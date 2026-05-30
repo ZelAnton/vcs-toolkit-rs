@@ -9,5 +9,8 @@ authors.workspace = true
 readme = "README.md"
 
 [dependencies]
+# Runs `git` inside an OS job (Windows Job Object / Linux cgroup) so the process
+# tree is killed on close — no orphaned subprocesses.
+vcs-process.workspace = true
 
 [dev-dependencies]

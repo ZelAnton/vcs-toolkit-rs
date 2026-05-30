@@ -1,12 +1,12 @@
 //! `vcs-github` — automate GitHub from Rust through the `gh` CLI.
 //!
-//! Thin, dependency-free wrappers that shell out to the GitHub CLI (`gh`) and
-//! capture its output. This is the starting skeleton; add command wrappers
-//! (pr, issue, repo, api, …) as the toolkit grows.
+//! Thin wrappers that shell out to the GitHub CLI (`gh`) and capture its output.
+//! Commands run inside an OS job (via [`vcs_process`]) so a `gh` subprocess is
+//! never orphaned. This is the starting skeleton; add command wrappers (pr,
+//! issue, repo, api, …) as the toolkit grows.
 
 use std::ffi::OsStr;
 use std::io;
-use std::process::Command;
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
@@ -20,16 +20,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(BINARY).args(args).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::other(format!(
-            "`{BINARY}` exited with {}: {}",
-            output.status,
-            stderr.trim()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    vcs_process::run(BINARY, args)
 }
 
 /// Return the installed GitHub CLI version (`gh --version`).

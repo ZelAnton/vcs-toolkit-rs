@@ -1,0 +1,30 @@
+# vcs-process
+
+Launch child processes inside an OS **job** so the whole process tree dies with
+the parent — no orphaned subprocesses left behind. Part of the
+[vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace; the
+`vcs-git`, `vcs-jj`, and `vcs-github` wrappers run every command through it.
+
+| Platform | Mechanism |
+|---|---|
+| Windows | [Job Object](https://learn.microsoft.com/windows/win32/procthread/job-objects) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
+| Linux | [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) `cgroup.kill`, falling back to a POSIX process group when no writable cgroup is available |
+| other | plain spawn, no containment |
+
+```rust
+// One-shot helper: spawn, capture stdout, then kill any stray descendants.
+let out = vcs_process::run("git", ["status", "--short"])?;
+
+// Or keep a job around and spawn several processes into it.
+let job = vcs_process::Job::new()?;
+let mut cmd = std::process::Command::new("long-running-tool");
+let mut child = job.spawn(&mut cmd)?;
+// ... dropping `job` kills child + every descendant (kill-on-close).
+```
+
+v1 guarantees **kill-on-close**: terminating or dropping the [`Job`] tears down
+the whole tree. Resource limits are intentionally out of scope for now.
+
+## License
+
+MIT

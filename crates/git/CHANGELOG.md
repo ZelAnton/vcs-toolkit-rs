@@ -13,7 +13,9 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Changed
--
+- `run` now launches `git` inside an OS job (Windows Job Object / Linux cgroup v2)
+  via `vcs-process`, so the process tree is killed on close — no orphaned
+  subprocesses.
 
 ### Fixed
 -

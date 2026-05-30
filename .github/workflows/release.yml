@@ -1,0 +1,82 @@
+name: Release
+
+# Manual, one-crate-at-a-time release. Each crate versions and publishes
+# independently (see AGENTS.md "Releasing and the changelog").
+#
+# IMPORTANT publish order: `vcs-process` must be on crates.io *before* the
+# wrappers (vcs-git/jj/github), since they depend on it by version. Release
+# vcs-process first whenever its version changed.
+#
+# Requires repository secret `CRATES_IO_TOKEN`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: Crate to release
+        required: true
+        type: choice
+        options:
+          - vcs-process
+          - vcs-git
+          - vcs-jj
+          - vcs-github
+      version:
+        description: New version, e.g. 0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write # push the version-bump commit and the tag
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve crate directory
+        id: map
+        run: |
+          case "${{ inputs.crate }}" in
+            vcs-process) echo "dir=crates/process" >> "$GITHUB_OUTPUT" ;;
+            vcs-git)     echo "dir=crates/git"     >> "$GITHUB_OUTPUT" ;;
+            vcs-jj)      echo "dir=crates/jj"      >> "$GITHUB_OUTPUT" ;;
+            vcs-github)  echo "dir=crates/github"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "unknown crate"; exit 1 ;;
+          esac
+
+      - name: Install tooling
+        run: cargo install cargo-edit --locked
+
+      - name: Bump version
+        run: cargo set-version -p ${{ inputs.crate }} ${{ inputs.version }}
+
+      - name: Promote changelog
+        # Non-destructive: rename the curated `## [Unreleased]` heading to the new
+        # version + date and leave a fresh empty Unreleased above it. The manual
+        # bullets (the source of truth per AGENTS.md) are preserved verbatim. The
+        # `## [x.y.z]` compare-link reference at the bottom is added by hand.
+        run: |
+          changelog="${{ steps.map.outputs.dir }}/CHANGELOG.md"
+          date="$(date +%F)"
+          sed -i "0,/^## \[Unreleased\]$/s//## [Unreleased]\n\n## [${{ inputs.version }}] - ${date}/" "$changelog"
+
+      - name: Commit, tag, push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "release: ${{ inputs.crate }} v${{ inputs.version }}"
+          git tag "${{ inputs.crate }}-v${{ inputs.version }}"
+          # checkout@v4 leaves a detached HEAD, so push to the branch explicitly
+          # (`git push origin HEAD` can't resolve a branch when detached).
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "${{ inputs.crate }}-v${{ inputs.version }}"
+
+      - name: Publish to crates.io
+        run: cargo publish -p ${{ inputs.crate }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

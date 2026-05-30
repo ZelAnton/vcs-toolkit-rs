@@ -9,20 +9,32 @@ This file provides guidance to AI coding agents when working with code in this r
 `git`, `jj`, and `gh` binaries and capture their output rather than
 reimplementing each tool's protocol.
 
-It is a Cargo workspace of three **independently versioned and published**
+It is a Cargo workspace of four **independently versioned and published**
 library crates:
 
 | Path | crates.io name | Drives |
 |---|---|---|
+| `crates/process` | `vcs-process` | the shared job-backed process launcher |
 | `crates/git` | `vcs-git` | `git` |
 | `crates/jj` | `vcs-jj` | `jj` |
 | `crates/github` | `vcs-github` | `gh` (GitHub CLI) |
 
-Each crate is self-contained (no inter-crate dependency) and exposes the same
-shape: a `run<I, S>(args)` helper that executes the underlying binary and
-returns trimmed stdout (or an `io::Error` carrying stderr on failure), plus
-typed wrappers like `version()`. Keep that shape consistent across crates when
-adding command wrappers.
+The three wrappers expose the same shape: a `run<I, S>(args)` helper that
+executes the underlying binary and returns trimmed stdout (or an `io::Error`
+carrying stderr on failure), plus typed wrappers like `version()`. Keep that
+shape consistent across crates when adding command wrappers.
+
+`vcs-process` is the one shared crate the wrappers depend on. It launches every
+child inside an OS **job** — a Windows [Job Object] with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, or a Linux [cgroup v2] killed via
+`cgroup.kill` (falling back to a POSIX process group when no writable cgroup is
+available) — so the whole process tree dies with the parent. The platform FFI
+lives only here (`crates/process/src/{windows,linux,other}.rs`); the wrappers
+just call `vcs_process::run`. v1 guarantees kill-on-close; resource limits are a
+future extension, observable via `Job::mechanism()`.
+
+[Job Object]: https://learn.microsoft.com/windows/win32/procthread/job-objects
+[cgroup v2]: https://docs.kernel.org/admin-guide/cgroup-v2.html
 
 ## Build, test, run
 
@@ -61,9 +73,10 @@ compiled as its own crate; prefer shared helpers in `tests/common/mod.rs`.
 ## Dependency management
 
 This workspace fixes **no** allow-list of crates — add whatever a crate
-genuinely needs. The core wrappers are intentionally dependency-free; keep them
-that way unless there's a real reason. The convention is about *how* you add
-dependencies, not *which*:
+genuinely needs. The three wrappers stay lean: their only dependency is
+`vcs-process` (which itself pulls in just `windows-sys` on Windows and `libc` on
+Linux for the job FFI). Don't add more to a wrapper unless there's a real
+reason. The convention is about *how* you add dependencies, not *which*:
 
 - **Document every dependency.** Each entry in `Cargo.toml` gets an inline
   comment explaining *why* it's there. A future reader should never guess.
@@ -97,9 +110,17 @@ Each crate releases **independently** — they do not share a version.
 - **Tag per crate** as `<crate>-v<version>` (e.g. `vcs-git-v0.2.0`) so each
   crate's history and compare links stay independent, then
   `cargo publish -p <crate>`.
-- This workspace ships **no** release workflow yet. Add one (e.g. a
-  `workflow_dispatch` Action that bumps a chosen crate, promotes its
-  `[Unreleased]`, tags, and publishes) when automated releases are needed.
+- **Publish order.** `vcs-process` must be on crates.io *before* the wrappers —
+  `vcs-git`/`vcs-jj`/`vcs-github` depend on it by version, so a wrapper publish
+  fails until the matching `vcs-process` version is live. Release `vcs-process`
+  first whenever its version changed.
+- **Release workflow.** `.github/workflows/release.yml` (`workflow_dispatch`)
+  bumps a chosen crate, promotes its `[Unreleased]` heading to the new version +
+  date (preserving the curated bullets), tags, and runs `cargo publish` (needs
+  the `CRATES_IO_TOKEN` secret). CI hard-gates on `cargo package -p vcs-process`;
+  the wrappers can only be package-checked once `vcs-process` is on crates.io, so
+  CI just emits a notice for them until then. The final publish stays a
+  deliberate, human-triggered action.
 
 ## Version control workflow
 

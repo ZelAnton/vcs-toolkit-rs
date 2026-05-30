@@ -36,3 +36,23 @@ jobs:
       - uses: actions/checkout@v4
       - run: cargo build --all-targets
       - run: cargo test
+
+  package:
+    name: cargo package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Hard gate: vcs-process has no workspace deps, so it packages and
+      # verify-builds fully — catches missing files or bad metadata before publish.
+      - run: cargo package -p vcs-process
+      # The wrappers depend on vcs-process by `version`, so `cargo package` (even
+      # with --no-verify) rejects them with "no matching package named
+      # vcs-process" until vcs-process is on crates.io. That's expected, not a CI
+      # failure — emit a notice instead of failing the job. Once vcs-process is
+      # published this packages cleanly and starts catching wrapper metadata bugs.
+      - name: Package wrappers (needs vcs-process on crates.io first)
+        run: |
+          for c in vcs-git vcs-jj vcs-github; do
+            cargo package -p "$c" --no-verify \
+              || echo "::notice::$c packaging skipped — publish vcs-process to crates.io first"
+          done

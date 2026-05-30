@@ -1,0 +1,31 @@
+[package]
+name = "vcs-process"
+version = "0.1.0"
+description = "Launch child processes inside an OS job (Windows Job Object / Linux cgroup v2) so the whole process tree dies with the parent."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+# Win32 Job Object FFI: CreateJobObject / SetInformationJobObject /
+# AssignProcessToJobObject / TerminateJobObject + the HANDLE type & CloseHandle.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION lives behind this.
+    "Win32_System_Threading",
+    # CreateJobObjectW's signature references SECURITY_ATTRIBUTES.
+    "Win32_Security",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Raw syscalls the cgroup path can't express via std: getpid/write into
+# cgroup.procs (async-signal-safe, in pre_exec) and kill/killpg for teardown
+# and the process-group fallback.
+libc = "0.2"
+
+[dev-dependencies]

@@ -1,12 +1,12 @@
 //! `vcs-git` — automate Git from Rust through CLI process execution.
 //!
-//! Thin, dependency-free wrappers that shell out to the `git` binary and
-//! capture its output. This is the starting skeleton; add command wrappers
-//! (status, log, commit, …) as the toolkit grows.
+//! Thin wrappers that shell out to the `git` binary and capture its output.
+//! Commands run inside an OS job (via [`vcs_process`]) so a `git` subprocess is
+//! never orphaned. This is the starting skeleton; add command wrappers (status,
+//! log, commit, …) as the toolkit grows.
 
 use std::ffi::OsStr;
 use std::io;
-use std::process::Command;
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "git";
@@ -20,16 +20,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(BINARY).args(args).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::other(format!(
-            "`{BINARY}` exited with {}: {}",
-            output.status,
-            stderr.trim()
-        )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    vcs_process::run(BINARY, args)
 }
 
 /// Return the installed Git version (`git --version`).
