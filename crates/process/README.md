@@ -24,6 +24,18 @@ let mut child = job.spawn(&mut cmd)?;
 // ... dropping `job` kills child + every descendant (kill-on-close).
 ```
 
+For long-running commands, stream instead of buffering to completion — stdout
+arrives as it is produced, stdin is written incrementally, and stderr is drained
+for you in the background:
+
+```rust
+let mut s = vcs_process::Exec::new("git").args(["log"]).stream().await?;
+while let Some(line) = s.next_line().await? {
+    // each line arrives as git emits it, before the process exits
+}
+let (status, stderr) = s.finish().await?;
+```
+
 v1 guarantees **kill-on-close**: terminating or dropping the [`Job`] tears down
 the whole tree. Resource limits are intentionally out of scope for now.
 

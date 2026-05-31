@@ -14,6 +14,11 @@
 //! every process still inside it. [`Exec::timeout`] adds a deadline that kills
 //! the job. Errors are reported as the structured [`CommandError`].
 //!
+//! Most runs capture output to completion ([`Exec::run`]/[`Exec::output`]). For
+//! long-running commands, [`Exec::stream`] returns a [`Streaming`] that reads
+//! stdout *as it is produced* and writes stdin incrementally (stderr is drained
+//! in the background and returned at the end).
+//!
 //! [Job Object]: https://learn.microsoft.com/windows/win32/procthread/job-objects
 //! [cgroup v2]: https://docs.kernel.org/admin-guide/cgroup-v2.html
 
@@ -37,6 +42,13 @@ pub use error::{CommandError, Result};
 
 mod exec;
 pub use exec::{Exec, Output, Termination};
+
+mod stream;
+pub use stream::Streaming;
+// The child pipe types appear in `Child`/`Streaming` signatures; re-export them
+// (tokio is already public API via `Child::inner_mut`) so callers needn't reach
+// into `tokio::process` to name them.
+pub use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
 
 mod runner;
 #[cfg(feature = "mock")]
@@ -121,6 +133,25 @@ impl Child {
     /// Borrow the underlying [`tokio::process::Child`] (e.g. for its stdio pipes).
     pub fn inner_mut(&mut self) -> &mut tokio::process::Child {
         &mut self.0
+    }
+
+    /// Take the child's stdout pipe for incremental async reads. `None` if it was
+    /// not piped or has already been taken. Implements [`tokio::io::AsyncRead`].
+    pub fn stdout(&mut self) -> Option<tokio::process::ChildStdout> {
+        self.0.stdout.take()
+    }
+
+    /// Take the child's stderr pipe for incremental async reads. `None` if it was
+    /// not piped or has already been taken.
+    pub fn stderr(&mut self) -> Option<tokio::process::ChildStderr> {
+        self.0.stderr.take()
+    }
+
+    /// Take the child's stdin pipe for incremental async writes. `None` unless the
+    /// command was built with [`Exec::pipe_stdin`]/[`Exec::stdin`] and it is still
+    /// open. Implements [`tokio::io::AsyncWrite`]; drop it to send EOF.
+    pub fn stdin(&mut self) -> Option<tokio::process::ChildStdin> {
+        self.0.stdin.take()
     }
 }
 

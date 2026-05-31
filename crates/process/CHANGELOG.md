@@ -27,6 +27,13 @@ crates; tag releases as `vcs-process-v<version>`.
   implemented for `&R`, so a test can keep its recorder. New `Output::ok`/`fail`/
   `timeout` constructors and `Exec::program`/`arguments`/`working_dir`/`env_vars`/
   `stdin_bytes` accessors. With the `mock` feature, `mockall` generates `MockRunner`.
+- **Streaming I/O:** `Exec::stream` returns a `Streaming` that reads stdout *as it
+  is produced* (`next_line`/`stdout`) and writes stdin incrementally (`stdin`,
+  enabled by `Exec::pipe_stdin`), instead of buffering until exit. stderr is
+  drained in a background task — so a stdout-only reader never deadlocks — and
+  returned by `finish` alongside the exit status. New typed `Child::stdout`/
+  `stderr`/`stdin` pipe accessors; the `ChildStdin`/`ChildStdout`/`ChildStderr`
+  types are re-exported.
 - `CliClient<R>` — the shared client core the wrappers build on: binary name +
   runner + default timeout, the `exec`/`exec_in` builders, and the
   `run_text`/`run_raw`/`run_unit`/`parsed`/`parsed_try` terminals. Each wrapper is

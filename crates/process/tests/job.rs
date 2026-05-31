@@ -167,6 +167,109 @@ async fn timeout_cancels_a_blocking_stdin_write() {
     );
 }
 
+// The core streaming guarantee: stdout is readable *as it is produced*, not only
+// after the process exits. The child prints line1, sleeps, then line2 — so line1
+// must arrive well before the full run completes.
+#[tokio::test]
+#[ignore = "spawns a real subprocess"]
+async fn stream_reads_stdout_before_exit() {
+    let exec = if cfg!(windows) {
+        Exec::new("cmd").args(["/c", "echo line1&ping -n 3 127.0.0.1 >NUL&echo line2"])
+    } else {
+        Exec::new("sh").args(["-c", "echo line1; sleep 2; echo line2"])
+    };
+    let start = Instant::now();
+    let mut s = exec.stream().await.expect("stream");
+
+    let first = s.next_line().await.expect("read line1");
+    let elapsed = start.elapsed();
+    assert_eq!(first.as_deref(), Some("line1"));
+    assert!(
+        elapsed < Duration::from_millis(1500),
+        "line1 should arrive immediately, not after the full run (took {elapsed:?})"
+    );
+
+    assert_eq!(
+        s.next_line().await.expect("read line2").as_deref(),
+        Some("line2")
+    );
+    assert!(s.next_line().await.expect("eof").is_none());
+    let (status, _stderr) = s.finish().await.expect("finish");
+    assert!(status.success());
+}
+
+// The open async stdin writer: write through `pipe_stdin`, close it (EOF), and
+// read the result back over the streaming reader.
+#[tokio::test]
+#[ignore = "spawns a real subprocess"]
+async fn stream_writes_stdin_then_reads_output() {
+    use tokio::io::AsyncWriteExt;
+    // `sort` (present on both platforms) reads stdin to EOF, then emits.
+    let mut s = Exec::new("sort")
+        .pipe_stdin()
+        .stream()
+        .await
+        .expect("stream");
+    s.stdin()
+        .expect("stdin should be piped")
+        .write_all(b"hello\n")
+        .await
+        .expect("write stdin");
+    s.close_stdin();
+    assert_eq!(s.next_line().await.expect("read").as_deref(), Some("hello"));
+    let (status, _stderr) = s.finish().await.expect("finish");
+    assert!(status.success());
+}
+
+// `finish` returns the exit status and the background-drained stderr — proving
+// stderr is captured without the caller draining it (no deadlock).
+#[tokio::test]
+#[ignore = "spawns a real subprocess"]
+async fn stream_finish_returns_status_and_stderr() {
+    let exec = if cfg!(windows) {
+        Exec::new("cmd").args(["/c", "echo out&echo err 1>&2&exit 3"])
+    } else {
+        Exec::new("sh").args(["-c", "echo out; echo err 1>&2; exit 3"])
+    };
+    let mut s = exec.stream().await.expect("stream");
+    assert_eq!(
+        s.next_line().await.expect("read out").as_deref(),
+        Some("out")
+    );
+    assert!(s.next_line().await.expect("eof").is_none());
+
+    let (status, stderr) = s.finish().await.expect("finish");
+    assert_eq!(status.code(), Some(3));
+    assert!(
+        stderr.contains("err"),
+        "stderr should be captured: {stderr:?}"
+    );
+}
+
+// Regression guard: the child writes far more than a pipe buffer (~64 KB) to
+// stdout, which we never read. If `finish` didn't drain it, the child would
+// block on the full pipe and `wait()` would hang forever. The outer timeout
+// turns a regression into a fast failure instead of a hung suite.
+#[tokio::test]
+#[ignore = "spawns a real subprocess"]
+async fn stream_finish_drains_unread_stdout() {
+    let exec = if cfg!(windows) {
+        Exec::new("powershell").args([
+            "-NoProfile",
+            "-Command",
+            "[Console]::Out.Write('x' * 200000)",
+        ])
+    } else {
+        Exec::new("sh").args(["-c", "head -c 200000 /dev/zero"])
+    };
+    let s = exec.stream().await.expect("stream");
+    let (status, _stderr) = tokio::time::timeout(Duration::from_secs(10), s.finish())
+        .await
+        .expect("finish must not hang on unread stdout")
+        .expect("finish");
+    assert!(status.success());
+}
+
 #[tokio::test]
 #[ignore = "spawns long-lived subprocesses and asserts kill-on-close"]
 async fn job_kills_multiple_children() {

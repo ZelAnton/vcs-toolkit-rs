@@ -144,6 +144,7 @@ pub struct Exec {
     envs: Vec<(OsString, OsString)>,
     stdin: Option<Vec<u8>>,
     timeout: Option<Duration>,
+    stream_stdin: bool,
 }
 
 impl Exec {
@@ -156,6 +157,7 @@ impl Exec {
             envs: Vec::new(),
             stdin: None,
             timeout: None,
+            stream_stdin: false,
         }
     }
 
@@ -205,9 +207,21 @@ impl Exec {
 
     /// Feed `bytes` to the child's stdin (then close it, sending EOF).
     ///
-    /// Intended for modest inputs (a commit message, a small patch).
+    /// Intended for modest inputs (a commit message, a small patch). For the
+    /// streaming path ([`Exec::stream`]) use [`pipe_stdin`](Exec::pipe_stdin)
+    /// instead and write incrementally — `stream` does not send these bytes.
     pub fn stdin(mut self, bytes: impl Into<Vec<u8>>) -> Self {
         self.stdin = Some(bytes.into());
+        self
+    }
+
+    /// Open the child's stdin as a pipe the caller writes to incrementally.
+    ///
+    /// Only meaningful with [`Exec::stream`], which leaves the pipe open and
+    /// hands back a writer via [`Streaming::stdin`](crate::Streaming::stdin).
+    /// Without this, a streamed child's stdin is `/dev/null`.
+    pub fn pipe_stdin(mut self) -> Self {
+        self.stream_stdin = true;
         self
     }
 
@@ -257,8 +271,9 @@ impl Exec {
     }
 
     /// Configure a [`tokio::process::Command`] from this builder. stdin is piped
-    /// when input was supplied, otherwise nulled (see [`run`](crate::run)).
-    fn build(&self) -> Command {
+    /// when input was buffered ([`stdin`](Exec::stdin)) or the caller asked to
+    /// stream it ([`pipe_stdin`](Exec::pipe_stdin)), otherwise nulled.
+    pub(crate) fn build(&self) -> Command {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
         if let Some(dir) = &self.cwd {
@@ -268,7 +283,7 @@ impl Exec {
             cmd.env(k, v);
         }
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd.stdin(if self.stdin.is_some() {
+        cmd.stdin(if self.stdin.is_some() || self.stream_stdin {
             Stdio::piped()
         } else {
             Stdio::null()

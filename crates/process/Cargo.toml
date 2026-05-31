@@ -10,8 +10,9 @@ readme = "README.md"
 
 [dependencies]
 # Async process spawning + timeout: tokio::process drives git/jj/gh, tokio::time
-# enforces deadlines, io-util writes stdin asynchronously.
-tokio = { version = "1", features = ["process", "time", "io-util"] }
+# enforces deadlines, io-util streams stdin/stdout, rt powers the background
+# stderr-drain task (tokio::spawn) behind the streaming API.
+tokio = { version = "1", features = ["process", "time", "io-util", "rt"] }
 # `async fn` in the object-safe `Runner`/`*Api` traits (dyn + mockall friendly).
 async-trait = "0.1"
 # Structured `CommandError` carrying program/args/exit code/stderr/timeout.
