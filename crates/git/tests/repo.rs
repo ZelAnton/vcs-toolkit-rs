@@ -103,3 +103,40 @@ async fn diff_is_empty_tracks_worktree_changes() {
         "unstaged change should be visible"
     );
 }
+
+// End-to-end check of the `-z` rename parsing: a real `git mv` must surface as a
+// rename entry carrying both the new path and the original (`orig_path`).
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn status_reports_rename_with_orig_path() {
+    let tmp = TempDir::new("rename");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("old.txt"), "hello\n").expect("write");
+    git.add(dir, &[PathBuf::from("old.txt")])
+        .await
+        .expect("add");
+    git.commit(dir, "add old").await.expect("commit");
+
+    // Stage a rename, then read it back through the typed status.
+    std::process::Command::new(vcs_git::BINARY)
+        .current_dir(dir)
+        .args(["mv", "old.txt", "new.txt"])
+        .status()
+        .expect("git mv");
+
+    let status = git.status(dir).await.expect("status");
+    let renamed = status
+        .iter()
+        .find(|e| e.code.starts_with('R'))
+        .expect("a rename entry");
+    assert_eq!(renamed.path, "new.txt", "new path");
+    assert_eq!(
+        renamed.orig_path.as_deref(),
+        Some("old.txt"),
+        "original path"
+    );
+}

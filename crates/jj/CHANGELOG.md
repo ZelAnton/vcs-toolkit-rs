@@ -26,6 +26,8 @@ crates; tag releases as `vcs-jj-v<version>`.
   cgroup v2) via `vcs-process`, killed on close.
 - **Now async (tokio):** every `JjApi` method is `async`; errors are the typed
   `vcs_process::CommandError`. Adds `async-trait`.
+- Builds on `vcs_process::CliClient`, the shared client core (internal refactor;
+  no public API change).
 
 ## [0.1.0] - 2026-05-29
 

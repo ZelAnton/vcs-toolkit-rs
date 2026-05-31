@@ -24,8 +24,14 @@ Each wrapper exposes the same shape — an **interface trait**
 (`Git`/`Jj`/`GitHub`) generic over a `Runner`. Methods are **`async`** (tokio,
 via `#[async_trait]`), take `dir: &Path`, return parsed structs, and fail with
 the structured `vcs_process::CommandError`; pure parsers live in each crate's
-`parse.rs`. Each client carries an optional `default_timeout`. Keep this shape
-consistent across crates and **keep the traits object-safe and `mockall`-friendly**
+`parse.rs`. Each client wraps a single `core: vcs_process::CliClient<R>` field
+that owns the binary name, runner, and optional `default_timeout` and provides
+the `exec`/`exec_in` builders and the `run_text`/`run_raw`/`run_unit`/`parsed`/
+`parsed_try` terminals — so a method is one line and a new wrapper is just a
+`const BINARY`, a `core` field, three constructors, and its typed methods. The
+generic, ergonomic argument types stay on `CliClient`, never on the trait. Keep
+this shape consistent across crates and **keep the traits object-safe and
+`mockall`-friendly**
 — no generic methods, no nested-reference lifetimes (use `&[PathBuf]`/`&[String]`,
 not `&[&Path]`/`&[&str]`; use `Option<String>`, not `Option<&str>`) so `&dyn Api`,
 `async-trait`, and `mockall` all work.
@@ -33,8 +39,12 @@ not `&[&Path]`/`&[&str]`; use `Option<String>`, not `Option<&str>`) so `&dyn Api
 **Mockability is a first-class requirement.** Consumers depend on the trait and,
 in tests, either enable the `mock` feature for a `mockall`-generated mock
 (`MockGitApi`) or call `Git::with_runner(`[`ScriptedRunner`]`)` to drive the real
-argument-building and parsing against canned output. New commands must keep both
-seams working (add a trait method + a hermetic `ScriptedRunner` test).
+argument-building and parsing against canned output. To assert the *exact* built
+command (full args, cwd, env — and that a flag is absent), wrap any runner in
+`RecordingRunner` and inspect the captured `Invocation`s; `Runner` is implemented
+for `&R`, so pass `&rec` and keep the recorder. New commands must keep these
+seams working (add a trait method + a hermetic `ScriptedRunner`/`RecordingRunner`
+test).
 
 `vcs-process` is the one shared crate the wrappers depend on. It launches every
 child inside an OS **job** — a Windows [Job Object] with

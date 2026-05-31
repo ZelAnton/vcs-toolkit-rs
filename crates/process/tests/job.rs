@@ -115,8 +115,8 @@ async fn output_captures_nonzero_exit() {
     .expect("output() should not error on non-zero exit");
 
     assert!(!out.success());
-    assert!(!out.timed_out);
-    assert_eq!(out.status.code(), Some(3));
+    assert!(!out.timed_out());
+    assert_eq!(out.code(), Some(3));
 }
 
 #[tokio::test]
@@ -132,7 +132,7 @@ async fn timeout_flags_and_kills() {
         .output()
         .await
         .expect("output");
-    assert!(out.timed_out, "should be flagged timed out");
+    assert!(out.timed_out(), "should be flagged timed out");
     assert!(!out.success());
 }
 
@@ -157,7 +157,10 @@ async fn timeout_cancels_a_blocking_stdin_write() {
         .output()
         .await
         .expect("output");
-    assert!(out.timed_out, "blocking stdin write should still time out");
+    assert!(
+        out.timed_out(),
+        "blocking stdin write should still time out"
+    );
     assert!(
         start.elapsed() < Duration::from_secs(10),
         "stdin write hung past the deadline instead of being cancelled"

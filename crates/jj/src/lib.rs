@@ -13,7 +13,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use vcs_process::{Exec, JobRunner, Output, Result, Runner};
+use vcs_process::{CliClient, JobRunner, Output, Result, Runner};
 
 mod parse;
 pub use parse::{Bookmark, Change};
@@ -56,16 +56,14 @@ pub trait JjApi: Send + Sync {
 /// The real jj client. Generic over the [`Runner`] so tests can inject a fake
 /// process executor; `Jj::new()` uses the real job-backed runner.
 pub struct Jj<R: Runner = JobRunner> {
-    runner: R,
-    timeout: Option<Duration>,
+    core: CliClient<R>,
 }
 
 impl Jj<JobRunner> {
     /// A client backed by the real `jj` binary.
     pub fn new() -> Self {
         Jj {
-            runner: JobRunner,
-            timeout: None,
+            core: CliClient::new(BINARY),
         }
     }
 }
@@ -80,85 +78,54 @@ impl<R: Runner> Jj<R> {
     /// A client that runs commands through `runner` — pass a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Jj {
-            runner,
-            timeout: None,
+            core: CliClient::with_runner(BINARY, runner),
         }
     }
 
     /// Kill any command that runs longer than `timeout`.
     pub fn default_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
+        self.core = self.core.default_timeout(timeout);
         self
-    }
-
-    fn exec_in(&self, dir: &Path, args: &[&str]) -> Exec {
-        Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .current_dir(dir)
-            .args(args)
     }
 }
 
 #[async_trait::async_trait]
 impl<R: Runner> JjApi for Jj<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        Ok(Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .args(args)
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core.run_text(self.core.exec(args)).await
     }
 
     async fn run_raw(&self, args: &[String]) -> io::Result<Output> {
-        Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .args(args)
-            .output_with(&self.runner)
-            .await
+        self.core.run_raw(self.core.exec(args)).await
     }
 
     async fn version(&self) -> Result<String> {
-        Ok(Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .args(["--version"])
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core.run_text(self.core.exec(["--version"])).await
     }
 
     async fn status(&self, dir: &Path) -> Result<String> {
-        Ok(self
-            .exec_in(dir, &["status"])
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core.run_text(self.core.exec_in(dir, ["status"])).await
     }
 
     async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
         let n = format!("-n{max}");
-        let out = self
-            .exec_in(
-                dir,
-                &[
-                    "log",
-                    "-r",
-                    revset,
-                    &n,
-                    "--no-graph",
-                    "-T",
-                    parse::CHANGE_TEMPLATE,
-                ],
+        self.core
+            .parsed(
+                self.core.exec_in(
+                    dir,
+                    [
+                        "log",
+                        "-r",
+                        revset,
+                        n.as_str(),
+                        "--no-graph",
+                        "-T",
+                        parse::CHANGE_TEMPLATE,
+                    ],
+                ),
+                parse::parse_changes,
             )
-            .checked_with(&self.runner)
-            .await?;
-        Ok(parse::parse_changes(&out.stdout))
+            .await
     }
 
     async fn current_change(&self, dir: &Path) -> Result<Change> {
@@ -172,39 +139,39 @@ impl<R: Runner> JjApi for Jj<R> {
     }
 
     async fn describe(&self, dir: &Path, message: &str) -> Result<()> {
-        self.exec_in(dir, &["describe", "-m", message])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["describe", "-m", message]))
             .await
-            .map(drop)
     }
 
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()> {
-        self.exec_in(dir, &["new", "-m", message])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["new", "-m", message]))
             .await
-            .map(drop)
     }
 
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
-        let out = self
-            .exec_in(dir, &["bookmark", "list"])
-            .checked_with(&self.runner)
-            .await?;
-        Ok(parse::parse_bookmarks(&out.stdout))
+        self.core
+            .parsed(
+                self.core.exec_in(dir, ["bookmark", "list"]),
+                parse::parse_bookmarks,
+            )
+            .await
     }
 
     async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
-        self.exec_in(dir, &["bookmark", "set", name, "-r", revision])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(
+                self.core
+                    .exec_in(dir, ["bookmark", "set", name, "-r", revision]),
+            )
             .await
-            .map(drop)
     }
 
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
-        self.exec_in(dir, &["git", "fetch"])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["git", "fetch"]))
             .await
-            .map(drop)
     }
 
     async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()> {
@@ -213,10 +180,7 @@ impl<R: Runner> JjApi for Jj<R> {
             args.push("-b");
             args.push(name);
         }
-        self.exec_in(dir, &args)
-            .checked_with(&self.runner)
-            .await
-            .map(drop)
+        self.core.run_unit(self.core.exec_in(dir, args)).await
     }
 }
 

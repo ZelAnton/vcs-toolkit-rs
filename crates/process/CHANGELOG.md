@@ -20,20 +20,33 @@ crates; tag releases as `vcs-process-v<version>`.
   `Child::try_wait` for non-blocking liveness checks.
 - `Runner` trait — the execution boundary, so consumers can inject a fake in
   tests. `JobRunner` is the real (default) runner; `ScriptedRunner` is a
-  dependency-free test double mapping a command to a canned `Output`. New
-  `Output::ok`/`Output::fail` constructors and `Exec::program`/`arguments`/
-  `working_dir` accessors. With the `mock` feature, `mockall` also generates
-  `MockRunner`.
+  dependency-free test double mapping a command to a canned `Output` by argument
+  prefix (`on`) or predicate (`when`). `RecordingRunner` wraps any runner and
+  captures each run as an `Invocation` (program, full args, cwd, env, stdin) for
+  exact assertions — including that a flag is *absent*. `Runner` is also
+  implemented for `&R`, so a test can keep its recorder. New `Output::ok`/`fail`/
+  `timeout` constructors and `Exec::program`/`arguments`/`working_dir`/`env_vars`/
+  `stdin_bytes` accessors. With the `mock` feature, `mockall` generates `MockRunner`.
+- `CliClient<R>` — the shared client core the wrappers build on: binary name +
+  runner + default timeout, the `exec`/`exec_in` builders, and the
+  `run_text`/`run_raw`/`run_unit`/`parsed`/`parsed_try` terminals. Each wrapper is
+  a thin typed facade over it, so a new wrapper is just a `const BINARY`, a `core`
+  field, three constructors, and its typed methods.
 - **Timeouts:** `Exec::timeout`/`maybe_timeout` kill the job when the deadline
-  elapses; `Output::timed_out` reports it. Inspired by the .NET sibling.
+  elapses; `Output::timed_out()` reports it. Inspired by the .NET sibling.
 - **Structured errors:** `CommandError` (and the `Result` alias) carries the
   program, args, exit code, stderr, and timeout — a typed alternative to the old
-  stringly `io::Error`. `Exec::run` and the new `Exec::checked_with`/`output_with`
-  (run via an injected `Runner`) return it.
+  stringly `io::Error`. `Exec::run`, `checked_with`/`output_with`, and
+  `code_with` (returns the exit code for commands where the code is the answer,
+  e.g. `git diff --quiet`, while still erroring on spawn/timeout/signal) return it.
 
 ### Changed
 - **Now async (tokio).** `Exec::run`/`output`/`spawn`, the `Runner` trait, and the
   free `run`/`output` helpers are `async`; processes spawn via `tokio::process`.
   `Child` wraps `tokio::process::Child`. Adds `tokio`, `async-trait`, `thiserror`.
+- `Output` models termination portably via the `Termination` enum
+  (`Exited`/`Signaled`/`TimedOut`), replacing the stored `ExitStatus` and the
+  separate `timed_out` bool. `timed_out()` is now a method; `code()` is new. This
+  drops the synthetic wait-status bit-shifting and its `#[cfg]` gates.
 
 [Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main

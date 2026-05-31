@@ -13,28 +13,53 @@ use tokio::process::Command;
 
 use crate::{Child, CommandError, Job, JobRunner, Runner};
 
+/// How a finished process terminated. Portable — carries no OS wait-status, so
+/// it is the same on every platform and trivial to construct in tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Termination {
+    /// Exited on its own with this code (`0` means success).
+    Exited(i32),
+    /// Killed by a signal (Unix), carrying the signal number when known. Never
+    /// produced on Windows, where every process yields an exit code.
+    Signaled(Option<i32>),
+    /// Killed by us because the [`Exec::timeout`] deadline elapsed.
+    TimedOut,
+}
+
 /// Captured result of a finished process.
 ///
 /// Unlike [`Exec::run`], producing an `Output` does **not** treat a non-zero
-/// exit as an error — inspect [`Output::status`] / [`Output::success`] /
-/// [`Output::timed_out`] yourself.
-#[derive(Debug, Clone)]
+/// exit as an error — inspect [`Output::termination`] / [`Output::success`] /
+/// [`Output::code`] / [`Output::timed_out`] yourself.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
-    /// Exit status of the process. On a timeout this is a synthetic non-zero
-    /// status (the process was killed); check [`Output::timed_out`] to tell.
-    pub status: ExitStatus,
+    /// How the process ended (exited / signalled / timed out).
+    pub termination: Termination,
     /// Captured standard output, lossily decoded as UTF-8.
     pub stdout: String,
     /// Captured standard error, lossily decoded as UTF-8.
     pub stderr: String,
-    /// `true` when the process was killed because its timeout elapsed.
-    pub timed_out: bool,
 }
 
 impl Output {
-    /// Whether the process exited successfully (zero status, not timed out).
+    /// Exit code if the process exited normally; `None` if it was signalled or
+    /// timed out (no meaningful code exists in those cases).
+    pub fn code(&self) -> Option<i32> {
+        match self.termination {
+            Termination::Exited(code) => Some(code),
+            _ => None,
+        }
+    }
+
+    /// Whether the process exited normally with code `0`.
     pub fn success(&self) -> bool {
-        !self.timed_out && self.status.success()
+        matches!(self.termination, Termination::Exited(0))
+    }
+
+    /// Whether the process was killed because its timeout elapsed.
+    pub fn timed_out(&self) -> bool {
+        matches!(self.termination, Termination::TimedOut)
     }
 
     /// `stdout` followed by `stderr`. Concatenation, not real-time interleaving.
@@ -47,62 +72,57 @@ impl Output {
 
     /// Build a successful `Output` carrying `stdout` — for scripting a
     /// [`ScriptedRunner`](crate::ScriptedRunner) or a mock in tests.
-    #[cfg(any(unix, windows))]
     pub fn ok(stdout: impl Into<String>) -> Self {
         Output {
-            status: synthetic_status(0),
+            termination: Termination::Exited(0),
             stdout: stdout.into(),
             stderr: String::new(),
-            timed_out: false,
         }
     }
 
     /// Build a failed `Output` with exit `code` and `stderr` — test/mock helper.
-    #[cfg(any(unix, windows))]
     pub fn fail(code: i32, stderr: impl Into<String>) -> Self {
         Output {
-            status: synthetic_status(code),
+            termination: Termination::Exited(code),
             stdout: String::new(),
             stderr: stderr.into(),
-            timed_out: false,
+        }
+    }
+
+    /// Build a timed-out `Output` — test/mock helper.
+    pub fn timeout() -> Self {
+        Output {
+            termination: Termination::TimedOut,
+            stdout: String::new(),
+            stderr: String::new(),
         }
     }
 
     fn from_std(out: std::process::Output) -> Self {
         Output {
-            status: out.status,
+            termination: termination_of(out.status),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-            timed_out: false,
-        }
-    }
-
-    #[cfg(any(unix, windows))]
-    fn timed_out() -> Self {
-        Output {
-            // 124 is the conventional "timed out" exit code (cf. GNU `timeout`).
-            status: synthetic_status(124),
-            stdout: String::new(),
-            stderr: String::new(),
-            timed_out: true,
         }
     }
 }
 
-/// Construct an `ExitStatus` for `code` without spawning a process. Windows
-/// takes the code directly; Unix wants the raw wait status (exit code in bits
-/// 8–15). Available on every process-capable target (Unix incl. macOS/BSD, Windows).
-#[cfg(any(unix, windows))]
-fn synthetic_status(code: i32) -> ExitStatus {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::ExitStatusExt;
-        ExitStatus::from_raw(code as u32)
+/// Interpret an OS exit status: a real exit code, or (Unix only) a terminating
+/// signal. This is the one place that touches platform wait-status semantics.
+fn termination_of(status: ExitStatus) -> Termination {
+    if let Some(code) = status.code() {
+        return Termination::Exited(code);
     }
+    // No code → terminated by a signal. Only reachable on Unix; Windows always
+    // yields a code.
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
+        Termination::Signaled(status.signal())
+    }
+    #[cfg(not(unix))]
+    {
+        Termination::Signaled(None)
     }
 }
 
@@ -218,6 +238,16 @@ impl Exec {
         self.cwd.as_deref()
     }
 
+    /// The environment overrides set for the child, in insertion order.
+    pub fn env_vars(&self) -> &[(OsString, OsString)] {
+        &self.envs
+    }
+
+    /// The buffered stdin input, if any was supplied.
+    pub fn stdin_bytes(&self) -> Option<&[u8]> {
+        self.stdin.as_deref()
+    }
+
     fn joined_args(&self) -> String {
         self.args
             .iter()
@@ -253,8 +283,8 @@ impl Exec {
     }
 
     /// Run to completion and capture output, **without** erroring on a non-zero
-    /// exit. On timeout the job is killed and `Output::timed_out` is set. The job
-    /// is dropped before returning (kill-on-close).
+    /// exit. On timeout the job is killed and [`Output::timed_out`] returns true.
+    /// The job is dropped before returning (kill-on-close).
     pub async fn output(self) -> io::Result<Output> {
         self.execute().await
     }
@@ -287,7 +317,7 @@ impl Exec {
                 Err(_elapsed) => {
                     // Deadline hit: kill the whole job, report a timed-out result.
                     let _ = job.kill_all();
-                    Ok(Output::timed_out())
+                    Ok(Output::timeout())
                 }
             },
             None => Ok(Output::from_std(drive.await?)),
@@ -307,7 +337,7 @@ impl Exec {
         let program = self.program.to_string_lossy().into_owned();
         match runner.run(&self).await {
             Err(source) => Err(CommandError::Spawn { program, source }),
-            Ok(out) if out.timed_out => Err(CommandError::Timeout {
+            Ok(out) if out.timed_out() => Err(CommandError::Timeout {
                 program,
                 args: self.joined_args(),
                 timeout: self.timeout.unwrap_or_default(),
@@ -316,9 +346,36 @@ impl Exec {
             Ok(out) => Err(CommandError::Exit {
                 program,
                 args: self.joined_args(),
-                code: out.status.code().unwrap_or(-1),
+                code: out.code().unwrap_or(-1),
                 stderr: out.stderr.trim().to_string(),
             }),
+        }
+    }
+
+    /// Run via an injected `runner` for a command whose **exit code is itself the
+    /// result** (e.g. `git diff --quiet`, `gh auth status`): returns the code on a
+    /// normal exit. A spawn failure, a timeout, or a terminating signal is never a
+    /// meaningful answer, so each still surfaces as a [`CommandError`] — unlike the
+    /// hand-rolled mappings this replaces, the timeout case is never lost.
+    pub async fn code_with<R: Runner + ?Sized>(self, runner: &R) -> crate::Result<i32> {
+        let program = self.program.to_string_lossy().into_owned();
+        match runner.run(&self).await {
+            Err(source) => Err(CommandError::Spawn { program, source }),
+            Ok(out) if out.timed_out() => Err(CommandError::Timeout {
+                program,
+                args: self.joined_args(),
+                timeout: self.timeout.unwrap_or_default(),
+            }),
+            Ok(out) => match out.code() {
+                Some(code) => Ok(code),
+                // Signalled (no exit code) — a real failure, not a 0/1 answer.
+                None => Err(CommandError::Exit {
+                    program,
+                    args: self.joined_args(),
+                    code: -1,
+                    stderr: out.stderr.trim().to_string(),
+                }),
+            },
         }
     }
 

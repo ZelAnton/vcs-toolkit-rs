@@ -1,14 +1,16 @@
 //! Pure parsers for git's machine-readable output. No process execution, so the
 //! tests here are hermetic and run on CI.
 
-/// One entry from `git status --porcelain` (v1 format: `XY <path>`).
+/// One entry from `git status --porcelain=v1 -z` (`XY <path>`, NUL-delimited).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusEntry {
-    /// Two-character status code, e.g. `" M"`, `"??"`, `"A "`.
+    /// Two-character status code, e.g. `" M"`, `"??"`, `"A "`, `"R "`.
     pub code: String,
-    /// Path the status applies to. For renames git emits `old -> new`; that is
-    /// left verbatim here.
+    /// Path the status applies to (the *new* path for a rename/copy). Raw bytes
+    /// from `-z` — no C-quoting/escaping to undo, even for paths with spaces.
     pub path: String,
+    /// For a rename/copy, the original path; `None` otherwise.
+    pub orig_path: Option<String>,
 }
 
 /// A commit, parsed from a `\x1f`-delimited `git log` line.
@@ -35,27 +37,43 @@ pub struct Branch {
     pub current: bool,
 }
 
-/// Parse `git status --porcelain` output.
+/// Parse `git status --porcelain=v1 -z` output: NUL-delimited records, raw
+/// (unquoted) paths. A rename/copy entry is followed by its source path as the
+/// next NUL record (e.g. `R  new\0old\0`).
 pub(crate) fn parse_porcelain(output: &str) -> Vec<StatusEntry> {
-    output
-        .lines()
-        // "XY path" — two code chars, a separator, then a non-empty path.
-        .filter(|line| line.len() >= 4)
-        .map(|line| StatusEntry {
-            code: line[..2].to_string(),
-            path: line[3..].to_string(),
-        })
-        .collect()
+    let mut entries = Vec::new();
+    let mut records = output.split('\0').filter(|rec| !rec.is_empty());
+    while let Some(rec) = records.next() {
+        // "XY path": two ASCII code chars (always ASCII → byte-slicing is safe),
+        // a space, then a non-empty path.
+        if rec.len() < 4 {
+            continue;
+        }
+        // A rename/copy (R/C in the index column) carries its source path as the
+        // immediately following NUL record; consume it.
+        let orig_path = if matches!(rec.as_bytes()[0], b'R' | b'C') {
+            records.next().map(str::to_string)
+        } else {
+            None
+        };
+        entries.push(StatusEntry {
+            code: rec[..2].to_string(),
+            path: rec[3..].to_string(),
+            orig_path,
+        });
+    }
+    entries
 }
 
-/// Parse `git log --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s` output (one commit per
-/// line, fields separated by the ASCII unit separator).
+/// Parse `git log -z --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s` output: commits are
+/// NUL-separated (robust to multi-line fields), fields split on the ASCII unit
+/// separator.
 pub(crate) fn parse_log(output: &str) -> Vec<Commit> {
     output
-        .lines()
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| {
-            let mut fields = line.split('\u{1f}');
+        .split('\0')
+        .filter(|rec| !rec.is_empty())
+        .filter_map(|rec| {
+            let mut fields = rec.split('\u{1f}');
             Some(Commit {
                 hash: fields.next()?.to_string(),
                 short_hash: fields.next()?.to_string(),
@@ -93,35 +111,60 @@ mod tests {
 
     #[test]
     fn porcelain_parses_codes_and_paths() {
-        let got = parse_porcelain(" M src/lib.rs\n?? new.txt\nA  added.rs\n");
+        // NUL-delimited records; the path with a space stays raw (no quoting).
+        let got = parse_porcelain(" M src/lib.rs\0?? new file.txt\0A  added.rs\0");
         assert_eq!(
             got,
             vec![
                 StatusEntry {
                     code: " M".into(),
-                    path: "src/lib.rs".into()
+                    path: "src/lib.rs".into(),
+                    orig_path: None,
                 },
                 StatusEntry {
                     code: "??".into(),
-                    path: "new.txt".into()
+                    path: "new file.txt".into(),
+                    orig_path: None,
                 },
                 StatusEntry {
                     code: "A ".into(),
-                    path: "added.rs".into()
+                    path: "added.rs".into(),
+                    orig_path: None,
                 },
             ]
         );
     }
 
     #[test]
-    fn porcelain_ignores_blank_and_short_lines() {
-        assert!(parse_porcelain("\n  \nX\n").is_empty());
+    fn porcelain_parses_rename_with_orig_path() {
+        // `R  new\0old\0` — the source path is the next NUL record.
+        let got = parse_porcelain("R  new.rs\0old.rs\0 M other.rs\0");
+        assert_eq!(
+            got,
+            vec![
+                StatusEntry {
+                    code: "R ".into(),
+                    path: "new.rs".into(),
+                    orig_path: Some("old.rs".into()),
+                },
+                StatusEntry {
+                    code: " M".into(),
+                    path: "other.rs".into(),
+                    orig_path: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn porcelain_ignores_blank_and_short_records() {
+        assert!(parse_porcelain("\0  \0X\0").is_empty());
     }
 
     #[test]
     fn log_splits_unit_separated_fields() {
-        let input = "abc123\u{1f}abc\u{1f}Ada\u{1f}2026-05-31T10:00:00+00:00\u{1f}Add feature\n\
-                     def456\u{1f}def\u{1f}Linus\u{1f}2026-05-30T09:00:00+00:00\u{1f}Fix bug\n";
+        let input = "abc123\u{1f}abc\u{1f}Ada\u{1f}2026-05-31T10:00:00+00:00\u{1f}Add feature\0\
+                     def456\u{1f}def\u{1f}Linus\u{1f}2026-05-30T09:00:00+00:00\u{1f}Fix bug\0";
         let got = parse_log(input);
         assert_eq!(got.len(), 2);
         assert_eq!(
@@ -139,7 +182,7 @@ mod tests {
 
     #[test]
     fn log_tolerates_empty_subject() {
-        let got = parse_log("h\u{1f}h\u{1f}A\u{1f}2026-05-31T10:00:00+00:00\u{1f}\n");
+        let got = parse_log("h\u{1f}h\u{1f}A\u{1f}2026-05-31T10:00:00+00:00\u{1f}\0");
         assert_eq!(got[0].subject, "");
     }
 

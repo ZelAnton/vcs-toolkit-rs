@@ -27,6 +27,12 @@ crates; tag releases as `vcs-git-v<version>`.
 - **Now async (tokio):** every `GitApi` method is `async`. Errors are the typed
   `vcs_process::CommandError` (exit code, stderr, …) instead of `io::Error`.
   Adds `async-trait`.
+- `status` now runs `git status --porcelain=v1 -z` (NUL-delimited records, raw
+  unescaped paths — robust to spaces and special characters) and `log` uses `-z`
+  record separation (robust to multi-line fields). `StatusEntry` gained
+  `orig_path`, the source path for a rename/copy (`R`/`C`).
+- Builds on `vcs_process::CliClient`, the shared client core (internal refactor;
+  no API change beyond `StatusEntry`).
 
 ### Fixed
 - `status`/`branches` parsing no longer corrupts the first entry: output is parsed

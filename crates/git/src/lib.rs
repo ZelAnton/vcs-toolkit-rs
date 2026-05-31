@@ -22,7 +22,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use vcs_process::{CommandError, Exec, JobRunner, Output, Result, Runner};
+use vcs_process::{CliClient, CommandError, JobRunner, Output, Result, Runner};
 
 mod parse;
 pub use parse::{Branch, Commit, StatusEntry};
@@ -69,16 +69,14 @@ pub trait GitApi: Send + Sync {
 /// The real Git client. Generic over the [`Runner`] so tests can inject a fake
 /// process executor; `Git::new()` uses the real job-backed runner.
 pub struct Git<R: Runner = JobRunner> {
-    runner: R,
-    timeout: Option<Duration>,
+    core: CliClient<R>,
 }
 
 impl Git<JobRunner> {
     /// A client backed by the real `git` binary.
     pub fn new() -> Self {
         Git {
-            runner: JobRunner,
-            timeout: None,
+            core: CliClient::new(BINARY),
         }
     }
 }
@@ -93,170 +91,127 @@ impl<R: Runner> Git<R> {
     /// A client that runs commands through `runner` — pass a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Git {
-            runner,
-            timeout: None,
+            core: CliClient::with_runner(BINARY, runner),
         }
     }
 
     /// Kill any command that runs longer than `timeout` (applies to all commands;
-    /// override per-call via the raw [`Exec`] API).
+    /// override per-call via the raw [`Exec`](vcs_process::Exec) API).
     pub fn default_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
+        self.core = self.core.default_timeout(timeout);
         self
-    }
-
-    fn exec(&self, args: &[&str]) -> Exec {
-        Exec::new(BINARY).maybe_timeout(self.timeout).args(args)
-    }
-
-    fn exec_in(&self, dir: &Path, args: &[&str]) -> Exec {
-        Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .current_dir(dir)
-            .args(args)
     }
 }
 
 #[async_trait::async_trait]
 impl<R: Runner> GitApi for Git<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        Ok(Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .args(args)
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core.run_text(self.core.exec(args)).await
     }
 
     async fn run_raw(&self, args: &[String]) -> io::Result<Output> {
-        Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .args(args)
-            .output_with(&self.runner)
-            .await
+        self.core.run_raw(self.core.exec(args)).await
     }
 
     async fn version(&self) -> Result<String> {
-        Ok(self
-            .exec(&["--version"])
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core.run_text(self.core.exec(["--version"])).await
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
-        let out = self
-            .exec_in(dir, &["status", "--porcelain"])
-            .checked_with(&self.runner)
-            .await?;
-        Ok(parse::parse_porcelain(&out.stdout))
+        self.core
+            .parsed(
+                self.core.exec_in(dir, ["status", "--porcelain=v1", "-z"]),
+                parse::parse_porcelain,
+            )
+            .await
     }
 
     async fn current_branch(&self, dir: &Path) -> Result<String> {
-        Ok(self
-            .exec_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core
+            .run_text(
+                self.core
+                    .exec_in(dir, ["rev-parse", "--abbrev-ref", "HEAD"]),
+            )
+            .await
     }
 
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>> {
-        let out = self
-            .exec_in(dir, &["branch"])
-            .checked_with(&self.runner)
-            .await?;
-        Ok(parse::parse_branches(&out.stdout))
+        self.core
+            .parsed(self.core.exec_in(dir, ["branch"]), parse::parse_branches)
+            .await
     }
 
     async fn log(&self, dir: &Path, max: usize) -> Result<Vec<Commit>> {
         let n = format!("-n{max}");
-        let out = self
-            .exec_in(dir, &["log", &n, "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"])
-            .checked_with(&self.runner)
-            .await?;
-        Ok(parse::parse_log(&out.stdout))
+        self.core
+            .parsed(
+                self.core.exec_in(
+                    dir,
+                    [
+                        "log",
+                        n.as_str(),
+                        "-z",
+                        "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                    ],
+                ),
+                parse::parse_log,
+            )
+            .await
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
-        Ok(self
-            .exec_in(dir, &["rev-parse", rev])
-            .checked_with(&self.runner)
-            .await?
-            .stdout
-            .trim()
-            .to_string())
+        self.core
+            .run_text(self.core.exec_in(dir, ["rev-parse", rev]))
+            .await
     }
 
     async fn init(&self, dir: &Path) -> Result<()> {
-        self.exec_in(dir, &["init"])
-            .checked_with(&self.runner)
-            .await
-            .map(drop)
+        self.core.run_unit(self.core.exec_in(dir, ["init"])).await
     }
 
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()> {
-        let mut exec = Exec::new(BINARY)
-            .maybe_timeout(self.timeout)
-            .current_dir(dir)
-            .arg("add")
-            .arg("--");
+        // `--` separates the pathspecs so a path can never be read as an option.
+        let mut exec = self.core.exec_in(dir, ["add", "--"]);
         for path in paths {
             exec = exec.arg(path);
         }
-        exec.checked_with(&self.runner).await.map(drop)
+        self.core.run_unit(exec).await
     }
 
     async fn commit(&self, dir: &Path, message: &str) -> Result<()> {
-        self.exec_in(dir, &["commit", "-m", message])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["commit", "-m", message]))
             .await
-            .map(drop)
     }
 
     async fn create_branch(&self, dir: &Path, name: &str) -> Result<()> {
-        self.exec_in(dir, &["branch", name])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["branch", name]))
             .await
-            .map(drop)
     }
 
     async fn checkout(&self, dir: &Path, reference: &str) -> Result<()> {
-        self.exec_in(dir, &["checkout", reference])
-            .checked_with(&self.runner)
+        self.core
+            .run_unit(self.core.exec_in(dir, ["checkout", reference]))
             .await
-            .map(drop)
     }
 
     async fn diff_is_empty(&self, dir: &Path) -> Result<bool> {
-        let out = self
-            .exec_in(dir, &["diff", "--quiet"])
-            .output_with(&self.runner)
-            .await
-            .map_err(|source| CommandError::Spawn {
-                program: BINARY.to_string(),
-                source,
-            })?;
-        if out.timed_out {
-            return Err(CommandError::Timeout {
-                program: BINARY.to_string(),
-                args: "diff --quiet".to_string(),
-                timeout: self.timeout.unwrap_or_default(),
-            });
-        }
-        match out.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
+        // `git diff --quiet` is an exit-code answer: 0 = clean, 1 = dirty.
+        // `code_with` still surfaces spawn/timeout/signal failures for us.
+        match self
+            .core
+            .exec_in(dir, ["diff", "--quiet"])
+            .code_with(self.core.runner())
+            .await?
+        {
+            0 => Ok(true),
+            1 => Ok(false),
             other => Err(CommandError::Exit {
                 program: BINARY.to_string(),
                 args: "diff --quiet".to_string(),
-                code: other.unwrap_or(-1),
-                stderr: out.stderr.trim().to_string(),
+                code: other,
+                stderr: String::new(),
             }),
         }
     }
@@ -276,8 +231,9 @@ mod tests {
     // against a scripted runner — no `git` binary needed, so this runs on CI.
     #[tokio::test]
     async fn status_parses_scripted_output() {
+        // `-z` output: NUL-delimited records, raw paths.
         let git = Git::with_runner(
-            ScriptedRunner::new().on(["status", "--porcelain"], Output::ok(" M a.rs\n?? b.rs\n")),
+            ScriptedRunner::new().on(["status"], Output::ok(" M a.rs\0?? b.rs\0")),
         );
         let entries = git.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);

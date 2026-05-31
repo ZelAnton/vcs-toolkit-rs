@@ -29,16 +29,19 @@ use tokio::process::Command;
 #[cfg_attr(not(any(windows, target_os = "linux")), path = "other.rs")]
 mod imp;
 
+mod client;
+pub use client::CliClient;
+
 mod error;
 pub use error::{CommandError, Result};
 
 mod exec;
-pub use exec::{Exec, Output};
+pub use exec::{Exec, Output, Termination};
 
 mod runner;
 #[cfg(feature = "mock")]
 pub use runner::MockRunner;
-pub use runner::{JobRunner, Runner, ScriptedRunner};
+pub use runner::{Invocation, JobRunner, RecordingRunner, Runner, ScriptedRunner};
 
 /// Which OS mechanism a [`Job`] is actually using to contain its processes.
 ///
@@ -238,7 +241,7 @@ mod tests {
         .timeout(Duration::from_millis(300));
 
         let out = exec.output().await.expect("output");
-        assert!(out.timed_out, "should be flagged as timed out");
+        assert!(out.timed_out(), "should be flagged as timed out");
         assert!(!out.success());
     }
 }

@@ -156,7 +156,9 @@ let git = Git::new();              // real, job-backed git
   in a release build.
 - **Inject a runner** — `Git::with_runner(vcs_process::ScriptedRunner::new()…)`
   feeds canned binary output through the *real* argument-building and parsing, so
-  a test exercises the actual command wiring without spawning anything:
+  a test exercises the actual command wiring without spawning anything. Wrap it in
+  a `RecordingRunner` to assert the exact command that was built — full args, cwd,
+  env, and even that a flag is *absent*:
 
   ```rust
   use vcs_git::{Git, GitApi};

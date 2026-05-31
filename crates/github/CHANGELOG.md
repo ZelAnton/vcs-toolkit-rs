@@ -29,6 +29,12 @@ crates; tag releases as `vcs-github-v<version>`.
 - **Now async (tokio):** every `GitHubApi` method is `async`; errors are the typed
   `vcs_process::CommandError` (JSON parse failures become `CommandError::Parse`).
   Adds `async-trait`.
+- Builds on `vcs_process::CliClient`, the shared client core (internal refactor;
+  no public API change).
+
+### Fixed
+- `auth_status` no longer reports "not authenticated" when `gh auth status` times
+  out — a timeout now surfaces as `CommandError::Timeout` (via `Exec::code_with`).
 
 ## [0.1.0] - 2026-05-29
 
