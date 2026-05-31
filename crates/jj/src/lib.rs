@@ -245,6 +245,26 @@ mod tests {
         assert_eq!(change.description, "hello jj");
     }
 
+    // With a bookmark, the run must build `git push -b <name>`. Only that 4-token
+    // command is scripted (no fallback), so a regression that dropped the flag
+    // would match no rule and error.
+    #[tokio::test]
+    async fn git_push_appends_bookmark_flag() {
+        let jj = Jj::with_runner(
+            ScriptedRunner::new().on(["git", "push", "-b", "feature"], Output::ok("")),
+        );
+        jj.git_push(Path::new("."), Some("feature".to_string()))
+            .await
+            .expect("should build `git push -b feature`");
+    }
+
+    // Without a bookmark, the run is a bare `git push`.
+    #[tokio::test]
+    async fn git_push_without_bookmark_is_bare() {
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["git", "push"], Output::ok("")));
+        jj.git_push(Path::new("."), None).await.expect("bare push");
+    }
+
     #[cfg(feature = "mock")]
     #[tokio::test]
     async fn consumer_mocks_the_interface() {

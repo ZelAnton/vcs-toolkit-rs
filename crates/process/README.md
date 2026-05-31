@@ -12,12 +12,14 @@ the parent — no orphaned subprocesses left behind. Part of the
 | other | plain spawn, no containment |
 
 ```rust
-// One-shot helper: spawn, capture stdout, then kill any stray descendants.
-let out = vcs_process::run("git", ["status", "--short"])?;
+// One-shot helper (async): spawn, capture stdout, then kill any stray
+// descendants. Returns the structured `CommandError` on a non-zero exit.
+let out = vcs_process::run("git", ["status", "--short"]).await?;
 
-// Or keep a job around and spawn several processes into it.
+// Or keep a job around and spawn several processes into it. `Job::spawn` takes a
+// `tokio::process::Command`; use the `Exec` builder for cwd/env/stdin/timeouts.
 let job = vcs_process::Job::new()?;
-let mut cmd = std::process::Command::new("long-running-tool");
+let mut cmd = tokio::process::Command::new("long-running-tool");
 let mut child = job.spawn(&mut cmd)?;
 // ... dropping `job` kills child + every descendant (kill-on-close).
 ```

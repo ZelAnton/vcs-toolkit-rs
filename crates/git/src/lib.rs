@@ -300,6 +300,36 @@ mod tests {
         }
     }
 
+    // diff_is_empty maps the raw exit code itself: 0 → clean, 1 → dirty, and
+    // anything else is a real failure surfaced as CommandError::Exit.
+    #[tokio::test]
+    async fn diff_is_empty_maps_exit_codes() {
+        let clean = Git::with_runner(ScriptedRunner::new().on(["diff", "--quiet"], Output::ok("")));
+        assert!(clean.diff_is_empty(Path::new(".")).await.unwrap());
+
+        let dirty =
+            Git::with_runner(ScriptedRunner::new().on(["diff", "--quiet"], Output::fail(1, "")));
+        assert!(!dirty.diff_is_empty(Path::new(".")).await.unwrap());
+
+        let broken = Git::with_runner(
+            ScriptedRunner::new().on(["diff", "--quiet"], Output::fail(128, "fatal: not a repo")),
+        );
+        assert!(matches!(
+            broken.diff_is_empty(Path::new(".")).await.unwrap_err(),
+            CommandError::Exit { code: 128, .. }
+        ));
+    }
+
+    // `add` must insert `--` before the pathspecs so a path can never be parsed
+    // as an option. No fallback rule: the run only matches if `add --` was built.
+    #[tokio::test]
+    async fn add_inserts_pathspec_separator() {
+        let git = Git::with_runner(ScriptedRunner::new().on(["add", "--"], Output::ok("")));
+        git.add(Path::new("."), &[PathBuf::from("f.rs")])
+            .await
+            .expect("add should build `add -- <paths>`");
+    }
+
     // The consumer-facing mock seam: a function depending on `&dyn GitApi` is
     // tested with a generated mock.
     #[cfg(feature = "mock")]

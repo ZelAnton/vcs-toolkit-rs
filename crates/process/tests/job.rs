@@ -136,6 +136,34 @@ async fn timeout_flags_and_kills() {
     assert!(!out.success());
 }
 
+// Regression guard for the documented guarantee that the timeout covers the
+// *stdin write* too: feed more than a pipe buffer's worth of input to a child
+// that never reads it. The blocking write_all must not outlive the deadline —
+// it has to be cancelled and the job killed, not hang.
+#[tokio::test]
+#[ignore = "spawns a real subprocess and waits for the timeout"]
+async fn timeout_cancels_a_blocking_stdin_write() {
+    // 1 MiB dwarfs the OS pipe buffer, so write_all blocks once the buffer fills.
+    let payload = vec![b'x'; 1024 * 1024];
+    let start = Instant::now();
+    let out = Exec::new(if cfg!(windows) { "cmd" } else { "sleep" })
+        .args(if cfg!(windows) {
+            vec!["/c", "ping", "-n", "30", "127.0.0.1"]
+        } else {
+            vec!["30"]
+        })
+        .stdin(payload)
+        .timeout(Duration::from_millis(300))
+        .output()
+        .await
+        .expect("output");
+    assert!(out.timed_out, "blocking stdin write should still time out");
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "stdin write hung past the deadline instead of being cancelled"
+    );
+}
+
 #[tokio::test]
 #[ignore = "spawns long-lived subprocesses and asserts kill-on-close"]
 async fn job_kills_multiple_children() {

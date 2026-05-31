@@ -249,6 +249,35 @@ mod tests {
         assert!(!no.auth_status().await.unwrap());
     }
 
+    // pr_create appends `--base <branch>` when given one, and returns the trimmed
+    // PR URL. The exact command (incl. --base) is the only scripted rule.
+    #[tokio::test]
+    async fn pr_create_appends_base_and_returns_url() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            [
+                "pr", "create", "--title", "T", "--body", "B", "--base", "main",
+            ],
+            Output::ok("https://gh/pr/1\n"),
+        ));
+        let url = gh
+            .pr_create(Path::new("."), "T", "B", Some("main".to_string()))
+            .await
+            .expect("should build `pr create … --base main`");
+        assert_eq!(url, "https://gh/pr/1");
+    }
+
+    // repo_view builds the --json request and flattens gh's nested owner/branch
+    // objects into the public Repo.
+    #[tokio::test]
+    async fn repo_view_parses_scripted_json() {
+        let json = r#"{"name":"r","owner":{"login":"o"},"description":"d","url":"u","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#;
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["repo", "view"], Output::ok(json)));
+        let repo = gh.repo_view(Path::new(".")).await.expect("repo_view");
+        assert_eq!(repo.owner, "o");
+        assert_eq!(repo.default_branch, "main");
+        assert!(!repo.is_private);
+    }
+
     #[cfg(feature = "mock")]
     #[tokio::test]
     async fn consumer_mocks_the_interface() {

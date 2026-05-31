@@ -16,7 +16,7 @@ crates; tag releases as `vcs-process-v<version>`.
   tree dies with the parent — no orphaned `git`/`jj`/`gh` subprocesses.
 - `Exec` builder for richer runs: working directory, env vars, and stdin input,
   with `run()` (error on non-zero exit) and `output()` (capture the status). New
-  `Output` type (`success`/`combined`/`into_result`) and free `output()` helper.
+  `Output` type (`success`/`combined`) and free `output()` helper.
   `Child::try_wait` for non-blocking liveness checks.
 - `Runner` trait — the execution boundary, so consumers can inject a fake in
   tests. `JobRunner` is the real (default) runner; `ScriptedRunner` is a
@@ -35,6 +35,5 @@ crates; tag releases as `vcs-process-v<version>`.
 - **Now async (tokio).** `Exec::run`/`output`/`spawn`, the `Runner` trait, and the
   free `run`/`output` helpers are `async`; processes spawn via `tokio::process`.
   `Child` wraps `tokio::process::Child`. Adds `tokio`, `async-trait`, `thiserror`.
-- `Output::into_result` was removed in favour of `Exec::run` / `checked_with`.
 
 [Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main
