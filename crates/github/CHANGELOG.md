@@ -18,6 +18,26 @@ crates; tag releases as `vcs-github-v<version>`.
 ### Fixed
 -
 
+## [0.2.0] - 2026-06-01
+
+### Added
+
+- feat(process): job-backed spawn (JobObject/cgroup) + publish setup
+- feat: typed command wrappers, exec options, integration tests
+- feat: mockable trait-based API + Runner injection
+- feat: async (tokio) API, timeouts, structured errors, richer models
+- feat: non_exhaustive result structs, optional tracing, cli_client! macro
+
+
+### Changed
+
+- Scaffold vcs-toolkit-rs workspace from rust-repo-template
+- review: harden whole solution, fix potential issues
+- refactor: portable Output model, CliClient core, richer test seam, -z git parsing
+- refactor: replace internal vcs-process with external processkit 0.3
+- ci: release workflow picks major/minor/patch with auto-increment (+ all-crates, first-release)
+- Release: vcs-git v0.1.0, vcs-jj v0.1.0, vcs-github v0.1.0
+
 ## [0.1.0] - 2026-06-01
 
 ### Added
@@ -54,5 +74,6 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.1.0...vcs-github-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-github-v0.1.0
