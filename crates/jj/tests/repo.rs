@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 
 use common::TempDir;
-use vcs_jj::{Jj, JjApi};
+use vcs_jj::{Jj, JjApi, WorkspaceAdd};
 
 /// Create a fresh jj repo in `dir` with a deterministic identity.
 fn init_repo(dir: &Path) {
@@ -69,6 +69,14 @@ async fn describe_new_and_log_cycle() {
 
     // status returns something without erroring.
     jj.status(dir).await.expect("status");
+
+    // A freshly described, unconflicted working copy reports no conflict
+    // (delegates to the `conflict` template on `@`).
+    assert!(
+        !jj.has_workingcopy_conflict(dir)
+            .await
+            .expect("has_workingcopy_conflict")
+    );
 }
 
 #[tokio::test]
@@ -94,5 +102,41 @@ async fn bookmark_create_set_and_list() {
     assert!(
         bookmarks.iter().any(|b| b.name == "mark"),
         "expected bookmark 'mark', got {bookmarks:?}"
+    );
+}
+
+// Add a workspace, see it in the listing alongside `default`, then forget it —
+// the core flow agent-workspace drives for jj.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn workspace_add_list_forget_cycle() {
+    let tmp = TempDir::new("ws-main");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    // root() resolves to a real path.
+    assert!(jj.root(dir).await.expect("root").exists());
+
+    // A workspace path that doesn't exist yet, outside the repo.
+    let ws_parent = TempDir::new("ws-linked");
+    let ws_path = ws_parent.path().join("ws1");
+
+    jj.workspace_add(dir, WorkspaceAdd::new("ws1", "@", ws_path.clone()))
+        .await
+        .expect("workspace add");
+
+    let list = jj.workspace_list(dir).await.expect("list");
+    assert!(list.iter().any(|w| w.name == "ws1"), "got {list:?}");
+    assert!(list.iter().any(|w| w.name == "default"));
+
+    jj.workspace_forget(dir, "ws1").await.expect("forget");
+    assert!(
+        !jj.workspace_list(dir)
+            .await
+            .expect("list2")
+            .iter()
+            .any(|w| w.name == "ws1"),
+        "workspace should be gone after forget"
     );
 }

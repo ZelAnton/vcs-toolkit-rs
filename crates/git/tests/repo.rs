@@ -7,7 +7,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::TempDir;
-use vcs_git::{Git, GitApi};
+use vcs_git::{Git, GitApi, WorktreeAdd};
 
 /// Give the repo a deterministic identity so commits don't depend on global config.
 fn configure(dir: &Path) {
@@ -138,5 +138,65 @@ async fn status_reports_rename_with_orig_path() {
         renamed.orig_path.as_deref(),
         Some("old.txt"),
         "original path"
+    );
+}
+
+// Add a linked worktree on a new branch, see it in the porcelain listing, then
+// remove it — the core flow agent-workspace drives.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn worktree_add_list_remove_cycle() {
+    let tmp = TempDir::new("wt-main");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("f.txt"), "x\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "init").await.expect("commit");
+
+    // common_dir points at the repo's `.git`.
+    let common = git.common_dir(dir).await.expect("common_dir");
+    assert!(common.to_string_lossy().contains(".git"), "{common:?}");
+
+    // is_merged on real `branch --merged` output: a branch is merged into itself.
+    let cur = git.current_branch(dir).await.expect("current_branch");
+    assert!(git.is_merged(dir, &cur, &cur).await.expect("is_merged"));
+    // No origin configured: `remote_head_branch` is `None`, not an error
+    // (the `--quiet` path).
+    assert!(
+        git.remote_head_branch(dir)
+            .await
+            .expect("remote_head_branch")
+            .is_none()
+    );
+
+    // A worktree path that doesn't exist yet, outside the repo.
+    let wt_parent = TempDir::new("wt-linked");
+    let wt = wt_parent.path().join("feature");
+
+    git.worktree_add(
+        dir,
+        WorktreeAdd::create_branch(wt.clone(), "feature", "HEAD"),
+    )
+    .await
+    .expect("worktree add");
+    assert!(git.branch_exists(dir, "feature").await.expect("exists"));
+
+    let list = git.worktree_list(dir).await.expect("list");
+    assert!(
+        list.iter().any(|w| w.branch.as_deref() == Some("feature")),
+        "new worktree should be listed, got {list:?}"
+    );
+
+    git.worktree_remove(dir, &wt, true).await.expect("remove");
+    assert!(
+        !git.worktree_list(dir)
+            .await
+            .expect("list2")
+            .iter()
+            .any(|w| w.branch.as_deref() == Some("feature")),
+        "worktree should be gone after remove"
     );
 }

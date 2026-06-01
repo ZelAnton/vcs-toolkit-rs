@@ -66,6 +66,28 @@ use vcs_jj::{Jj, JjApi};
 # Ok(()) }
 ```
 
+### Workspaces
+
+Manage workspaces (jj's worktrees) with structured results:
+
+```rust
+use vcs_jj::{Jj, JjApi, WorkspaceAdd};
+use std::path::Path;
+
+# async fn demo(repo: &Path) -> Result<(), processkit::Error> {
+let jj = Jj::new();
+
+jj.workspace_add(repo, WorkspaceAdd::new("feature", "@", "/tmp/feature"))
+    .await?;
+
+for ws in jj.workspace_list(repo).await? {            // Vec<Workspace>
+    println!("{} @ {} {:?}", ws.name, ws.commit, ws.bookmarks);
+}
+
+jj.workspace_forget(repo, "feature").await?;
+# Ok(()) }
+```
+
 ### Timeouts
 
 ```rust

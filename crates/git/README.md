@@ -64,6 +64,29 @@ use vcs_git::{Git, GitApi};
 # Ok(()) }
 ```
 
+### Worktrees
+
+Manage linked worktrees with structured results:
+
+```rust
+use vcs_git::{Git, GitApi, WorktreeAdd};
+use std::path::Path;
+
+# async fn demo(repo: &Path) -> Result<(), processkit::Error> {
+let git = Git::new();
+
+// Create a worktree on a new branch based on HEAD.
+git.worktree_add(repo, WorktreeAdd::create_branch("/tmp/feature", "feature", "HEAD"))
+    .await?;
+
+for wt in git.worktree_list(repo).await? {            // Vec<Worktree>
+    println!("{} -> {:?}", wt.path.display(), wt.branch);
+}
+
+git.worktree_remove(repo, Path::new("/tmp/feature"), false).await?;
+# Ok(()) }
+```
+
 ### Distinguish failures structurally
 
 ```rust

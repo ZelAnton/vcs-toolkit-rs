@@ -1,6 +1,8 @@
 //! Pure parsers for git's machine-readable output. No process execution, so the
 //! tests here are hermetic and run on CI.
 
+use std::path::PathBuf;
+
 /// One entry from `git status --porcelain=v1 -z` (`XY <path>`, NUL-delimited).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,6 +40,36 @@ pub struct Branch {
     pub name: String,
     /// Whether this is the checked-out branch (the `*` marker).
     pub current: bool,
+}
+
+/// A worktree from `git worktree list --porcelain`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Worktree {
+    /// Absolute path to the worktree.
+    pub path: PathBuf,
+    /// Short branch name (`refs/heads/` stripped); `None` when detached or bare.
+    pub branch: Option<String>,
+    /// The checked-out commit (`HEAD <sha>`); `None` for a bare entry.
+    pub head: Option<String>,
+    /// The main worktree of a bare repository.
+    pub bare: bool,
+    /// Checked out at a detached HEAD (no branch).
+    pub detached: bool,
+    /// Locked against pruning.
+    pub locked: bool,
+}
+
+/// Aggregate line/file counts from `git diff --shortstat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct DiffStat {
+    /// Number of files changed.
+    pub files_changed: usize,
+    /// Lines added (`insertions(+)`).
+    pub insertions: usize,
+    /// Lines removed (`deletions(-)`).
+    pub deletions: usize,
 }
 
 /// Parse `git status --porcelain=v1 -z` output: NUL-delimited records, raw
@@ -106,6 +138,97 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
             })
         })
         .collect()
+}
+
+/// Parse `git worktree list --porcelain`: records separated by a blank line,
+/// each a set of `label [value]` lines — `worktree <path>`, `HEAD <sha>`,
+/// `branch refs/heads/<name>`, plus the valueless attributes `bare` / `detached`
+/// / `locked`. Unknown labels (e.g. `prunable`) are ignored.
+pub(crate) fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
+    let mut worktrees = Vec::new();
+    let mut current: Option<Worktree> = None;
+    let flush = |current: &mut Option<Worktree>, out: &mut Vec<Worktree>| {
+        if let Some(wt) = current.take() {
+            out.push(wt);
+        }
+    };
+    for line in output.lines() {
+        if line.is_empty() {
+            flush(&mut current, &mut worktrees);
+            continue;
+        }
+        let (label, value) = match line.split_once(' ') {
+            Some((l, v)) => (l, Some(v)),
+            None => (line, None),
+        };
+        match label {
+            // A new record begins; flush any record not closed by a blank line.
+            "worktree" => {
+                flush(&mut current, &mut worktrees);
+                current = Some(Worktree {
+                    path: PathBuf::from(value.unwrap_or("")),
+                    branch: None,
+                    head: None,
+                    bare: false,
+                    detached: false,
+                    locked: false,
+                });
+            }
+            "HEAD" => {
+                if let Some(wt) = current.as_mut() {
+                    wt.head = value.map(str::to_string);
+                }
+            }
+            "branch" => {
+                if let Some(wt) = current.as_mut() {
+                    // Value is a full ref (`refs/heads/main`); expose the short name.
+                    wt.branch =
+                        value.map(|v| v.strip_prefix("refs/heads/").unwrap_or(v).to_string());
+                }
+            }
+            "bare" => {
+                if let Some(wt) = current.as_mut() {
+                    wt.bare = true;
+                }
+            }
+            "detached" => {
+                if let Some(wt) = current.as_mut() {
+                    wt.detached = true;
+                }
+            }
+            "locked" => {
+                if let Some(wt) = current.as_mut() {
+                    wt.locked = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut current, &mut worktrees);
+    worktrees
+}
+
+/// Parse `git diff --shortstat`, e.g. ` 3 files changed, 12 insertions(+), 4
+/// deletions(-)`. Any clause may be absent (a pure-insertion diff omits
+/// deletions; no changes yields an empty string → all zeros).
+pub(crate) fn parse_shortstat(output: &str) -> DiffStat {
+    let mut stat = DiffStat::default();
+    for part in output.split(',') {
+        let part = part.trim();
+        let n = part
+            .split_whitespace()
+            .next()
+            .and_then(|tok| tok.parse().ok())
+            .unwrap_or(0);
+        if part.contains("file") {
+            stat.files_changed = n;
+        } else if part.contains("insertion") {
+            stat.insertions = n;
+        } else if part.contains("deletion") {
+            stat.deletions = n;
+        }
+    }
+    stat
 }
 
 #[cfg(test)]
@@ -205,5 +328,49 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn worktrees_parse_branch_detached_and_bare() {
+        let input = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\
+                     \nworktree /repo/wt\nHEAD def456\ndetached\n\
+                     \nworktree /repo/bare\nbare\n";
+        let got = parse_worktree_porcelain(input);
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].path, PathBuf::from("/repo"));
+        assert_eq!(got[0].branch.as_deref(), Some("main"));
+        assert_eq!(got[0].head.as_deref(), Some("abc123"));
+        assert!(got[1].detached && got[1].branch.is_none());
+        assert!(got[2].bare && got[2].head.is_none());
+    }
+
+    #[test]
+    fn worktrees_parse_last_record_without_trailing_blank() {
+        // The final record may not be followed by a blank line.
+        let got = parse_worktree_porcelain("worktree /only\nHEAD aaa\nbranch refs/heads/x\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].branch.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn shortstat_parses_all_clauses() {
+        let got = parse_shortstat(" 3 files changed, 12 insertions(+), 4 deletions(-)\n");
+        assert_eq!(
+            got,
+            DiffStat {
+                files_changed: 3,
+                insertions: 12,
+                deletions: 4
+            }
+        );
+    }
+
+    #[test]
+    fn shortstat_tolerates_missing_clauses_and_empty() {
+        // Pure-insertion diff omits deletions; no changes yields all zeros.
+        let only_ins = parse_shortstat(" 1 file changed, 2 insertions(+)\n");
+        assert_eq!(only_ins.insertions, 2);
+        assert_eq!(only_ins.deletions, 0);
+        assert_eq!(parse_shortstat(""), DiffStat::default());
     }
 }

@@ -139,6 +139,10 @@ that aren't modelled yet, plus `version()`.
 | `init` / `add` / `commit` | `bookmark_set` | `pr_create` → URL |
 | `create_branch` / `checkout` | `git_fetch` / `git_push` | `api` → raw JSON |
 | `diff_is_empty` → `bool` | | |
+| `worktree_list` → `Vec<Worktree>`, `worktree_add`/`_remove`/`_move`/`_prune` | `workspace_list` → `Vec<Workspace>`, `workspace_add`/`_root`/`_forget` | |
+| `branch_exists`/`remote_branch_exists` → `bool`, `common_dir`/`git_dir`/`remote_head_branch` | `root`/`trunk`/`current_bookmark`, `bookmark_create`/`_move`/`_rename`/`_delete` | |
+| `diff_shortstat` → `DiffStat`, `is_merged`, `rev_list_count` | `diff_summary`/`diff_stat`, `commit_count`, `is_conflicted`, `template_query` | |
+| `merge_*` / `rebase_*` / `reset_*` / `fetch` | `rebase`/`edit`/`squash_into`/`new_merge`/`git_import`, `op_head`/`op_restore`/`op_undo` | |
 
 ## Recipes
 

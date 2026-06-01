@@ -10,13 +10,19 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
-
-### Changed
--
-
-### Fixed
--
+- **Worktree management:** `worktree_list` (new `Worktree` struct),
+  `worktree_add` (`WorktreeAdd` options), `worktree_remove`, `worktree_move`,
+  `worktree_prune`.
+- **Discovery:** `common_dir`, `git_dir`, `resolve_commit`, `remote_head_branch`,
+  `branch_exists`, `remote_branch_exists` (no credential prompt, 10s timeout),
+  `remote_url`.
+- **Branches & diff:** `is_merged`, `delete_branch`, `rename_branch`,
+  `rev_list_count`, `diff_range_is_empty`, `diff_shortstat` (new `DiffStat` struct).
+- **In-progress state:** `staged_is_empty`, `is_rebase_in_progress`,
+  `is_merge_in_progress`.
+- **Mutations:** `fetch`, `fetch_remote_branch`, `merge_squash`, `merge_commit`,
+  `merge_no_commit`, `merge_abort`, `merge_continue`, `reset_merge`, `reset_hard`,
+  `rebase`, `rebase_abort`, `rebase_continue`.
 
 ## [0.1.0] - 2026-06-01
 

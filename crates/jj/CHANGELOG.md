@@ -10,13 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
-
-### Changed
--
-
-### Fixed
--
+- **Workspace management:** `workspace_list` (new `Workspace` struct),
+  `workspace_root`, `workspace_add` (`WorkspaceAdd` options), `workspace_forget`.
+- **Discovery:** `root`, `current_bookmark`, `trunk`.
+- **Bookmarks:** `bookmark_create`, `bookmark_rename`, `bookmark_delete`,
+  `bookmark_move`.
+- **Diff / query / state:** `diff_summary` (new `ChangedPath` struct), `diff_stat`
+  (new `DiffStat` struct), `commit_count`, `is_conflicted`,
+  `has_workingcopy_conflict`, and `template_query` (a typed `jj log -T` escape hatch).
+- **Mutations:** `rebase`, `edit`, `squash_into`, `new_merge`, `abandon`,
+  `git_fetch_branch`, `git_import`.
+- **Operation log:** `op_head`, `op_restore`, `op_undo`.
 
 ## [0.1.0] - 2026-06-01
 
