@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/process", "crates/git", "crates/jj", "crates/github"]
+members = ["crates/git", "crates/jj", "crates/github"]
 
 # Metadata shared by every crate in the toolkit. Each crate inherits these via
 # `field.workspace = true` in its own Cargo.toml. NOTE: `version` is *not* here
@@ -22,10 +22,9 @@ authors = ["Anton Zhelezniakou"]
 # versions, enable only the features used, and keep Cargo.lock committed.
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-# Job-backed process launcher shared by the git/jj/github wrappers: runs each
-# binary inside a Windows Job Object / Linux cgroup so the tree dies on close.
-# `path` builds locally; `version` is what dependents publish against, so
-# vcs-process must be published before them (see AGENTS.md "Releasing"). When
-# vcs-process crosses a major (for 0.x, a 0.MINOR) bump, raise this req too and
-# re-release the wrappers.
-vcs-process = { version = "0.1", path = "crates/process" }
+# External job-backed process launcher (Windows Job Object / Linux cgroup v2, so a
+# git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
+# `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
+# test seams the wrappers build on. Was the internal `vcs-process` crate; now the
+# published `processkit`. 0.3 first carries `Error::Timeout` as a distinct error.
+processkit = "0.3"

@@ -38,6 +38,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -162,6 +171,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "processkit"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e33ca5fdfeb3f34c4ede0ce3fa62feac490bc253d8fbcbc27f452c853ddd5447"
+dependencies = [
+ "async-trait",
+ "encoding_rs",
+ "libc",
+ "mockall",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -290,6 +316,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-stream"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -332,8 +369,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "mockall",
+ "processkit",
  "tokio",
- "vcs-process",
 ]
 
 [[package]]
@@ -342,10 +379,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "mockall",
+ "processkit",
  "serde",
  "serde_json",
  "tokio",
- "vcs-process",
 ]
 
 [[package]]
@@ -354,21 +391,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "mockall",
+ "processkit",
  "tokio",
- "vcs-process",
-]
-
-[[package]]
-name = "vcs-process"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "libc",
- "mockall",
- "thiserror",
- "tokio",
- "tracing",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

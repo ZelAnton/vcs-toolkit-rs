@@ -9,56 +9,56 @@ This file provides guidance to AI coding agents when working with code in this r
 `git`, `jj`, and `gh` binaries and capture their output rather than
 reimplementing each tool's protocol.
 
-It is a Cargo workspace of four **independently versioned and published**
-library crates:
+It is a Cargo workspace of three **independently versioned and published** wrapper
+crates, all built on the external [`processkit`](https://crates.io/crates/processkit)
+crate (the job-backed process launcher + `CliClient` core; was the prototype
+internal `vcs-process` crate):
 
 | Path | crates.io name | Drives |
 |---|---|---|
-| `crates/process` | `vcs-process` | the shared job-backed process launcher |
 | `crates/git` | `vcs-git` | `git` |
 | `crates/jj` | `vcs-jj` | `jj` |
 | `crates/github` | `vcs-github` | `gh` (GitHub CLI) |
 
 Each wrapper exposes the same shape — an **interface trait**
 (`GitApi`/`JjApi`/`GitHubApi`) and a real client struct
-(`Git`/`Jj`/`GitHub`) generic over a `Runner`. Methods are **`async`** (tokio,
-via `#[async_trait]`), take `dir: &Path`, return parsed structs, and fail with
-the structured `vcs_process::CommandError`; pure parsers live in each crate's
-`parse.rs`. Each client wraps a single `core: vcs_process::CliClient<R>` field
-that owns the binary name, runner, and optional `default_timeout` and provides
-the `exec`/`exec_in` builders and the `run_text`/`run_raw`/`run_unit`/`parsed`/
-`parsed_try` terminals — so a method is one line and a new wrapper is just a
-`const BINARY`, the `vcs_process::cli_client!(pub struct X => BINARY)` macro (which
+(`Git`/`Jj`/`GitHub`) generic over a `processkit::ProcessRunner`. Methods are
+**`async`** (tokio, via `#[async_trait]`), take `dir: &Path`, return parsed structs,
+and fail with the structured `processkit::Error`; pure parsers live in each crate's
+`parse.rs`. Each client wraps a single `core: processkit::CliClient<R>` field that
+owns the binary name, runner, and optional `default_timeout` and provides the
+`command`/`command_in` builders and the `text`/`capture`/`unit`/`code`/`parse`/
+`try_parse` terminals — so a method is one line and a new wrapper is just a
+`const BINARY`, the `processkit::cli_client!(pub struct X => BINARY)` macro (which
 emits the `core` field, `new`/`Default`/`with_runner`/`default_timeout`), its
-object-safe `*Api` trait, and its typed methods. The
-generic, ergonomic argument types stay on `CliClient`, never on the trait. Keep
-this shape consistent across crates and **keep the traits object-safe and
-`mockall`-friendly**
+object-safe `*Api` trait, and its typed methods. The generic, ergonomic argument
+types stay on `CliClient`, never on the trait. Keep this shape consistent across
+crates and **keep the traits object-safe and `mockall`-friendly**
 — no generic methods, no nested-reference lifetimes (use `&[PathBuf]`/`&[String]`,
 not `&[&Path]`/`&[&str]`; use `Option<String>`, not `Option<&str>`) so `&dyn Api`,
 `async-trait`, and `mockall` all work.
 
 **Mockability is a first-class requirement.** Consumers depend on the trait and,
 in tests, either enable the `mock` feature for a `mockall`-generated mock
-(`MockGitApi`) or call `Git::with_runner(`[`ScriptedRunner`]`)` to drive the real
-argument-building and parsing against canned output. To assert the *exact* built
-command (full args, cwd, env — and that a flag is absent), wrap any runner in
-`RecordingRunner` and inspect the captured `Invocation`s; `Runner` is implemented
-for `&R`, so pass `&rec` and keep the recorder. New commands must keep these
-seams working (add a trait method + a hermetic `ScriptedRunner`/`RecordingRunner`
-test).
+(`MockGitApi`) or call `Git::with_runner(processkit::ScriptedRunner::new()…)` to
+drive the real argument-building and parsing against canned `Reply`s. To assert the
+*exact* built command (full args, cwd, env — and that a flag is absent), wrap any
+runner in `processkit::RecordingRunner` and inspect the captured `Invocation`s;
+`ProcessRunner` is implemented for `&R`, so pass `&rec` and keep the recorder. New
+commands must keep these seams working (add a trait method + a hermetic
+`ScriptedRunner`/`RecordingRunner` test).
 
-`vcs-process` is the one shared crate the wrappers depend on. It launches every
-child inside an OS **job** — a Windows [Job Object] with
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, or a Linux [cgroup v2] killed via
-`cgroup.kill` (falling back to a POSIX process group when no writable cgroup is
-available) — so the whole process tree dies with the parent. The platform FFI
-lives only here (`crates/process/src/{windows,linux,other}.rs`). The `Runner`
-trait is the execution seam: `JobRunner` is the real one, `ScriptedRunner` the
-test double. v1 guarantees kill-on-close; resource limits are a future
-extension, observable via `Job::mechanism()`.
-
-[`ScriptedRunner`]: crates/process/src/runner.rs
+[`processkit`](https://crates.io/crates/processkit) is the external crate the
+wrappers build on. It launches every child inside an OS **job** — a Windows
+[Job Object] with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, or a Linux [cgroup v2]
+killed via `cgroup.kill` (falling back to a POSIX process group when no writable
+cgroup is available) — so the whole process tree dies with the parent. Its
+`ProcessRunner` trait is the execution seam: `JobRunner` is the real one,
+`ScriptedRunner`/`RecordingRunner` the test doubles. processkit guarantees
+kill-on-close (observable via its `Mechanism`) and surfaces timeouts as a distinct
+`Error::Timeout` (0.3+). **Do not vendor or fork processkit here** — if the
+wrappers need a change in it, raise it as a requirement against the ProcessKit
+project rather than working around it in a wrapper.
 
 [Job Object]: https://learn.microsoft.com/windows/win32/procthread/job-objects
 [cgroup v2]: https://docs.kernel.org/admin-guide/cgroup-v2.html
@@ -102,14 +102,13 @@ compiled as its own crate; prefer shared helpers in `tests/common/mod.rs`.
 ## Dependency management
 
 This workspace fixes **no** allow-list of crates — add whatever a crate
-genuinely needs. `vcs-process` pulls in `tokio` (async process spawning +
-timeouts), `async-trait`, `thiserror`, plus `windows-sys` (Windows) / `libc`
-(Linux) for the job FFI. The wrappers stay lean: `vcs-git` and `vcs-jj` depend on
-`vcs-process` + `async-trait`; `vcs-github` additionally adds `serde`/`serde_json`
-to deserialize `gh … --json`. Each crate uses `tokio` (`macros`,
-`rt-multi-thread`) only as a `dev-dependency` for `#[tokio::test]`. Don't add more
-to a wrapper unless there's a real reason. The convention is about *how* you add
-dependencies, not *which*:
+genuinely needs. The wrappers stay lean: `vcs-git` and `vcs-jj` depend on
+`processkit` + `async-trait`; `vcs-github` additionally adds `serde`/`serde_json`
+to deserialize `gh … --json`. `processkit` (external) brings the job FFI, the
+`tokio` runtime, and the structured `Error`, so the wrappers don't depend on
+`tokio` directly except `tokio` (`macros`, `rt-multi-thread`) as a `dev-dependency`
+for `#[tokio::test]`. Don't add more to a wrapper unless there's a real reason. The
+convention is about *how* you add dependencies, not *which*:
 
 - **Document every dependency.** Each entry in `Cargo.toml` gets an inline
   comment explaining *why* it's there. A future reader should never guess.
@@ -149,17 +148,16 @@ Each crate releases **independently** — they do not share a version.
 - **Tag per crate** as `<crate>-v<version>` (e.g. `vcs-git-v0.2.0`) so each
   crate's history and compare links stay independent, then
   `cargo publish -p <crate>`.
-- **Publish order.** `vcs-process` must be on crates.io *before* the wrappers —
-  `vcs-git`/`vcs-jj`/`vcs-github` depend on it by version, so a wrapper publish
-  fails until the matching `vcs-process` version is live. Release `vcs-process`
-  first whenever its version changed.
+- **No in-workspace publish order.** The wrappers depend on the already-published
+  external `processkit` crate (by version), so each wrapper publishes
+  independently — there is no "publish X first" ordering within this repo. If a
+  wrapper needs a newer `processkit`, bump the `[workspace.dependencies]` req and
+  ensure that `processkit` version is live on crates.io first.
 - **Release workflow.** `.github/workflows/release.yml` (`workflow_dispatch`)
   bumps a chosen crate, promotes its `[Unreleased]` heading to the new version +
   date (preserving the curated bullets), tags, and runs `cargo publish` (needs
-  the `CRATES_IO_TOKEN` secret). CI hard-gates on `cargo package -p vcs-process`;
-  the wrappers can only be package-checked once `vcs-process` is on crates.io, so
-  CI just emits a notice for them until then. The final publish stays a
-  deliberate, human-triggered action.
+  the `CRATES_IO_TOKEN` secret). The final publish stays a deliberate,
+  human-triggered action.
 
 ## Version control workflow
 

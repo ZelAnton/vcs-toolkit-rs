@@ -2,17 +2,19 @@
 //!
 //! Async, mockable, and structured-error: consumers depend on the [`GitHubApi`]
 //! trait and substitute a mock for the real [`GitHub`] client in tests. Commands
-//! run inside an OS job (via [`vcs_process`]) so a `gh` subprocess is never
+//! run inside an OS job (via [`processkit`]) so a `gh` subprocess is never
 //! orphaned, and honour an optional [timeout](GitHub::default_timeout).
 //!
 //! Two test seams: enable the `mock` feature for a `mockall`-generated
 //! `MockGitHubApi`, or inject a fake runner with
-//! `GitHub::with_runner(`[`ScriptedRunner`](vcs_process::ScriptedRunner)`)`.
+//! `GitHub::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
 
-use std::io;
 use std::path::Path;
 
-use vcs_process::{Output, Result, Runner};
+use processkit::ProcessRunner;
+// Re-export the processkit types in this crate's public API (also brings
+// `Error`/`Result`/`ProcessResult` into scope here).
+pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
 pub use parse::{Issue, PullRequest, Repo};
@@ -30,8 +32,9 @@ const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef
 pub trait GitHubApi: Send + Sync {
     /// Run `gh <args>`, returning trimmed stdout (throws on a non-zero exit).
     async fn run(&self, args: &[String]) -> Result<String>;
-    /// Like [`GitHubApi::run`] but never errors on exit code — returns [`Output`].
-    async fn run_raw(&self, args: &[String]) -> io::Result<Output>;
+    /// Like [`GitHubApi::run`] but never errors on a non-zero exit — returns the
+    /// captured [`ProcessResult`].
+    async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed GitHub CLI version (`gh --version`).
     async fn version(&self) -> Result<String>;
     /// Whether the user is authenticated (`gh auth status` exits zero).
@@ -57,44 +60,44 @@ pub trait GitHubApi: Send + Sync {
     async fn api(&self, endpoint: &str) -> Result<String>;
 }
 
-vcs_process::cli_client!(
-    /// The real GitHub client. Generic over the [`Runner`] so tests can inject a
-    /// fake process executor; `GitHub::new()` uses the real job-backed runner.
+processkit::cli_client!(
+    /// The real GitHub client. Generic over the [`ProcessRunner`] so tests can
+    /// inject a fake process executor; `GitHub::new()` uses the real job-backed
+    /// runner.
     pub struct GitHub => BINARY
 );
 
 #[async_trait::async_trait]
-impl<R: Runner> GitHubApi for GitHub<R> {
+impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        self.core.run_text(self.core.exec(args)).await
+        self.core.text(self.core.command(args)).await
     }
 
-    async fn run_raw(&self, args: &[String]) -> io::Result<Output> {
-        self.core.run_raw(self.core.exec(args)).await
+    async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core.capture(self.core.command(args)).await
     }
 
     async fn version(&self) -> Result<String> {
-        self.core.run_text(self.core.exec(["--version"])).await
+        self.core.text(self.core.command(["--version"])).await
     }
 
     async fn auth_status(&self) -> Result<bool> {
         // `gh auth status` exits 0 when authenticated, non-zero when not — an
-        // exit-code answer. `code_with` reports the bool but, unlike the old
-        // hand-rolled mapping, still errors on a spawn failure or timeout rather
-        // than silently reporting "not authenticated".
+        // exit-code answer. `code` reports the bool but still errors on a spawn
+        // failure or timeout (processkit surfaces a timeout as `Error::Timeout`),
+        // rather than silently reporting "not authenticated".
         Ok(self
             .core
-            .exec(["auth", "status"])
-            .code_with(self.core.runner())
+            .code(self.core.command(["auth", "status"]))
             .await?
             == 0)
     }
 
     async fn repo_view(&self, dir: &Path) -> Result<Repo> {
         self.core
-            .parsed_try(
+            .try_parse(
                 self.core
-                    .exec_in(dir, ["repo", "view", "--json", REPO_FIELDS]),
+                    .command_in(dir, ["repo", "view", "--json", REPO_FIELDS]),
                 parse::parse_repo,
             )
             .await
@@ -102,8 +105,9 @@ impl<R: Runner> GitHubApi for GitHub<R> {
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
         self.core
-            .parsed_try(
-                self.core.exec_in(dir, ["pr", "list", "--json", PR_FIELDS]),
+            .try_parse(
+                self.core
+                    .command_in(dir, ["pr", "list", "--json", PR_FIELDS]),
                 parse::from_json,
             )
             .await
@@ -112,9 +116,9 @@ impl<R: Runner> GitHubApi for GitHub<R> {
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest> {
         let n = number.to_string();
         self.core
-            .parsed_try(
+            .try_parse(
                 self.core
-                    .exec_in(dir, ["pr", "view", n.as_str(), "--json", PR_FIELDS]),
+                    .command_in(dir, ["pr", "view", n.as_str(), "--json", PR_FIELDS]),
                 parse::from_json,
             )
             .await
@@ -122,9 +126,9 @@ impl<R: Runner> GitHubApi for GitHub<R> {
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
         self.core
-            .parsed_try(
+            .try_parse(
                 self.core
-                    .exec_in(dir, ["issue", "list", "--json", "number,title,state"]),
+                    .command_in(dir, ["issue", "list", "--json", "number,title,state"]),
                 parse::from_json,
             )
             .await
@@ -142,18 +146,18 @@ impl<R: Runner> GitHubApi for GitHub<R> {
             args.push("--base");
             args.push(base);
         }
-        self.core.run_text(self.core.exec_in(dir, args)).await
+        self.core.text(self.core.command_in(dir, args)).await
     }
 
     async fn api(&self, endpoint: &str) -> Result<String> {
-        self.core.run_text(self.core.exec(["api", endpoint])).await
+        self.core.text(self.core.command(["api", endpoint])).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vcs_process::ScriptedRunner;
+    use processkit::{Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_gh() {
@@ -165,7 +169,7 @@ mod tests {
     #[tokio::test]
     async fn pr_list_parses_scripted_json() {
         let json = r#"[{"number":7,"title":"Add X","state":"OPEN","headRefName":"feat/x","baseRefName":"main","url":"u"}]"#;
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "list"], Output::ok(json)));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
         let prs = gh.pr_list(Path::new(".")).await.expect("pr_list");
         assert_eq!(prs.len(), 1);
         assert_eq!(prs[0].number, 7);
@@ -175,22 +179,23 @@ mod tests {
     // Hermetic: auth_status reflects the exit code without erroring.
     #[tokio::test]
     async fn auth_status_reads_exit_code() {
-        let yes = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Output::ok("")));
+        let yes = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Reply::ok("")));
         assert!(yes.auth_status().await.unwrap());
         let no = GitHub::with_runner(
-            ScriptedRunner::new().on(["auth"], Output::fail(1, "not logged in")),
+            ScriptedRunner::new().on(["auth"], Reply::fail(1, "not logged in")),
         );
         assert!(!no.auth_status().await.unwrap());
     }
 
     // Regression guard for the timeout fix: a timed-out auth check must error,
     // not silently report "not authenticated" (the old hand-rolled mapping bug).
+    // Relies on processkit surfacing a timed-out run as `Error::Timeout`.
     #[tokio::test]
     async fn auth_status_errors_on_timeout() {
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Output::timeout()));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Reply::timeout()));
         assert!(matches!(
             gh.auth_status().await.unwrap_err(),
-            vcs_process::CommandError::Timeout { .. }
+            Error::Timeout { .. }
         ));
     }
 
@@ -202,7 +207,7 @@ mod tests {
             [
                 "pr", "create", "--title", "T", "--body", "B", "--base", "main",
             ],
-            Output::ok("https://gh/pr/1\n"),
+            Reply::ok("https://gh/pr/1\n"),
         ));
         let url = gh
             .pr_create(Path::new("."), "T", "B", Some("main".to_string()))
@@ -216,8 +221,9 @@ mod tests {
     // can assert flag *absence* and the cwd — which prefix matching can't.
     #[tokio::test]
     async fn pr_create_omits_base_when_none() {
-        use vcs_process::RecordingRunner;
-        let rec = RecordingRunner::replying(Output::ok("https://gh/pr/2\n"));
+        use processkit::RecordingRunner;
+        use std::ffi::OsStr;
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/pr/2\n"));
         let gh = GitHub::with_runner(&rec);
         let url = gh
             .pr_create(Path::new("/repo"), "T", "B", None)
@@ -226,7 +232,7 @@ mod tests {
         assert_eq!(url, "https://gh/pr/2");
 
         let call = rec.only_call();
-        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(call.cwd.as_deref(), Some(OsStr::new("/repo")));
         assert_eq!(
             call.args_str(),
             ["pr", "create", "--title", "T", "--body", "B"]
@@ -239,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn repo_view_parses_scripted_json() {
         let json = r#"{"name":"r","owner":{"login":"o"},"description":"d","url":"u","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#;
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["repo", "view"], Output::ok(json)));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["repo", "view"], Reply::ok(json)));
         let repo = gh.repo_view(Path::new(".")).await.expect("repo_view");
         assert_eq!(repo.owner, "o");
         assert_eq!(repo.default_branch, "main");

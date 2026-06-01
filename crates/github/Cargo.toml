@@ -10,8 +10,9 @@ readme = "README.md"
 
 [dependencies]
 # Runs `gh` inside an OS job (Windows Job Object / Linux cgroup) so the process
-# tree is killed on close — no orphaned subprocesses. Also the `Runner` seam.
-vcs-process.workspace = true
+# tree is killed on close — no orphaned subprocesses. Also the `ProcessRunner`
+# seam, `CliClient` core, and structured `Error`.
+processkit.workspace = true
 # Deserialize `gh … --json` output into typed structs (PullRequest/Issue/Repo).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,10 +23,10 @@ async-trait = "0.1"
 mockall = { version = "0.13", optional = true }
 
 [features]
-# Expose the `mockall`-generated `MockGitHubApi` (and pull in vcs-process's mocks).
-mock = ["dep:mockall", "vcs-process/mock"]
-# Emit a `tracing` event per command run (forwards to vcs-process's `tracing`).
-tracing = ["vcs-process/tracing"]
+# Expose the `mockall`-generated `MockGitHubApi` (and pull in processkit's mocks).
+mock = ["dep:mockall", "processkit/mock"]
+# Emit a `tracing` event per command run (forwards to processkit's `tracing`).
+tracing = ["processkit/tracing"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests.

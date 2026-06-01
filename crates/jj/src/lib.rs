@@ -2,17 +2,19 @@
 //!
 //! Async, mockable, and structured-error: consumers depend on the [`JjApi`]
 //! trait and substitute a mock for the real [`Jj`] client in tests. Commands run
-//! inside an OS job (via [`vcs_process`]) so a `jj` subprocess is never orphaned,
+//! inside an OS job (via [`processkit`]) so a `jj` subprocess is never orphaned,
 //! and honour an optional [timeout](Jj::default_timeout).
 //!
 //! Two test seams: enable the `mock` feature for a `mockall`-generated
 //! `MockJjApi`, or inject a fake runner with
-//! `Jj::with_runner(`[`ScriptedRunner`](vcs_process::ScriptedRunner)`)`.
+//! `Jj::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
 
-use std::io;
 use std::path::Path;
 
-use vcs_process::{Output, Result, Runner};
+use processkit::ProcessRunner;
+// Re-export the processkit types in this crate's public API (also brings
+// `Error`/`Result`/`ProcessResult` into scope here).
+pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
 pub use parse::{Bookmark, Change};
@@ -27,8 +29,9 @@ pub const BINARY: &str = "jj";
 pub trait JjApi: Send + Sync {
     /// Run `jj <args>`, returning trimmed stdout (throws on a non-zero exit).
     async fn run(&self, args: &[String]) -> Result<String>;
-    /// Like [`JjApi::run`] but never errors on exit code — returns the [`Output`].
-    async fn run_raw(&self, args: &[String]) -> io::Result<Output>;
+    /// Like [`JjApi::run`] but never errors on a non-zero exit — returns the
+    /// captured [`ProcessResult`].
+    async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed Jujutsu version (`jj --version`).
     async fn version(&self) -> Result<String>;
     /// Working-copy status (`jj status`).
@@ -52,35 +55,35 @@ pub trait JjApi: Send + Sync {
     async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()>;
 }
 
-vcs_process::cli_client!(
-    /// The real jj client. Generic over the [`Runner`] so tests can inject a fake
-    /// process executor; `Jj::new()` uses the real job-backed runner.
+processkit::cli_client!(
+    /// The real jj client. Generic over the [`ProcessRunner`] so tests can inject
+    /// a fake process executor; `Jj::new()` uses the real job-backed runner.
     pub struct Jj => BINARY
 );
 
 #[async_trait::async_trait]
-impl<R: Runner> JjApi for Jj<R> {
+impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        self.core.run_text(self.core.exec(args)).await
+        self.core.text(self.core.command(args)).await
     }
 
-    async fn run_raw(&self, args: &[String]) -> io::Result<Output> {
-        self.core.run_raw(self.core.exec(args)).await
+    async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core.capture(self.core.command(args)).await
     }
 
     async fn version(&self) -> Result<String> {
-        self.core.run_text(self.core.exec(["--version"])).await
+        self.core.text(self.core.command(["--version"])).await
     }
 
     async fn status(&self, dir: &Path) -> Result<String> {
-        self.core.run_text(self.core.exec_in(dir, ["status"])).await
+        self.core.text(self.core.command_in(dir, ["status"])).await
     }
 
     async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
         let n = format!("-n{max}");
         self.core
-            .parsed(
-                self.core.exec_in(
+            .parse(
+                self.core.command_in(
                     dir,
                     [
                         "log",
@@ -99,30 +102,28 @@ impl<R: Runner> JjApi for Jj<R> {
 
     async fn current_change(&self, dir: &Path) -> Result<Change> {
         let mut changes = self.log(dir, "@", 1).await?;
-        changes
-            .pop()
-            .ok_or_else(|| vcs_process::CommandError::Parse {
-                program: BINARY.to_string(),
-                message: "no working-copy change found".to_string(),
-            })
+        changes.pop().ok_or_else(|| Error::Parse {
+            program: BINARY.to_string(),
+            message: "no working-copy change found".to_string(),
+        })
     }
 
     async fn describe(&self, dir: &Path, message: &str) -> Result<()> {
         self.core
-            .run_unit(self.core.exec_in(dir, ["describe", "-m", message]))
+            .unit(self.core.command_in(dir, ["describe", "-m", message]))
             .await
     }
 
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()> {
         self.core
-            .run_unit(self.core.exec_in(dir, ["new", "-m", message]))
+            .unit(self.core.command_in(dir, ["new", "-m", message]))
             .await
     }
 
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
         self.core
-            .parsed(
-                self.core.exec_in(dir, ["bookmark", "list"]),
+            .parse(
+                self.core.command_in(dir, ["bookmark", "list"]),
                 parse::parse_bookmarks,
             )
             .await
@@ -130,16 +131,16 @@ impl<R: Runner> JjApi for Jj<R> {
 
     async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
         self.core
-            .run_unit(
+            .unit(
                 self.core
-                    .exec_in(dir, ["bookmark", "set", name, "-r", revision]),
+                    .command_in(dir, ["bookmark", "set", name, "-r", revision]),
             )
             .await
     }
 
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
         self.core
-            .run_unit(self.core.exec_in(dir, ["git", "fetch"]))
+            .unit(self.core.command_in(dir, ["git", "fetch"]))
             .await
     }
 
@@ -149,14 +150,14 @@ impl<R: Runner> JjApi for Jj<R> {
             args.push("-b");
             args.push(name);
         }
-        self.core.run_unit(self.core.exec_in(dir, args)).await
+        self.core.unit(self.core.command_in(dir, args)).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vcs_process::ScriptedRunner;
+    use processkit::{Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_jj() {
@@ -167,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn current_change_parses_scripted_output() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["log"], Output::ok("kztuxlro\t38e00654\tfalse\thello jj\n")),
+            ScriptedRunner::new().on(["log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello jj\n")),
         );
         let change = jj
             .current_change(Path::new("."))
@@ -184,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn git_push_appends_bookmark_flag() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["git", "push", "-b", "feature"], Output::ok("")),
+            ScriptedRunner::new().on(["git", "push", "-b", "feature"], Reply::ok("")),
         );
         jj.git_push(Path::new("."), Some("feature".to_string()))
             .await
@@ -194,7 +195,7 @@ mod tests {
     // Without a bookmark, the run is a bare `git push`.
     #[tokio::test]
     async fn git_push_without_bookmark_is_bare() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["git", "push"], Output::ok("")));
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["git", "push"], Reply::ok("")));
         jj.git_push(Path::new("."), None).await.expect("bare push");
     }
 

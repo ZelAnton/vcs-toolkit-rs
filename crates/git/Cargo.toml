@@ -10,9 +10,9 @@ readme = "README.md"
 
 [dependencies]
 # Runs `git` inside an OS job (Windows Job Object / Linux cgroup) so the process
-# tree is killed on close — no orphaned subprocesses. Also the `Runner` seam,
-# `CommandError`, and timeouts.
-vcs-process.workspace = true
+# tree is killed on close — no orphaned subprocesses. Also the `ProcessRunner`
+# seam, `CliClient` core, structured `Error`, and timeouts.
+processkit.workspace = true
 # `async fn` in the object-safe `GitApi` trait (dyn + mockall friendly).
 async-trait = "0.1"
 # Auto-generated `MockGitApi` for consumers' tests. Test-only — enabled only via
@@ -20,10 +20,10 @@ async-trait = "0.1"
 mockall = { version = "0.13", optional = true }
 
 [features]
-# Expose the `mockall`-generated `MockGitApi` (and pull in vcs-process's mocks).
-mock = ["dep:mockall", "vcs-process/mock"]
-# Emit a `tracing` event per command run (forwards to vcs-process's `tracing`).
-tracing = ["vcs-process/tracing"]
+# Expose the `mockall`-generated `MockGitApi` (and pull in processkit's mocks).
+mock = ["dep:mockall", "processkit/mock"]
+# Emit a `tracing` event per command run (forwards to processkit's `tracing`).
+tracing = ["processkit/tracing"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests.

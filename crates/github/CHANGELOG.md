@@ -25,20 +25,23 @@ crates; tag releases as `vcs-github-v<version>`.
 ### Changed
 - The API is now the `GitHub` client + `GitHubApi` trait — the original free
   functions are gone. Commands launch `gh` inside an OS job (Windows Job Object /
-  Linux cgroup v2) via `vcs-process`, killed on close.
+  Linux cgroup v2) via `processkit`, killed on close.
 - **Now async (tokio):** every `GitHubApi` method is `async`; errors are the typed
-  `vcs_process::CommandError` (JSON parse failures become `CommandError::Parse`).
+  `processkit::Error` (JSON parse failures become `Error::Parse`).
   Adds `async-trait`.
-- Builds on `vcs_process::CliClient`, the shared client core (internal refactor;
-  no public API change).
+- Built on the external **`processkit`** crate (the `CliClient` core, the
+  `cli_client!` macro, the `ProcessRunner` seam, and the structured `Error`) —
+  replacing the prototype internal `vcs-process` crate. `run_raw` now returns
+  `processkit::ProcessResult<String>`.
 - `PullRequest`/`Issue`/`Repo` are now `#[non_exhaustive]` — future fields won't
   be breaking changes.
-- Optional `tracing` feature (forwards to `vcs-process/tracing`): a `debug` event
+- Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `gh` command.
 
 ### Fixed
 - `auth_status` no longer reports "not authenticated" when `gh auth status` times
-  out — a timeout now surfaces as `CommandError::Timeout` (via `Exec::code_with`).
+  out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
+  backed by processkit 0.3's first-class timeout error).
 
 ## [0.1.0] - 2026-05-29
 

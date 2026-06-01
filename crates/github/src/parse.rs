@@ -1,9 +1,9 @@
 //! Typed results from `gh … --json` and the deserialization helpers. Parsing is
 //! pure, so these tests are hermetic and run on CI.
 
+use processkit::{Error, Result};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use vcs_process::{CommandError, Result};
 
 use crate::BINARY;
 
@@ -84,9 +84,9 @@ struct BranchRefJson {
 }
 
 /// Deserialize `gh --json` output into `T`, mapping parse errors to
-/// [`CommandError::Parse`].
+/// [`Error::Parse`].
 pub(crate) fn from_json<T: DeserializeOwned>(json: &str) -> Result<T> {
-    serde_json::from_str(json).map_err(|e| CommandError::Parse {
+    serde_json::from_str(json).map_err(|e| Error::Parse {
         program: BINARY.to_string(),
         message: e.to_string(),
     })
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn malformed_json_is_a_parse_error() {
         match from_json::<Vec<Issue>>("not json").unwrap_err() {
-            CommandError::Parse { .. } => {}
+            Error::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
     }

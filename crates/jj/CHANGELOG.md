@@ -23,14 +23,16 @@ crates; tag releases as `vcs-jj-v<version>`.
 ### Changed
 - The API is now the `Jj` client + `JjApi` trait — the original free functions
   are gone. Commands launch `jj` inside an OS job (Windows Job Object / Linux
-  cgroup v2) via `vcs-process`, killed on close.
+  cgroup v2) via `processkit`, killed on close.
 - **Now async (tokio):** every `JjApi` method is `async`; errors are the typed
-  `vcs_process::CommandError`. Adds `async-trait`.
-- Builds on `vcs_process::CliClient`, the shared client core (internal refactor;
-  no public API change).
+  `processkit::Error`. Adds `async-trait`.
+- Built on the external **`processkit`** crate (the `CliClient` core, the
+  `cli_client!` macro, the `ProcessRunner` seam, and the structured `Error`) —
+  replacing the prototype internal `vcs-process` crate. `run_raw` now returns
+  `processkit::ProcessResult<String>`.
 - `Change`/`Bookmark` are now `#[non_exhaustive]` — future fields won't be
   breaking changes.
-- Optional `tracing` feature (forwards to `vcs-process/tracing`): a `debug` event
+- Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
 ## [0.1.0] - 2026-05-29

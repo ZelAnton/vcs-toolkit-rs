@@ -1,11 +1,9 @@
 name: Release
 
-# Manual, one-crate-at-a-time release. Each crate versions and publishes
-# independently (see AGENTS.md "Releasing and the changelog").
-#
-# IMPORTANT publish order: `vcs-process` must be on crates.io *before* the
-# wrappers (vcs-git/jj/github), since they depend on it by version. Release
-# vcs-process first whenever its version changed.
+# Manual, one-crate-at-a-time release. Each wrapper versions and publishes
+# independently (see AGENTS.md "Releasing and the changelog"). The wrappers depend
+# on the already-published external `processkit` crate, so there is no in-workspace
+# publish ordering.
 #
 # Requires repository secret `CRATES_IO_TOKEN`.
 
@@ -17,7 +15,6 @@ on:
         required: true
         type: choice
         options:
-          - vcs-process
           - vcs-git
           - vcs-jj
           - vcs-github
@@ -41,10 +38,9 @@ jobs:
         id: map
         run: |
           case "${{ inputs.crate }}" in
-            vcs-process) echo "dir=crates/process" >> "$GITHUB_OUTPUT" ;;
-            vcs-git)     echo "dir=crates/git"     >> "$GITHUB_OUTPUT" ;;
-            vcs-jj)      echo "dir=crates/jj"      >> "$GITHUB_OUTPUT" ;;
-            vcs-github)  echo "dir=crates/github"  >> "$GITHUB_OUTPUT" ;;
+            vcs-git)    echo "dir=crates/git"    >> "$GITHUB_OUTPUT" ;;
+            vcs-jj)     echo "dir=crates/jj"     >> "$GITHUB_OUTPUT" ;;
+            vcs-github) echo "dir=crates/github" >> "$GITHUB_OUTPUT" ;;
             *) echo "unknown crate"; exit 1 ;;
           esac
 
