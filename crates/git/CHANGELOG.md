@@ -16,7 +16,8 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
--
+- `remote_head_branch` now keeps a slashed default-branch name intact (e.g.
+  `release/v2`) instead of returning only its last path segment.
 
 ## [0.2.1] - 2026-06-01
 

@@ -371,8 +371,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             )
             .await?;
         if res.exit_code() == 0 {
-            // e.g. "refs/remotes/origin/main" → "main".
-            Ok(res.stdout().trim().rsplit('/').next().map(str::to_string))
+            // "refs/remotes/origin/main" → "main"; strip the whole ref prefix so a
+            // slashed default branch (e.g. "release/v2") survives intact.
+            let out = res.stdout().trim();
+            Ok(Some(
+                out.strip_prefix("refs/remotes/origin/")
+                    .unwrap_or(out)
+                    .to_string(),
+            ))
         } else {
             Ok(None)
         }
@@ -794,6 +800,46 @@ mod tests {
         assert!(yes.branch_exists(Path::new("."), "main").await.unwrap());
         let no = Git::with_runner(ScriptedRunner::new().on(["show-ref"], Reply::fail(1, "")));
         assert!(!no.branch_exists(Path::new("."), "nope").await.unwrap());
+    }
+
+    // The full ref prefix is stripped but a slashed default branch survives; an
+    // unset origin/HEAD (non-zero exit) is `None`, not an error.
+    #[tokio::test]
+    async fn remote_head_branch_strips_prefix_and_keeps_slashes() {
+        let simple = Git::with_runner(
+            ScriptedRunner::new().on(["symbolic-ref"], Reply::ok("refs/remotes/origin/main\n")),
+        );
+        assert_eq!(
+            simple
+                .remote_head_branch(Path::new("."))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("main")
+        );
+
+        let slashed = Git::with_runner(ScriptedRunner::new().on(
+            ["symbolic-ref"],
+            Reply::ok("refs/remotes/origin/release/v2\n"),
+        ));
+        assert_eq!(
+            slashed
+                .remote_head_branch(Path::new("."))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("release/v2")
+        );
+
+        let unset =
+            Git::with_runner(ScriptedRunner::new().on(["symbolic-ref"], Reply::fail(1, "")));
+        assert!(
+            unset
+                .remote_head_branch(Path::new("."))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     // remote_branch_exists must pass `GIT_TERMINAL_PROMPT=0` and treat empty
