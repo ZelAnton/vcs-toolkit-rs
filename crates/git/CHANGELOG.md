@@ -13,6 +13,17 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.2.1] - 2026-06-01
+
+### Added
+-
+
+### Changed
 - Bumped `processkit` to 0.4 — macOS/BSD process trees are now contained via a
   POSIX process group (`killpg` on drop) instead of an uncontained spawn.
 
@@ -74,6 +85,7 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.2.1...HEAD
+[0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.2.0...vcs-git-v0.2.1
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.1.0...vcs-git-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-git-v0.1.0

@@ -13,6 +13,17 @@ crates; tag releases as `vcs-github-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.2.1] - 2026-06-01
+
+### Added
+-
+
+### Changed
 - Bumped `processkit` to 0.4 — macOS/BSD process trees are now contained via a
   POSIX process group (`killpg` on drop) instead of an uncontained spawn.
 
@@ -75,6 +86,7 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.1...HEAD
+[0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.0...vcs-github-v0.2.1
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.1.0...vcs-github-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-github-v0.1.0

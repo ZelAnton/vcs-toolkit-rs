@@ -13,6 +13,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.2.1] - 2026-06-01
+
+### Added
+-
+
+### Changed
 - Bumped `processkit` to 0.4 — macOS/BSD process trees are now contained via a
   POSIX process group (`killpg` on drop) instead of an uncontained spawn.
 
@@ -62,6 +73,7 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.1...HEAD
+[0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.0...vcs-jj-v0.2.1
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.1.0...vcs-jj-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-jj-v0.1.0
