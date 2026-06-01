@@ -10,6 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-01
+
+### Added
 - `JjApi` trait + `Jj` client with typed, repo-scoped commands returning parsed
   structs: `log`/`current_change` (`Change`), `describe`/`new_change`, `status`,
   `bookmarks` (`Bookmark`).
@@ -35,4 +46,5 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-jj-v0.1.0

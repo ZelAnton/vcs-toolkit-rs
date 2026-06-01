@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-01
+
+### Added
 - `GitHubApi` trait + `GitHub` client with typed commands deserializing
   `gh … --json` into structs: `pr_list`/`pr_view` (`PullRequest`), `issue_list`
   (`Issue`), `repo_view` (`Repo`), `auth_status`, and raw `api`. Adds
@@ -43,4 +54,5 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-github-v0.1.0

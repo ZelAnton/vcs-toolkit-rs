@@ -10,6 +10,17 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-01
+
+### Added
 - `GitApi` trait + `Git` client with typed, repo-scoped commands returning parsed
   structs: `status` (`StatusEntry`), `log`/`current_branch`/`branches`/`rev_parse`,
   `init`/`add`/`commit`, `diff_is_empty`. New `Commit`/`Branch`/`StatusEntry` types.
@@ -45,4 +56,5 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-git-v0.1.0
