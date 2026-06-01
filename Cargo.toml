@@ -26,5 +26,5 @@ authors = ["Anton Zhelezniakou"]
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
 # test seams the wrappers build on. Was the internal `vcs-process` crate; now the
-# published `processkit`. 0.3 first carries `Error::Timeout` as a distinct error.
-processkit = "0.3"
+# published `processkit`.
+processkit = "0.4"

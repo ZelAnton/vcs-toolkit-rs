@@ -58,7 +58,7 @@ mechanism is platform-specific and observable at runtime via its `Mechanism`:
 |---|---|---|
 | Windows | [Job Object](https://learn.microsoft.com/windows/win32/procthread/job-objects) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` | ✅ whole tree |
 | Linux | [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) via `cgroup.kill`, with a POSIX **process-group** fallback when no writable cgroup is available | ✅ whole tree (cgroup) / ✅ process group (fallback) |
-| other (macOS, BSD) | plain spawn, no containment | ⚠️ best-effort — direct child only (`kill_on_drop`) |
+| macOS, BSD (and other Unix) | POSIX **process group** (`killpg` on drop) — the same backend Linux falls back to | ✅ whole tree (process group) |
 
 v1 guarantees kill-on-close; resource limits are intentionally out of scope.
 

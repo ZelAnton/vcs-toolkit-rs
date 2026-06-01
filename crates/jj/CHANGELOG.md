@@ -13,7 +13,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Changed
--
+- Bumped `processkit` to 0.4 — macOS/BSD process trees are now contained via a
+  POSIX process group (`killpg` on drop) instead of an uncontained spawn.
 
 ### Fixed
 -
