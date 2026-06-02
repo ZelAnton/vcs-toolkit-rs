@@ -33,12 +33,19 @@ use vcs_github::{GitHub, GitHubApi};
     let r = gh.repo_view(repo).await?; // Repo { owner, name, default_branch, is_private, … }
     println!("{}/{} (default: {})", r.owner, r.name, r.default_branch);
 
-    // Open a PR against an explicit base; returns the new PR's URL.
+    // Any PRs (open/closed/merged) merging this branch into main? (title + URL)
+    for pr in gh.pr_list_for_branch(repo, "feat/streaming", "main").await? {
+        println!("#{} [{}] {} — {}", pr.number, pr.state, pr.title, pr.url);
+    }
+
+    // Open a PR from an explicit head into an explicit base (both optional —
+    // `None` head = current branch, `None` base = repo default). Returns the URL.
     let url = gh
         .pr_create(
             repo,
             "Add streaming",
             "Implements …",
+            Some("feat/streaming".to_string()),
             Some("main".to_string()),
         )
         .await?;

@@ -43,17 +43,29 @@ pub trait GitHubApi: Send + Sync {
     async fn repo_view(&self, dir: &Path) -> Result<Repo>;
     /// Pull requests for `dir` (`gh pr list --json …`).
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
+    /// Pull requests that merge `head` into `base`, in any state — open, closed,
+    /// or merged (`gh pr list --head <head> --base <base> --state all --json …`).
+    /// Each carries its title, URL, and `state`. Empty when none match.
+    async fn pr_list_for_branch(
+        &self,
+        dir: &Path,
+        head: &str,
+        base: &str,
+    ) -> Result<Vec<PullRequest>>;
     /// A single pull request by number (`gh pr view <n> --json …`).
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
     /// Issues for `dir` (`gh issue list --json …`).
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
-    /// Open a pull request, returning its URL (`gh pr create`). `base` is owned
-    /// (`Option<String>`) to keep the trait `mockall`-friendly.
+    /// Open a pull request, returning its URL (`gh pr create`). `head` (the
+    /// source branch; `None` = the current branch) and `base` (the target;
+    /// `None` = the repo default) are owned `Option<String>`s to keep the trait
+    /// `mockall`-friendly.
     async fn pr_create(
         &self,
         dir: &Path,
         title: &str,
         body: &str,
+        head: Option<String>,
         base: Option<String>,
     ) -> Result<String>;
     /// Raw GitHub REST/GraphQL response body (`gh api <endpoint>`).
@@ -113,6 +125,28 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
+    async fn pr_list_for_branch(
+        &self,
+        dir: &Path,
+        head: &str,
+        base: &str,
+    ) -> Result<Vec<PullRequest>> {
+        // `--state all` so a closed/merged PR for this branch pair is reported
+        // too, not just open ones (gh's default); the caller filters on `state`.
+        self.core
+            .try_parse(
+                self.core.command_in(
+                    dir,
+                    [
+                        "pr", "list", "--head", head, "--base", base, "--state", "all", "--json",
+                        PR_FIELDS,
+                    ],
+                ),
+                parse::from_json,
+            )
+            .await
+    }
+
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest> {
         let n = number.to_string();
         self.core
@@ -139,9 +173,14 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         dir: &Path,
         title: &str,
         body: &str,
+        head: Option<String>,
         base: Option<String>,
     ) -> Result<String> {
         let mut args = vec!["pr", "create", "--title", title, "--body", body];
+        if let Some(head) = head.as_deref() {
+            args.push("--head");
+            args.push(head);
+        }
         if let Some(base) = base.as_deref() {
             args.push("--base");
             args.push(base);
@@ -232,10 +271,58 @@ mod tests {
             Reply::ok("https://gh/pr/1\n"),
         ));
         let url = gh
-            .pr_create(Path::new("."), "T", "B", Some("main".to_string()))
+            .pr_create(Path::new("."), "T", "B", None, Some("main".to_string()))
             .await
             .expect("should build `pr create … --base main`");
         assert_eq!(url, "https://gh/pr/1");
+    }
+
+    // With an explicit head, `pr_create` inserts `--head <branch>` before
+    // `--base` — so a PR can target an arbitrary source→target pair.
+    #[tokio::test]
+    async fn pr_create_appends_head_and_base() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/pr/9\n"));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_create(
+            Path::new("/repo"),
+            "T",
+            "B",
+            Some("feat/x".to_string()),
+            Some("main".to_string()),
+        )
+        .await
+        .expect("pr_create");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "pr", "create", "--title", "T", "--body", "B", "--head", "feat/x", "--base", "main"
+            ]
+        );
+    }
+
+    // pr_list_for_branch filters by head + base and parses the PR list (title +
+    // url available on each result).
+    #[tokio::test]
+    async fn pr_list_for_branch_filters_and_parses() {
+        use processkit::RecordingRunner;
+        let json = r#"[{"number":9,"title":"Merge feat","state":"OPEN","headRefName":"feat/x","baseRefName":"main","url":"https://gh/pr/9"}]"#;
+        let rec = RecordingRunner::replying(Reply::ok(json));
+        let gh = GitHub::with_runner(&rec);
+        let prs = gh
+            .pr_list_for_branch(Path::new("/repo"), "feat/x", "main")
+            .await
+            .expect("pr_list_for_branch");
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].title, "Merge feat");
+        assert_eq!(prs[0].url, "https://gh/pr/9");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "pr", "list", "--head", "feat/x", "--base", "main", "--state", "all", "--json",
+                PR_FIELDS
+            ]
+        );
     }
 
     // Without a base, `pr_create` must omit `--base` entirely. RecordingRunner
@@ -248,7 +335,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("https://gh/pr/2\n"));
         let gh = GitHub::with_runner(&rec);
         let url = gh
-            .pr_create(Path::new("/repo"), "T", "B", None)
+            .pr_create(Path::new("/repo"), "T", "B", None, None)
             .await
             .expect("pr_create");
         assert_eq!(url, "https://gh/pr/2");
@@ -260,6 +347,7 @@ mod tests {
             ["pr", "create", "--title", "T", "--body", "B"]
         );
         assert!(!call.has_flag("--base"), "no base was given");
+        assert!(!call.has_flag("--head"), "no head was given");
     }
 
     // repo_view builds the --json request and flattens gh's nested owner/branch

@@ -12,9 +12,15 @@ crates; tag releases as `vcs-github-v<version>`.
 ### Added
 - Inherent `GitHub::run_args` / `run_raw_args` taking `&[&str]`, so callers
   needn't allocate a `Vec<String>` for the `run` escape hatch.
+- `pr_list_for_branch(dir, head, base)` — PRs that merge `head` into `base` in
+  any state (`gh pr list --head <head> --base <base> --state all --json …`), each
+  carrying its title, URL, and state.
 
 ### Changed
-- Bumped `processkit` to 0.5. No change to this crate's public API.
+- `pr_create` gained a `head: Option<String>` parameter (before `base`) so a PR
+  can target an explicit source branch (`gh pr create --head <head>`); `None`
+  keeps the previous behaviour (head = current branch).
+- Bumped `processkit` to 0.5. No change to the rest of this crate's public API.
 
 ### Fixed
 -
