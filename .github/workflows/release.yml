@@ -11,10 +11,13 @@ name: Release
 # version as-is, ignoring the bump.
 #
 # Each wrapper is versioned and published independently (see AGENTS.md
-# "Releasing"); they depend on the already-published external `processkit` crate,
-# so there is no in-workspace publish ordering. `all` releases every crate in one
-# run — each bumped by the same chosen type, from its own current version — in a
-# single commit + atomic push, then published and tagged one by one.
+# "Releasing"). The leaf wrappers (vcs-git/vcs-jj/vcs-github) depend only on the
+# already-published external `processkit` crate. The `vcs-core` facade is the one
+# exception: it depends on `vcs-git`/`vcs-jj`, so `all` publishes it LAST (after
+# its deps), and its `^0.3` dependency must stay in range when those cross a
+# minor/major boundary. `all` releases every crate in one run — each bumped by the
+# same chosen type, from its own current version — in a single commit + atomic
+# push, then published and tagged one by one.
 #
 # Per crate: bump → auto-fill an empty `[Unreleased]` from git history (git-cliff,
 # scoped to the crate's directory) → promote the changelog → dry-run publish →
@@ -37,6 +40,7 @@ on:
           - vcs-git
           - vcs-jj
           - vcs-github
+          - vcs-core
         default: all
       bump:
         description: Version bump type (ignored on a crate's first release)
@@ -99,9 +103,10 @@ jobs:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          declare -A DIR=( [vcs-git]=crates/git [vcs-jj]=crates/jj [vcs-github]=crates/github )
+          declare -A DIR=( [vcs-git]=crates/git [vcs-jj]=crates/jj [vcs-github]=crates/github [vcs-core]=crates/core )
           if [ "$SELECTED" = "all" ]; then
-            NAMES=(vcs-git vcs-jj vcs-github)
+            # vcs-core last: it depends on vcs-git/vcs-jj, so they publish first.
+            NAMES=(vcs-git vcs-jj vcs-github vcs-core)
           else
             NAMES=("$SELECTED")
           fi

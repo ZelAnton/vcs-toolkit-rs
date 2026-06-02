@@ -14,8 +14,8 @@ readme = "README.md"
 processkit.workspace = true
 # The typed per-tool clients this crate dispatches between. Path within the
 # workspace; `version` is used when published independently.
-vcs-git = { path = "../git", version = "0.2" }
-vcs-jj = { path = "../jj", version = "0.2" }
+vcs-git = { path = "../git", version = "0.3" }
+vcs-jj = { path = "../jj", version = "0.3" }
 
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.

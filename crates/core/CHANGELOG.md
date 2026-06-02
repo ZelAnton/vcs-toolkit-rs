@@ -11,21 +11,19 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Added
 - Initial release: a unified facade over `vcs-git` and `vcs-jj`.
-  - `detect(dir) -> Option<Located>` — walk up to find a `.git`/`.jj` repository
-    (jj wins when colocated), returning `BackendKind` + root.
-  - `Repo` — a cwd-bound handle (`Repo::open`, `Repo::at`) dispatching the common
-    surface to whichever backend is present: `current_branch`, `trunk`,
-    `changed_files`, `diff_stat`, `commit_paths`, `fetch`, `list_worktrees`,
-    `create_worktree`, `remove_worktree`, with `git()`/`jj()` escape hatches for
-    tool-specific operations.
-  - Backend-agnostic DTOs: `BackendKind`, `ChangeKind`, `FileChange`, `DiffStat`,
-    `WorktreeInfo`, `CreateOutcome`.
-  - Generic over the `processkit::ProcessRunner` so tests can inject a fake
-    runner via `Repo::from_git` / `Repo::from_jj`.
-  - Extended common surface for the agent-workspace migration: `local_branches`,
-    `branch_exists`, `has_uncommitted_changes`, `delete_branch`, `rename_branch`.
-  - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
-    can reach the raw clients and their types (the `Repo::git()` / `Repo::jj()`
-    escape hatches) without a separate dependency.
-  - Public DTOs are `#[non_exhaustive]`; `Repo::open` absolutises its argument so
-    a relative path still finds a repository in an ancestor directory.
+- `detect(dir) -> Option<Located>` — walk up to find a `.git`/`.jj` repository
+  (jj wins when colocated), returning `BackendKind` + root.
+- `Repo` — a cwd-bound handle (`Repo::open`, `Repo::at`) dispatching the common
+  surface to whichever backend is present: `current_branch`, `trunk`,
+  `changed_files`, `diff_stat`, `commit_paths`, `fetch`, `list_worktrees`,
+  `create_worktree`, `remove_worktree`, plus `local_branches`, `branch_exists`,
+  `has_uncommitted_changes`, `delete_branch`, `rename_branch` — with `git()` /
+  `jj()` escape hatches for tool-specific operations.
+- Backend-agnostic, `#[non_exhaustive]` DTOs: `BackendKind`, `ChangeKind`,
+  `FileChange`, `DiffStat`, `WorktreeInfo`, `CreateOutcome`.
+- Generic over the `processkit::ProcessRunner` so tests can inject a fake runner
+  via `Repo::from_git` / `Repo::from_jj`.
+- Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
+  can reach the raw clients and their types without a separate dependency.
+
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.1.0...HEAD

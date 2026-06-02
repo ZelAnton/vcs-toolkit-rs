@@ -9,18 +9,20 @@ This file provides guidance to AI coding agents when working with code in this r
 `git`, `jj`, and `gh` binaries and capture their output rather than
 reimplementing each tool's protocol.
 
-It is a Cargo workspace of three **independently versioned and published** wrapper
-crates, all built on the external [`processkit`](https://crates.io/crates/processkit)
-crate (the job-backed process launcher + `CliClient` core; was the prototype
-internal `vcs-process` crate):
+It is a Cargo workspace of **independently versioned and published** crates: three
+CLI wrappers, all built on the external
+[`processkit`](https://crates.io/crates/processkit) crate (the job-backed process
+launcher + `CliClient` core; was the prototype internal `vcs-process` crate), plus
+one facade:
 
 | Path | crates.io name | Drives |
 |---|---|---|
 | `crates/git` | `vcs-git` | `git` |
 | `crates/jj` | `vcs-jj` | `jj` |
 | `crates/github` | `vcs-github` | `gh` (GitHub CLI) |
+| `crates/core` | `vcs-core` | — (facade over `vcs-git`/`vcs-jj`) |
 
-Each wrapper exposes the same shape — an **interface trait**
+Each **CLI wrapper** (`vcs-git`/`vcs-jj`/`vcs-github`) exposes the same shape — an **interface trait**
 (`GitApi`/`JjApi`/`GitHubApi`) and a real client struct
 (`Git`/`Jj`/`GitHub`) generic over a `processkit::ProcessRunner`. Methods are
 **`async`** (tokio, via `#[async_trait]`), take `dir: &Path`, return parsed structs,
@@ -148,14 +150,17 @@ Each crate releases **independently** — they do not share a version.
   `docs`/`chore`/`test`→skipped).
 - **Tag per crate** as `<crate>-v<version>` (e.g. `vcs-git-v0.2.0`) so each
   crate's history and compare links stay independent.
-- **No in-workspace publish order.** The wrappers depend on the already-published
-  external `processkit` crate (by version), so each wrapper publishes
-  independently — there is no "publish X first" ordering within this repo. If a
-  wrapper needs a newer `processkit`, bump the `[workspace.dependencies]` req and
+- **Publish order is almost flat.** The three CLI wrappers depend only on the
+  already-published external `processkit` crate (by version), so each publishes
+  independently. The **`vcs-core` facade is the one exception**: it depends on
+  `vcs-git`/`vcs-jj`, so it publishes **last** (the `all` plan orders it after its
+  deps), and its `^0.3` requirement on them must be kept in range when they cross
+  a minor/major boundary (and the new version must be live on crates.io first). If
+  a crate needs a newer `processkit`, bump the `[workspace.dependencies]` req and
   ensure that `processkit` version is live on crates.io first.
 - **Release workflow.** `.github/workflows/release.yml` (`workflow_dispatch`,
   needs the `CRATES_IO_TOKEN` secret) is the only way to release. Pick **which
-  crate** (`vcs-git`/`vcs-jj`/`vcs-github`, or **`all`**) and a **bump**
+  crate** (`vcs-git`/`vcs-jj`/`vcs-github`/`vcs-core`, or **`all`**) and a **bump**
   (`patch`/`minor`/`major`) — the version is **never typed by hand**. For each
   selected crate it derives the next version from that crate's current
   `Cargo.toml` (a crate's **first release** — no `<crate>-v*` tag yet — ships the
