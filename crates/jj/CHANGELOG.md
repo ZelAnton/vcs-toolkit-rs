@@ -16,6 +16,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   per-line `DiffLine`s). The pure parser `parse::parse_diff` is public for
   parsing externally-obtained diff text. `DiffSpec::WorkingTree` diffs `@`;
   `DiffSpec::Rev(_)` diffs a revset.
+- Partial-change ops with a safe `JjFileset` newtype (escapes `\`/`"`, renders
+  `file:"…"`): `commit_paths`, `squash_paths`, and `sparse_set` (`sparse set
+  --clear --add …`). `WorkspaceAdd` gains a `sparse(SparseMode)` builder
+  (`workspace add --sparse-patterns copy|full|empty`).
 
 ### Changed
 - Bumped `processkit` to 0.5. No change to this crate's public API.

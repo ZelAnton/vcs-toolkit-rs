@@ -36,6 +36,50 @@ pub enum DiffSpec {
     Rev(String),
 }
 
+/// How a new workspace inherits sparse patterns (`jj workspace add
+/// --sparse-patterns <mode>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SparseMode {
+    /// Copy all sparse patterns from the current workspace (jj's default).
+    Copy,
+    /// Include every file in the new workspace.
+    Full,
+    /// Start with no files — the caller sets patterns afterwards (CoW flow).
+    Empty,
+}
+
+impl SparseMode {
+    /// The `--sparse-patterns` value jj expects.
+    fn as_arg(self) -> &'static str {
+        match self {
+            SparseMode::Copy => "copy",
+            SparseMode::Full => "full",
+            SparseMode::Empty => "empty",
+        }
+    }
+}
+
+/// An exact-path jj fileset (`file:"<path>"`), so path metacharacters like `(`,
+/// `)`, `|`, `*` are treated literally rather than as fileset operators.
+///
+/// Build it with [`JjFileset::path`]; the path is repo-root-relative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JjFileset(String);
+
+impl JjFileset {
+    /// Wrap a repo-relative `path` as an exact-path fileset, escaping `\` and `"`.
+    pub fn path(path: impl AsRef<str>) -> Self {
+        let escaped = path.as_ref().replace('\\', "\\\\").replace('"', "\\\"");
+        JjFileset(format!("file:\"{escaped}\""))
+    }
+
+    /// The rendered `file:"…"` expression.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Options for [`JjApi::workspace_add`] (`jj workspace add`).
 ///
 /// `#[non_exhaustive]`, so build it through [`WorkspaceAdd::new`].
@@ -48,6 +92,9 @@ pub struct WorkspaceAdd {
     pub base: String,
     /// Filesystem path for the new workspace.
     pub path: PathBuf,
+    /// How to seed the new workspace's sparse patterns (`--sparse-patterns`);
+    /// `None` leaves jj's default (inherit from the current workspace).
+    pub sparse_patterns: Option<SparseMode>,
 }
 
 impl WorkspaceAdd {
@@ -57,7 +104,14 @@ impl WorkspaceAdd {
             name: name.into(),
             base: base.into(),
             path: path.into(),
+            sparse_patterns: None,
         }
+    }
+
+    /// Seed the new workspace's sparse patterns with `mode` (`--sparse-patterns`).
+    pub fn sparse(mut self, mode: SparseMode) -> Self {
+        self.sparse_patterns = Some(mode);
+        self
     }
 }
 
@@ -164,6 +218,21 @@ pub trait JjApi: Send + Sync {
     async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
     /// Squash the working copy into a revision (`squash --into <rev>`).
     async fn squash_into(&self, dir: &Path, into: &str) -> Result<()>;
+    /// Finalise a commit from exactly these filesets (`commit -m <message>
+    /// <filesets>`); the rest stay in the new working-copy change.
+    async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
+    /// Squash exactly these filesets from one revision into another
+    /// (`squash --from <from> --into <into> <filesets>`).
+    async fn squash_paths(
+        &self,
+        dir: &Path,
+        from: &str,
+        into: &str,
+        filesets: &[JjFileset],
+    ) -> Result<()>;
+    /// Set the working copy's sparse patterns to exactly `patterns`
+    /// (`sparse set --clear --add <p>…`); an empty list clears the working copy.
+    async fn sparse_set(&self, dir: &Path, patterns: &[String]) -> Result<()>;
     /// Create a new change with the given parents (`new -m <msg> <p1> <p2> …`).
     async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()>;
     /// Abandon a revision (`abandon <rev>`).
@@ -499,6 +568,41 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
+    async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()> {
+        let mut args: Vec<String> = vec!["commit".into(), "-m".into(), message.into()];
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn squash_paths(
+        &self,
+        dir: &Path,
+        from: &str,
+        into: &str,
+        filesets: &[JjFileset],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "squash".into(),
+            "--from".into(),
+            from.into(),
+            "--into".into(),
+            into.into(),
+        ];
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn sparse_set(&self, dir: &Path, patterns: &[String]) -> Result<()> {
+        // `--clear` empties the working copy first, then each `--add` reinstates a
+        // pattern — so the working copy ends up holding exactly `patterns`.
+        let mut args: Vec<String> = vec!["sparse".into(), "set".into(), "--clear".into()];
+        for pattern in patterns {
+            args.push("--add".into());
+            args.push(pattern.clone());
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
     async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()> {
         let mut args: Vec<String> = vec!["new".into(), "-m".into(), message.into()];
         args.extend(parents);
@@ -577,13 +681,16 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()> {
-        let command = self
+        let mut command = self
             .core
             .command_in(dir, ["workspace", "add", "--name"])
             .arg(&spec.name)
             .arg("-r")
-            .arg(&spec.base)
-            .arg(&spec.path);
+            .arg(&spec.base);
+        if let Some(mode) = spec.sparse_patterns {
+            command = command.arg("--sparse-patterns").arg(mode.as_arg());
+        }
+        command = command.arg(&spec.path);
         self.core.unit(command).await
     }
 
@@ -628,6 +735,94 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             ["workspace", "add", "--name", "ws1", "-r", "main", "/wt"]
+        );
+    }
+
+    // `--sparse-patterns <mode>` lands between `-r <base>` and the path.
+    #[tokio::test]
+    async fn workspace_add_with_sparse_mode() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.workspace_add(
+            Path::new("/repo"),
+            WorkspaceAdd::new("ws1", "main", "/wt").sparse(SparseMode::Empty),
+        )
+        .await
+        .expect("workspace add");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "workspace",
+                "add",
+                "--name",
+                "ws1",
+                "-r",
+                "main",
+                "--sparse-patterns",
+                "empty",
+                "/wt"
+            ]
+        );
+    }
+
+    #[test]
+    fn fileset_quotes_metacharacters() {
+        assert_eq!(
+            JjFileset::path("src/a(b).rs").as_str(),
+            "file:\"src/a(b).rs\""
+        );
+        // Backslash and quote are escaped.
+        assert_eq!(JjFileset::path("a\\\"b").as_str(), "file:\"a\\\\\\\"b\"");
+    }
+
+    #[tokio::test]
+    async fn commit_paths_builds_filesets() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.commit_paths(
+            Path::new("."),
+            &[JjFileset::path("x|y.rs"), JjFileset::path("z.rs")],
+            "msg",
+        )
+        .await
+        .expect("commit_paths");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["commit", "-m", "msg", "file:\"x|y.rs\"", "file:\"z.rs\""]
+        );
+    }
+
+    #[tokio::test]
+    async fn squash_paths_builds_from_into_filesets() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.squash_paths(Path::new("."), "@", "feat", &[JjFileset::path("a.rs")])
+            .await
+            .expect("squash_paths");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["squash", "--from", "@", "--into", "feat", "file:\"a.rs\""]
+        );
+    }
+
+    #[tokio::test]
+    async fn sparse_set_clears_then_adds() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.sparse_set(Path::new("."), &["README.md".into(), "lib".into()])
+            .await
+            .expect("sparse_set");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "sparse",
+                "set",
+                "--clear",
+                "--add",
+                "README.md",
+                "--add",
+                "lib"
+            ]
         );
     }
 

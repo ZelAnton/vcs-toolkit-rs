@@ -62,6 +62,9 @@ pub struct WorktreeAdd {
     pub new_branch: Option<String>,
     /// The commit/branch to base the worktree on; `None` defaults to `HEAD`.
     pub commitish: Option<String>,
+    /// Register the worktree without populating its files (`--no-checkout`) — the
+    /// caller fills the working tree itself (e.g. a copy-on-write clone).
+    pub no_checkout: bool,
 }
 
 impl WorktreeAdd {
@@ -72,6 +75,7 @@ impl WorktreeAdd {
             path: path.into(),
             new_branch: None,
             commitish: Some(commitish.into()),
+            no_checkout: false,
         }
     }
 
@@ -86,7 +90,15 @@ impl WorktreeAdd {
             path: path.into(),
             new_branch: Some(name.into()),
             commitish: Some(commitish.into()),
+            no_checkout: false,
         }
+    }
+
+    /// Register the worktree without checking out its files (`--no-checkout`),
+    /// for a caller that populates the working tree itself.
+    pub fn no_checkout(mut self) -> Self {
+        self.no_checkout = true;
+        self
     }
 }
 
@@ -111,6 +123,8 @@ pub trait GitApi: Send + Sync {
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
     /// Latest `max` commits, newest first (`git log`).
     async fn log(&self, dir: &Path, max: usize) -> Result<Vec<Commit>>;
+    /// Commits in `range`, newest first, up to `max` (`git log <range>`).
+    async fn log_range(&self, dir: &Path, range: &str, max: usize) -> Result<Vec<Commit>>;
     /// Resolve a revision to a full hash (`git rev-parse <rev>`).
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
     /// Initialise a repository (`git init`).
@@ -123,6 +137,23 @@ pub trait GitApi: Send + Sync {
     async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
     /// Switch to a branch or revision (`git checkout <reference>`).
     async fn checkout(&self, dir: &Path, reference: &str) -> Result<()>;
+    /// Check out a commit as a detached HEAD (`git checkout --detach <commit>`).
+    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
+    /// Commit exactly `paths`' working-tree content, ignoring the index
+    /// (`git commit [--amend] -m <message> --only -- <paths>`).
+    async fn commit_paths(
+        &self,
+        dir: &Path,
+        paths: &[PathBuf],
+        message: &str,
+        amend: bool,
+    ) -> Result<()>;
+    /// The last commit's full message (`git log -1 --format=%B`) — e.g. to
+    /// pre-fill an amend.
+    async fn last_commit_message(&self, dir: &Path) -> Result<String>;
+    /// Whether `HEAD` is unborn — a fresh repo with no commits yet
+    /// (`git rev-parse --verify -q HEAD`, exit-code mapped).
+    async fn is_unborn(&self, dir: &Path) -> Result<bool>;
     /// Whether the working tree has no unstaged changes (`git diff --quiet`).
     async fn diff_is_empty(&self, dir: &Path) -> Result<bool>;
 
@@ -219,6 +250,11 @@ pub trait GitApi: Send + Sync {
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
     /// Continue a rebase after resolving conflicts (`rebase --continue`).
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
+    /// Stash the working tree (`stash push`, `--include-untracked` when asked) —
+    /// e.g. to save state before a copy-on-write restore.
+    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
+    /// Restore the most recent stash and drop it (`stash pop`).
+    async fn stash_pop(&self, dir: &Path) -> Result<()>;
 
     // --- Worktrees -----------------------------------------------------------
 
@@ -297,6 +333,25 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn log_range(&self, dir: &Path, range: &str, max: usize) -> Result<Vec<Commit>> {
+        let n = format!("-n{max}");
+        self.core
+            .parse(
+                self.core.command_in(
+                    dir,
+                    [
+                        "log",
+                        range,
+                        n.as_str(),
+                        "-z",
+                        "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                    ],
+                ),
+                parse::parse_log,
+            )
+            .await
+    }
+
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
         self.core
             .text(self.core.command_in(dir, ["rev-parse", rev]))
@@ -332,6 +387,61 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core
             .unit(self.core.command_in(dir, ["checkout", reference]))
             .await
+    }
+
+    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["checkout", "--detach", commit]))
+            .await
+    }
+
+    async fn commit_paths(
+        &self,
+        dir: &Path,
+        paths: &[PathBuf],
+        message: &str,
+        amend: bool,
+    ) -> Result<()> {
+        // `--only -- <paths>` commits exactly these paths' working-tree content
+        // regardless of the index; `--` keeps a path from being read as an option.
+        let mut command = self.core.command_in(dir, ["commit"]);
+        if amend {
+            command = command.arg("--amend");
+        }
+        command = command.arg("-m").arg(message).arg("--only").arg("--");
+        for path in paths {
+            command = command.arg(path);
+        }
+        self.core.unit(command).await
+    }
+
+    async fn last_commit_message(&self, dir: &Path) -> Result<String> {
+        self.core
+            .text(self.core.command_in(dir, ["log", "-1", "--format=%B"]))
+            .await
+    }
+
+    async fn is_unborn(&self, dir: &Path) -> Result<bool> {
+        // `rev-parse --verify -q HEAD` resolves HEAD quietly: 0 = a commit exists
+        // (not unborn), 1 = no commit yet (unborn). Anything else (e.g. 128, not a
+        // repo) is a real failure surfaced as `Error::Exit`.
+        match self
+            .core
+            .code(
+                self.core
+                    .command_in(dir, ["rev-parse", "--verify", "-q", "HEAD"]),
+            )
+            .await?
+        {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(Error::Exit {
+                program: BINARY.to_string(),
+                code: other,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
     }
 
     async fn diff_is_empty(&self, dir: &Path) -> Result<bool> {
@@ -664,6 +774,20 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()> {
+        let mut command = self.core.command_in(dir, ["stash", "push"]);
+        if include_untracked {
+            command = command.arg("--include-untracked");
+        }
+        self.core.unit(command).await
+    }
+
+    async fn stash_pop(&self, dir: &Path) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["stash", "pop"]))
+            .await
+    }
+
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
         self.core
             .parse(
@@ -678,6 +802,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let mut command = self.core.command_in(dir, ["worktree", "add"]);
         if let Some(name) = spec.new_branch.as_deref() {
             command = command.arg("-b").arg(name);
+        }
+        if spec.no_checkout {
+            command = command.arg("--no-checkout");
         }
         command = command.arg(&spec.path);
         if let Some(commitish) = spec.commitish.as_deref() {
@@ -836,6 +963,103 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             ["worktree", "remove", "--force", "/wt"]
+        );
+    }
+
+    // `--no-checkout` must land between `-b <name>` and the path.
+    #[tokio::test]
+    async fn worktree_add_no_checkout_inserts_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.worktree_add(
+            Path::new("/repo"),
+            WorktreeAdd::checkout("/wt", "main").no_checkout(),
+        )
+        .await
+        .expect("worktree add");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["worktree", "add", "--no-checkout", "/wt", "main"]
+        );
+    }
+
+    #[tokio::test]
+    async fn checkout_detach_builds_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.checkout_detach(Path::new("."), "abc123")
+            .await
+            .expect("detach");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["checkout", "--detach", "abc123"]
+        );
+    }
+
+    // Partial amend commit must build `commit --amend -m <msg> --only -- <paths>`.
+    #[tokio::test]
+    async fn commit_paths_builds_only_amend_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.commit_paths(
+            Path::new("."),
+            &[PathBuf::from("a.rs"), PathBuf::from("b.rs")],
+            "msg",
+            true,
+        )
+        .await
+        .expect("commit_paths");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "commit", "--amend", "-m", "msg", "--only", "--", "a.rs", "b.rs"
+            ]
+        );
+    }
+
+    // is_unborn maps the rev-parse exit code: 0 → has commits (false), 1 →
+    // unborn (true), anything else is a structured error.
+    #[tokio::test]
+    async fn is_unborn_maps_exit_codes() {
+        let born = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::ok("abc\n")));
+        assert!(!born.is_unborn(Path::new(".")).await.unwrap());
+        let unborn = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::fail(1, "")));
+        assert!(unborn.is_unborn(Path::new(".")).await.unwrap());
+        let broken =
+            Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::fail(128, "boom")));
+        assert!(matches!(
+            broken.is_unborn(Path::new(".")).await.unwrap_err(),
+            Error::Exit { code: 128, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn log_range_builds_range_and_format() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.log_range(Path::new("."), "main..HEAD", 5)
+            .await
+            .expect("log_range");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "log",
+                "main..HEAD",
+                "-n5",
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stash_push_adds_include_untracked() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.stash_push(Path::new("."), true).await.expect("stash");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["stash", "push", "--include-untracked"]
         );
     }
 

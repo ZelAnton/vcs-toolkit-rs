@@ -16,6 +16,10 @@ crates; tag releases as `vcs-git-v<version>`.
   with per-line `DiffLine`s). The pure parser `parse::parse_diff` is public for
   parsing externally-obtained diff text. `DiffSpec::WorkingTree` diffs the working
   tree vs `HEAD`; `DiffSpec::Rev(_)` diffs a revision/range.
+- API gaps consumers previously hand-rolled via `run()`: `checkout_detach`,
+  `commit_paths` (partial `commit --only`, with optional `--amend`),
+  `last_commit_message`, `is_unborn`, `log_range`, and `stash_push`/`stash_pop`.
+  `WorktreeAdd` gains a `no_checkout()` builder (`worktree add --no-checkout`).
 
 ### Changed
 - Bumped `processkit` to 0.5 and absorbed its breaking changes: exit-code probes
