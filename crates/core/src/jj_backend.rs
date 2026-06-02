@@ -25,6 +25,53 @@ pub(crate) async fn trunk<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Op
     Ok(jj.trunk(dir).await?)
 }
 
+pub(crate) async fn local_branches<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    Ok(jj
+        .bookmarks(dir)
+        .await?
+        .into_iter()
+        .map(|b| b.name)
+        .collect())
+}
+
+pub(crate) async fn branch_exists<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    name: &str,
+) -> Result<bool> {
+    // jj has no direct existence probe; scan the local bookmarks.
+    Ok(jj.bookmarks(dir).await?.iter().any(|b| b.name == name))
+}
+
+pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<bool> {
+    Ok(!jj.current_change(dir).await?.empty)
+}
+
+pub(crate) async fn delete_branch<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    name: &str,
+) -> Result<()> {
+    jj.bookmark_delete(dir, name).await?;
+    Ok(())
+}
+
+pub(crate) async fn rename_branch<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    old: &str,
+    new: &str,
+) -> Result<()> {
+    jj.bookmark_rename(dir, old, new).await?;
+    Ok(())
+}
+
 pub(crate) async fn changed_files<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,

@@ -23,6 +23,53 @@ pub(crate) async fn trunk<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<
     Ok(git.remote_head_branch(dir).await?)
 }
 
+pub(crate) async fn local_branches<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    Ok(git
+        .branches(dir)
+        .await?
+        .into_iter()
+        .map(|b| b.name)
+        .collect())
+}
+
+pub(crate) async fn branch_exists<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    name: &str,
+) -> Result<bool> {
+    Ok(git.branch_exists(dir, name).await?)
+}
+
+pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<bool> {
+    Ok(!git.status(dir).await?.is_empty())
+}
+
+pub(crate) async fn delete_branch<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    name: &str,
+    force: bool,
+) -> Result<()> {
+    git.delete_branch(dir, name, force).await?;
+    Ok(())
+}
+
+pub(crate) async fn rename_branch<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    old: &str,
+    new: &str,
+) -> Result<()> {
+    git.rename_branch(dir, old, new).await?;
+    Ok(())
+}
+
 pub(crate) async fn changed_files<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,

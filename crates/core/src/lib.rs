@@ -39,6 +39,15 @@ mod jj_backend;
 pub use dto::{BackendKind, ChangeKind, CreateOutcome, DiffStat, FileChange, WorktreeInfo};
 pub use error::{Error, Result};
 
+// Re-export the underlying typed clients so a consumer depending only on
+// `vcs-core` can still reach raw, tool-specific operations — and their types
+// (`GitApi`, `JjApi`, `WorktreeAdd`, `JjFileset`, …) — without adding `vcs-git`
+// / `vcs-jj` as separate dependencies. [`Repo::git`] / [`Repo::jj`] hand out
+// borrows of these clients; the consumer decides, per call, whether to go
+// through the facade or straight to the tool.
+pub use vcs_git;
+pub use vcs_jj;
+
 /// The result of [`detect`]: which backend, and the repository root it was found
 /// at.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +215,48 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Local branch (git) / bookmark (jj) names.
+    pub async fn local_branches(&self) -> Result<Vec<String>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::local_branches(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::local_branches(j, &self.cwd).await,
+        }
+    }
+
+    /// Whether a local branch/bookmark named `name` exists.
+    pub async fn branch_exists(&self, name: &str) -> Result<bool> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::branch_exists(g, &self.cwd, name).await,
+            Backend::Jj(j) => jj_backend::branch_exists(j, &self.cwd, name).await,
+        }
+    }
+
+    /// Whether the working copy has uncommitted changes (git: a non-empty
+    /// `status`; jj: a non-empty working-copy change `@`).
+    pub async fn has_uncommitted_changes(&self) -> Result<bool> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::has_uncommitted_changes(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::has_uncommitted_changes(j, &self.cwd).await,
+        }
+    }
+
+    /// Delete a local branch (git) / bookmark (jj). `force` applies to git only
+    /// (`branch -D` vs `-d`); jj has no force and ignores it.
+    pub async fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::delete_branch(g, &self.cwd, name, force).await,
+            Backend::Jj(j) => jj_backend::delete_branch(j, &self.cwd, name).await,
+        }
+    }
+
+    /// Rename a local branch (git) / bookmark (jj).
+    pub async fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::rename_branch(g, &self.cwd, old, new).await,
+            Backend::Jj(j) => jj_backend::rename_branch(j, &self.cwd, old, new).await,
+        }
+    }
+
     /// The working-copy changes (git `status` / jj `diff -r @ --summary`).
     pub async fn changed_files(&self) -> Result<Vec<FileChange>> {
         match &self.backend {
@@ -349,6 +400,10 @@ mod tests {
         Repo::from_git("/repo", "/repo", Git::with_runner(runner))
     }
 
+    fn jj_repo(runner: ScriptedRunner) -> Repo<ScriptedRunner> {
+        Repo::from_jj("/repo", "/repo", Jj::with_runner(runner))
+    }
+
     #[tokio::test]
     async fn kind_and_escape_hatches_reflect_backend() {
         let repo = git_repo(ScriptedRunner::new());
@@ -383,11 +438,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_branches_maps_git_branch_output() {
+        let repo = git_repo(ScriptedRunner::new().on(["branch"], Reply::ok("* main\n  feat\n")));
+        assert_eq!(repo.local_branches().await.unwrap(), ["main", "feat"]);
+    }
+
+    #[tokio::test]
+    async fn branch_exists_reads_show_ref_exit() {
+        let yes = git_repo(ScriptedRunner::new().on(["show-ref"], Reply::ok("")));
+        assert!(yes.branch_exists("main").await.unwrap());
+        let no = git_repo(ScriptedRunner::new().on(["show-ref"], Reply::fail(1, "")));
+        assert!(!no.branch_exists("nope").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn has_uncommitted_changes_reflects_status() {
+        let dirty = git_repo(ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0")));
+        assert!(dirty.has_uncommitted_changes().await.unwrap());
+        let clean = git_repo(ScriptedRunner::new().on(["status"], Reply::ok("")));
+        assert!(!clean.has_uncommitted_changes().await.unwrap());
+    }
+
+    #[tokio::test]
     async fn at_rebinds_cwd_and_shares_backend() {
         let repo = git_repo(ScriptedRunner::new());
         let moved = repo.at("/repo/sub");
         assert_eq!(moved.cwd(), Path::new("/repo/sub"));
         assert_eq!(moved.root(), Path::new("/repo"));
         assert_eq!(moved.kind(), BackendKind::Git);
+    }
+
+    // --- dispatch: jj backend (hermetic) -----------------------------------
+
+    #[tokio::test]
+    async fn jj_kind_and_escape_hatches_reflect_backend() {
+        let repo = jj_repo(ScriptedRunner::new());
+        assert_eq!(repo.kind(), BackendKind::Jj);
+        assert!(repo.jj().is_some() && repo.git().is_none());
+    }
+
+    #[tokio::test]
+    async fn jj_current_branch_reads_bookmark() {
+        let repo = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("main\n")));
+        assert_eq!(
+            repo.current_branch().await.unwrap().as_deref(),
+            Some("main")
+        );
+    }
+
+    #[tokio::test]
+    async fn jj_local_branches_maps_bookmark_list() {
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["bookmark", "list"],
+            Reply::ok("main: chg cmt desc\nfeat: c2 m2 d2\n"),
+        ));
+        assert_eq!(repo.local_branches().await.unwrap(), ["main", "feat"]);
+    }
+
+    #[tokio::test]
+    async fn jj_branch_exists_scans_bookmarks() {
+        let repo = jj_repo(
+            ScriptedRunner::new().on(["bookmark", "list"], Reply::ok("main: chg cmt desc\n")),
+        );
+        assert!(repo.branch_exists("main").await.unwrap());
+        let repo2 = jj_repo(
+            ScriptedRunner::new().on(["bookmark", "list"], Reply::ok("main: chg cmt desc\n")),
+        );
+        assert!(!repo2.branch_exists("missing").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn jj_has_uncommitted_changes_reads_empty_flag() {
+        // CHANGE_TEMPLATE row: change_id \t commit_id \t empty \t description
+        let dirty = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("kz\t38\tfalse\twip\n")));
+        assert!(dirty.has_uncommitted_changes().await.unwrap());
+        let clean = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("kz\t38\ttrue\t\n")));
+        assert!(!clean.has_uncommitted_changes().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn jj_changed_files_maps_diff_summary() {
+        let repo = jj_repo(
+            ScriptedRunner::new().on(["diff"], Reply::ok("M src/a.rs\nA b.rs\nD gone.rs\n")),
+        );
+        let changes = repo.changed_files().await.unwrap();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].kind, ChangeKind::Modified);
+        assert_eq!(changes[1].kind, ChangeKind::Added);
+        assert_eq!(changes[2].kind, ChangeKind::Deleted);
+        assert!(changes.iter().all(|c| c.old_path.is_none()));
+    }
+
+    #[tokio::test]
+    async fn jj_rename_branch_builds_bookmark_rename() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        repo.rename_branch("old", "new").await.unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["bookmark", "rename", "old", "new"]
+        );
     }
 }

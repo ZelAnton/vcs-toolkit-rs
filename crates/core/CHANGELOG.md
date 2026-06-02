@@ -22,3 +22,10 @@ crates; tag releases as `vcs-core-v<version>`.
     `WorktreeInfo`, `CreateOutcome`.
   - Generic over the `processkit::ProcessRunner` so tests can inject a fake
     runner via `Repo::from_git` / `Repo::from_jj`.
+  - Extended common surface for the agent-workspace migration: `local_branches`,
+    `branch_exists`, `has_uncommitted_changes`, `delete_branch`, `rename_branch`.
+  - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
+    can reach the raw clients and their types (the `Repo::git()` / `Repo::jj()`
+    escape hatches) without a separate dependency.
+  - Public DTOs are `#[non_exhaustive]`; `Repo::open` absolutises its argument so
+    a relative path still finds a repository in an ancestor directory.
