@@ -1,0 +1,22 @@
+[package]
+name = "vcs-core"
+version = "0.1.0"
+description = "Unified facade over vcs-git and vcs-jj: repo detection and a backend-agnostic VCS handle."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[dependencies]
+# Re-exported `Error`/`ProcessRunner`/`JobRunner` and the `ScriptedRunner` test
+# seam the underlying clients are generic over. No subprocess work happens here.
+processkit.workspace = true
+# The typed per-tool clients this crate dispatches between. Path within the
+# workspace; `version` is used when published independently.
+vcs-git = { path = "../git", version = "0.2" }
+vcs-jj = { path = "../jj", version = "0.2" }
+
+[dev-dependencies]
+# `#[tokio::test]` for the async dispatch tests.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

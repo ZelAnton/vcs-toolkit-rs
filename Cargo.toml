@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/git", "crates/jj", "crates/github"]
+members = ["crates/git", "crates/jj", "crates/github", "crates/core"]
 
 # Metadata shared by every crate in the toolkit. Each crate inherits these via
 # `field.workspace = true` in its own Cargo.toml. NOTE: `version` is *not* here
