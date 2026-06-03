@@ -223,8 +223,9 @@ pub trait GitApi: Send + Sync {
     async fn remote_head_branch(&self, dir: &Path) -> Result<Option<String>>;
     /// Whether a local branch exists (`show-ref --verify --quiet refs/heads/<name>`).
     async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
-    /// Whether `origin` has `name`, without fetching (`ls-remote --heads origin
-    /// <name>`). Runs with `GIT_TERMINAL_PROMPT=0` and a 10s timeout so a missing
+    /// Whether `origin` has `name`, without fetching (`ls-remote origin
+    /// refs/heads/<name>` — the fully-qualified ref, so `foo` can't tail-match
+    /// `bar/foo`). Runs with `GIT_TERMINAL_PROMPT=0` and a 10s timeout so a missing
     /// credential or a flaky network can't hang the call.
     async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
     /// A remote's URL (`remote get-url <remote>`).
@@ -272,7 +273,7 @@ pub trait GitApi: Send + Sync {
 
     // --- Mutations -----------------------------------------------------------
 
-    /// Fetch from the default remote (`fetch --quiet`).
+    /// Fetch from the default remote (`fetch --quiet`), with `GIT_TERMINAL_PROMPT=0`.
     async fn fetch(&self, dir: &Path) -> Result<()>;
     /// Fetch a single branch from `origin` into its remote-tracking ref
     /// (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`), with
@@ -282,7 +283,8 @@ pub trait GitApi: Send + Sync {
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
     /// Stage a branch's changes without committing (`merge --squash <branch>`).
     async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()>;
-    /// Merge a branch (`merge [--no-ff] [-m <msg>] <branch>`).
+    /// Merge a branch (`merge [--no-ff] [-m <msg> | --no-edit] <branch>`); with no
+    /// message it takes the default merge message non-interactively (`--no-edit`).
     async fn merge_commit(
         &self,
         dir: &Path,
@@ -307,11 +309,13 @@ pub trait GitApi: Send + Sync {
     async fn reset_merge(&self, dir: &Path) -> Result<()>;
     /// Hard-reset the working tree to a revision (`reset --hard <rev>`).
     async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
-    /// Rebase the current branch onto `onto` (`rebase <onto>`).
+    /// Rebase the current branch onto `onto` (`rebase <onto>`); the editor is
+    /// suppressed (`GIT_EDITOR=true`) so it never hangs a headless caller.
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
     /// Abort an in-progress rebase (`rebase --abort`).
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
-    /// Continue a rebase after resolving conflicts (`rebase --continue`).
+    /// Continue a rebase after resolving conflicts (`rebase --continue`); the
+    /// editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never hangs.
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
     /// Stash the working tree (`stash push`, `--include-untracked` when asked) —
     /// e.g. to save state before a copy-on-write restore.
@@ -785,9 +789,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn fetch(&self, dir: &Path) -> Result<()> {
-        self.core
-            .unit(self.core.command_in(dir, ["fetch", "--quiet"]))
-            .await
+        // `GIT_TERMINAL_PROMPT=0` so a remote needing credentials fails fast
+        // rather than blocking on an interactive prompt — matching the other
+        // remote ops (`fetch_remote_branch`, `push`, `remote_branch_exists`).
+        let cmd = self
+            .core
+            .command_in(dir, ["fetch", "--quiet"])
+            .env("GIT_TERMINAL_PROMPT", "0");
+        self.core.unit(cmd).await
     }
 
     async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()> {
@@ -1616,6 +1625,21 @@ mod tests {
     // The consumer-facing mock seam: a function depending on `&dyn GitApi` is
     // tested with a generated mock.
     #[cfg(feature = "mock")]
+    // `fetch` must disable the credential prompt so it fails fast (never hangs) on
+    // a remote needing auth — matching the other remote ops.
+    #[tokio::test]
+    async fn fetch_disables_terminal_prompt() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.fetch(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["fetch", "--quiet"]);
+        assert!(call.envs.iter().any(|(k, v)| {
+            k.to_str() == Some("GIT_TERMINAL_PROMPT")
+                && v.as_deref().and_then(|o| o.to_str()) == Some("0")
+        }));
+    }
+
     #[tokio::test]
     async fn consumer_mocks_the_interface() {
         async fn on_branch(git: &dyn GitApi, want: &str) -> bool {

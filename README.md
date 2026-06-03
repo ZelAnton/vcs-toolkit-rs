@@ -194,7 +194,8 @@ use vcs_github::{GitHub, GitHubApi};
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
     let gh = GitHub::new();
     if gh.auth_status().await? {
-        let url = gh.pr_create(repo, "My change", "Body", None).await?;
+        // head / base optional: `None` head = current branch, `None` base = repo default.
+        let url = gh.pr_create(repo, "My change", "Body", None, None).await?;
         println!("opened {url}");
     }
 # Ok(()) }

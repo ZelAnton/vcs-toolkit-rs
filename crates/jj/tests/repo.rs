@@ -111,8 +111,7 @@ async fn bookmark_create_set_and_list() {
     // colocated `mark@git` remote-tracking entry are both reported.
     let all = jj.bookmarks_all(dir).await.expect("bookmarks_all");
     assert!(
-        all.iter()
-            .any(|b| b.name == "mark" && b.remote.is_none()),
+        all.iter().any(|b| b.name == "mark" && b.remote.is_none()),
         "expected local 'mark', got {all:?}"
     );
     assert!(

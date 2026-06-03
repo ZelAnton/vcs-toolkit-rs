@@ -24,6 +24,8 @@ crates; tag releases as `vcs-git-v<version>`.
   a headless caller never hangs on `$EDITOR`.
 - `remote_branch_exists` now queries the fully-qualified `refs/heads/<name>` — a
   bare `foo` could tail-match `bar/foo`.
+- `fetch` now runs with `GIT_TERMINAL_PROMPT=0`, matching the other remote ops, so
+  a credentials-needing remote fails fast instead of blocking on a prompt.
 
 ### Fixed
 -
