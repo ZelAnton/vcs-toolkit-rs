@@ -33,16 +33,19 @@ timeouts, the structured `Error`, and the test seams these wrappers build on.
 
 ## Crates
 
-This is a Cargo workspace of three wrapper crates, each **versioned and published
-independently**, all built on the external [`processkit`](https://crates.io/crates/processkit) crate:
+This is a Cargo workspace, each crate **versioned and published independently**:
+three CLI wrappers built on the external
+[`processkit`](https://crates.io/crates/processkit) crate, plus a facade over the
+git/jj pair:
 
 | Crate | Drives | crates.io name |
 |---|---|---|
 | [`crates/git`](crates/git) | the `git` binary | `vcs-git` |
 | [`crates/jj`](crates/jj) | the `jj` (Jujutsu) binary | `vcs-jj` |
 | [`crates/github`](crates/github) | the `gh` (GitHub CLI) binary | `vcs-github` |
+| [`crates/core`](crates/core) | — (facade over `vcs-git`/`vcs-jj`) | `vcs-core` |
 
-Each wrapper exposes an **interface trait** (`GitApi`/`JjApi`/`GitHubApi`) and a
+Each **CLI wrapper** exposes an **interface trait** (`GitApi`/`JjApi`/`GitHubApi`) and a
 real client (`Git`/`Jj`/`GitHub`) with typed, repo-scoped async commands that
 return parsed structs and fail with the structured `processkit::Error`. They build
 on `processkit` (its `CliClient` core, the `cli_client!` macro, the `ProcessRunner`
@@ -277,8 +280,8 @@ suite on Linux/Windows/macOS, `cargo-deny`, and a `cargo package` gate.
 Releases go through the **`Release` GitHub Action** (`workflow_dispatch`) — you
 never type a version. Click *Run workflow* and pick:
 
-- **Crate** — `vcs-git`, `vcs-jj`, `vcs-github`, or **`all`** (release every crate
-  in one run).
+- **Crate** — `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-core`, or **`all`** (release
+  every crate in one run).
 - **Bump** — `patch` / `minor` / `major`.
 
 For each selected crate it reads the current version from that crate's
@@ -288,9 +291,11 @@ promotes its `CHANGELOG.md`, **publishes to crates.io before tagging**
 `<crate>-v<version>`, and opens a GitHub Release from the curated notes. `all`
 does them in a single commit + atomic push.
 
-The wrappers depend on the already-published
-[`processkit`](https://crates.io/crates/processkit) crate, so there is **no
-in-workspace publish ordering** — each wrapper releases independently.
+The CLI wrappers depend only on the already-published
+[`processkit`](https://crates.io/crates/processkit) crate, so they release
+independently. The **`vcs-core` facade is the exception** — it depends on
+`vcs-git`/`vcs-jj`, so `all` publishes it **last**, and its `^0.3` requirement on
+them must stay in range when they cross a minor/major boundary.
 
 ## Conventions
 

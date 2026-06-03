@@ -1,7 +1,8 @@
 # vcs-core
 
-A unified facade over [`vcs-git`](../git) and [`vcs-jj`](../jj): repository
-detection plus a backend-agnostic handle for the operations both tools share.
+A unified facade over [`vcs-git`](https://crates.io/crates/vcs-git) and
+[`vcs-jj`](https://crates.io/crates/vcs-jj): repository detection plus a
+backend-agnostic handle for the operations both tools share.
 
 It exists to lift the "detect git-vs-jj and dispatch behind one interface" layer
 that downstream tools kept re-implementing. Rich, tool-specific operations stay

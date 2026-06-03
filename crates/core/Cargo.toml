@@ -17,6 +17,12 @@ processkit.workspace = true
 vcs-git = { path = "../git", version = "0.3" }
 vcs-jj = { path = "../jj", version = "0.3" }
 
+[features]
+# Forward to the underlying clients' `tracing` (a `debug` event per command).
+# Features aren't re-exported, so this is how a `vcs-core`-only consumer turns it
+# on for both backends at once.
+tracing = ["vcs-git/tracing", "vcs-jj/tracing"]
+
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

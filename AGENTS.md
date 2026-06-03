@@ -90,8 +90,8 @@ compiled as its own crate; prefer shared helpers in `tests/common/mod.rs`.
   comments explain the non-obvious reason — a workaround, a wire contract, a
   performance trade-off. Don't narrate obvious lines.
 - **Match the surrounding code.** Follow the existing module's naming, idioms,
-  error-handling style, and comment density. Keep the three crates parallel:
-  new wrappers should look the same in `vcs-git`, `vcs-jj`, and `vcs-github`.
+  error-handling style, and comment density. Keep the three wrapper crates
+  parallel: new wrappers should look the same in `vcs-git`, `vcs-jj`, and `vcs-github`.
 - **Reuse before you add.** Search for an existing helper before writing a new
   one; avoid duplicating logic.
 - **Conventional-commit subjects.** Write commit subjects as

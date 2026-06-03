@@ -68,3 +68,9 @@ jobs:
       # and verify-builds fully — catching missing files or bad metadata before
       # publish.
       - run: cargo package -p vcs-git -p vcs-jj -p vcs-github
+      # `vcs-core` depends on the in-workspace `vcs-git`/`vcs-jj`; a verify-build
+      # here would resolve those from crates.io, which can lag the local tree. So
+      # check its file list + metadata only (`--no-verify`) — the workspace test
+      # job already verify-builds it against the local path deps, and the release
+      # dry-run does a full verify against the published deps at release time.
+      - run: cargo package -p vcs-core --no-verify
