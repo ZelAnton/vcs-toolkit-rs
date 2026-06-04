@@ -10,6 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-06-04
+
+### Added
 - `Jj::at(dir)` → `JjAt`, a cwd-bound view whose methods omit the leading `dir`
   argument (`jj.at(dir).status()`); the dir-taking `JjApi` stays for driving many
   workspaces from one client.
@@ -171,7 +182,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.1...vcs-jj-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.0...vcs-jj-v0.3.1
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.1...vcs-jj-v0.3.0
 [0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.0...vcs-jj-v0.2.1

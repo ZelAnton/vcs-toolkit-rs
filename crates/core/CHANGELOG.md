@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-04
+
+### Added
 - `Repo::git_at()` / `Repo::jj_at()` — the backend client bound to the handle's
   `cwd` (`GitAt`/`JjAt`), so tool-specific calls drop the `dir` argument:
   `repo.git_at()?.merge_continue().await?`. For another worktree, bind the
@@ -54,5 +65,6 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.1.0...vcs-core-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-core-v0.1.0

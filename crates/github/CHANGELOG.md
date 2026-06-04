@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-06-04
+
+### Added
 - `GitHub::at(dir)` → `GitHubAt`, a cwd-bound view whose repo-scoped methods omit
   the leading `dir` argument (`gh.at(dir).pr_list()`).
 
@@ -148,7 +159,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.3.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.3.1...vcs-github-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.3.0...vcs-github-v0.3.1
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.1...vcs-github-v0.3.0
 [0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.0...vcs-github-v0.2.1

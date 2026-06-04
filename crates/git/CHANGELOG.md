@@ -10,6 +10,17 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-06-04
+
+### Added
 - `Git::at(dir)` → `GitAt`, a cwd-bound view whose methods omit the leading `dir`
   argument (`git.at(dir).status()`), so a caller needn't thread `dir` through every
   call. The dir-taking `GitApi` stays for driving many directories from one client.
@@ -190,7 +201,8 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.3.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.3.1...vcs-git-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.3.0...vcs-git-v0.3.1
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.2.1...vcs-git-v0.3.0
 [0.2.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.2.0...vcs-git-v0.2.1

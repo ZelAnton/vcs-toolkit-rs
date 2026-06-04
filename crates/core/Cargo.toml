@@ -1,6 +1,6 @@
 [package]
 name = "vcs-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified facade over vcs-git and vcs-jj: repo detection and a backend-agnostic VCS handle."
 edition.workspace = true
 license.workspace = true
@@ -14,8 +14,8 @@ readme = "README.md"
 processkit.workspace = true
 # The typed per-tool clients this crate dispatches between. Path within the
 # workspace; `version` is used when published independently.
-vcs-git = { path = "../git", version = "0.3" }
-vcs-jj = { path = "../jj", version = "0.3" }
+vcs-git = { path = "../git", version = "0.4" }
+vcs-jj = { path = "../jj", version = "0.4" }
 # `async fn` in the object-safe `VcsRepo` trait, so a consumer can hold a
 # `Box<dyn VcsRepo>` / `&dyn VcsRepo` instead of threading the runner generic.
 async-trait = "0.1"
