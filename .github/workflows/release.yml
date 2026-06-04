@@ -286,6 +286,15 @@ jobs:
       # Gate: build + package each crate exactly as `cargo publish` would, without
       # uploading — catches build/metadata errors before the irreversible publish.
       # `--locked` asserts Cargo.lock matches the just-bumped manifests.
+      #
+      # Exception: `vcs-core` depends (by version) on `vcs-git`/`vcs-jj`. When those
+      # are being released in the SAME run, their just-bumped versions aren't on the
+      # crates.io index yet, so a registry-resolving `--dry-run` for vcs-core can't
+      # pass here (it would fail `failed to select a version for vcs-git = "^0.x"`).
+      # vcs-core publishes LAST — after its deps go live — and `cargo publish` runs
+      # its own verify build then. So for that case we instead compile vcs-core
+      # against the local (path) deps, which proves it builds without needing the
+      # registry; the packaged verify happens at publish time.
       - name: Verify crates publish (dry run)
         shell: bash
         env:
@@ -293,6 +302,11 @@ jobs:
         run: |
           set -euo pipefail
           while IFS=$'\t' read -r name dir version prev; do
+            if [ "$name" = "vcs-core" ] && grep -qP '^(vcs-git|vcs-jj)\t' "$PLAN"; then
+              echo "verify vcs-core v$version against local path deps (deps publish earlier this run; registry dry-run runs at publish time)"
+              cargo build -p "$name" --locked
+              continue
+            fi
             echo "dry-run publish $name v$version"
             cargo publish -p "$name" --locked --dry-run
           done < "$PLAN"
