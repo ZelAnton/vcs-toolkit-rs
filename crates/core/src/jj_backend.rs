@@ -249,13 +249,13 @@ fn normalize_for_compare(p: &Path) -> PathBuf {
     canonical
 }
 
-/// Project a `jj diff --summary` entry into a [`FileChange`]. jj supplies no
-/// rename source, so `old_path` is always `None`.
+/// Project a `jj diff --summary` entry into a [`FileChange`]. For a rename/copy
+/// the parser supplies the original path; otherwise `old_path` is `None`.
 fn file_change_from_summary(entry: ChangedPath) -> FileChange {
     FileChange {
         kind: change_kind_from_status(entry.status),
         path: entry.path,
-        old_path: None,
+        old_path: entry.old_path,
     }
 }
 

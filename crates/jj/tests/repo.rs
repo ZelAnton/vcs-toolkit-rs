@@ -209,3 +209,27 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     let conflicts = jj.resolve_list(dir, "@").await.expect("resolve_list");
     assert_eq!(conflicts, ["c.txt"], "got {conflicts:?}");
 }
+
+// A renamed tracked file: jj `diff --summary` renders `R {old => new}`; status()
+// must expose the real new path (and the old path), not the raw brace expression.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn status_exposes_rename_paths() {
+    let tmp = TempDir::new("rename");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    std::fs::write(dir.join("old.rs"), "x\n").expect("write");
+    jj.describe(dir, "base").await.expect("describe");
+    jj.new_change(dir, "rename").await.expect("new");
+    std::fs::rename(dir.join("old.rs"), dir.join("new.rs")).expect("rename");
+
+    let changed = jj.status(dir).await.expect("status");
+    let renamed = changed
+        .iter()
+        .find(|c| c.status == 'R')
+        .unwrap_or_else(|| panic!("no rename entry in {changed:?}"));
+    assert_eq!(renamed.path, "new.rs");
+    assert_eq!(renamed.old_path.as_deref(), Some("old.rs"));
+}

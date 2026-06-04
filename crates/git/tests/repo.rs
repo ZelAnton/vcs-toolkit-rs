@@ -231,3 +231,24 @@ async fn bound_view_and_rev_parse_short() {
         "{short} vs {full}"
     );
 }
+
+// diff_text on an unborn repo (no commits) must not error on the unresolvable
+// HEAD — it diffs against the empty tree and shows the staged additions.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn diff_text_works_on_unborn_repo() {
+    let tmp = TempDir::new("unborn");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("f.txt"), "hello\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+
+    assert!(git.is_unborn(dir).await.expect("is_unborn"));
+    let diff = git
+        .diff_text(dir, vcs_git::DiffSpec::WorkingTree)
+        .await
+        .expect("diff_text must not error on unborn repo");
+    assert!(diff.contains("f.txt"), "expected the new file in: {diff}");
+}

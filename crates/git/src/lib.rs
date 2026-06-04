@@ -208,7 +208,9 @@ pub trait GitApi: Send + Sync {
     /// Whether `HEAD` is unborn — a fresh repo with no commits yet
     /// (`git rev-parse --verify -q HEAD`, exit-code mapped).
     async fn is_unborn(&self, dir: &Path) -> Result<bool>;
-    /// Whether the working tree has no unstaged changes (`git diff --quiet`).
+    /// Whether the working tree has no unstaged modifications to **tracked** files
+    /// (`git diff --quiet`). Untracked files are *not* counted — this is not a full
+    /// "is the working tree clean?" check; use [`status`](GitApi::status) for that.
     async fn diff_is_empty(&self, dir: &Path) -> Result<bool>;
 
     // --- Discovery / identity ------------------------------------------------
@@ -648,11 +650,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .core
             .text(self.core.command_in(dir, ["branch", "--merged", target]))
             .await?;
-        // Each line is `  name` / `* name` (current) / `+ name` (checked out in
-        // another worktree); strip the marker before comparing.
+        // Each line is a fixed 2-column marker (`  `/`* `/`+ `) then the name;
+        // drop exactly those two columns rather than trimming a char class (which
+        // would over-strip a name that legitimately began with the marker char).
         Ok(out
             .lines()
-            .map(|line| line.trim_start_matches(['*', '+', ' ']))
+            .filter_map(|line| line.get(2..))
             .any(|b| b == branch))
     }
 
@@ -711,7 +714,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // the caller's revision/range. `-M` enables rename detection; `--no-color`
         // / `--no-ext-diff` keep the output stable and machine-parseable.
         let target = match spec {
-            DiffSpec::WorkingTree => "HEAD".to_string(),
+            DiffSpec::WorkingTree => {
+                // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
+                // diff against the empty tree so a pre-first-commit working tree
+                // still yields its additions instead of a hard failure.
+                if self.is_unborn(dir).await? {
+                    EMPTY_TREE.to_string()
+                } else {
+                    "HEAD".to_string()
+                }
+            }
             DiffSpec::Rev(rev) => rev,
         };
         self.core
@@ -840,8 +852,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_continue(&self, dir: &Path) -> Result<()> {
+        // `--no-edit` already reuses the prepared MERGE_MSG; `no_editor` is a
+        // headless backstop so a commit hook re-opening the editor can't hang.
         self.core
-            .unit(self.core.command_in(dir, ["commit", "--no-edit"]))
+            .unit(no_editor(
+                self.core.command_in(dir, ["commit", "--no-edit"]),
+            ))
             .await
     }
 
@@ -947,8 +963,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 //
 // git writes load-bearing diagnostics to *either* stream on failure — `CONFLICT
 // (content): …` to stdout, `Automatic merge failed …` to stderr — so these probe
-// both fields of `Error::Exit` (the `stdout` field is new in processkit 0.5).
-// Consumers call these instead of re-implementing the string-scraping themselves.
+// both `stdout` and `stderr` of `Error::Exit`. Consumers call these instead of
+// re-implementing the string-scraping themselves.
+
+/// Git's well-known empty-tree object id — a stable stand-in for `HEAD` when
+/// diffing the working tree of an unborn (no-commits-yet) repository.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Total attempts for a transient-retried `fetch` (1 try + 2 retries).
 const FETCH_ATTEMPTS: u32 = 3;
@@ -1452,15 +1472,34 @@ mod tests {
     // machine-output flags, in order.
     #[tokio::test]
     async fn diff_text_builds_working_tree_args() {
+        // The `rev-parse` unborn probe replies exit 0 (HEAD resolves), so the diff
+        // targets HEAD. The probe is the first call; the diff is the last.
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.diff_text(Path::new("."), DiffSpec::WorkingTree)
             .await
             .expect("diff_text");
         assert_eq!(
-            rec.only_call().args_str(),
+            rec.calls().last().unwrap().args_str(),
             ["diff", "HEAD", "--no-color", "--no-ext-diff", "-M"]
         );
+    }
+
+    // On an unborn repo the working-tree diff targets the empty tree instead of
+    // the unresolvable `HEAD`, so it returns additions rather than erroring. The
+    // diff rule only matches the empty-tree argv, so a `HEAD` target would miss it.
+    #[tokio::test]
+    async fn diff_text_working_tree_uses_empty_tree_when_unborn() {
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["rev-parse"], Reply::fail(1, "")) // unborn: HEAD doesn't resolve
+                .on(["diff", EMPTY_TREE], Reply::ok("EMPTY")),
+        );
+        let out = git
+            .diff_text(Path::new("."), DiffSpec::WorkingTree)
+            .await
+            .expect("diff_text");
+        assert_eq!(out, "EMPTY");
     }
 
     // Hermetic: real diff() arg-building (`Rev`) + the ported parser against

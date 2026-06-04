@@ -52,14 +52,18 @@ pub struct Workspace {
 }
 
 /// One entry from `jj diff --summary`: a single-letter status (`M`/`A`/`D`/…)
-/// and the path it applies to.
+/// and the (forward-slash-normalised) path it applies to — the *new* path for a
+/// rename/copy, with the original on [`old_path`](ChangedPath::old_path).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ChangedPath {
-    /// Status letter (`M` modified, `A` added, `D` deleted, …).
+    /// Status letter (`M` modified, `A` added, `D` deleted, `R` renamed,
+    /// `C` copied).
     pub status: char,
-    /// The path the status applies to.
+    /// The path the status applies to — the *new* path for a rename/copy.
     pub path: String,
+    /// For a rename (`R`) or copy (`C`), the original path; `None` otherwise.
+    pub old_path: Option<String>,
 }
 
 /// Aggregate line/file counts from the `jj diff --stat` summary footer.
@@ -255,13 +259,14 @@ pub(crate) fn parse_reachable_bookmarks(output: &str) -> Vec<Bookmark> {
 
 /// Parse `jj resolve --list` output: each line is a conflicted path left-aligned
 /// in a column, then a run of spaces, then a human conflict description. Take the
-/// path (the text before the first 2-space gap).
+/// path (the text before the first 2-space gap), forward-slash normalised (jj
+/// emits the OS-native separator here, like `--summary`).
 pub(crate) fn parse_resolve_list(output: &str) -> Vec<String> {
     output
         .lines()
         .filter_map(|line| {
             let path = line.split("  ").next().unwrap_or(line).trim();
-            (!path.is_empty()).then(|| path.to_string())
+            (!path.is_empty()).then(|| path.replace('\\', "/"))
         })
         .collect()
 }
@@ -292,25 +297,65 @@ pub(crate) fn parse_workspaces(output: &str) -> Vec<Workspace> {
         .collect()
 }
 
-/// Parse `jj diff --summary`: each line is `<status-letter> <path>`.
+/// Parse `jj diff --summary`: each line is `<status-letter> <path>`. For a rename
+/// (`R`) or copy (`C`) jj renders the path as `prefix{old => new}suffix` rather than
+/// a plain path, so those are expanded into the real new path (and the old path is
+/// captured on [`ChangedPath::old_path`]). Paths are forward-slash normalised —
+/// jj's `--summary` uses the OS-native separator, unlike its `--git` diff (and git
+/// itself), so this keeps the unified DTO consistent across backends/platforms.
 pub(crate) fn parse_diff_summary(output: &str) -> Vec<ChangedPath> {
+    let normalize = |p: String| p.replace('\\', "/");
     output
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
             let mut chars = line.chars();
             let status = chars.next()?;
-            // Skip the single separating space; the remainder is the raw path.
-            let path = chars.as_str().strip_prefix(' ').unwrap_or(chars.as_str());
-            if path.is_empty() {
+            // Require the single separating space; the remainder is the raw path.
+            let raw = chars.as_str().strip_prefix(' ')?;
+            if raw.is_empty() {
                 return None;
             }
+            let (old_path, path) = if matches!(status, 'R' | 'C') {
+                let (old, new) = expand_rename(raw);
+                (Some(normalize(old)), normalize(new))
+            } else {
+                (None, normalize(raw.to_string()))
+            };
             Some(ChangedPath {
                 status,
-                path: path.to_string(),
+                path,
+                old_path,
             })
         })
         .collect()
+}
+
+/// Expand jj's rename/copy path form `prefix{left => right}suffix` into
+/// `(old, new)` full paths. Falls back to `(raw, raw)` when the brace/arrow form
+/// isn't present, so a plain path is returned unchanged.
+fn expand_rename(raw: &str) -> (String, String) {
+    let plain = || (raw.to_string(), raw.to_string());
+    // `{`, `}`, and ` => ` are ASCII, so these byte offsets land on char
+    // boundaries even when the surrounding path is non-ASCII.
+    let (Some(open), Some(close)) = (raw.find('{'), raw.find('}')) else {
+        return plain();
+    };
+    if open >= close {
+        return plain();
+    }
+    let Some(rel) = raw[open..close].find(" => ") else {
+        return plain();
+    };
+    let arrow = open + rel;
+    let prefix = &raw[..open];
+    let left = &raw[open + 1..arrow];
+    let right = &raw[arrow + 4..close];
+    let suffix = &raw[close + 1..];
+    (
+        format!("{prefix}{left}{suffix}"),
+        format!("{prefix}{right}{suffix}"),
+    )
 }
 
 /// Parse the summary footer of `jj diff --stat`, e.g. `4 files changed, 157
@@ -539,6 +584,11 @@ mod tests {
         );
         assert_eq!(got, vec!["src/a.rs".to_string(), "b.txt".to_string()]);
         assert!(parse_resolve_list("").is_empty());
+        // OS-native backslash separators (Windows) are normalised to `/`.
+        assert_eq!(
+            parse_resolve_list("sub\\c.txt    2-sided conflict\n"),
+            vec!["sub/c.txt".to_string()]
+        );
     }
 
     #[test]
@@ -583,7 +633,35 @@ mod tests {
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].status, 'M');
         assert_eq!(got[1].path, "new file.txt");
+        assert!(got[1].old_path.is_none());
         assert_eq!(got[2].status, 'D');
+    }
+
+    // jj renders a rename/copy path as `prefix{old => new}suffix` (verified against
+    // jj 0.38); it must be expanded into the real new path with the old path
+    // captured — not stored raw. A plain `M`/`A`/`D` path is left untouched.
+    #[test]
+    fn diff_summary_expands_rename_and_copy() {
+        let got =
+            parse_diff_summary("R {old.rs => new.rs}\nC sub/{a.rs => b.rs}\nM lit{eral}.rs\n");
+        assert_eq!(got[0].status, 'R');
+        assert_eq!(got[0].path, "new.rs");
+        assert_eq!(got[0].old_path.as_deref(), Some("old.rs"));
+        assert_eq!(got[1].path, "sub/b.rs");
+        assert_eq!(got[1].old_path.as_deref(), Some("sub/a.rs"));
+        // A literal `{...}` in a non-rename path (no ` => `) is not mis-expanded.
+        assert_eq!(got[2].path, "lit{eral}.rs");
+        assert!(got[2].old_path.is_none());
+    }
+
+    // jj `--summary` emits OS-native separators (backslashes on Windows); paths are
+    // normalised to forward slashes to match the `--git` diff and the git backend.
+    #[test]
+    fn diff_summary_normalises_backslash_separators() {
+        let got = parse_diff_summary("M deep\\nested\\f.rs\nR win\\{a.rs => b.rs}\n");
+        assert_eq!(got[0].path, "deep/nested/f.rs");
+        assert_eq!(got[1].path, "win/b.rs");
+        assert_eq!(got[1].old_path.as_deref(), Some("win/a.rs"));
     }
 
     #[test]
