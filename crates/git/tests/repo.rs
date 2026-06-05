@@ -352,3 +352,181 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
     );
     assert!(dir.join("new.txt").exists(), "untracked file must survive");
 }
+
+// Clone from a local bare fixture: the worktree materialises and history reads.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn clone_repo_from_local_bare_remote() {
+    let tmp = TempDir::new("clone");
+    let bare = common::bare_remote(tmp.path());
+    let dest = tmp.path().join("cloned");
+    let git = Git::new();
+
+    git.clone_repo(
+        bare.to_str().expect("utf8"),
+        &dest,
+        vcs_git::CloneSpec::new().branch("main"),
+    )
+    .await
+    .expect("clone");
+    assert!(dest.join("seed.txt").exists(), "worktree materialised");
+    let log = git.log(&dest, 10).await.expect("log");
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].subject, "seed");
+    assert_eq!(git.current_branch(&dest).await.expect("branch"), "main");
+}
+
+// Tag cycle, file-at-revision, config and remote management round-trips.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn tags_show_config_and_remotes_round_trip() {
+    let tmp = TempDir::new("misc");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::create_dir_all(dir.join("sub")).expect("mkdir");
+    std::fs::write(dir.join("sub").join("f.txt"), "v1\n").expect("write");
+    git.add(dir, &[PathBuf::from("sub/f.txt")])
+        .await
+        .expect("add");
+    git.commit(dir, "base").await.expect("commit");
+
+    // Tags: lightweight + annotated, list, delete.
+    git.tag_create(dir, "v1", None).await.expect("tag");
+    git.tag_create_annotated(dir, "v1.1", "first release", None)
+        .await
+        .expect("tag -a");
+    assert_eq!(git.tag_list(dir).await.expect("list"), ["v1", "v1.1"]);
+    git.tag_delete(dir, "v1").await.expect("delete");
+    assert_eq!(git.tag_list(dir).await.expect("list"), ["v1.1"]);
+
+    // show_file resolves a subdir path — exercised with BACKSLASH separators
+    // on purpose (the Windows trap; normalised internally).
+    assert_eq!(
+        git.show_file(dir, "HEAD", r"sub\f.txt")
+            .await
+            .expect("show"),
+        "v1"
+    );
+
+    // Config: set → get → unset key reads as None.
+    git.config_set(dir, "vcs.test", "yes").await.expect("set");
+    assert_eq!(
+        git.config_get(dir, "vcs.test").await.expect("get"),
+        Some("yes".to_string())
+    );
+    assert_eq!(
+        git.config_get(dir, "vcs.unset-key").await.expect("get"),
+        None
+    );
+
+    // Remotes: add, then re-point.
+    git.remote_add(dir, "up", "https://example.com/a.git")
+        .await
+        .expect("remote add");
+    git.remote_set_url(dir, "up", "https://example.com/b.git")
+        .await
+        .expect("set-url");
+    assert_eq!(
+        git.remote_url(dir, "up").await.expect("url"),
+        "https://example.com/b.git"
+    );
+}
+
+// blame maps lines to the commits that introduced them; cherry-pick and revert
+// transplant/undo a commit.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn blame_cherry_pick_and_revert_cycle() {
+    let tmp = TempDir::new("blame");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    // cherry-pick/revert re-check files out; keep byte-exact content
+    // assertions valid on Windows (autocrlf would rewrite LF → CRLF).
+    git.config_set(dir, "core.autocrlf", "false")
+        .await
+        .expect("config");
+    std::fs::write(dir.join("f.txt"), "one\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "first").await.expect("commit");
+    let first = git.rev_parse(dir, "HEAD").await.expect("rev");
+    std::fs::write(dir.join("f.txt"), "one\ntwo\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "second").await.expect("commit");
+    let second = git.rev_parse(dir, "HEAD").await.expect("rev");
+
+    let blame = git.blame(dir, "f.txt", None).await.expect("blame");
+    assert_eq!(blame.len(), 2);
+    assert_eq!(blame[0].commit, first, "line 1 from the first commit");
+    assert_eq!(blame[1].commit, second, "line 2 from the second commit");
+    assert_eq!(blame[0].author, "Test");
+    assert!(blame[0].author_time > 1_500_000_000, "sane epoch");
+    assert_eq!(blame[1].content, "two");
+
+    // Transplant "second" onto a branch cut at "first".
+    git.create_branch(dir, "side").await.expect("branch");
+    git.checkout(dir, "side").await.expect("checkout");
+    git.reset_hard(dir, &first).await.expect("reset");
+    git.cherry_pick(dir, &second).await.expect("cherry-pick");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("f.txt")).expect("read"),
+        "one\ntwo\n"
+    );
+    // And revert it again.
+    git.revert(dir, "HEAD").await.expect("revert");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("f.txt")).expect("read"),
+        "one\n"
+    );
+}
+
+// rebase_skip: only the `apply` backend refuses an emptied patch ("nothing to
+// commit … skip this patch") — the default merge backend auto-drops it.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn rebase_skip_finishes_an_emptied_patch() {
+    let tmp = TempDir::new("skip");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::process::Command::new(vcs_git::BINARY)
+        .current_dir(dir)
+        .args(["config", "rebase.backend", "apply"])
+        .status()
+        .expect("git config");
+
+    std::fs::write(dir.join("f.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    let main = git.current_branch(dir).await.expect("branch");
+    // A stack commit whose content the base branch then also adopts.
+    git.create_branch(dir, "stack").await.expect("branch");
+    git.checkout(dir, "stack").await.expect("checkout");
+    std::fs::write(dir.join("f.txt"), "same change\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "stack change").await.expect("commit");
+    git.checkout(dir, &main).await.expect("checkout");
+    std::fs::write(dir.join("f.txt"), "upstream version\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    git.commit(dir, "upstream change").await.expect("commit");
+    git.checkout(dir, "stack").await.expect("checkout");
+
+    // The rebase conflicts; resolving to EXACTLY the upstream content empties
+    // the patch, so --continue refuses and --skip is the way out.
+    assert!(git.rebase(dir, &main).await.is_err(), "conflict expected");
+    std::fs::write(dir.join("f.txt"), "upstream version\n").expect("resolve");
+    git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
+    assert!(
+        git.rebase_continue(dir).await.is_err(),
+        "apply backend refuses the emptied patch"
+    );
+    git.rebase_skip(dir).await.expect("rebase --skip");
+    assert!(
+        !git.is_rebase_in_progress(dir).await.expect("state"),
+        "rebase finished after the skip"
+    );
+}

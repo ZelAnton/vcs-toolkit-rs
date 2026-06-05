@@ -296,3 +296,139 @@ async fn transaction_rolls_back_on_error_and_keeps_success() {
         "after"
     );
 }
+
+// git_clone from a local bare fixture, plain and colocated.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn git_clone_from_local_bare_remote() {
+    let tmp = TempDir::new("clone");
+    let bare = common::bare_remote(tmp.path());
+    let jj = Jj::new();
+
+    let plain = tmp.path().join("plain");
+    jj.git_clone(bare.to_str().expect("utf8"), &plain, false)
+        .await
+        .expect("clone");
+    assert!(plain.join(".jj").is_dir(), "jj repo materialised");
+    assert!(
+        !plain.join(".git").exists(),
+        "explicit --no-colocate wins over any version/config default"
+    );
+    assert!(plain.join("seed.txt").exists(), "worktree materialised");
+
+    let colocated = tmp.path().join("colocated");
+    jj.git_clone(bare.to_str().expect("utf8"), &colocated, true)
+        .await
+        .expect("clone --colocate");
+    assert!(colocated.join(".jj").is_dir());
+    assert!(colocated.join(".git").exists(), "colocated keeps .git");
+}
+
+// absorb folds an edit into the change that introduced the lines; split carves
+// named paths into their own commit; duplicate copies a commit.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn absorb_split_and_duplicate_cycle() {
+    let tmp = TempDir::new("absorb");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    // Base change introduces two files.
+    std::fs::write(dir.join("a.txt"), "alpha\n").expect("write");
+    std::fs::write(dir.join("b.txt"), "beta\n").expect("write");
+    jj.describe(dir, "base").await.expect("describe");
+    jj.new_change(dir, "wip").await.expect("new");
+
+    // Absorb: an edit to a.txt belongs to "base" and must fold back into it.
+    std::fs::write(dir.join("a.txt"), "alpha edited\n").expect("edit");
+    jj.absorb(dir, None, &[]).await.expect("absorb");
+    assert!(
+        jj.current_change(dir).await.expect("change").empty,
+        "the edit was absorbed out of the working copy"
+    );
+    assert_eq!(
+        jj.file_show(dir, "@-", "a.txt").await.expect("show"),
+        "alpha edited",
+        "the base change now carries the edit"
+    );
+
+    // Split operates on @ — put a fresh edit into @ across two files, then
+    // carve one of them out into its own described commit.
+    assert_eq!(
+        jj.description(dir, "@-").await.expect("description"),
+        "base"
+    );
+    std::fs::write(dir.join("c.txt"), "gamma\n").expect("write");
+    std::fs::write(dir.join("d.txt"), "delta\n").expect("write");
+    jj.split_paths(dir, &[vcs_jj::JjFileset::path("c.txt")], "carve c")
+        .await
+        .expect("split");
+    assert_eq!(
+        jj.description(dir, "@-").await.expect("description"),
+        "carve c",
+        "the named fileset landed in its own commit"
+    );
+    assert_eq!(
+        jj.file_show(dir, "@-", "c.txt").await.expect("show"),
+        "gamma"
+    );
+
+    // Duplicate: copying @- adds a commit without moving @.
+    let before = jj.commit_count(dir, "all()").await.expect("count");
+    jj.duplicate(dir, "@-").await.expect("duplicate");
+    let after = jj.commit_count(dir, "all()").await.expect("count");
+    assert_eq!(after, before + 1, "one duplicated commit");
+}
+
+// op_log lists recent operations; evolog tracks a change's rewrites; annotate
+// maps lines to the changes that introduced them.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn op_log_evolog_and_annotate_cycle() {
+    let tmp = TempDir::new("oplog");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    std::fs::write(dir.join("f.txt"), "one\n").expect("write");
+    jj.describe(dir, "first words").await.expect("describe");
+    jj.describe(dir, "better words").await.expect("re-describe");
+
+    let ops = jj.op_log(dir, 5).await.expect("op_log");
+    assert!(ops.len() >= 3, "init + snapshots/describes, got {ops:?}");
+    assert!(ops.iter().all(|op| !op.id.is_empty()));
+    assert!(
+        ops.iter().any(|op| op.description.contains("describe")),
+        "a describe op is listed: {ops:?}"
+    );
+    // The newest op id matches op_head.
+    assert_eq!(ops[0].id, jj.op_head(dir).await.expect("op_head"));
+
+    // evolog: the re-described change has at least two recorded versions.
+    let evolution = jj.evolog(dir, "@", 10).await.expect("evolog");
+    assert!(evolution.len() >= 2, "got {evolution:?}");
+    assert_eq!(evolution[0].description, "better words", "newest first");
+    assert!(
+        evolution
+            .iter()
+            .any(|c| c.description == "first words" || c.description.is_empty()),
+        "an earlier version is recorded: {evolution:?}"
+    );
+
+    // annotate: both lines map to the changes that introduced them.
+    jj.new_change(dir, "second line").await.expect("new");
+    std::fs::write(dir.join("f.txt"), "one\ntwo\n").expect("edit");
+    let lines = jj
+        .file_annotate(dir, "f.txt", None)
+        .await
+        .expect("annotate");
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].line, 1);
+    assert_eq!(lines[1].line, 2);
+    assert_ne!(
+        lines[0].change_id, lines[1].change_id,
+        "lines came from different changes"
+    );
+    assert_eq!(lines[1].content, "two");
+}

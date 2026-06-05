@@ -29,7 +29,8 @@ pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
 pub use parse::{
-    Branch, ChangeKind, Commit, DiffLine, DiffStat, FileDiff, Hunk, StatusEntry, Worktree,
+    BlameLine, Branch, ChangeKind, Commit, DiffLine, DiffStat, FileDiff, Hunk, StatusEntry,
+    Worktree,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -146,6 +147,49 @@ impl GitPush {
     /// Record the pushed branch as the local branch's upstream (`-u`).
     pub fn set_upstream(mut self) -> Self {
         self.set_upstream = true;
+        self
+    }
+}
+
+/// Options for [`GitApi::clone_repo`] (`git clone`).
+///
+/// `#[non_exhaustive]`, so build it through [`CloneSpec::new`] and the chained
+/// setters rather than a struct literal.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct CloneSpec {
+    /// Check out this branch instead of the remote's default (`--branch`).
+    pub branch: Option<String>,
+    /// Shallow-clone to this many commits (`--depth`). git silently ignores
+    /// the flag for a plain local-path source (warns, still clones fully);
+    /// use a `file://` URL to shallow-clone locally.
+    pub depth: Option<u32>,
+    /// Create a bare repository (`--bare`).
+    pub bare: bool,
+}
+
+impl CloneSpec {
+    /// A plain full clone of the remote's default branch.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check out `branch` instead of the remote's default (`--branch`).
+    pub fn branch(mut self, branch: impl Into<String>) -> Self {
+        self.branch = Some(branch.into());
+        self
+    }
+
+    /// Shallow-clone to `depth` commits (`--depth`); see the field doc for the
+    /// local-path caveat.
+    pub fn depth(mut self, depth: u32) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Clone as a bare repository (`--bare`).
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 }
@@ -352,6 +396,56 @@ pub trait GitApi: Send + Sync {
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
     /// Prune stale worktree admin entries (`worktree prune`).
     async fn worktree_prune(&self, dir: &Path) -> Result<()>;
+
+    // --- Clone / tags / inspection --------------------------------------------
+
+    /// Clone `url` into `dest` (`git clone <url> <dest>` + [`CloneSpec`] flags).
+    /// Runs without a working directory — pass an **absolute** `dest`.
+    async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
+    /// Create a lightweight tag at `rev` (`tag <name> [<rev>]`; `None` = HEAD).
+    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()>;
+    /// Create an annotated tag (`tag -a <name> -m <message> [<rev>]`).
+    async fn tag_create_annotated(
+        &self,
+        dir: &Path,
+        name: &str,
+        message: &str,
+        rev: Option<String>,
+    ) -> Result<()>;
+    /// Tag names, sorted by git's default ordering (`tag --list`).
+    async fn tag_list(&self, dir: &Path) -> Result<Vec<String>>;
+    /// Delete a tag (`tag -d <name>`).
+    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()>;
+    /// A file's content at a revision (`git show <rev>:<path>`). `path` is
+    /// repo-relative; backslashes are normalised to `/` (git requires it).
+    /// Content is decoded **lossily** — binary files come back mangled rather
+    /// than erroring.
+    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String>;
+    /// The value of a config key, or `None` when unset (`config --get <key>`,
+    /// whose exit 1 covers both "unset" and "no such section" — git doesn't
+    /// distinguish). A multi-valued key errors; read those via `run`.
+    async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>>;
+    /// Set a config key in the repository's local config (`config <key> <value>`).
+    async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
+    /// Add a remote (`remote add <name> <url>`).
+    async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+    /// Change a remote's URL (`remote set-url <name> <url>`).
+    async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+    /// Per-line authorship of `path` (`blame --line-porcelain [<rev>] -- <path>`;
+    /// `None` = the working tree's HEAD).
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
+
+    // --- Sequencer -------------------------------------------------------------
+
+    /// Apply a commit onto the current branch (`cherry-pick <rev>`). A conflict
+    /// surfaces as an error classified by [`is_merge_conflict`].
+    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()>;
+    /// Revert a commit with the default message (`revert --no-edit <rev>`).
+    async fn revert(&self, dir: &Path, rev: &str) -> Result<()>;
+    /// Skip the current patch of a paused rebase (`rebase --skip`). Mainly for
+    /// the `apply` backend's "nothing to commit" stop — the default `merge`
+    /// backend auto-drops emptied patches on `--continue`.
+    async fn rebase_skip(&self, dir: &Path) -> Result<()>;
 }
 
 processkit::cli_client!(
@@ -1002,6 +1096,138 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .unit(self.core.command_in(dir, ["worktree", "prune"]))
             .await
     }
+
+    async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()> {
+        // No working directory: clone creates `dest` itself, so `dest` should
+        // be absolute (a relative path would resolve against this process' cwd).
+        let mut command = self.core.command(["clone"]);
+        if let Some(branch) = spec.branch.as_deref() {
+            command = command.arg("--branch").arg(branch);
+        }
+        if let Some(depth) = spec.depth {
+            command = command.arg("--depth").arg(depth.to_string());
+        }
+        if spec.bare {
+            command = command.arg("--bare");
+        }
+        let command = command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0");
+        self.core.unit(command).await
+    }
+
+    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()> {
+        let mut args = vec!["tag", name];
+        if let Some(rev) = rev.as_deref() {
+            args.push(rev);
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn tag_create_annotated(
+        &self,
+        dir: &Path,
+        name: &str,
+        message: &str,
+        rev: Option<String>,
+    ) -> Result<()> {
+        let mut args = vec!["tag", "-a", name, "-m", message];
+        if let Some(rev) = rev.as_deref() {
+            args.push(rev);
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn tag_list(&self, dir: &Path) -> Result<Vec<String>> {
+        let out = self
+            .core
+            .text(self.core.command_in(dir, ["tag", "--list"]))
+            .await?;
+        Ok(out.lines().map(str::to_string).collect())
+    }
+
+    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["tag", "-d", name]))
+            .await
+    }
+
+    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String> {
+        // git rejects backslash separators in the `<rev>:<path>` spec ("exists
+        // on disk, but not in <rev>") — normalise for Windows callers.
+        let spec = format!("{rev}:{}", path.replace('\\', "/"));
+        self.core
+            .text(self.core.command_in(dir, ["show", spec.as_str()]))
+            .await
+    }
+
+    async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>> {
+        let res = self
+            .core
+            .capture(self.core.command_in(dir, ["config", "--get", key]))
+            .await?;
+        match res.code() {
+            // Exit 1 = unset (git lumps "no such key/section" in here too).
+            Some(1) => Ok(None),
+            Some(0) => Ok(Some(res.stdout().trim_end().to_string())),
+            _ => {
+                res.ensure_success()?;
+                Ok(None) // unreachable: a non-zero exit always errors above.
+            }
+        }
+    }
+
+    async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["config", key, value]))
+            .await
+    }
+
+    async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["remote", "add", name, url]))
+            .await
+    }
+
+    async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        self.core
+            .unit(self.core.command_in(dir, ["remote", "set-url", name, url]))
+            .await
+    }
+
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>> {
+        let mut args = vec!["blame", "--line-porcelain"];
+        if let Some(rev) = rev.as_deref() {
+            args.push(rev);
+        }
+        args.push("--");
+        args.push(path);
+        self.core
+            .parse(
+                self.core.command_in(dir, args),
+                parse::parse_blame_porcelain,
+            )
+            .await
+    }
+
+    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()> {
+        // No editor opens non-interactively, but keep the headless backstop.
+        self.core
+            .unit(no_editor(self.core.command_in(dir, ["cherry-pick", rev])))
+            .await
+    }
+
+    async fn revert(&self, dir: &Path, rev: &str) -> Result<()> {
+        self.core
+            .unit(no_editor(
+                self.core.command_in(dir, ["revert", "--no-edit", rev]),
+            ))
+            .await
+    }
+
+    async fn rebase_skip(&self, dir: &Path) -> Result<()> {
+        self.core
+            .unit(no_editor(self.core.command_in(dir, ["rebase", "--skip"])))
+            .await
+    }
 }
 
 // --- Error classification ----------------------------------------------------
@@ -1204,6 +1430,7 @@ git_at_forwarders! {
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn clone_repo(url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
     }
     dir {
         fn status() -> Result<Vec<StatusEntry>>;
@@ -1269,6 +1496,19 @@ git_at_forwarders! {
         fn worktree_remove(path: &Path, force: bool) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
+        fn tag_create(name: &str, rev: Option<String>) -> Result<()>;
+        fn tag_create_annotated(name: &str, message: &str, rev: Option<String>) -> Result<()>;
+        fn tag_list() -> Result<Vec<String>>;
+        fn tag_delete(name: &str) -> Result<()>;
+        fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn config_get(key: &str) -> Result<Option<String>>;
+        fn config_set(key: &str, value: &str) -> Result<()>;
+        fn remote_add(name: &str, url: &str) -> Result<()>;
+        fn remote_set_url(name: &str, url: &str) -> Result<()>;
+        fn blame(path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
+        fn cherry_pick(rev: &str) -> Result<()>;
+        fn revert(rev: &str) -> Result<()>;
+        fn rebase_skip() -> Result<()>;
     }
 }
 
@@ -1340,11 +1580,15 @@ mod tests {
         // One of the new query methods.
         git.conflicted_files(dir).await.unwrap();
         git.at(dir).conflicted_files().await.unwrap();
+        // One of the §4 additions.
+        git.tag_delete(dir, "v1").await.unwrap();
+        git.at(dir).tag_delete("v1").await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[4].args_str(), calls[5].args_str());
+        assert_eq!(calls[6].args_str(), calls[7].args_str());
         // The bound calls also carried the bound dir as their working directory.
         assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
         assert_eq!(calls[3].cwd.as_deref(), Some(dir.as_os_str()));
@@ -1953,6 +2197,174 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), 1);
+    }
+
+    // clone_repo is dir-less and appends only the requested flags.
+    #[tokio::test]
+    async fn clone_repo_builds_flags_and_runs_dirless() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clone_repo(
+            "https://example.com/r.git",
+            Path::new("/dest"),
+            CloneSpec::new().branch("main").depth(1).bare(),
+        )
+        .await
+        .expect("clone");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "clone",
+                "--branch",
+                "main",
+                "--depth",
+                "1",
+                "--bare",
+                "https://example.com/r.git",
+                "/dest"
+            ]
+        );
+        assert_eq!(call.cwd, None, "clone runs without a working directory");
+
+        let bare = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&bare);
+        git.clone_repo("u", Path::new("/d"), CloneSpec::new())
+            .await
+            .expect("clone");
+        assert_eq!(bare.only_call().args_str(), ["clone", "u", "/d"]);
+    }
+
+    #[tokio::test]
+    async fn tag_methods_build_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.tag_create(Path::new("/r"), "v1", None).await.unwrap();
+        git.tag_create(Path::new("/r"), "v1", Some("abc".into()))
+            .await
+            .unwrap();
+        git.tag_create_annotated(Path::new("/r"), "v2", "notes", None)
+            .await
+            .unwrap();
+        git.tag_delete(Path::new("/r"), "v1").await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["tag", "v1"]);
+        assert_eq!(calls[1].args_str(), ["tag", "v1", "abc"]);
+        assert_eq!(calls[2].args_str(), ["tag", "-a", "v2", "-m", "notes"]);
+        assert_eq!(calls[3].args_str(), ["tag", "-d", "v1"]);
+    }
+
+    #[tokio::test]
+    async fn tag_list_splits_lines() {
+        let git =
+            Git::with_runner(ScriptedRunner::new().on(["tag", "--list"], Reply::ok("v1\nv2.0\n")));
+        assert_eq!(git.tag_list(Path::new(".")).await.unwrap(), ["v1", "v2.0"]);
+    }
+
+    // The `<rev>:<path>` spec requires forward slashes — Windows callers may
+    // hand in backslashes.
+    #[tokio::test]
+    async fn show_file_normalises_path_separators() {
+        let rec = RecordingRunner::replying(Reply::ok("content\n"));
+        let git = Git::with_runner(&rec);
+        let out = git
+            .show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
+            .await
+            .expect("show_file");
+        assert_eq!(out, "content");
+        assert_eq!(rec.only_call().args_str(), ["show", "HEAD:sub/dir/f.txt"]);
+    }
+
+    // config --get: exit 0 → Some(value), exit 1 → None (unset), other → error.
+    #[tokio::test]
+    async fn config_get_maps_exit_codes() {
+        let set =
+            Git::with_runner(ScriptedRunner::new().on(["config", "--get"], Reply::ok("Alice\n")));
+        assert_eq!(
+            set.config_get(Path::new("."), "user.name").await.unwrap(),
+            Some("Alice".to_string())
+        );
+        let unset =
+            Git::with_runner(ScriptedRunner::new().on(["config", "--get"], Reply::fail(1, "")));
+        assert_eq!(
+            unset.config_get(Path::new("."), "user.name").await.unwrap(),
+            None
+        );
+        // A multi-valued key (exit 2) or worse is a real error.
+        let multi = Git::with_runner(
+            ScriptedRunner::new().on(["config", "--get"], Reply::fail(2, "multiple values")),
+        );
+        assert!(
+            multi
+                .config_get(Path::new("."), "remote.all")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn blame_builds_rev_before_pathspec_separator() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.blame(Path::new("/r"), "src/lib.rs", Some("HEAD~1".into()))
+            .await
+            .unwrap();
+        git.blame(Path::new("/r"), "src/lib.rs", None)
+            .await
+            .unwrap();
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["blame", "--line-porcelain", "HEAD~1", "--", "src/lib.rs"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["blame", "--line-porcelain", "--", "src/lib.rs"]
+        );
+    }
+
+    // revert must never open an editor: --no-edit plus the env backstop.
+    #[tokio::test]
+    async fn sequencer_methods_suppress_editors() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.revert(Path::new("/r"), "abc").await.unwrap();
+        git.cherry_pick(Path::new("/r"), "abc").await.unwrap();
+        git.rebase_skip(Path::new("/r")).await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["revert", "--no-edit", "abc"]);
+        assert_eq!(calls[1].args_str(), ["cherry-pick", "abc"]);
+        assert_eq!(calls[2].args_str(), ["rebase", "--skip"]);
+        for call in &calls {
+            assert!(
+                call.envs
+                    .iter()
+                    .any(|(k, _)| k.to_str() == Some("GIT_EDITOR")),
+                "editor suppressed on {:?}",
+                call.args_str()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_add_and_set_url_build_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.remote_add(Path::new("/r"), "up", "https://x/y.git")
+            .await
+            .unwrap();
+        git.remote_set_url(Path::new("/r"), "up", "https://x/z.git")
+            .await
+            .unwrap();
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["remote", "add", "up", "https://x/y.git"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["remote", "set-url", "up", "https://x/z.git"]
+        );
     }
 
     // Dirty tree: stash -u → checkout → pop, in that order.

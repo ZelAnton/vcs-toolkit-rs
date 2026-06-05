@@ -20,8 +20,8 @@ pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
 pub use parse::{
-    Bookmark, BookmarkRef, Change, ChangeKind, ChangedPath, DiffLine, DiffStat, FileDiff, Hunk,
-    Workspace,
+    AnnotationLine, Bookmark, BookmarkRef, Change, ChangeKind, ChangedPath, DiffLine, DiffStat,
+    FileDiff, Hunk, Operation, Workspace,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -239,6 +239,23 @@ pub trait JjApi: Send + Sync {
     /// multi-commit revset yields only the newest commit's description
     /// (`jj log` order, `--limit 1`).
     async fn description(&self, dir: &Path, revset: &str) -> Result<String>;
+    /// How the commit a revset resolves to evolved, newest snapshot first, up
+    /// to `max` (`jj evolog -r <revset>`) — one [`Change`] row per recorded
+    /// predecessor.
+    async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
+    /// Per-line authorship of `path` (`jj file annotate <path> [-r <revset>]`;
+    /// `None` = `@`): which change introduced each line.
+    async fn file_annotate(
+        &self,
+        dir: &Path,
+        path: &str,
+        revset: Option<String>,
+    ) -> Result<Vec<AnnotationLine>>;
+    /// A file's content at a revision (`jj file show -r <revset>
+    /// file:"<path>"` — the path is wrapped as an exact-path fileset, so
+    /// fileset metacharacters in the name stay literal). Content is decoded
+    /// lossily — a binary file comes back mangled rather than erroring.
+    async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -282,12 +299,34 @@ pub trait JjApi: Send + Sync {
     async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Import git refs into jj (`jj git import`) — colocated-repo sync.
     async fn git_import(&self, dir: &Path) -> Result<()>;
+    /// Clone a git repository into `dest` (`jj git clone <url> <dest>
+    /// --colocate|--no-colocate`). Runs without a working directory — pass an
+    /// **absolute** `dest`. The flag is always passed explicitly: whether
+    /// colocation (a visible `.git` alongside `.jj`) is jj's default depends
+    /// on the jj version *and* the user's `git.colocate` config, so `colocate`
+    /// decides deterministically.
+    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
+    /// Fold working-copy edits into the mutable ancestors that introduced the
+    /// touched lines (`absorb [--from <revset>] [<filesets>…]`); empty
+    /// `filesets` absorbs everything.
+    async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
+    /// Split exactly these filesets out of `@` into their own commit described
+    /// by `message` (`split -m <message> <filesets>…`); the remainder stays
+    /// behind. `filesets` must be non-empty — a fileset-less split opens jj's
+    /// interactive diff editor (a headless hang), so it is refused with an
+    /// error before spawning.
+    async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
+    /// Duplicate the commits a revset resolves to (`duplicate <revset>`).
+    async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()>;
 
     // --- Operation log -------------------------------------------------------
 
     /// The current operation id (`op log --no-graph --limit 1`) — capture before
     /// a risky sequence to roll back to.
     async fn op_head(&self, dir: &Path) -> Result<String>;
+    /// The newest `limit` operations, newest first (`op log --no-graph
+    /// --limit n`).
+    async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>>;
     /// Restore the repo to an operation (`op restore <id>`).
     async fn op_restore(&self, dir: &Path, op_id: &str) -> Result<()>;
     /// Undo the latest operation (`op undo`).
@@ -690,6 +729,59 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
+    async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
+        // Evolog templates render in a *commit* context (bare `change_id`
+        // doesn't exist there) — EVOLOG_TEMPLATE uses the `commit.` method
+        // form but emits the same columns CHANGE_TEMPLATE does.
+        let limit = max.to_string();
+        self.core
+            .parse(
+                self.cmd_in(
+                    dir,
+                    [
+                        "evolog",
+                        "-r",
+                        revset,
+                        "--no-graph",
+                        "--limit",
+                        limit.as_str(),
+                        "-T",
+                        parse::EVOLOG_TEMPLATE,
+                    ],
+                ),
+                parse::parse_changes,
+            )
+            .await
+    }
+
+    async fn file_annotate(
+        &self,
+        dir: &Path,
+        path: &str,
+        revset: Option<String>,
+    ) -> Result<Vec<AnnotationLine>> {
+        let mut args = vec!["file", "annotate", path];
+        if let Some(revset) = revset.as_deref() {
+            args.push("-r");
+            args.push(revset);
+        }
+        args.extend(["-T", parse::ANNOTATE_TEMPLATE]);
+        self.core
+            .parse(self.cmd_in(dir, args), parse::parse_annotate)
+            .await
+    }
+
+    async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String> {
+        // `file show` takes FILESETS, so a bare path with a fileset
+        // metacharacter (`(`, `*`, `~`, …) would be parsed as an expression —
+        // wrap it in the exact-path form. (`file annotate` is the opposite: it
+        // takes a plain PATH and rejects the `file:"…"` form.)
+        let fileset = JjFileset::path(path);
+        self.core
+            .text(self.cmd_in(dir, ["file", "show", "-r", revset, fileset.as_str()]))
+            .await
+    }
+
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
         self.core
             .unit(self.cmd_in(dir, ["rebase", "-d", onto]))
@@ -779,6 +871,61 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.unit(self.cmd_in(dir, ["git", "import"])).await
     }
 
+    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()> {
+        // No working directory yet (the clone creates `dest`), so this builds
+        // on the raw `command` and appends `--color never` at the end — the
+        // `workspace_add` precedent for color-after-value-args. The colocate
+        // flag is ALWAYS passed: jj's default flipped across versions and is
+        // overridable via `git.colocate` config, so an omitted flag would make
+        // `colocate: false` a lie on some setups.
+        let command = self
+            .core
+            .command(["git", "clone", url])
+            .arg(dest)
+            .arg(if colocate {
+                "--colocate"
+            } else {
+                "--no-colocate"
+            });
+        self.core.unit(command.arg("--color").arg("never")).await
+    }
+
+    async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()> {
+        let mut args: Vec<String> = vec!["absorb".into()];
+        if let Some(from) = from.as_deref() {
+            args.push("--from".into());
+            args.push(from.into());
+        }
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core.unit(self.cmd_in(dir, args)).await
+    }
+
+    async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()> {
+        // A fileset-less `jj split` opens the interactive diff editor — even
+        // with `-m` — which would hang a headless run indefinitely. Refuse
+        // before spawning anything.
+        if filesets.is_empty() {
+            return Err(Error::Spawn {
+                program: BINARY.to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "split_paths requires at least one fileset — an empty split \
+                     opens jj's interactive diff editor",
+                ),
+            });
+        }
+        // `-m` doubles as the description-editor suppressor.
+        let mut args: Vec<String> = vec!["split".into(), "-m".into(), message.into()];
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core.unit(self.cmd_in(dir, args)).await
+    }
+
+    async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()> {
+        self.core
+            .unit(self.cmd_in(dir, ["duplicate", revset]))
+            .await
+    }
+
     async fn op_head(&self, dir: &Path) -> Result<String> {
         self.core
             .text(self.cmd_in(
@@ -793,6 +940,27 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                     "id.short()",
                 ],
             ))
+            .await
+    }
+
+    async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>> {
+        let limit = limit.to_string();
+        self.core
+            .parse(
+                self.cmd_in(
+                    dir,
+                    [
+                        "op",
+                        "log",
+                        "--no-graph",
+                        "--limit",
+                        limit.as_str(),
+                        "-T",
+                        parse::OP_TEMPLATE,
+                    ],
+                ),
+                parse::parse_operations,
+            )
             .await
     }
 
@@ -1008,6 +1176,7 @@ jj_at_forwarders! {
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn git_clone(url: &str, dest: &Path, colocate: bool) -> Result<()>;
     }
     dir {
         fn status() -> Result<Vec<ChangedPath>>;
@@ -1042,6 +1211,12 @@ jj_at_forwarders! {
         fn resolve_list(revset: &str) -> Result<Vec<String>>;
         fn template_query(revset: &str, template: &str, limit: Option<usize>) -> Result<String>;
         fn description(revset: &str) -> Result<String>;
+        fn evolog(revset: &str, max: usize) -> Result<Vec<Change>>;
+        fn file_annotate(path: &str, revset: Option<String>) -> Result<Vec<AnnotationLine>>;
+        fn file_show(revset: &str, path: &str) -> Result<String>;
+        fn absorb(from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
+        fn split_paths(filesets: &[JjFileset], message: &str) -> Result<()>;
+        fn duplicate(revset: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
         fn rebase_branch(branch: &str, dest: &str) -> Result<()>;
         fn edit(revset: &str) -> Result<()>;
@@ -1054,6 +1229,7 @@ jj_at_forwarders! {
         fn git_fetch_branch(branch: &str) -> Result<()>;
         fn git_import() -> Result<()>;
         fn op_head() -> Result<String>;
+        fn op_log(limit: usize) -> Result<Vec<Operation>>;
         fn op_restore(op_id: &str) -> Result<()>;
         fn op_undo() -> Result<()>;
         fn workspace_list() -> Result<Vec<Workspace>>;
@@ -1184,11 +1360,15 @@ mod tests {
         jj.at(dir).describe_rev("feat", "msg").await.unwrap();
         jj.description(dir, "@-").await.unwrap();
         jj.at(dir).description("@-").await.unwrap();
+        // One of the §4 additions.
+        jj.duplicate(dir, "@-").await.unwrap();
+        jj.at(dir).duplicate("@-").await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[4].args_str(), calls[5].args_str());
+        assert_eq!(calls[6].args_str(), calls[7].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
     }
 
@@ -1715,6 +1895,179 @@ mod tests {
             .await
             .expect("transaction");
         assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir.as_os_str()));
+    }
+
+    // git_clone is dir-less; the colocate flag is ALWAYS explicit (jj's default
+    // varies by version/config) and `--color never` still lands at the very end.
+    #[tokio::test]
+    async fn git_clone_builds_dirless_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.git_clone("https://x/r.git", Path::new("/dest"), true)
+            .await
+            .expect("clone");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "git",
+                "clone",
+                "https://x/r.git",
+                "/dest",
+                "--colocate",
+                "--color",
+                "never"
+            ]
+        );
+        assert_eq!(call.cwd, None, "clone runs without a working directory");
+
+        let plain = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&plain);
+        jj.git_clone("u", Path::new("/d"), false).await.unwrap();
+        let call = plain.only_call();
+        assert!(call.has_flag("--no-colocate"), "explicit either way");
+        assert!(!call.has_flag("--colocate"));
+    }
+
+    #[tokio::test]
+    async fn absorb_and_split_build_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.absorb(Path::new("/r"), None, &[]).await.unwrap();
+        jj.absorb(
+            Path::new("/r"),
+            Some("@-".into()),
+            &[JjFileset::path("src/a.rs")],
+        )
+        .await
+        .unwrap();
+        jj.split_paths(Path::new("/r"), &[JjFileset::path("b.rs")], "split out b")
+            .await
+            .unwrap();
+        jj.duplicate(Path::new("/r"), "@-").await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["absorb", "--color", "never"]);
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "absorb",
+                "--from",
+                "@-",
+                "file:\"src/a.rs\"",
+                "--color",
+                "never"
+            ]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            [
+                "split",
+                "-m",
+                "split out b",
+                "file:\"b.rs\"",
+                "--color",
+                "never"
+            ]
+        );
+        assert_eq!(calls[3].args_str(), ["duplicate", "@-", "--color", "never"]);
+    }
+
+    // An empty split would open jj's interactive diff editor and hang headless —
+    // it must be refused BEFORE any process spawns.
+    #[tokio::test]
+    async fn split_paths_refuses_empty_filesets_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .split_paths(Path::new("/r"), &[], "msg")
+            .await
+            .expect_err("empty filesets must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn op_log_parses_template_rows() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(
+            ["op", "log"],
+            Reply::ok("abc\tu@h\t2026-06-05T10:00:00+0200\tnew empty commit\n"),
+        ));
+        let jj = Jj::with_runner(&rec);
+        let ops = jj.op_log(Path::new("."), 5).await.expect("op_log");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].id, "abc");
+        assert_eq!(ops[0].description, "new empty commit");
+        let args = rec.only_call().args_str();
+        assert_eq!(&args[..5], &["op", "log", "--no-graph", "--limit", "5"]);
+    }
+
+    // evolog must use the commit-context template (bare `change_id` doesn't
+    // exist there) but flows through the same Change parser.
+    #[tokio::test]
+    async fn evolog_uses_commit_context_template() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let rows = jj.evolog(Path::new("."), "@", 10).await.expect("evolog");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].description, "wip");
+        let args = rec.only_call().args_str();
+        assert_eq!(
+            &args[..6],
+            &["evolog", "-r", "@", "--no-graph", "--limit", "10"]
+        );
+        let template = &args[7];
+        assert!(
+            template.contains("commit.change_id()"),
+            "commit-context form required, got {template}"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_annotate_and_show_build_args() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["file", "annotate"],
+                    Reply::ok("kz\tline one\nkz\tline two"),
+                )
+                .on(["file", "show"], Reply::ok("content\n")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let lines = jj
+            .file_annotate(Path::new("."), "src/a.rs", Some("@-".into()))
+            .await
+            .expect("annotate");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].change_id, "kz");
+        assert_eq!(lines[1].line, 2);
+        assert_eq!(
+            jj.file_show(Path::new("."), "@-", "src/a.rs")
+                .await
+                .unwrap(),
+            "content"
+        );
+        let calls = rec.calls();
+        assert_eq!(
+            &calls[0].args_str()[..5],
+            &["file", "annotate", "src/a.rs", "-r", "@-"]
+        );
+        // file_show wraps the path as an exact-path fileset (metacharacters in
+        // the name must stay literal); annotate takes a PLAIN path — quoting
+        // it would break jj's path lookup.
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "file",
+                "show",
+                "-r",
+                "@-",
+                "file:\"src/a.rs\"",
+                "--color",
+                "never"
+            ]
+        );
     }
 
     // `description` is a fixed template query: first match only, raw description.

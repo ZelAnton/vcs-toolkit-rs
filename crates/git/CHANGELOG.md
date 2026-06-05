@@ -22,6 +22,25 @@ crates; tag releases as `vcs-git-v<version>`.
   `stash pop`; a clean tree skips the stash round-trip, and a failed checkout
   pops the stash back where it was. Inherent (a composed operation, not a 1:1
   CLI verb).
+- `clone_repo(url, dest, CloneSpec)` — `git clone` with a `CloneSpec` builder
+  (`.branch()`, `.depth()`, `.bare()`). Runs without a working directory; pass
+  an absolute `dest`. Note: git silently ignores `--depth` for a plain
+  local-path source.
+- Tag operations: `tag_create` (lightweight, optional rev),
+  `tag_create_annotated` (`-a -m`), `tag_list`, `tag_delete`.
+- `show_file(dir, rev, path)` — file content at a revision
+  (`git show <rev>:<path>`); backslash separators are normalised to `/` (git
+  requires it), binary content decodes lossily rather than erroring.
+- `config_get(dir, key)` → `Option<String>` (`config --get`; exit 1 → `None` —
+  git lumps "unset" and "no such section" together) and
+  `config_set(dir, key, value)`.
+- `remote_add(dir, name, url)` and `remote_set_url(dir, name, url)`.
+- `blame(dir, path, rev)` → `Vec<BlameLine>` (`blame --line-porcelain`):
+  per-line commit, author, epoch timestamp + tz, and content.
+- Sequencer: `cherry_pick(dir, rev)`, `revert(dir, rev)` (`--no-edit` +
+  headless editor backstop), and `rebase_skip(dir)` (`rebase --skip`) — mainly
+  for the `apply` backend's "nothing to commit" stop; the default `merge`
+  backend auto-drops emptied patches on `--continue`.
 
 ### Changed
 -

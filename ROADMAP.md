@@ -79,20 +79,29 @@ spellings) validated empirically on gh 2.93.
 - **3.4 ✅** `issue_create` / `issue_view` (extends `Issue` with `body`/`url`);
   `release_list` / `release_view`
 
-## 4. Coverage gaps in the git/jj clients
+## 4. Coverage gaps in the git/jj clients — ✅ done
 
-Verified absent today; add as consumers (or new tools) demand them:
+**Status:** implemented (client-level only — these stay off the facade by
+design). Two behavioural surprises recorded during empirical validation:
+git's default `merge` rebase backend auto-drops an emptied patch on
+`--continue` — the "nothing to commit … skip" refusal that motivates
+`rebase_skip` exists only under `rebase.backend=apply`; and `jj evolog -T`
+renders in a *commit* context (bare `change_id` doesn't exist — the
+`commit.`-method template form is required). Also: whether `jj git clone`
+colocates by default depends on the jj version *and* `git.colocate` config, so
+`git_clone` always passes the flag explicitly.
 
-- **4.1 git:** `clone` (today `init` is the only way to obtain a repo!), tag
-  operations (create/list/delete — release tooling), `show <rev>:<path>`
-  (file content at a revision — review/agent tooling), `cherry_pick`,
-  `revert`, `config_get`/`config_set`, `remote_add`/`remote_set_url`,
-  `blame`, `rebase_skip` (`rebase --skip` — without it,
-  `continue_in_progress` surfaces an empty-patch rebase stop as an error the
-  caller must resolve by hand).
-- **4.2 jj:** `git clone`, `absorb` (fold edits into the changes that touched
-  those lines — ideal for agent workflows), `split`, `duplicate`, `op_log`
-  (the list; only head/restore/undo exist today), `evolog`, `file annotate`.
+- **4.1 ✅ git:** `clone_repo` + `CloneSpec` (today `init` was the only way to
+  obtain a repo!), tag operations (`tag_create`/`_create_annotated`/`_list`/
+  `_delete` — release tooling), `show_file` (`show <rev>:<path>`, separators
+  normalised — review/agent tooling), `cherry_pick`, `revert`,
+  `config_get`/`config_set`, `remote_add`/`remote_set_url`, `blame` →
+  `Vec<BlameLine>`, `rebase_skip`.
+- **4.2 ✅ jj:** `git_clone`, `absorb` (fold edits into the changes that touched
+  those lines — ideal for agent workflows), `split_paths`, `duplicate`,
+  `op_log` → `Vec<Operation>` (the list; only head/restore/undo existed),
+  `evolog`, `file_annotate` (+ bonus `file_show`, the twin of git's
+  `show_file`).
 
 ## 5. Infrastructure and quality
 

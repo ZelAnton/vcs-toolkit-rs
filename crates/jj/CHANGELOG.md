@@ -21,6 +21,29 @@ crates; tag releases as `vcs-jj-v<version>`.
   restores the captured operation when the closure returns `Err`. Inherent (not
   on the trait — generic closures aren't mockable); rollback runs on `Err` only,
   not on panic/cancellation.
+- `git_clone(url, dest, colocate)` — `jj git clone` without a working
+  directory (pass an absolute `dest`). The colocate flag is always passed
+  explicitly (`--colocate`/`--no-colocate`): jj's default flipped across
+  versions and is overridable via `git.colocate` config.
+- `absorb(dir, from, filesets)` — fold working-copy edits into the mutable
+  ancestors that introduced the touched lines; empty `filesets` absorbs
+  everything.
+- `split_paths(dir, filesets, message)` — carve named filesets out of `@` into
+  their own described commit (the `-m` keeps it non-interactive). Empty
+  `filesets` are refused before spawning — a fileset-less `jj split` opens the
+  interactive diff editor, a headless hang.
+- `duplicate(dir, revset)`.
+- `op_log(dir, limit)` → `Vec<Operation>` (id/user/start-time/description) —
+  the listing counterpart of `op_head`.
+- `evolog(dir, revset, max)` → `Vec<Change>` — how a change evolved, newest
+  snapshot first. (Evolog templates render in a *commit* context, so this uses
+  a `commit.`-method-form template, unlike `log`.)
+- `file_annotate(dir, path, rev)` → `Vec<AnnotationLine>` (change id + 1-based
+  line + content) and `file_show(dir, revset, path)` — file content at a
+  revision (lossy for binary). `file_show` wraps the path as an exact-path
+  fileset (`file:"…"`) so fileset metacharacters stay literal; `file_annotate`
+  deliberately doesn't — `jj file annotate` takes a plain path and rejects the
+  quoted form.
 
 ### Changed
 -

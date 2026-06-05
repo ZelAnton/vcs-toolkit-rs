@@ -146,6 +146,7 @@ that aren't modelled yet, plus `version()`.
 | `branch_exists`/`remote_branch_exists` → `bool`, `common_dir`/`git_dir`/`remote_head_branch` | `root`/`trunk`/`current_bookmark`, `bookmark_create`/`_move`/`_rename`/`_delete` | `run_list`/`run_view`/`run_watch` → `WorkflowRun` |
 | `diff_shortstat` → `DiffStat`, `is_merged`, `rev_list_count` | `diff_summary`/`diff_stat`, `commit_count`, `is_conflicted`, `template_query` | `pr_review` / `pr_comment`, `pr_feedback` → reviews+comments |
 | `merge_*` / `rebase_*` / `reset_*` / `fetch` | `rebase`/`edit`/`squash_into`/`new_merge`/`git_import`, `op_head`/`op_restore`/`op_undo` | `issue_create`/`issue_view`, `release_list`/`release_view` |
+| `clone_repo`, `tag_*`, `show_file`, `blame` → `Vec<BlameLine>`, `config_get`/`_set`, `cherry_pick`/`revert`/`rebase_skip` | `git_clone`, `absorb`/`split_paths`/`duplicate`, `op_log` → `Vec<Operation>`, `evolog`, `file_annotate`/`file_show` | |
 
 ## Recipes
 

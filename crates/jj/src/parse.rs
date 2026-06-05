@@ -167,6 +167,82 @@ pub(crate) const COUNT_TEMPLATE: &str = "commit_id.short() ++ \"\\n\"";
 pub(crate) const REACHABLE_BOOKMARKS_TEMPLATE: &str =
     "local_bookmarks.map(|b| b.name()).join(\" \") ++ \"\\t\" ++ commit_id.short() ++ \"\\n\"";
 
+/// `jj evolog -T` template. Evolog renders in a *commit* context where the
+/// bare keywords (`change_id`, …) don't exist — the `commit.` method form is
+/// required. Columns mirror [`CHANGE_TEMPLATE`], so [`parse_changes`] reads it.
+pub(crate) const EVOLOG_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\" ++ commit.commit_id().short() ++ \"\\t\" ++ if(commit.empty(), \"true\", \"false\") ++ \"\\t\" ++ commit.description().first_line() ++ \"\\n\"";
+
+/// `jj op log -T` template: `id\tuser\tstart-time\tdescription`, one row per
+/// operation.
+pub(crate) const OP_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ user ++ \"\\t\" ++ time.start().format(\"%Y-%m-%dT%H:%M:%S%z\") ++ \"\\t\" ++ description.first_line() ++ \"\\n\"";
+
+/// `jj file annotate -T` template: `change-id\tcontent`. Annotate emits one row
+/// per source line and separates them itself — no trailing `\n` here, or every
+/// row would be double-spaced.
+pub(crate) const ANNOTATE_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\" ++ content";
+
+/// One entry of `jj op log` (an operation-log row).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Operation {
+    /// Short operation id — what `op restore`/`op undo` take.
+    pub id: String,
+    /// The OS-level `user@host` that ran the operation (not the configured
+    /// jj author).
+    pub user: String,
+    /// Start timestamp, ISO 8601 with offset.
+    pub time: String,
+    /// First line of the operation description, e.g. `new empty commit`.
+    pub description: String,
+}
+
+/// One line of `jj file annotate` output: which change last touched it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AnnotationLine {
+    /// Short change id of the change that introduced the line.
+    pub change_id: String,
+    /// Line number in the annotated file (1-based).
+    pub line: u32,
+    /// The line's content (without the trailing newline).
+    pub content: String,
+}
+
+/// Parse rows produced by [`OP_TEMPLATE`].
+pub(crate) fn parse_operations(output: &str) -> Vec<Operation> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            // `splitn(4)` keeps literal tabs inside the description.
+            let mut fields = line.splitn(4, '\t');
+            Some(Operation {
+                id: fields.next()?.to_string(),
+                user: fields.next()?.to_string(),
+                time: fields.next()?.to_string(),
+                description: fields.next().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Parse rows produced by [`ANNOTATE_TEMPLATE`]: one row per source line, the
+/// 1-based line number is the row index.
+pub(crate) fn parse_annotate(output: &str) -> Vec<AnnotationLine> {
+    output
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let (change_id, content) = line.split_once('\t')?;
+            Some(AnnotationLine {
+                change_id: change_id.to_string(),
+                line: (idx + 1) as u32,
+                content: content.to_string(),
+            })
+        })
+        .collect()
+}
+
 /// Parse rows produced by [`CHANGE_TEMPLATE`].
 pub(crate) fn parse_changes(output: &str) -> Vec<Change> {
     output
@@ -528,6 +604,44 @@ fn header_b_path(section: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operations_split_tab_fields() {
+        let out = "abc123\tuser@host\t2026-06-05T10:00:00+0200\tnew empty commit\n\
+                   def456\tuser@host\t2026-06-05T09:59:00+0200\tdescribe commit\twith tab\n";
+        let ops = parse_operations(out);
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].id, "abc123");
+        assert_eq!(ops[0].user, "user@host");
+        assert_eq!(ops[0].time, "2026-06-05T10:00:00+0200");
+        assert_eq!(ops[0].description, "new empty commit");
+        // A literal tab in the description survives (splitn keeps the tail).
+        assert_eq!(ops[1].description, "describe commit\twith tab");
+    }
+
+    #[test]
+    fn annotate_rows_carry_line_numbers() {
+        let out = "kxoyzabc\tfn main() {\nkxoyzabc\t}\nqlmnopqr\t// added later";
+        let lines = parse_annotate(out);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].change_id, "kxoyzabc");
+        assert_eq!(lines[0].line, 1);
+        assert_eq!(lines[0].content, "fn main() {");
+        assert_eq!(lines[2].change_id, "qlmnopqr");
+        assert_eq!(lines[2].line, 3);
+        assert!(parse_annotate("").is_empty());
+    }
+
+    // EVOLOG_TEMPLATE renders the same columns as CHANGE_TEMPLATE, so the rows
+    // flow through parse_changes unchanged.
+    #[test]
+    fn evolog_rows_parse_as_changes() {
+        let out = "kz\t38\tfalse\tfeat: parser\nkz\t12\ttrue\t\n";
+        let changes = parse_changes(out);
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].description, "feat: parser");
+        assert!(changes[1].empty);
+    }
 
     #[test]
     fn changes_split_tab_fields() {

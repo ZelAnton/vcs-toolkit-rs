@@ -281,6 +281,79 @@ pub(crate) fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
+/// One line of `git blame --line-porcelain` output: who last touched the line
+/// and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BlameLine {
+    /// Full hash of the commit that last changed the line.
+    pub commit: String,
+    /// Line number in that commit's version of the file (1-based).
+    pub orig_line: u32,
+    /// Line number in the blamed version of the file (1-based).
+    pub final_line: u32,
+    /// Author name of that commit.
+    pub author: String,
+    /// Author timestamp as a unix epoch (seconds).
+    pub author_time: i64,
+    /// Author timezone offset, e.g. `+0200`.
+    pub author_tz: String,
+    /// The line's content (without the trailing newline).
+    pub content: String,
+}
+
+/// Parse `git blame --line-porcelain` output. Every line gets a header
+/// (`<40-hex sha> <orig> <final> [<group count>]`), a full set of `tag value`
+/// metadata lines (`author`, `author-time`, …, optional `boundary`), then the
+/// content prefixed with a literal TAB.
+pub(crate) fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
+    let mut lines = Vec::new();
+    let mut current: Option<BlameLine> = None;
+    for line in output.lines() {
+        // Content line: closes the current record.
+        if let Some(content) = line.strip_prefix('\t') {
+            if let Some(mut entry) = current.take() {
+                entry.content = content.to_string();
+                lines.push(entry);
+            }
+            continue;
+        }
+        let (label, value) = match line.split_once(' ') {
+            Some((l, v)) => (l, v),
+            None => (line, ""),
+        };
+        // Header: a 40-hex sha followed by line numbers (and an optional group
+        // count, which only appears on a group's first line).
+        if label.len() == 40 && label.bytes().all(|b| b.is_ascii_hexdigit()) {
+            let mut nums = value.split(' ');
+            let orig = nums.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            let fin = nums.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            current = Some(BlameLine {
+                commit: label.to_string(),
+                orig_line: orig,
+                final_line: fin,
+                author: String::new(),
+                author_time: 0,
+                author_tz: String::new(),
+                content: String::new(),
+            });
+            continue;
+        }
+        let Some(entry) = current.as_mut() else {
+            continue;
+        };
+        match label {
+            "author" => entry.author = value.to_string(),
+            "author-time" => entry.author_time = value.parse().unwrap_or(0),
+            "author-tz" => entry.author_tz = value.to_string(),
+            // committer*/summary/filename/previous/boundary intentionally not
+            // captured — `#[non_exhaustive]` leaves room to add them later.
+            _ => {}
+        }
+    }
+    lines
+}
+
 /// Parse `git diff --shortstat`, e.g. ` 3 files changed, 12 insertions(+), 4
 /// deletions(-)`. Any clause may be absent (a pure-insertion diff omits
 /// deletions; no changes yields an empty string → all zeros).
@@ -513,6 +586,48 @@ mod tests {
     #[test]
     fn porcelain_ignores_blank_and_short_records() {
         assert!(parse_porcelain("\0  \0X\0").is_empty());
+    }
+
+    // --line-porcelain repeats the full metadata for every line; the group
+    // count appears only on a group's first header, and `boundary` is a
+    // valueless tag — both must parse.
+    #[test]
+    fn blame_line_porcelain_parses_headers_and_metadata() {
+        let sha_a = "a".repeat(40);
+        let sha_b = "b".repeat(40);
+        let out = format!(
+            "{sha_a} 1 1 2\nauthor Alice\nauthor-mail <a@x>\nauthor-time 1717500000\n\
+             author-tz +0200\ncommitter Alice\nsummary first\nboundary\nfilename f.txt\n\
+             \tline one\n\
+             {sha_a} 2 2\nauthor Alice\nauthor-mail <a@x>\nauthor-time 1717500000\n\
+             author-tz +0200\ncommitter Alice\nsummary first\nfilename f.txt\n\
+             \tline two\n\
+             {sha_b} 1 3 1\nauthor Bob\nauthor-mail <b@x>\nauthor-time 1717600000\n\
+             author-tz -0500\ncommitter Bob\nsummary second\nfilename f.txt\n\
+             \t\n"
+        );
+        let lines = parse_blame_porcelain(&out);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].commit, sha_a);
+        assert_eq!(lines[0].orig_line, 1);
+        assert_eq!(lines[0].final_line, 1);
+        assert_eq!(lines[0].author, "Alice");
+        assert_eq!(lines[0].author_time, 1717500000);
+        assert_eq!(lines[0].author_tz, "+0200");
+        assert_eq!(lines[0].content, "line one");
+        // Second line of the same group: header without a group count.
+        assert_eq!(lines[1].final_line, 2);
+        assert_eq!(lines[1].content, "line two");
+        // A different commit, and an empty content line stays empty.
+        assert_eq!(lines[2].commit, sha_b);
+        assert_eq!(lines[2].author, "Bob");
+        assert_eq!(lines[2].content, "");
+    }
+
+    #[test]
+    fn blame_ignores_garbage_and_empty_input() {
+        assert!(parse_blame_porcelain("").is_empty());
+        assert!(parse_blame_porcelain("not a header\n\torphan content\n").is_empty());
     }
 
     #[test]
