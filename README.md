@@ -295,8 +295,8 @@ does them in a single commit + atomic push.
 The CLI wrappers depend only on the already-published
 [`processkit`](https://crates.io/crates/processkit) crate, so they release
 independently. The **`vcs-core` facade is the exception** — it depends on
-`vcs-git`/`vcs-jj`, so `all` publishes it **last**, and its `^0.3` requirement on
-them must stay in range when they cross a minor/major boundary.
+`vcs-git`/`vcs-jj`, so `all` publishes it **last**, and its `^MAJOR.MINOR`
+requirement on them must stay in range when they cross a minor/major boundary.
 
 ## Conventions
 

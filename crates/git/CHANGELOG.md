@@ -10,7 +10,13 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `fetch_from(dir, remote)` — fetch from a *named* remote (`fetch --quiet
+  <remote>`), with the same terminal-prompt-off and transient-retry behaviour as
+  `fetch`.
+- `conflicted_files(dir)` — paths with unresolved merge conflicts
+  (`diff --name-only --diff-filter=U -z`); empty when there are none.
+- `status_tracked(dir)` — `status` minus untracked files
+  (`--untracked-files=no`): "is the *tracked* tree dirty", staged or not.
 
 ### Changed
 -

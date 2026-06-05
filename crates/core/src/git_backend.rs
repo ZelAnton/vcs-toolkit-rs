@@ -50,6 +50,20 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
     Ok(!git.status(dir).await?.is_empty())
 }
 
+pub(crate) async fn has_tracked_changes<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<bool> {
+    Ok(!git.status_tracked(dir).await?.is_empty())
+}
+
+pub(crate) async fn conflicted_files<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    Ok(git.conflicted_files(dir).await?)
+}
+
 pub(crate) async fn delete_branch<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
@@ -101,6 +115,15 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
 
 pub(crate) async fn fetch<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<()> {
     git.fetch(dir).await?;
+    Ok(())
+}
+
+pub(crate) async fn fetch_from<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    remote: &str,
+) -> Result<()> {
+    git.fetch_from(dir, remote).await?;
     Ok(())
 }
 

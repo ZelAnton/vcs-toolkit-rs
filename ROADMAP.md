@@ -11,20 +11,22 @@ of a gap worth closing. File references below point at consumer code as it
 stood when this document was written; treat them as evidence, not as live
 links.
 
-## 1. Close the remaining consumer escape hatches
+## 1. Close the remaining consumer escape hatches — ✅ done
 
-Small typed methods; each is a place a consumer builds argv by hand today.
-One minor release wave.
+Small typed methods; each was a place a consumer built argv by hand.
+**Status:** implemented — 1.2 and 1.3 turned out to be already covered by
+existing APIs (the consumer code predates them); the rest shipped as described
+below.
 
-| # | Gap | Evidence | Proposed API |
-|---|---|---|---|
-| 1.1 | Read a jj commit description | `vcs-flow-rs crates/commit/src/vcs.rs:158` (`jj log -r <revset> -T description`) | `JjApi::description(dir, rev) -> String` (thin wrapper over `template_query`) |
-| 1.2 | `jj squash … --use-destination-message` with filesets | `vcs.rs:205` | extend `squash_paths` with an options builder (`SquashSpec { use_destination_message, … }`) |
-| 1.3 | git push with an explicit refspec + `-u` | `vcs.rs:501` (`git push -u origin local:remote`) | `GitApi::push_refspec(dir, remote, local, remote_branch, set_upstream)` |
-| 1.4 | fetch from a *named* remote | `vcs.rs:265` (`git fetch origin`; typed `fetch()` is bare) | `fetch_from(dir, remote)` on both clients, retried like `fetch` |
-| 1.5 | List git conflicted files | `vcs.rs:518` (`git diff --name-only --diff-filter=U`) | `GitApi::conflicted_files(dir)`; jj already has `resolve_list` |
-| 1.6 | Unified conflict listing on the facade | both consumers dispatch by hand | `Repo::conflicted_files() -> Vec<String>` (git `diff-filter=U` / jj `resolve_list`) |
-| 1.7 | Dirty-tree check ignoring untracked | `vcs.rs:342` (`git status --porcelain --untracked-files=no`) | an `untracked: bool` knob on `has_uncommitted_changes` / a `tracked_only` status variant |
+| # | Status | Gap | Evidence | API |
+|---|---|---|---|---|
+| 1.1 | ✅ | Read a jj commit description | `vcs-flow-rs crates/commit/src/vcs.rs:158` (`jj log -r <revset> -T description`) | `JjApi::description(dir, revset) -> String` (wrapper over `template_query`, `--limit 1`) |
+| 1.2 | ✅ already covered | `jj squash … --use-destination-message` with filesets | `vcs.rs:205` | `squash_paths(dir, from, into, filesets, use_destination_message)` already exists |
+| 1.3 | ✅ already covered | git push with an explicit refspec + `-u` | `vcs.rs:501` (`git push -u origin local:remote`) | `push(dir, GitPush)` with `GitPush::refspec(local, remote_branch).remote(_).set_upstream()` already exists |
+| 1.4 | ✅ | fetch from a *named* remote | `vcs.rs:265` (`git fetch origin`; typed `fetch()` is bare) | `GitApi::fetch_from(dir, remote)` / `JjApi::git_fetch_from(dir, remote)` + facade `Repo::fetch_from(remote)`, retried like `fetch` |
+| 1.5 | ✅ | List git conflicted files | `vcs.rs:518` (`git diff --name-only --diff-filter=U`) | `GitApi::conflicted_files(dir)`; jj already had `resolve_list` |
+| 1.6 | ✅ | Unified conflict listing on the facade | both consumers dispatch by hand | `Repo::conflicted_files() -> Vec<String>` (git `diff-filter=U` / jj `resolve_list -r @`) |
+| 1.7 | ✅ | Dirty-tree check ignoring untracked | `vcs.rs:342` (`git status --porcelain --untracked-files=no`) | `GitApi::status_tracked(dir)` + facade `Repo::has_tracked_changes()` (jj: equals `has_uncommitted_changes`) |
 
 ## 2. Orchestration primitives
 

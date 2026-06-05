@@ -168,6 +168,13 @@ pub trait GitApi: Send + Sync {
     /// Raw porcelain status text (`git status --porcelain=v1`) — the unparsed
     /// counterpart of [`status`](GitApi::status), mirroring `vcs_jj` `status_text`.
     async fn status_text(&self, dir: &Path) -> Result<String>;
+    /// Like [`status`](GitApi::status) but ignoring untracked files
+    /// (`git status --porcelain=v1 -z --untracked-files=no`) — "is the *tracked*
+    /// tree dirty", staged or not.
+    async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
+    /// Paths with unresolved merge conflicts, repo-relative with `/` separators
+    /// (`git diff --name-only --diff-filter=U -z`). Empty when there are none.
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
     /// Current branch name (`git rev-parse --abbrev-ref HEAD`).
     async fn current_branch(&self, dir: &Path) -> Result<String>;
     /// Local branches, current one flagged (`git branch`).
@@ -281,6 +288,10 @@ pub trait GitApi: Send + Sync {
     /// Fetch from the default remote (`fetch --quiet`), with `GIT_TERMINAL_PROMPT=0`.
     /// Transient (network) failures are retried (3 attempts, 500 ms backoff).
     async fn fetch(&self, dir: &Path) -> Result<()>;
+    /// Fetch from a *named* remote (`fetch --quiet <remote>`), with
+    /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried like
+    /// [`fetch`](GitApi::fetch).
+    async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
     /// Fetch a single branch from `origin` into its remote-tracking ref
     /// (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`), with
     /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried (3×, 500 ms).
@@ -376,6 +387,29 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn status_text(&self, dir: &Path) -> Result<String> {
         self.core
             .text(self.core.command_in(dir, ["status", "--porcelain=v1"]))
+            .await
+    }
+
+    async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
+        self.core
+            .parse(
+                self.core.command_in(
+                    dir,
+                    ["status", "--porcelain=v1", "-z", "--untracked-files=no"],
+                ),
+                parse::parse_porcelain,
+            )
+            .await
+    }
+
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>> {
+        // `-z` keeps special-character paths literal (no C-style quoting).
+        self.core
+            .parse(
+                self.core
+                    .command_in(dir, ["diff", "--name-only", "--diff-filter=U", "-z"]),
+                parse::parse_nul_paths,
+            )
             .await
     }
 
@@ -773,6 +807,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.unit(cmd).await
     }
 
+    async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
+        // Same containment as `fetch` (prompt off, transient retry), with the
+        // remote named explicitly.
+        let cmd = self
+            .core
+            .command_in(dir, ["fetch", "--quiet", remote])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        self.core.unit(cmd).await
+    }
+
     async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()> {
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
         let cmd = self
@@ -1127,6 +1172,8 @@ git_at_forwarders! {
     dir {
         fn status() -> Result<Vec<StatusEntry>>;
         fn status_text() -> Result<String>;
+        fn status_tracked() -> Result<Vec<StatusEntry>>;
+        fn conflicted_files() -> Result<Vec<String>>;
         fn current_branch() -> Result<String>;
         fn branches() -> Result<Vec<Branch>>;
         fn log(max: usize) -> Result<Vec<Commit>>;
@@ -1165,6 +1212,7 @@ git_at_forwarders! {
         fn is_rebase_in_progress() -> Result<bool>;
         fn is_merge_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
+        fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_remote_branch(branch: &str) -> Result<()>;
         fn push(spec: GitPush) -> Result<()>;
         fn merge_squash(branch: &str) -> Result<()>;
@@ -1252,10 +1300,14 @@ mod tests {
             .worktree_remove(Path::new("/wt"), true)
             .await
             .unwrap();
+        // One of the new query methods.
+        git.conflicted_files(dir).await.unwrap();
+        git.at(dir).conflicted_files().await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
+        assert_eq!(calls[4].args_str(), calls[5].args_str());
         // The bound calls also carried the bound dir as their working directory.
         assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
         assert_eq!(calls[3].cwd.as_deref(), Some(dir.as_os_str()));
@@ -1272,6 +1324,36 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].code, " M");
         assert_eq!(entries[1].path, "b.rs");
+    }
+
+    // `status_tracked` is `status` minus untracked files — same parser, extra flag.
+    #[tokio::test]
+    async fn status_tracked_excludes_untracked_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(" M a.rs\0"));
+        let git = Git::with_runner(&rec);
+        let entries = git.status_tracked(Path::new(".")).await.expect("status");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].code, " M");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["status", "--porcelain=v1", "-z", "--untracked-files=no"]
+        );
+    }
+
+    // `conflicted_files` lists unmerged paths NUL-delimited (no quoting).
+    #[tokio::test]
+    async fn conflicted_files_builds_args_and_parses_nul_list() {
+        let rec = RecordingRunner::replying(Reply::ok("a.rs\0sub/spaced name.rs\0"));
+        let git = Git::with_runner(&rec);
+        let paths = git
+            .conflicted_files(Path::new("."))
+            .await
+            .expect("conflicted_files");
+        assert_eq!(paths, ["a.rs", "sub/spaced name.rs"]);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["diff", "--name-only", "--diff-filter=U", "-z"]
+        );
     }
 
     #[tokio::test]
@@ -1834,6 +1916,28 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), 1);
+    }
+
+    // `fetch_from` names the remote, keeps the prompt off, and shares the
+    // transient retry.
+    #[tokio::test]
+    async fn fetch_from_builds_args_and_retries() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.fetch_from(Path::new("/r"), "upstream")
+            .await
+            .expect("fetch_from");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["fetch", "--quiet", "upstream"]);
+        assert!(call.envs.iter().any(|(k, v)| {
+            k.to_str() == Some("GIT_TERMINAL_PROMPT")
+                && v.as_deref().and_then(|o| o.to_str()) == Some("0")
+        }));
+
+        let failing = RecordingRunner::replying(Reply::fail(128, "fatal: Connection timed out"));
+        let git = Git::with_runner(&failing);
+        assert!(git.fetch_from(Path::new("/r"), "upstream").await.is_err());
+        assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
     }
 
     // The consumer-facing mock seam: a function depending on `&dyn GitApi` is

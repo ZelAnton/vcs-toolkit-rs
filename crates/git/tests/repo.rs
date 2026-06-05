@@ -252,3 +252,56 @@ async fn diff_text_works_on_unborn_repo() {
         .expect("diff_text must not error on unborn repo");
     assert!(diff.contains("f.txt"), "expected the new file in: {diff}");
 }
+
+// A real merge conflict must surface through `conflicted_files`, and a tree
+// whose only change is an untracked file must read as tracked-clean.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn conflicted_files_and_status_tracked() {
+    let tmp = TempDir::new("conflict");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    let main = git.current_branch(dir).await.expect("branch");
+
+    // Diverge: edit a.txt on both sides.
+    git.create_branch(dir, "other").await.expect("branch");
+    std::fs::write(dir.join("a.txt"), "main change\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "main edit").await.expect("commit");
+    git.checkout(dir, "other").await.expect("checkout");
+    std::fs::write(dir.join("a.txt"), "other change\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "other edit").await.expect("commit");
+
+    // No conflicts before the merge.
+    assert!(
+        git.conflicted_files(dir)
+            .await
+            .expect("conflicted_files")
+            .is_empty()
+    );
+
+    // The conflicting merge fails and leaves a.txt unmerged.
+    assert!(git.merge_commit(dir, &main, false, None).await.is_err());
+    assert_eq!(
+        git.conflicted_files(dir).await.expect("conflicted_files"),
+        ["a.txt"]
+    );
+    git.merge_abort(dir).await.expect("merge_abort");
+
+    // An untracked file is uncommitted-dirty but tracked-clean.
+    std::fs::write(dir.join("new.txt"), "untracked\n").expect("write");
+    assert!(!git.status(dir).await.expect("status").is_empty());
+    assert!(
+        git.status_tracked(dir)
+            .await
+            .expect("status_tracked")
+            .is_empty()
+    );
+}

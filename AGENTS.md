@@ -154,7 +154,7 @@ Each crate releases **independently** — they do not share a version.
   already-published external `processkit` crate (by version), so each publishes
   independently. The **`vcs-core` facade is the one exception**: it depends on
   `vcs-git`/`vcs-jj`, so it publishes **last** (the `all` plan orders it after its
-  deps), and its `^0.3` requirement on them must be kept in range when they cross
+  deps), and its `^MAJOR.MINOR` requirement on them must be kept in range when they cross
   a minor/major boundary (and the new version must be live on crates.io first). If
   a crate needs a newer `processkit`, bump the `[workspace.dependencies]` req and
   ensure that `processkit` version is live on crates.io first.

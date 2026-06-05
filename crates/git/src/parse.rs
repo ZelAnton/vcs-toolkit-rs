@@ -163,6 +163,16 @@ pub(crate) fn parse_porcelain(output: &str) -> Vec<StatusEntry> {
     entries
 }
 
+/// Parse a NUL-delimited path list (e.g. `git diff --name-only -z`): one
+/// repo-relative path per record, `/` separators, no quoting.
+pub(crate) fn parse_nul_paths(output: &str) -> Vec<String> {
+    output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Parse `git log -z --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s` output: commits are
 /// NUL-separated (robust to multi-line fields), fields split on the ASCII unit
 /// separator.
@@ -503,6 +513,15 @@ mod tests {
     #[test]
     fn porcelain_ignores_blank_and_short_records() {
         assert!(parse_porcelain("\0  \0X\0").is_empty());
+    }
+
+    #[test]
+    fn nul_paths_split_and_keep_special_characters() {
+        assert_eq!(
+            parse_nul_paths("a.rs\0sub/with space.rs\0"),
+            ["a.rs", "sub/with space.rs"]
+        );
+        assert!(parse_nul_paths("").is_empty());
     }
 
     #[test]

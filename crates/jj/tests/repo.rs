@@ -233,3 +233,31 @@ async fn status_exposes_rename_paths() {
     assert_eq!(renamed.path, "new.rs");
     assert_eq!(renamed.old_path.as_deref(), Some("old.rs"));
 }
+
+// `description` reads back exactly what `describe` wrote (single revision,
+// multiline body preserved, trailing whitespace trimmed).
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn description_round_trips_describe() {
+    let tmp = TempDir::new("description");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    // An undescribed change reads as empty.
+    assert_eq!(jj.description(dir, "@").await.expect("description"), "");
+
+    let message = "feat: parser\n\nlonger body line";
+    jj.describe(dir, message).await.expect("describe");
+    assert_eq!(
+        jj.description(dir, "@").await.expect("description"),
+        message
+    );
+
+    // A multi-commit revset yields only the newest commit's description.
+    jj.new_change(dir, "second").await.expect("new");
+    assert_eq!(
+        jj.description(dir, "::@").await.expect("description"),
+        "second"
+    );
+}

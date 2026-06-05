@@ -10,7 +10,16 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Repo::conflicted_files()` (also on `VcsRepo`) — paths with unresolved merge
+  conflicts in the working copy (git `diff --diff-filter=U` / jj
+  `resolve --list -r @`).
+- `Repo::has_tracked_changes()` (also on `VcsRepo`) — uncommitted changes to
+  *tracked* files only. git ignores untracked files
+  (`status --untracked-files=no`); jj auto-tracks new files, so this equals
+  `has_uncommitted_changes` there.
+- `Repo::fetch_from(remote)` (also on `VcsRepo`) — fetch from a *named* remote
+  (git `fetch <remote>` / jj `git fetch --remote <remote>`), transient failures
+  retried by the underlying client.
 
 ### Changed
 -

@@ -10,7 +10,12 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `description(dir, revset)` — the full (multiline) description of the commit a
+  revset resolves to (`log --limit 1 -T description`); empty for an undescribed
+  change, newest commit only (log order) for a multi-commit revset.
+- `git_fetch_from(dir, remote)` — fetch from a *named* git remote
+  (`git fetch --remote <remote>`), retried on transient failures like
+  `git_fetch`.
 
 ### Changed
 -

@@ -53,6 +53,13 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
     Ok(!jj.current_change(dir).await?.empty)
 }
 
+pub(crate) async fn conflicted_files<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    Ok(jj.resolve_list(dir, "@").await?)
+}
+
 pub(crate) async fn delete_branch<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
@@ -102,6 +109,15 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
 
 pub(crate) async fn fetch<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<()> {
     jj.git_fetch(dir).await?;
+    Ok(())
+}
+
+pub(crate) async fn fetch_from<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    remote: &str,
+) -> Result<()> {
+    jj.git_fetch_from(dir, remote).await?;
     Ok(())
 }
 

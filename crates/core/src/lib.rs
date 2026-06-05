@@ -293,6 +293,29 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Whether the working copy has uncommitted changes to *tracked* files.
+    ///
+    /// Backend nuance: git ignores untracked files here
+    /// (`status --untracked-files=no`); jj auto-tracks new files, so there is no
+    /// untracked concept and this equals
+    /// [`has_uncommitted_changes`](Self::has_uncommitted_changes).
+    pub async fn has_tracked_changes(&self) -> Result<bool> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::has_tracked_changes(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::has_uncommitted_changes(j, &self.cwd).await,
+        }
+    }
+
+    /// Paths with unresolved merge conflicts in the working copy, repo-relative
+    /// with `/` separators (git `diff --diff-filter=U` / jj `resolve --list -r @`).
+    /// Empty when there are none.
+    pub async fn conflicted_files(&self) -> Result<Vec<String>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::conflicted_files(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::conflicted_files(j, &self.cwd).await,
+        }
+    }
+
     /// Delete a local branch (git) / bookmark (jj). `force` applies to git only
     /// (`branch -D` vs `-d`); jj has no force and ignores it.
     pub async fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
@@ -346,6 +369,16 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::fetch(g, &self.cwd).await,
             Backend::Jj(j) => jj_backend::fetch(j, &self.cwd).await,
+        }
+    }
+
+    /// Fetch from a *named* remote (git `fetch <remote>` / jj
+    /// `git fetch --remote <remote>`). Transient network failures are retried by
+    /// the underlying client.
+    pub async fn fetch_from(&self, remote: &str) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::fetch_from(g, &self.cwd, remote).await,
+            Backend::Jj(j) => jj_backend::fetch_from(j, &self.cwd, remote).await,
         }
     }
 
@@ -481,6 +514,10 @@ pub trait VcsRepo: Send + Sync {
     async fn branch_exists(&self, name: &str) -> Result<bool>;
     /// See [`Repo::has_uncommitted_changes`].
     async fn has_uncommitted_changes(&self) -> Result<bool>;
+    /// See [`Repo::has_tracked_changes`].
+    async fn has_tracked_changes(&self) -> Result<bool>;
+    /// See [`Repo::conflicted_files`].
+    async fn conflicted_files(&self) -> Result<Vec<String>>;
     /// See [`Repo::delete_branch`].
     async fn delete_branch(&self, name: &str, force: bool) -> Result<()>;
     /// See [`Repo::rename_branch`].
@@ -493,6 +530,8 @@ pub trait VcsRepo: Send + Sync {
     async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()>;
     /// See [`Repo::fetch`].
     async fn fetch(&self) -> Result<()>;
+    /// See [`Repo::fetch_from`].
+    async fn fetch_from(&self, remote: &str) -> Result<()>;
     /// See [`Repo::fetch_remote_branch`].
     async fn fetch_remote_branch(&self, branch: &str) -> Result<()>;
     /// See [`Repo::checkout`].
@@ -540,6 +579,12 @@ impl<R: ProcessRunner> VcsRepo for Repo<R> {
     async fn has_uncommitted_changes(&self) -> Result<bool> {
         self.has_uncommitted_changes().await
     }
+    async fn has_tracked_changes(&self) -> Result<bool> {
+        self.has_tracked_changes().await
+    }
+    async fn conflicted_files(&self) -> Result<Vec<String>> {
+        self.conflicted_files().await
+    }
     async fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
         self.delete_branch(name, force).await
     }
@@ -557,6 +602,9 @@ impl<R: ProcessRunner> VcsRepo for Repo<R> {
     }
     async fn fetch(&self) -> Result<()> {
         self.fetch().await
+    }
+    async fn fetch_from(&self, remote: &str) -> Result<()> {
+        self.fetch_from(remote).await
     }
     async fn fetch_remote_branch(&self, branch: &str) -> Result<()> {
         self.fetch_remote_branch(branch).await
@@ -860,6 +908,65 @@ mod tests {
             .unwrap();
         let args = jrec.only_call().args_str();
         assert_eq!(&args[..2], &["git", "fetch"]);
+    }
+
+    #[tokio::test]
+    async fn fetch_from_names_the_remote_on_both_backends() {
+        use processkit::RecordingRunner;
+        let grec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
+            .fetch_from("upstream")
+            .await
+            .unwrap();
+        assert_eq!(
+            grec.only_call().args_str(),
+            ["fetch", "--quiet", "upstream"]
+        );
+
+        let jrec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
+            .fetch_from("upstream")
+            .await
+            .unwrap();
+        let args = jrec.only_call().args_str();
+        assert_eq!(&args[..4], &["git", "fetch", "--remote", "upstream"]);
+    }
+
+    // git: untracked files count as uncommitted but not as *tracked* changes.
+    #[tokio::test]
+    async fn git_has_tracked_changes_ignores_untracked() {
+        let dirty = git_repo(ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0")));
+        assert!(dirty.has_tracked_changes().await.unwrap());
+        // `--untracked-files=no` means git itself omits `??` entries; an empty
+        // reply is what a tracked-clean tree returns.
+        let clean = git_repo(ScriptedRunner::new().on(["status"], Reply::ok("")));
+        assert!(!clean.has_tracked_changes().await.unwrap());
+    }
+
+    // jj has no untracked concept — `has_tracked_changes` follows `@`'s emptiness.
+    #[tokio::test]
+    async fn jj_has_tracked_changes_follows_working_copy() {
+        let dirty = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("kz\t38\tfalse\twip\n")));
+        assert!(dirty.has_tracked_changes().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_dispatches_per_backend() {
+        let git = git_repo(ScriptedRunner::new().on(["diff"], Reply::ok("a.rs\0b dir/c.rs\0")));
+        assert_eq!(
+            git.conflicted_files().await.unwrap(),
+            ["a.rs", "b dir/c.rs"]
+        );
+
+        let jj =
+            jj_repo(ScriptedRunner::new().on(["resolve"], Reply::ok("a.rs    2-sided conflict\n")));
+        assert_eq!(jj.conflicted_files().await.unwrap(), ["a.rs"]);
+        // The benign "no conflicts" non-zero exit still reads as an empty list.
+        let clean = jj_repo(ScriptedRunner::new().on(
+            ["resolve"],
+            Reply::fail(2, "Error: No conflicts found at this revision"),
+        ));
+        assert!(clean.conflicted_files().await.unwrap().is_empty());
     }
 
     // jj records conflicts on the change; the facade maps that to `Conflict`.

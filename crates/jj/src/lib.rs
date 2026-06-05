@@ -167,6 +167,9 @@ pub trait JjApi: Send + Sync {
     /// Fetch from the git remote (`jj git fetch`); transient (network) failures
     /// are retried (3 attempts, 500 ms backoff).
     async fn git_fetch(&self, dir: &Path) -> Result<()>;
+    /// Fetch from a *named* git remote (`jj git fetch --remote <remote>`);
+    /// transient failures are retried like [`git_fetch`](JjApi::git_fetch).
+    async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
     /// Push to the git remote (`jj git push`, optionally `-b <bookmark>`). The
     /// bookmark is owned (`Option<String>`) to keep the trait `mockall`-friendly.
     async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()>;
@@ -229,6 +232,12 @@ pub trait JjApi: Send + Sync {
         template: &str,
         limit: Option<usize>,
     ) -> Result<String>;
+    /// The full (possibly multiline) description of the commit `revset` resolves
+    /// to, trailing whitespace trimmed; empty for an undescribed change — or for
+    /// a revset matching no commit (an *invalid* revset still errors). A
+    /// multi-commit revset yields only the newest commit's description
+    /// (`jj log` order, `--limit 1`).
+    async fn description(&self, dir: &Path, revset: &str) -> Result<String>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -456,6 +465,14 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.unit(cmd).await
     }
 
+    async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
+        // Idempotent → `retry` replays it on a transient (network) failure.
+        let cmd = self
+            .cmd_in(dir, ["git", "fetch", "--remote", remote])
+            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        self.core.unit(cmd).await
+    }
+
     async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()> {
         let mut args = vec!["git", "push"];
         if let Some(name) = bookmark.as_deref() {
@@ -665,6 +682,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         args.push("-T".into());
         args.push(template.into());
         self.core.text(self.cmd_in(dir, args)).await
+    }
+
+    async fn description(&self, dir: &Path, revset: &str) -> Result<String> {
+        self.template_query(dir, revset, "description", Some(1))
+            .await
     }
 
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
@@ -958,6 +980,7 @@ jj_at_forwarders! {
         fn bookmark_track(name: &str, remote: &str) -> Result<()>;
         fn bookmark_set(name: &str, revision: &str) -> Result<()>;
         fn git_fetch() -> Result<()>;
+        fn git_fetch_from(remote: &str) -> Result<()>;
         fn git_push(bookmark: Option<String>) -> Result<()>;
         fn root() -> Result<PathBuf>;
         fn current_bookmark() -> Result<Option<String>>;
@@ -975,6 +998,7 @@ jj_at_forwarders! {
         fn has_workingcopy_conflict() -> Result<bool>;
         fn resolve_list(revset: &str) -> Result<Vec<String>>;
         fn template_query(revset: &str, template: &str, limit: Option<usize>) -> Result<String>;
+        fn description(revset: &str) -> Result<String>;
         fn rebase(onto: &str) -> Result<()>;
         fn rebase_branch(branch: &str, dest: &str) -> Result<()>;
         fn edit(revset: &str) -> Result<()>;
@@ -1101,10 +1125,13 @@ mod tests {
         jj.at(dir).bookmark_move("main", "@", true).await.unwrap();
         jj.describe_rev(dir, "feat", "msg").await.unwrap();
         jj.at(dir).describe_rev("feat", "msg").await.unwrap();
+        jj.description(dir, "@-").await.unwrap();
+        jj.at(dir).description("@-").await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
+        assert_eq!(calls[4].args_str(), calls[5].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
     }
 
@@ -1546,6 +1573,52 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         assert!(jj.git_fetch(Path::new(".")).await.is_err());
         assert_eq!(rec.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // `git_fetch_from` names the remote and shares `git_fetch`'s transient retry.
+    #[tokio::test]
+    async fn git_fetch_from_builds_args_and_retries() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.git_fetch_from(Path::new("."), "upstream")
+            .await
+            .expect("git_fetch_from");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["git", "fetch", "--remote", "upstream", "--color", "never"]
+        );
+
+        let failing = RecordingRunner::replying(Reply::fail(1, "Error: Connection timed out"));
+        let jj = Jj::with_runner(&failing);
+        assert!(jj.git_fetch_from(Path::new("."), "upstream").await.is_err());
+        assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // `description` is a fixed template query: first match only, raw description.
+    #[tokio::test]
+    async fn description_builds_single_commit_template_query() {
+        let rec = RecordingRunner::replying(Reply::ok("feat: parser\n\nbody\n"));
+        let jj = Jj::with_runner(&rec);
+        let text = jj
+            .description(Path::new("."), "abc123")
+            .await
+            .expect("description");
+        assert_eq!(text, "feat: parser\n\nbody");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "log",
+                "-r",
+                "abc123",
+                "--no-graph",
+                "--limit",
+                "1",
+                "-T",
+                "description",
+                "--color",
+                "never"
+            ]
+        );
     }
 
     // `diff_text` for the working copy must build `diff -r @ --git`.
