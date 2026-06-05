@@ -302,7 +302,8 @@ them must stay in range when they cross a minor/major boundary.
 
 See [AGENTS.md](AGENTS.md) for code style, dependency management (every
 dependency gets a "why" comment; no fixed allow-list), the per-crate changelog
-process, and the `jj` version-control workflow.
+process, and the `jj` version-control workflow. Planned future work lives in
+[ROADMAP.md](ROADMAP.md).
 
 ## License
 
