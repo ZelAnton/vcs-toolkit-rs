@@ -9,6 +9,7 @@
 //! `MockJjApi`, or inject a fake runner with
 //! `Jj::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -912,6 +913,48 @@ impl<R: ProcessRunner> Jj<R> {
     pub fn at<'a>(&'a self, dir: &'a Path) -> JjAt<'a, R> {
         JjAt { jj: self, dir }
     }
+
+    /// Run a mutation sequence with op-log rollback: capture the current
+    /// operation ([`op_head`](JjApi::op_head)), run `f` with a [`JjAt`] bound to
+    /// `dir`, and on `Err` restore the repo to the captured operation
+    /// ([`op_restore`](JjApi::op_restore)) before returning the error.
+    ///
+    /// ```no_run
+    /// # async fn demo(jj: &vcs_jj::Jj) -> Result<(), processkit::Error> {
+    /// jj.transaction(std::path::Path::new("."), |tx| async move {
+    ///     tx.describe("wip").await?;
+    ///     tx.new_change("next").await // an Err here rolls back the describe
+    /// })
+    /// .await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Inherent (not on the object-safe trait): the closure parameter is
+    /// generic, which `mockall` / trait objects can't express.
+    ///
+    /// Caveats:
+    /// - Rollback runs on `Err` only — **not** on panic or cancellation (a
+    ///   dropped future); there is no async `Drop`. Convert panics to `Err`
+    ///   inside `f` if you need that safety.
+    /// - If the restore itself fails, the *original* error from `f` is returned
+    ///   and the repo may be left mid-transaction; re-probe
+    ///   [`op_head`](JjApi::op_head) to detect that.
+    pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
+    where
+        F: FnOnce(JjAt<'a, R>) -> Fut,
+        Fut: Future<Output = Result<T>> + 'a,
+    {
+        let pre = self.op_head(dir).await?;
+        match f(self.at(dir)).await {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                // Best-effort restore; the closure's error is the cause and is
+                // what the caller must see even when the restore also fails.
+                let _ = self.op_restore(dir, &pre).await;
+                Err(err)
+            }
+        }
+    }
 }
 
 /// A [`Jj`] client with a working directory bound, so calls drop the leading
@@ -1017,6 +1060,20 @@ jj_at_forwarders! {
         fn workspace_root(name: Option<String>) -> Result<PathBuf>;
         fn workspace_add(spec: WorkspaceAdd) -> Result<()>;
         fn workspace_forget(name: &str) -> Result<()>;
+    }
+}
+
+// Manual forwarder: `transaction` takes a generic closure, which the declarative
+// forwarder macro (fixed argument lists) cannot express.
+impl<'a, R: ProcessRunner> JjAt<'a, R> {
+    /// Bound form of [`Jj::transaction`] (with `dir` pre-bound): run `f` with
+    /// op-log rollback on `Err`. See [`Jj::transaction`] for the caveats.
+    pub async fn transaction<T, F, Fut>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(JjAt<'a, R>) -> Fut,
+        Fut: Future<Output = Result<T>> + 'a,
+    {
+        self.jj.transaction(self.dir, f).await
     }
 }
 
@@ -1592,6 +1649,72 @@ mod tests {
         let jj = Jj::with_runner(&failing);
         assert!(jj.git_fetch_from(Path::new("."), "upstream").await.is_err());
         assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // `transaction` captures the op head and restores it when the closure errors —
+    // and the original (closure) error is what surfaces.
+    #[tokio::test]
+    async fn transaction_restores_op_head_on_error() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("abc123\n"))
+                .on(["op", "restore"], Reply::ok(""))
+                .on(["describe"], Reply::fail(1, "boom")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let res = jj
+            .transaction(
+                Path::new("/r"),
+                |tx| async move { tx.describe("wip").await },
+            )
+            .await;
+        let err = res.expect_err("closure error must surface");
+        assert!(matches!(err, Error::Exit { .. }));
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 3, "op head, mutation, restore: {calls:?}");
+        assert_eq!(calls[0].args_str()[..2], ["op", "log"]);
+        assert_eq!(calls[1].args_str()[0], "describe");
+        assert_eq!(calls[2].args_str()[..3], ["op", "restore", "abc123"]);
+    }
+
+    // A successful transaction must NOT restore (that would undo the work).
+    #[tokio::test]
+    async fn transaction_keeps_changes_on_success() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("abc123\n"))
+                .on(["describe"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        jj.transaction(
+            Path::new("/r"),
+            |tx| async move { tx.describe("wip").await },
+        )
+        .await
+        .expect("transaction");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(
+            calls.iter().all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "no restore on success: {calls:?}"
+        );
+    }
+
+    // The bound view forwards `transaction` with `dir` pre-bound.
+    #[tokio::test]
+    async fn bound_view_forwards_transaction() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("op9\n"))
+                .on(["new"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        jj.at(dir)
+            .transaction(|tx| async move { tx.new_change("x").await })
+            .await
+            .expect("transaction");
+        assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir.as_os_str()));
     }
 
     // `description` is a fixed template query: first match only, raw description.

@@ -17,6 +17,11 @@ crates; tag releases as `vcs-git-v<version>`.
   (`diff --name-only --diff-filter=U -z`); empty when there are none.
 - `status_tracked(dir)` — `status` minus untracked files
   (`--untracked-files=no`): "is the *tracked* tree dirty", staged or not.
+- `Git::switch_with_stash(dir, branch)` (also on `GitAt`) — switch branches
+  carrying uncommitted changes across via `stash push -u` → `checkout` →
+  `stash pop`; a clean tree skips the stash round-trip, and a failed checkout
+  pops the stash back where it was. Inherent (a composed operation, not a 1:1
+  CLI verb).
 
 ### Changed
 -

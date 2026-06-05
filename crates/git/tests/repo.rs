@@ -305,3 +305,50 @@ async fn conflicted_files_and_status_tracked() {
             .is_empty()
     );
 }
+
+// `switch_with_stash` carries dirty state (tracked + untracked) across a branch
+// switch, and restores it on the original branch when the checkout fails.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn switch_with_stash_carries_changes_and_restores_on_failure() {
+    let tmp = TempDir::new("switch");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    // The stash round-trip re-checks files out; keep byte-exact content
+    // assertions valid on Windows (autocrlf would rewrite LF → CRLF).
+    std::process::Command::new(vcs_git::BINARY)
+        .current_dir(dir)
+        .args(["config", "core.autocrlf", "false"])
+        .status()
+        .expect("git config");
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    git.create_branch(dir, "feature").await.expect("branch");
+
+    // Dirty tree: a tracked edit and an untracked file both travel.
+    std::fs::write(dir.join("a.txt"), "edited\n").expect("write");
+    std::fs::write(dir.join("new.txt"), "untracked\n").expect("write");
+    git.switch_with_stash(dir, "feature").await.expect("switch");
+    assert_eq!(git.current_branch(dir).await.expect("branch"), "feature");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).expect("read"),
+        "edited\n"
+    );
+    assert!(dir.join("new.txt").exists(), "untracked file must travel");
+
+    // A failing checkout restores the dirty state where it was.
+    assert!(
+        git.switch_with_stash(dir, "no-such-branch").await.is_err(),
+        "checkout of a missing branch must fail"
+    );
+    assert_eq!(git.current_branch(dir).await.expect("branch"), "feature");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).expect("read"),
+        "edited\n"
+    );
+    assert!(dir.join("new.txt").exists(), "untracked file must survive");
+}

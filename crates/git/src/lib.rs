@@ -1101,6 +1101,42 @@ impl<R: ProcessRunner> Git<R> {
         GitAt { git: self, dir }
     }
 
+    /// Switch to `branch`, carrying uncommitted changes (tracked *and*
+    /// untracked) across via the stash: `stash push -u` → `checkout` →
+    /// `stash pop`. A clean tree skips the stash round-trip entirely — a
+    /// `stash push` there would save nothing and the later pop would pop an
+    /// older, unrelated stash.
+    ///
+    /// Failure behaviour:
+    /// - `checkout` fails (atomic — the working copy stays on the original
+    ///   branch): the stash is popped back to restore the original state, and
+    ///   the checkout error is returned. If that restoring pop *also* fails,
+    ///   the changes stay safe in the stash (`git stash list`).
+    /// - `stash pop` on the target branch conflicts: the error is returned with
+    ///   the target branch checked out; git keeps the stash entry, so the
+    ///   changes can be resolved or re-applied manually.
+    ///
+    /// Inherent (not on the object-safe trait): a composed operation, not a 1:1
+    /// CLI verb — mock the underlying `status`/`stash_*`/`checkout` instead.
+    pub async fn switch_with_stash(&self, dir: &Path, branch: &str) -> Result<()> {
+        // Untracked-inclusive guard to match `stash push -u`: "dirty" must mean
+        // the same thing to the guard and to the stash.
+        if self.status(dir).await?.is_empty() {
+            return self.checkout(dir, branch).await;
+        }
+        self.stash_push(dir, true).await?;
+        match self.checkout(dir, branch).await {
+            Ok(()) => self.stash_pop(dir).await,
+            Err(err) => {
+                // A failed checkout is atomic — we are still on the original
+                // branch, so popping restores the exact pre-call state. If the
+                // pop fails too, the stash entry is preserved for the caller.
+                let _ = self.stash_pop(dir).await;
+                Err(err)
+            }
+        }
+    }
+
     /// `git_dir` resolved to an absolute path — `rev-parse --git-dir` may report
     /// it relative to `dir` (e.g. `.git`), which the filesystem probes need joined.
     async fn resolved_git_dir(&self, dir: &Path) -> Result<PathBuf> {
@@ -1227,6 +1263,7 @@ git_at_forwarders! {
         fn rebase_continue() -> Result<()>;
         fn stash_push(include_untracked: bool) -> Result<()>;
         fn stash_pop() -> Result<()>;
+        fn switch_with_stash(branch: &str) -> Result<()>;
         fn worktree_list() -> Result<Vec<Worktree>>;
         fn worktree_add(spec: WorktreeAdd) -> Result<()>;
         fn worktree_remove(path: &Path, force: bool) -> Result<()>;
@@ -1916,6 +1953,70 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), 1);
+    }
+
+    // Dirty tree: stash -u → checkout → pop, in that order.
+    #[tokio::test]
+    async fn switch_with_stash_round_trips_dirty_tree() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["status"], Reply::ok(" M a.rs\0"))
+                .on(["stash", "push"], Reply::ok(""))
+                .on(["checkout"], Reply::ok(""))
+                .on(["stash", "pop"], Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec);
+        git.switch_with_stash(Path::new("/r"), "feature")
+            .await
+            .expect("switch");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(
+            calls[1].args_str(),
+            ["stash", "push", "--include-untracked"]
+        );
+        assert_eq!(calls[2].args_str(), ["checkout", "feature"]);
+        assert_eq!(calls[3].args_str(), ["stash", "pop"]);
+    }
+
+    // A clean tree skips the stash round-trip — a no-op `stash push` would make
+    // the later pop grab an older, unrelated stash.
+    #[tokio::test]
+    async fn switch_with_stash_skips_stash_on_clean_tree() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["status"], Reply::ok(""))
+                .on(["checkout"], Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec);
+        git.switch_with_stash(Path::new("/r"), "feature")
+            .await
+            .expect("switch");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|c| c.args_str()[0] != "stash"));
+    }
+
+    // A failed checkout pops the stash back (we are still on the original
+    // branch) and surfaces the checkout error.
+    #[tokio::test]
+    async fn switch_with_stash_restores_on_checkout_failure() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["status"], Reply::ok(" M a.rs\0"))
+                .on(["stash", "push"], Reply::ok(""))
+                .on(["checkout"], Reply::fail(1, "error: pathspec 'nope'"))
+                .on(["stash", "pop"], Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec);
+        let err = git
+            .switch_with_stash(Path::new("/r"), "nope")
+            .await
+            .expect_err("checkout error must surface");
+        assert!(matches!(err, Error::Exit { .. }));
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[3].args_str(), ["stash", "pop"], "restoring pop ran");
     }
 
     // `fetch_from` names the remote, keeps the prompt off, and shares the

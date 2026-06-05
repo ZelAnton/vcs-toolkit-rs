@@ -20,6 +20,17 @@ crates; tag releases as `vcs-core-v<version>`.
 - `Repo::fetch_from(remote)` (also on `VcsRepo`) — fetch from a *named* remote
   (git `fetch <remote>` / jj `git fetch --remote <remote>`), transient failures
   retried by the underlying client.
+- `Repo::try_merge(source)` (also on `VcsRepo`) returning the new `MergeProbe`
+  (`Clean` / `Conflicts(paths)`) — probe whether a merge would conflict, with
+  guaranteed rollback before returning (git: `merge --no-commit --no-ff` +
+  `merge --abort`; jj: a probe merge undone via `op restore`). A failing
+  rollback propagates as an error instead of misreporting the tree state.
+- `Repo::abort_in_progress()` / `Repo::continue_in_progress()` (also on
+  `VcsRepo`) — drive a paused git merge/rebase to ground and return the fresh
+  post-call `OperationState`. On git, `continue_in_progress` reports `Conflict`
+  while unresolved paths block continuing (unlike `in_progress_state`, which
+  still never returns `Conflict` for git). On jj both are reporting no-ops —
+  nothing is ever paused; roll back via `Jj::transaction` / `op_restore`.
 
 ### Changed
 -

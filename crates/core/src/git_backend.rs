@@ -6,7 +6,9 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_git::{Git, GitApi, StatusEntry, WorktreeAdd};
 
-use crate::dto::{ChangeKind, CreateOutcome, DiffStat, FileChange, OperationState, WorktreeInfo};
+use crate::dto::{
+    ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState, WorktreeInfo,
+};
 use crate::error::Result;
 
 pub(crate) async fn current_branch<R: ProcessRunner>(
@@ -148,6 +150,86 @@ pub(crate) async fn checkout<R: ProcessRunner>(
 pub(crate) async fn rebase<R: ProcessRunner>(git: &Git<R>, dir: &Path, onto: &str) -> Result<()> {
     git.rebase(dir, onto).await?;
     Ok(())
+}
+
+pub(crate) async fn try_merge<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    source: &str,
+) -> Result<MergeProbe> {
+    // `--no-ff` so even a fast-forwardable merge stages a real (abortable) merge
+    // instead of moving HEAD; `--no-commit` so nothing is committed either way.
+    let merged = git.merge_no_commit(dir, source, false, true).await;
+    match merged {
+        Ok(()) => {
+            // "Already up to date." exits 0 *without* MERGE_HEAD — `merge
+            // --abort` would then fail, so only abort an actually-started merge.
+            if git.is_merge_in_progress(dir).await? {
+                git.merge_abort(dir).await?;
+            }
+            Ok(MergeProbe::Clean)
+        }
+        Err(err) if vcs_git::is_merge_conflict(&err) => {
+            // Collect the conflicted paths BEFORE aborting — `merge --abort`
+            // clears the unmerged index entries this reads.
+            let files = git.conflicted_files(dir).await?;
+            // A failed abort breaks the guaranteed-rollback contract → propagate
+            // rather than return a `Conflicts` that lies about the tree state.
+            git.merge_abort(dir).await?;
+            Ok(MergeProbe::Conflicts(files))
+        }
+        Err(err) => {
+            // E.g. a dirty-tree refusal or an unknown ref — the merge usually
+            // never started, but clean up if it did.
+            if git.is_merge_in_progress(dir).await? {
+                git.merge_abort(dir).await?;
+            }
+            Err(err.into())
+        }
+    }
+}
+
+pub(crate) async fn abort_in_progress<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<OperationState> {
+    match in_progress_state(git, dir).await? {
+        OperationState::Merge => git.merge_abort(dir).await?,
+        OperationState::Rebase => git.rebase_abort(dir).await?,
+        _ => {}
+    }
+    // Recompute rather than assume `Clear` — the return is the *post-call* state.
+    in_progress_state(git, dir).await
+}
+
+pub(crate) async fn continue_in_progress<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<OperationState> {
+    // git refuses to continue while unmerged paths remain; report instead of
+    // tripping over the hard error.
+    if !git.conflicted_files(dir).await?.is_empty() {
+        return Ok(OperationState::Conflict);
+    }
+    match in_progress_state(git, dir).await? {
+        OperationState::Merge => git.merge_continue(dir).await?,
+        OperationState::Rebase => {
+            // `rebase --continue` exits non-zero when it stops on the NEXT
+            // patch's conflict — that's the `Conflict` outcome, not an error.
+            if let Err(err) = git.rebase_continue(dir).await {
+                if !git.conflicted_files(dir).await?.is_empty() {
+                    return Ok(OperationState::Conflict);
+                }
+                return Err(err.into());
+            }
+        }
+        _ => {}
+    }
+    // Belt and braces: report any unresolved paths the continue left behind.
+    if !git.conflicted_files(dir).await?.is_empty() {
+        return Ok(OperationState::Conflict);
+    }
+    in_progress_state(git, dir).await
 }
 
 pub(crate) async fn in_progress_state<R: ProcessRunner>(

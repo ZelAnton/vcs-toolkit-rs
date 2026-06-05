@@ -95,6 +95,26 @@ pub enum OperationState {
     Conflict,
 }
 
+/// The outcome of a [`try_merge`](crate::Repo::try_merge) probe. The probe
+/// itself is rolled back before it returns, whatever the outcome — this only
+/// *reports* what a real merge would do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MergeProbe {
+    /// The merge would apply without conflicts.
+    Clean,
+    /// The merge would conflict in these paths (repo-relative, `/` separators —
+    /// the same contract as [`conflicted_files`](crate::Repo::conflicted_files)).
+    Conflicts(Vec<String>),
+}
+
+impl MergeProbe {
+    /// Whether the probe found no conflicts.
+    pub fn is_clean(&self) -> bool {
+        matches!(self, MergeProbe::Clean)
+    }
+}
+
 /// How a worktree was materialised. The facade always reports
 /// [`Plain`](CreateOutcome::Plain); the [`CowCloned`](CreateOutcome::CowCloned)
 /// variant exists so a consumer that layers a copy-on-write strategy on top can

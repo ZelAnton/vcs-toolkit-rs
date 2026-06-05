@@ -15,10 +15,12 @@
 //! [`Repo::git`] / [`Repo::jj`] escape hatches). Some operations are deliberately
 //! *not* on the common surface because the backends model them too differently to
 //! unify without lying: a full `merge` (jj composes `new` + `squash` + bookmark
-//! moves), operation rollback (jj's `op restore` has no faithful git analogue),
-//! and range/revset-scoped queries (`commit_count`, diff stats over a range —
-//! git's `a..b` and jj's revsets aren't interchangeable). Reach those through the
-//! bound handles.
+//! moves — though the conflict *probe* is unified as [`Repo::try_merge`]),
+//! operation rollback (jj's `op restore` has no faithful git analogue; see
+//! [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client), and
+//! range/revset-scoped queries
+//! (`commit_count`, diff stats over a range — git's `a..b` and jj's revsets
+//! aren't interchangeable). Reach those through the bound handles.
 //!
 //! ```no_run
 //! use vcs_core::Repo;
@@ -44,7 +46,8 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, ChangeKind, CreateOutcome, DiffStat, FileChange, OperationState, WorktreeInfo,
+    BackendKind, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
+    WorktreeInfo,
 };
 pub use error::{Error, Result};
 
@@ -409,11 +412,58 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Probe whether merging `source` into the current work would conflict,
+    /// **without leaving any trace**: the probe is rolled back before returning
+    /// (git: `merge --no-commit --no-ff` then `merge --abort`; jj: a merge
+    /// change probed and undone via `op restore`).
+    ///
+    /// Preconditions/behaviour:
+    /// - git: requires a clean-enough working tree — a dirty-tree refusal
+    ///   propagates as a plain error, not as [`MergeProbe::Conflicts`].
+    /// - A failing rollback **propagates as an error** rather than returning a
+    ///   result that misdescribes the on-disk state.
+    pub async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::try_merge(g, &self.cwd, source).await,
+            Backend::Jj(j) => jj_backend::try_merge(j, &self.cwd, source).await,
+        }
+    }
+
+    /// Abort the in-progress operation, if any (git: `merge --abort` /
+    /// `rebase --abort`; jj: a no-op — there are no paused operations, roll back
+    /// explicitly via `Jj::transaction` / `op_restore`). Returns the fresh
+    /// *post-call* [`OperationState`]; `Clear` when nothing was (or remains) in
+    /// progress.
+    pub async fn abort_in_progress(&self) -> Result<OperationState> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::abort_in_progress(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::abort_in_progress(j, &self.cwd).await,
+        }
+    }
+
+    /// Continue the in-progress operation after conflict resolution (git:
+    /// `commit --no-edit` for a merge / `rebase --continue`; jj: a no-op —
+    /// resolving the files *is* the continuation). Returns the fresh *post-call*
+    /// [`OperationState`]:
+    /// - `Conflict` when unresolved paths still block continuing (also on git —
+    ///   unlike [`in_progress_state`](Self::in_progress_state), this method
+    ///   *does* report `Conflict` for git), or when a continued rebase stops on
+    ///   the next patch's conflict.
+    /// - `Clear` when the operation finished.
+    pub async fn continue_in_progress(&self) -> Result<OperationState> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::continue_in_progress(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::continue_in_progress(j, &self.cwd).await,
+        }
+    }
+
     /// Whether the working copy is mid-operation or conflicted — see
     /// [`OperationState`]. Lets a caller decide between abort/continue without
-    /// knowing the backend's model. Note the asymmetry: git reports `Merge`/
-    /// `Rebase` (a git conflict *is* that paused state — the conflict itself
-    /// surfaces on the failed op via [`Error::is_conflict`]), while jj has no
+    /// knowing the backend's model. Note the asymmetry: *this method* reports
+    /// `Merge`/`Rebase` (never `Conflict`) on git — a git conflict *is* that
+    /// paused state, and the conflict itself surfaces on the failed op via
+    /// [`Error::is_conflict`] (or as `Conflict` from
+    /// [`continue_in_progress`](Self::continue_in_progress)) — while jj has no
     /// paused op and reports `Conflict` directly.
     pub async fn in_progress_state(&self) -> Result<OperationState> {
         match &self.backend {
@@ -538,6 +588,12 @@ pub trait VcsRepo: Send + Sync {
     async fn checkout(&self, reference: &str) -> Result<()>;
     /// See [`Repo::rebase`].
     async fn rebase(&self, onto: &str) -> Result<()>;
+    /// See [`Repo::try_merge`].
+    async fn try_merge(&self, source: &str) -> Result<MergeProbe>;
+    /// See [`Repo::abort_in_progress`].
+    async fn abort_in_progress(&self) -> Result<OperationState>;
+    /// See [`Repo::continue_in_progress`].
+    async fn continue_in_progress(&self) -> Result<OperationState>;
     /// See [`Repo::in_progress_state`].
     async fn in_progress_state(&self) -> Result<OperationState>;
     /// See [`Repo::list_worktrees`].
@@ -614,6 +670,15 @@ impl<R: ProcessRunner> VcsRepo for Repo<R> {
     }
     async fn rebase(&self, onto: &str) -> Result<()> {
         self.rebase(onto).await
+    }
+    async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
+        self.try_merge(source).await
+    }
+    async fn abort_in_progress(&self) -> Result<OperationState> {
+        self.abort_in_progress().await
+    }
+    async fn continue_in_progress(&self) -> Result<OperationState> {
+        self.continue_in_progress().await
     }
     async fn in_progress_state(&self) -> Result<OperationState> {
         self.in_progress_state().await
@@ -967,6 +1032,215 @@ mod tests {
             Reply::fail(2, "Error: No conflicts found at this revision"),
         ));
         assert!(clean.conflicted_files().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_probe_is_clean() {
+        assert!(MergeProbe::Clean.is_clean());
+        assert!(!MergeProbe::Conflicts(vec!["a.rs".into()]).is_clean());
+    }
+
+    // git try_merge, clean: probe merge, no MERGE_HEAD afterwards (the scripted
+    // git-dir doesn't exist) → no abort, `Clean`.
+    #[tokio::test]
+    async fn git_try_merge_reports_clean_and_skips_needless_abort() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["merge"], Reply::ok("Already up to date.\n"))
+                .on(["rev-parse"], Reply::ok("/vcs-core-no-such-git-dir")),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(repo.try_merge("other").await.unwrap(), MergeProbe::Clean);
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| !c.args_str().contains(&"--abort".to_string())),
+            "no merge to abort"
+        );
+    }
+
+    // git try_merge, conflict: conflicted paths are read BEFORE the abort (abort
+    // clears the unmerged index), then the merge is aborted.
+    #[tokio::test]
+    async fn git_try_merge_collects_conflicts_then_aborts() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // Order matters: ["merge","--abort"] must outrank the ["merge"] rule.
+                .on(["merge", "--abort"], Reply::ok(""))
+                .on(
+                    ["merge"],
+                    Reply::fail(1, "CONFLICT (content): Merge conflict in a.rs"),
+                )
+                .on(["diff"], Reply::ok("a.rs\0")),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.try_merge("other").await.unwrap(),
+            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+        );
+        let calls = rec.calls();
+        let diff_pos = calls.iter().position(|c| c.args_str()[0] == "diff");
+        let abort_pos = calls
+            .iter()
+            .position(|c| c.args_str().contains(&"--abort".to_string()));
+        assert!(diff_pos.unwrap() < abort_pos.unwrap(), "{calls:?}");
+    }
+
+    // git try_merge: a failing rollback must propagate, not be reported as a
+    // clean/conflicted probe.
+    #[tokio::test]
+    async fn git_try_merge_propagates_abort_failure() {
+        let tmp = TempDir::new("probe-abort");
+        std::fs::write(tmp.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["merge", "--abort"],
+                    Reply::fail(128, "fatal: cannot abort"),
+                )
+                .on(["merge"], Reply::ok(""))
+                .on(["rev-parse"], Reply::ok(tmp.path().to_str().unwrap())),
+        );
+        assert!(repo.try_merge("other").await.is_err());
+    }
+
+    // jj try_merge: op head captured first, probe runs, op restore always runs.
+    #[tokio::test]
+    async fn jj_try_merge_probes_and_restores() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("op42\n"))
+                .on(["op", "restore"], Reply::ok(""))
+                .on(["new"], Reply::ok(""))
+                .on(["log"], Reply::ok("1\n")) // is_conflicted → true
+                .on(["resolve"], Reply::ok("a.rs    2-sided conflict\n")),
+        );
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        assert_eq!(
+            repo.try_merge("feature").await.unwrap(),
+            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+        );
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str()[..2], ["op", "log"]);
+        assert_eq!(calls[1].args_str()[0], "new");
+        let last = calls.last().unwrap().args_str();
+        assert_eq!(last[..3], ["op", "restore", "op42"]);
+    }
+
+    #[tokio::test]
+    async fn jj_try_merge_clean_and_restore_failure() {
+        // Conflict-free probe → Clean (no resolve call needed).
+        let clean = jj_repo(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("op42\n"))
+                .on(["op", "restore"], Reply::ok(""))
+                .on(["new"], Reply::ok(""))
+                .on(["log"], Reply::ok("0\n")),
+        );
+        assert_eq!(clean.try_merge("feature").await.unwrap(), MergeProbe::Clean);
+
+        // A failing op restore breaks the rollback guarantee → error, not Clean.
+        let broken = jj_repo(
+            ScriptedRunner::new()
+                .on(["op", "log"], Reply::ok("op42\n"))
+                .on(["op", "restore"], Reply::fail(1, "op not found"))
+                .on(["new"], Reply::ok(""))
+                .on(["log"], Reply::ok("0\n")),
+        );
+        assert!(broken.try_merge("feature").await.is_err());
+    }
+
+    // continue_in_progress with unresolved paths reports `Conflict` and must NOT
+    // attempt the continue (git would hard-error).
+    #[tokio::test]
+    async fn git_continue_blocked_by_conflicts_does_not_act() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(["diff"], Reply::ok("a.rs\0")));
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Conflict
+        );
+        assert!(
+            rec.calls().iter().all(|c| c.args_str()[0] == "diff"),
+            "only the conflict probe may run: {:?}",
+            rec.calls()
+        );
+    }
+
+    // A continued rebase that stops on the NEXT patch's conflict exits non-zero;
+    // continue_in_progress must report that as `Conflict`, not as an error. The
+    // first conflict probe must see a clean index (else continue is blocked), the
+    // post-continue probe must see the new conflict — a stateful predicate
+    // sequences the two `diff` replies.
+    #[tokio::test]
+    async fn git_continue_maps_rebase_re_conflict() {
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let tmp = TempDir::new("rebase-restop");
+        std::fs::create_dir_all(tmp.path().join("rebase-merge")).unwrap();
+        let seen_first_diff = StdArc::new(AtomicBool::new(false));
+        let flag = StdArc::clone(&seen_first_diff);
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .when(
+                    move |cmd| {
+                        cmd.arguments().first().and_then(|a| a.to_str()) == Some("diff")
+                            && flag.swap(true, Ordering::SeqCst)
+                    },
+                    Reply::ok("a.rs\0"),
+                )
+                .on(["diff"], Reply::ok(""))
+                .on(["rev-parse"], Reply::ok(tmp.path().to_str().unwrap()))
+                .on(
+                    ["rebase", "--continue"],
+                    Reply::fail(1, "CONFLICT (content): Merge conflict in a.rs"),
+                ),
+        );
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Conflict
+        );
+    }
+
+    // abort_in_progress dispatches to `merge --abort` when MERGE_HEAD is present.
+    #[tokio::test]
+    async fn git_abort_dispatches_on_merge_in_progress() {
+        use processkit::RecordingRunner;
+        let tmp = TempDir::new("abort");
+        std::fs::write(tmp.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["rev-parse"], Reply::ok(tmp.path().to_str().unwrap()))
+                .on(["merge", "--abort"], Reply::ok("")),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        repo.abort_in_progress().await.unwrap();
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["merge", "--abort"]),
+            "{:?}",
+            rec.calls()
+        );
+    }
+
+    // On jj, abort/continue are reporting no-ops (nothing is ever paused).
+    #[tokio::test]
+    async fn jj_abort_and_continue_are_reporting_noops() {
+        let conflicted = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("1\n")));
+        assert_eq!(
+            conflicted.abort_in_progress().await.unwrap(),
+            OperationState::Conflict
+        );
+        let clear = jj_repo(ScriptedRunner::new().on(["log"], Reply::ok("0\n")));
+        assert_eq!(
+            clear.continue_in_progress().await.unwrap(),
+            OperationState::Clear
+        );
     }
 
     // jj records conflicts on the change; the facade maps that to `Conflict`.

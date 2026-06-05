@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use processkit::ProcessRunner;
 use vcs_jj::{ChangedPath, Jj, JjApi, JjFileset, WorkspaceAdd};
 
-use crate::dto::{ChangeKind, CreateOutcome, DiffStat, FileChange, OperationState, WorktreeInfo};
+use crate::dto::{
+    ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState, WorktreeInfo,
+};
 use crate::error::{Error, Result};
 
 pub(crate) async fn current_branch<R: ProcessRunner>(
@@ -144,6 +146,69 @@ pub(crate) async fn checkout<R: ProcessRunner>(
 pub(crate) async fn rebase<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, onto: &str) -> Result<()> {
     jj.rebase(dir, onto).await?;
     Ok(())
+}
+
+pub(crate) async fn try_merge<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    source: &str,
+) -> Result<MergeProbe> {
+    // Capture the rollback point BEFORE any mutation.
+    let pre_op = jj.op_head(dir).await?;
+    // Materialise the merge as a new working-copy change; jj records conflicts
+    // on the commit instead of failing, so a 0 exit does NOT mean "clean".
+    let merged = jj
+        .new_merge(
+            dir,
+            "vcs-core try_merge probe (rolled back)",
+            vec!["@".into(), source.into()],
+        )
+        .await;
+    // Probe the outcome before restoring (the probe target disappears after).
+    // If `new_merge` itself failed, a failing probe must not mask that error.
+    let probe = async {
+        if jj.is_conflicted(dir, "@").await? {
+            Ok::<_, vcs_jj::Error>(Some(jj.resolve_list(dir, "@").await?))
+        } else {
+            Ok(None)
+        }
+    }
+    .await;
+    // Always roll back — also when the merge or the probe errored.
+    let restored = jj.op_restore(dir, &pre_op).await;
+    match (merged, probe) {
+        (Ok(()), Ok(conflicts)) => {
+            // The probe is only trustworthy if the rollback actually happened —
+            // a `Clean`/`Conflicts` with the probe commit still present lies.
+            restored?;
+            Ok(match conflicts {
+                Some(files) => MergeProbe::Conflicts(files),
+                None => MergeProbe::Clean,
+            })
+        }
+        // The original failure is the cause; a secondary restore/probe failure
+        // must not mask it.
+        (Err(err), _) | (Ok(()), Err(err)) => Err(err.into()),
+    }
+}
+
+pub(crate) async fn abort_in_progress<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<OperationState> {
+    // jj has no paused operations to abort — a conflict lives on the change
+    // itself. Roll back explicitly via `Jj::transaction` / `op_restore` instead;
+    // this only reports the current state.
+    in_progress_state(jj, dir).await
+}
+
+pub(crate) async fn continue_in_progress<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<OperationState> {
+    // jj has nothing to continue — resolving the conflicted files *is* the
+    // continuation. This only reports the current state.
+    in_progress_state(jj, dir).await
 }
 
 pub(crate) async fn in_progress_state<R: ProcessRunner>(

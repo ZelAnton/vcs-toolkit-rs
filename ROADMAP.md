@@ -28,28 +28,36 @@ below.
 | 1.6 | ✅ | Unified conflict listing on the facade | both consumers dispatch by hand | `Repo::conflicted_files() -> Vec<String>` (git `diff-filter=U` / jj `resolve_list -r @`) |
 | 1.7 | ✅ | Dirty-tree check ignoring untracked | `vcs.rs:342` (`git status --porcelain --untracked-files=no`) | `GitApi::status_tracked(dir)` + facade `Repo::has_tracked_changes()` (jj: equals `has_uncommitted_changes`) |
 
-## 2. Orchestration primitives
+## 2. Orchestration primitives — ✅ done
 
 Both consumers independently built the same machinery on top of the typed
 API — the strongest possible signal it belongs here. These are *separate
 primitives*, not a false cross-backend abstraction (the merge / op-rollback
 divergence stays deliberately non-unified, as documented in `vcs-core`).
+**Status:** implemented as described, with two shape adjustments found during
+design: the transaction closure receives a bound `JjAt` (rollback on `Err`
+only — panic-rollback is impossible without async `Drop`), and
+`switch_with_stash` is inherent on `Git` rather than a `GitApi` trait method
+(composed operation, wrong mock surface for the trait).
 
-- **2.1 jj transaction with op-log rollback.** Both consumers capture
-  `op_head` before a mutation chain and `op_restore` on failure. Provide
-  `Jj::transaction(dir, |tx| async { … })` (or an RAII `OpCheckpoint` guard)
-  that snapshots the operation id and restores it on `Err`/panic.
-- **2.2 Dry-run merge.** `agent-workspace` probes with `merge --no-commit` +
-  abort; jj-side it merges into a throwaway change and op-restores. Unify as
-  `Repo::try_merge(source) -> MergeProbe` where
-  `MergeProbe = Clean | Conflicts(Vec<String>)`, with guaranteed rollback.
-- **2.3 Abort/continue as one state machine.** `in_progress_state()` already
-  reports `Merge`/`Rebase`/`Conflict`; add `Repo::abort_in_progress()` and
-  `Repo::continue_in_progress()` (git: `merge --abort` / `rebase --abort` /
-  the `_continue` twins; jj: no-op or `op_restore`).
-- **2.4 Stash-safe branch switch.** Lift `agent-workspace`'s sequencing
-  (checkout the target *before* `stash pop`, so a failed checkout leaves the
-  stash intact) into `GitApi::switch_with_stash(dir, branch)`.
+- **2.1 ✅ jj transaction with op-log rollback.** Both consumers capture
+  `op_head` before a mutation chain and `op_restore` on failure. Shipped as
+  `Jj::transaction(dir, |tx| async { … })` (also on `JjAt`): snapshots the
+  operation id, hands the closure a bound `JjAt`, restores on `Err`.
+- **2.2 ✅ Dry-run merge.** `agent-workspace` probes with `merge --no-commit` +
+  abort; jj-side it merges into a throwaway change and op-restores. Shipped as
+  `Repo::try_merge(source) -> MergeProbe`
+  (`MergeProbe = Clean | Conflicts(Vec<String>)`), with guaranteed rollback —
+  a failing rollback propagates instead of misreporting.
+- **2.3 ✅ Abort/continue as one state machine.** Shipped as
+  `Repo::abort_in_progress()` and `Repo::continue_in_progress()` returning the
+  fresh post-call `OperationState` (git: `merge --abort` / `rebase --abort` /
+  the `_continue` twins, with `Conflict` reported while unresolved paths block;
+  jj: reporting no-ops — rollback goes through 2.1).
+- **2.4 ✅ Stash-safe branch switch.** `agent-workspace`'s sequencing (a failed
+  checkout leaves the changes safe) shipped as
+  `Git::switch_with_stash(dir, branch)` (also on `GitAt`), with a clean-tree
+  fast path that skips the stash round-trip.
 
 ## 3. Widen `vcs-github` for PR-lifecycle automation
 
@@ -73,7 +81,9 @@ Verified absent today; add as consumers (or new tools) demand them:
   operations (create/list/delete — release tooling), `show <rev>:<path>`
   (file content at a revision — review/agent tooling), `cherry_pick`,
   `revert`, `config_get`/`config_set`, `remote_add`/`remote_set_url`,
-  `blame`.
+  `blame`, `rebase_skip` (`rebase --skip` — without it,
+  `continue_in_progress` surfaces an empty-patch rebase stop as an error the
+  caller must resolve by hand).
 - **4.2 jj:** `git clone`, `absorb` (fold edits into the changes that touched
   those lines — ideal for agent workflows), `split`, `duplicate`, `op_log`
   (the list; only head/restore/undo exist today), `evolog`, `file annotate`.

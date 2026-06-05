@@ -261,3 +261,38 @@ async fn description_round_trips_describe() {
         "second"
     );
 }
+
+// `transaction` rolls the op log back on Err and keeps the work on Ok.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn transaction_rolls_back_on_error_and_keeps_success() {
+    let tmp = TempDir::new("transaction");
+    let dir = tmp.path();
+    init_repo(dir);
+    let jj = Jj::new();
+
+    jj.describe(dir, "before").await.expect("describe");
+
+    // Failing transaction: the inner describe is rolled back.
+    let res = jj
+        .transaction(dir, |tx| async move {
+            tx.describe("inside").await?;
+            tx.edit("zzz-no-such-revset").await // forces the rollback
+        })
+        .await;
+    assert!(res.is_err(), "the closure error must surface");
+    assert_eq!(
+        jj.description(dir, "@").await.expect("description"),
+        "before",
+        "the describe inside the failed transaction must be rolled back"
+    );
+
+    // Successful transaction: the mutation sticks.
+    jj.transaction(dir, |tx| async move { tx.describe("after").await })
+        .await
+        .expect("transaction");
+    assert_eq!(
+        jj.description(dir, "@").await.expect("description"),
+        "after"
+    );
+}

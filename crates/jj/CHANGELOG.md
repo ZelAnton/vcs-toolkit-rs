@@ -16,6 +16,11 @@ crates; tag releases as `vcs-jj-v<version>`.
 - `git_fetch_from(dir, remote)` — fetch from a *named* git remote
   (`git fetch --remote <remote>`), retried on transient failures like
   `git_fetch`.
+- `Jj::transaction(dir, |tx| …)` (also on `JjAt`) — run a mutation sequence with
+  op-log rollback: captures `op_head`, hands the closure a bound `JjAt`, and
+  restores the captured operation when the closure returns `Err`. Inherent (not
+  on the trait — generic closures aren't mockable); rollback runs on `Err` only,
+  not on panic/cancellation.
 
 ### Changed
 -
