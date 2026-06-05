@@ -167,6 +167,54 @@ pub(crate) const COUNT_TEMPLATE: &str = "commit_id.short() ++ \"\\n\"";
 pub(crate) const REACHABLE_BOOKMARKS_TEMPLATE: &str =
     "local_bookmarks.map(|b| b.name()).join(\" \") ++ \"\\t\" ++ commit_id.short() ++ \"\\n\"";
 
+/// The installed jj binary's version, parsed from `jj --version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct JjVersion {
+    /// Major component (`0` in `0.38.0`).
+    pub major: u64,
+    /// Minor component.
+    pub minor: u64,
+    /// Patch component (`0` when the binary reports only `major.minor`).
+    pub patch: u64,
+}
+
+impl std::fmt::Display for JjVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// Parse `jj --version` output (`jj 0.38.0`): the first dotted-numeric token
+/// wins; non-numeric trailers (`-dev`, build hashes) are ignored; a missing
+/// patch reads as `0`.
+pub(crate) fn parse_jj_version(raw: &str) -> Option<JjVersion> {
+    for token in raw.split_whitespace() {
+        let mut parts = token.split('.');
+        let Some(major) = parts.next().and_then(leading_number) else {
+            continue;
+        };
+        let Some(minor) = parts.next().and_then(leading_number) else {
+            continue; // A bare number is not a version token.
+        };
+        let patch = parts.next().and_then(leading_number).unwrap_or(0);
+        return Some(JjVersion {
+            major,
+            minor,
+            patch,
+        });
+    }
+    None
+}
+
+/// The numeric prefix of `s` (`"38-dev"` → 38); `None` when it has none.
+fn leading_number(s: &str) -> Option<u64> {
+    let end = s.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 {
+        return None;
+    }
+    s[..end].parse().ok()
+}
+
 /// `jj evolog -T` template. Evolog renders in a *commit* context where the
 /// bare keywords (`change_id`, …) don't exist — the `commit.` method form is
 /// required. Columns mirror [`CHANGE_TEMPLATE`], so [`parse_changes`] reads it.
@@ -604,6 +652,19 @@ fn header_b_path(section: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jj_version_parses_real_world_shapes() {
+        let v = parse_jj_version("jj 0.38.0").unwrap();
+        assert_eq!((v.major, v.minor, v.patch), (0, 38, 0));
+        let v = parse_jj_version("jj 0.39.0-dev+abc123").unwrap();
+        assert_eq!((v.major, v.minor, v.patch), (0, 39, 0));
+        let v = parse_jj_version("jj 1.2").unwrap();
+        assert_eq!(v.patch, 0, "missing patch defaults to 0");
+        // Ordering drives the supported-floor gate.
+        assert!(parse_jj_version("jj 0.37.9").unwrap() < parse_jj_version("jj 0.38.0").unwrap());
+        assert!(parse_jj_version("jj").is_none());
+    }
 
     #[test]
     fn operations_split_tab_fields() {

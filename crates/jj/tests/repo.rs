@@ -2,34 +2,16 @@
 //! repository. Ignored by default (require the `jj` binary); run with
 //! `cargo test -p vcs-jj -- --ignored`.
 
-mod common;
-
-use std::path::Path;
-use std::process::Command;
-
-use common::TempDir;
+// Scaffolding from vcs-testkit: `JjSandbox` owns the throwaway workspace and
+// raw scenario steps; the typed client under test does the rest.
 use vcs_jj::{Jj, JjApi, WorkspaceAdd};
-
-/// Create a fresh jj repo in `dir` with a deterministic identity.
-fn init_repo(dir: &Path) {
-    let jj = |args: &[&str]| {
-        Command::new(vcs_jj::BINARY)
-            .current_dir(dir)
-            .args(args)
-            .status()
-            .expect("jj command");
-    };
-    jj(&["git", "init"]);
-    jj(&["config", "set", "--repo", "user.name", "Test"]);
-    jj(&["config", "set", "--repo", "user.email", "test@example.com"]);
-}
+use vcs_testkit::{BareRemote, JjSandbox, TempDir, jj as jj_raw};
 
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn describe_new_and_log_cycle() {
-    let tmp = TempDir::new("cycle");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("cycle");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     // Fresh working copy: an empty change with no description.
@@ -84,17 +66,12 @@ async fn describe_new_and_log_cycle() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn bookmark_create_set_and_list() {
-    let tmp = TempDir::new("bookmarks");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("bookmarks");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     jj.describe(dir, "rooted").await.expect("describe");
-    Command::new(vcs_jj::BINARY)
-        .current_dir(dir)
-        .args(["bookmark", "create", "mark", "-r", "@"])
-        .status()
-        .expect("bookmark create");
+    jj_raw(dir, &["bookmark", "create", "mark", "-r", "@"]);
     // Move it via the typed API.
     jj.bookmark_set(dir, "mark", "@")
         .await
@@ -126,9 +103,8 @@ async fn bookmark_create_set_and_list() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn workspace_add_list_forget_cycle() {
-    let tmp = TempDir::new("ws-main");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("ws-main");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     // root() resolves to a real path.
@@ -162,9 +138,8 @@ async fn workspace_add_list_forget_cycle() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn reachable_bookmarks_and_resolve_list_cycle() {
-    let tmp = TempDir::new("reachable");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("reachable");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     jj.describe(dir, "base").await.expect("describe");
@@ -190,21 +165,14 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     // Build a real conflict: two children of base that edit the same file,
     // merged. `resolve_list` must return the actual conflicted path (this is the
     // case the format parser has to get right).
-    let jj_raw = |args: &[&str]| {
-        Command::new(vcs_jj::BINARY)
-            .current_dir(dir)
-            .args(args)
-            .status()
-            .expect("jj");
-    };
     std::fs::write(dir.join("c.txt"), "base\n").expect("write base");
-    jj_raw(&["new", "root()", "-m", "side-a"]);
+    jj_raw(dir, &["new", "root()", "-m", "side-a"]);
     std::fs::write(dir.join("c.txt"), "aaa\n").expect("write a");
     let a = jj.current_change(dir).await.expect("a").change_id;
-    jj_raw(&["new", "root()", "-m", "side-b"]);
+    jj_raw(dir, &["new", "root()", "-m", "side-b"]);
     std::fs::write(dir.join("c.txt"), "bbb\n").expect("write b");
     let b = jj.current_change(dir).await.expect("b").change_id;
-    jj_raw(&["new", &a, &b, "-m", "merge"]);
+    jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
 
     let conflicts = jj.resolve_list(dir, "@").await.expect("resolve_list");
     assert_eq!(conflicts, ["c.txt"], "got {conflicts:?}");
@@ -215,9 +183,8 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn status_exposes_rename_paths() {
-    let tmp = TempDir::new("rename");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("rename");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     std::fs::write(dir.join("old.rs"), "x\n").expect("write");
@@ -239,9 +206,8 @@ async fn status_exposes_rename_paths() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn description_round_trips_describe() {
-    let tmp = TempDir::new("description");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("description");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     // An undescribed change reads as empty.
@@ -266,9 +232,8 @@ async fn description_round_trips_describe() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn transaction_rolls_back_on_error_and_keeps_success() {
-    let tmp = TempDir::new("transaction");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("transaction");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     jj.describe(dir, "before").await.expect("describe");
@@ -301,12 +266,12 @@ async fn transaction_rolls_back_on_error_and_keeps_success() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn git_clone_from_local_bare_remote() {
-    let tmp = TempDir::new("clone");
-    let bare = common::bare_remote(tmp.path());
+    let remote = BareRemote::seeded("clone");
+    let tmp = TempDir::new("clone-dest");
     let jj = Jj::new();
 
     let plain = tmp.path().join("plain");
-    jj.git_clone(bare.to_str().expect("utf8"), &plain, false)
+    jj.git_clone(remote.url().as_str(), &plain, false)
         .await
         .expect("clone");
     assert!(plain.join(".jj").is_dir(), "jj repo materialised");
@@ -317,7 +282,7 @@ async fn git_clone_from_local_bare_remote() {
     assert!(plain.join("seed.txt").exists(), "worktree materialised");
 
     let colocated = tmp.path().join("colocated");
-    jj.git_clone(bare.to_str().expect("utf8"), &colocated, true)
+    jj.git_clone(remote.url().as_str(), &colocated, true)
         .await
         .expect("clone --colocate");
     assert!(colocated.join(".jj").is_dir());
@@ -329,9 +294,8 @@ async fn git_clone_from_local_bare_remote() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn absorb_split_and_duplicate_cycle() {
-    let tmp = TempDir::new("absorb");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("absorb");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     // Base change introduces two files.
@@ -386,9 +350,8 @@ async fn absorb_split_and_duplicate_cycle() {
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn op_log_evolog_and_annotate_cycle() {
-    let tmp = TempDir::new("oplog");
-    let dir = tmp.path();
-    init_repo(dir);
+    let sandbox = JjSandbox::init("oplog");
+    let dir = sandbox.path();
     let jj = Jj::new();
 
     std::fs::write(dir.join("f.txt"), "one\n").expect("write");
@@ -431,4 +394,13 @@ async fn op_log_evolog_and_annotate_cycle() {
         "lines came from different changes"
     );
     assert_eq!(lines[1].content, "two");
+}
+
+// capabilities round-trips against the real binary on PATH.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn capabilities_probe_real_binary() {
+    let caps = Jj::new().capabilities().await.expect("capabilities");
+    assert!(caps.is_supported(), "got {:?}", caps.version);
+    caps.ensure_supported().expect("supported");
 }

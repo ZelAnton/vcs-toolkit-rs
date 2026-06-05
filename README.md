@@ -35,8 +35,8 @@ timeouts, the structured `Error`, and the test seams these wrappers build on.
 
 This is a Cargo workspace, each crate **versioned and published independently**:
 three CLI wrappers built on the external
-[`processkit`](https://crates.io/crates/processkit) crate, plus a facade over the
-git/jj pair:
+[`processkit`](https://crates.io/crates/processkit) crate, a facade over the
+git/jj pair, and a dependency-free test-fixture crate:
 
 | Crate | Drives | crates.io name |
 |---|---|---|
@@ -44,6 +44,7 @@ git/jj pair:
 | [`crates/jj`](crates/jj) | the `jj` (Jujutsu) binary | `vcs-jj` |
 | [`crates/github`](crates/github) | the `gh` (GitHub CLI) binary | `vcs-github` |
 | [`crates/core`](crates/core) | — (facade over `vcs-git`/`vcs-jj`) | `vcs-core` |
+| [`crates/testkit`](crates/testkit) | — (test fixtures: git/jj sandboxes, bare remote) | `vcs-testkit` |
 
 Each **CLI wrapper** exposes an **interface trait** (`GitApi`/`JjApi`/`GitHubApi`) and a
 real client (`Git`/`Jj`/`GitHub`) with typed, repo-scoped async commands that
@@ -257,6 +258,32 @@ let git = Git::new(); // real, job-backed git
   # }
   ```
 
+For building integration-test scenarios, the [`vcs-testkit`](crates/testkit)
+crate (a dev-dependency) provides throwaway `GitSandbox`/`JjSandbox` repos, a
+seeded `BareRemote` to clone/fetch against, and a self-cleaning `TempDir` — the
+same fixtures this workspace's own ignored tests run on.
+
+## Observing commands
+
+Four seams, no extra configuration:
+
+- **Argv observation** — wrap the real runner the same way tests wrap fakes:
+  `RecordingRunner::new(JobRunner::new())`, hand `&rec` to `with_runner`, and
+  read `rec.calls()` (full argv, cwd, env per invocation).
+- **Live output streaming** — `processkit::Command` supports per-line
+  callbacks (`.on_stdout_line(|l| …)` / `.on_stderr_line(…)`), so a
+  long-running command built directly against processkit can report progress
+  while it runs. The typed `Git`/`Jj` methods consume their `Command`
+  internally and do **not** surface the hook yet — streaming wrappers (e.g. a
+  fetch-with-progress) land once the upstream hardening (callback panic
+  isolation, scripted-replay testability) ships in processkit.
+- **`tracing` feature** — each crate's `tracing` feature makes processkit emit
+  a `debug` event per command run (program, args, exit) for any subscriber.
+- **Dry-run harness** — `ScriptedRunner::new().fallback(Reply::ok(""))`
+  executes nothing and answers everything, so a whole flow can be exercised
+  without touching a repository; add `.on(…)` rules for the calls that need
+  realistic replies.
+
 ## Build, test
 
 Requires a Rust toolchain with the **2024 edition** (Rust 1.88+; the wrappers use
@@ -282,8 +309,8 @@ suite on Linux/Windows/macOS, `cargo-deny`, and a `cargo package` gate.
 Releases go through the **`Release` GitHub Action** (`workflow_dispatch`) — you
 never type a version. Click *Run workflow* and pick:
 
-- **Crate** — `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-core`, or **`all`** (release
-  every crate in one run).
+- **Crate** — `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-testkit`, `vcs-core`, or
+  **`all`** (release every crate in one run).
 - **Bump** — `patch` / `minor` / `major`.
 
 For each selected crate it reads the current version from that crate's
@@ -294,10 +321,11 @@ promotes its `CHANGELOG.md`, **publishes to crates.io before tagging**
 does them in a single commit + atomic push.
 
 The CLI wrappers depend only on the already-published
-[`processkit`](https://crates.io/crates/processkit) crate, so they release
-independently. The **`vcs-core` facade is the exception** — it depends on
-`vcs-git`/`vcs-jj`, so `all` publishes it **last**, and its `^MAJOR.MINOR`
-requirement on them must stay in range when they cross a minor/major boundary.
+[`processkit`](https://crates.io/crates/processkit) crate, and `vcs-testkit`
+depends on nothing at all, so they release independently. The **`vcs-core`
+facade is the exception** — it depends on `vcs-git`/`vcs-jj`, so `all`
+publishes it **last**, and its `^MAJOR.MINOR` requirement on them must stay in
+range when they cross a minor/major boundary.
 
 ## Conventions
 

@@ -64,10 +64,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The wrappers depend on the published `processkit` crate, so each packages
-      # and verify-builds fully — catching missing files or bad metadata before
-      # publish.
-      - run: cargo package -p vcs-git -p vcs-jj -p vcs-github
+      # The wrappers depend on the published `processkit` crate (and vcs-testkit
+      # on nothing), so each packages and verify-builds fully — catching missing
+      # files or bad metadata before publish.
+      - run: cargo package -p vcs-git -p vcs-jj -p vcs-github -p vcs-testkit
       # `vcs-core` depends on the in-workspace `vcs-git`/`vcs-jj`; a verify-build
       # here would resolve those from crates.io, which can lag the local tree. So
       # check its file list + metadata only (`--no-verify`) — the workspace test

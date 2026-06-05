@@ -2,27 +2,14 @@
 //! repository. Ignored by default (require the `git` binary); run with
 //! `cargo test -p vcs-git -- --ignored`.
 
-mod common;
+use std::path::PathBuf;
 
-use std::path::{Path, PathBuf};
-
-use common::TempDir;
+// Scaffolding from vcs-testkit; most tests here drive `git.init()` themselves
+// (initialisation IS the subject), so they use `TempDir` + `configure_identity`
+// rather than `GitSandbox::init`. Note `configure_identity` also pins
+// `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{Git, GitApi, WorktreeAdd};
-
-/// Give the repo a deterministic identity so commits don't depend on global config.
-fn configure(dir: &Path) {
-    for (key, val) in [
-        ("user.email", "test@example.com"),
-        ("user.name", "Test"),
-        ("commit.gpgsign", "false"),
-    ] {
-        std::process::Command::new(vcs_git::BINARY)
-            .current_dir(dir)
-            .args(["config", key, val])
-            .status()
-            .expect("git config");
-    }
-}
+use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
 
 #[tokio::test]
 #[ignore = "requires the git binary"]
@@ -122,11 +109,7 @@ async fn status_reports_rename_with_orig_path() {
     git.commit(dir, "add old").await.expect("commit");
 
     // Stage a rename, then read it back through the typed status.
-    std::process::Command::new(vcs_git::BINARY)
-        .current_dir(dir)
-        .args(["mv", "old.txt", "new.txt"])
-        .status()
-        .expect("git mv");
+    vcs_testkit::git(dir, &["mv", "old.txt", "new.txt"]);
 
     let status = git.status(dir).await.expect("status");
     let renamed = status
@@ -316,14 +299,7 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
     let git = Git::new();
 
     git.init(dir).await.expect("init");
-    configure(dir);
-    // The stash round-trip re-checks files out; keep byte-exact content
-    // assertions valid on Windows (autocrlf would rewrite LF → CRLF).
-    std::process::Command::new(vcs_git::BINARY)
-        .current_dir(dir)
-        .args(["config", "core.autocrlf", "false"])
-        .status()
-        .expect("git config");
+    configure(dir); // pins core.autocrlf=false — the stash round-trip re-checks files out
     std::fs::write(dir.join("a.txt"), "base\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "base").await.expect("commit");
@@ -357,13 +333,13 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
 #[tokio::test]
 #[ignore = "requires the git binary"]
 async fn clone_repo_from_local_bare_remote() {
-    let tmp = TempDir::new("clone");
-    let bare = common::bare_remote(tmp.path());
+    let remote = BareRemote::seeded("clone");
+    let tmp = TempDir::new("clone-dest");
     let dest = tmp.path().join("cloned");
     let git = Git::new();
 
     git.clone_repo(
-        bare.to_str().expect("utf8"),
+        remote.url().as_str(),
         &dest,
         vcs_git::CloneSpec::new().branch("main"),
     )
@@ -443,12 +419,7 @@ async fn blame_cherry_pick_and_revert_cycle() {
     let dir = tmp.path();
     let git = Git::new();
     git.init(dir).await.expect("init");
-    configure(dir);
-    // cherry-pick/revert re-check files out; keep byte-exact content
-    // assertions valid on Windows (autocrlf would rewrite LF → CRLF).
-    git.config_set(dir, "core.autocrlf", "false")
-        .await
-        .expect("config");
+    configure(dir); // pins core.autocrlf=false — cherry-pick/revert re-check files out
     std::fs::write(dir.join("f.txt"), "one\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     git.commit(dir, "first").await.expect("commit");
@@ -493,11 +464,7 @@ async fn rebase_skip_finishes_an_emptied_patch() {
     let git = Git::new();
     git.init(dir).await.expect("init");
     configure(dir);
-    std::process::Command::new(vcs_git::BINARY)
-        .current_dir(dir)
-        .args(["config", "rebase.backend", "apply"])
-        .status()
-        .expect("git config");
+    vcs_testkit::git(dir, &["config", "rebase.backend", "apply"]);
 
     std::fs::write(dir.join("f.txt"), "base\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
@@ -529,4 +496,13 @@ async fn rebase_skip_finishes_an_emptied_patch() {
         !git.is_rebase_in_progress(dir).await.expect("state"),
         "rebase finished after the skip"
     );
+}
+
+// capabilities round-trips against the real binary on PATH.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn capabilities_probe_real_binary() {
+    let caps = Git::new().capabilities().await.expect("capabilities");
+    assert!(caps.is_supported(), "got {:?}", caps.version);
+    caps.ensure_supported().expect("supported");
 }

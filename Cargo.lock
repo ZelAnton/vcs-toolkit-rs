@@ -372,6 +372,7 @@ dependencies = [
  "tokio",
  "vcs-git",
  "vcs-jj",
+ "vcs-testkit",
 ]
 
 [[package]]
@@ -382,6 +383,7 @@ dependencies = [
  "mockall",
  "processkit",
  "tokio",
+ "vcs-testkit",
 ]
 
 [[package]]
@@ -404,7 +406,12 @@ dependencies = [
  "mockall",
  "processkit",
  "tokio",
+ "vcs-testkit",
 ]
+
+[[package]]
+name = "vcs-testkit"
+version = "0.1.0"
 
 [[package]]
 name = "wasi"

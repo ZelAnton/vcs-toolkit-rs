@@ -44,6 +44,12 @@ crates; tag releases as `vcs-jj-v<version>`.
   fileset (`file:"…"`) so fileset metacharacters stay literal; `file_annotate`
   deliberately doesn't — `jj file annotate` takes a plain path and rejects the
   quoted form.
+- `capabilities()` → `JjCapabilities { version: JjVersion }` — the installed
+  binary's parsed version (tolerates `-dev`/build-hash suffixes), with
+  `is_supported()` / `ensure_supported()` gating **precisely** on jj ≥ 0.38,
+  the empirically validated floor (jj's CLI moves fast; every parser and flag
+  in this crate was verified against that release). A value type: probe once
+  and keep it.
 
 ### Changed
 -

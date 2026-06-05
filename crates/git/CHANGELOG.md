@@ -41,6 +41,11 @@ crates; tag releases as `vcs-git-v<version>`.
   headless editor backstop), and `rebase_skip(dir)` (`rebase --skip`) — mainly
   for the `apply` backend's "nothing to commit" stop; the default `merge`
   backend auto-drops emptied patches on `--continue`.
+- `capabilities()` → `GitCapabilities { version: GitVersion }` — the installed
+  binary's parsed version (tolerates `2.54.0.windows.1`/`-rc` shapes), with
+  `is_supported()` / `ensure_supported()` gating on the major floor only
+  (validated on 2.54; expected ≥ 2.30 — an untested minor is not hard-gated).
+  A value type: probe once and keep it.
 
 ### Changed
 -

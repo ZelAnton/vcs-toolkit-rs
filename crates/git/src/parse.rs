@@ -163,6 +163,61 @@ pub(crate) fn parse_porcelain(output: &str) -> Vec<StatusEntry> {
     entries
 }
 
+/// The installed git binary's version, parsed from `git --version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GitVersion {
+    /// Major component (`2` in `2.54.0`).
+    pub major: u64,
+    /// Minor component.
+    pub minor: u64,
+    /// Patch component (`0` when the binary reports only `major.minor`).
+    pub patch: u64,
+}
+
+impl std::fmt::Display for GitVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// Parse `git --version` output (`git version 2.54.0.windows.1`): the first
+/// dotted-numeric token wins; non-numeric trailers (`.windows.1`, `-rc1`) are
+/// ignored; a missing patch reads as `0`.
+pub(crate) fn parse_git_version(raw: &str) -> Option<GitVersion> {
+    parse_dotted_version(raw).map(|(major, minor, patch)| GitVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+/// Find the first `N.N[.N…]` token in `raw` and return its leading three
+/// numeric components (missing ones read as 0). Each component is the token's
+/// leading digits, so `0-dev` or `1.windows` trailers don't break parsing.
+pub(crate) fn parse_dotted_version(raw: &str) -> Option<(u64, u64, u64)> {
+    for token in raw.split_whitespace() {
+        let mut parts = token.split('.');
+        let Some(major) = parts.next().and_then(leading_number) else {
+            continue;
+        };
+        let Some(minor) = parts.next().and_then(leading_number) else {
+            continue; // A bare number ("2") is not a version token.
+        };
+        let patch = parts.next().and_then(leading_number).unwrap_or(0);
+        return Some((major, minor, patch));
+    }
+    None
+}
+
+/// The numeric prefix of `s` (`"38-dev"` → 38); `None` when it has none.
+fn leading_number(s: &str) -> Option<u64> {
+    let end = s.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 {
+        return None;
+    }
+    s[..end].parse().ok()
+}
+
 /// Parse a NUL-delimited path list (e.g. `git diff --name-only -z`): one
 /// repo-relative path per record, `/` separators, no quoting.
 pub(crate) fn parse_nul_paths(output: &str) -> Vec<String> {
@@ -628,6 +683,20 @@ mod tests {
     fn blame_ignores_garbage_and_empty_input() {
         assert!(parse_blame_porcelain("").is_empty());
         assert!(parse_blame_porcelain("not a header\n\torphan content\n").is_empty());
+    }
+
+    #[test]
+    fn git_version_parses_real_world_shapes() {
+        // The Windows build trailer (`.windows.1`) is extra dotted components
+        // beyond the patch; an `-rc1` suffix rides on the patch itself.
+        let v = parse_git_version("git version 2.54.0.windows.1").unwrap();
+        assert_eq!((v.major, v.minor, v.patch), (2, 54, 0));
+        let v = parse_git_version("git version 2.41.0-rc1").unwrap();
+        assert_eq!((v.major, v.minor, v.patch), (2, 41, 0));
+        let v = parse_git_version("git version 2.54").unwrap();
+        assert_eq!(v.patch, 0, "missing patch defaults to 0");
+        assert!(parse_git_version("no digits here").is_none());
+        assert!(parse_git_version("git version unknowable").is_none());
     }
 
     #[test]

@@ -29,8 +29,8 @@ pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
 pub use parse::{
-    BlameLine, Branch, ChangeKind, Commit, DiffLine, DiffStat, FileDiff, Hunk, StatusEntry,
-    Worktree,
+    BlameLine, Branch, ChangeKind, Commit, DiffLine, DiffStat, FileDiff, GitVersion, Hunk,
+    StatusEntry, Worktree,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -194,6 +194,49 @@ impl CloneSpec {
     }
 }
 
+/// What the installed `git` binary supports, probed via
+/// [`GitApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitCapabilities {
+    /// The binary's parsed version.
+    pub version: GitVersion,
+}
+
+/// The oldest git major this crate is written against. Validated on 2.54;
+/// expected to work from ≥ 2.30 — but only the *major* is hard-gated, because
+/// a false "unsupported" on an untested-but-fine 2.2x would be worse than the
+/// argv error git itself would give. (Contrast vcs-jj, whose floor is precise:
+/// its parsers were empirically validated against one jj release.)
+const MIN_SUPPORTED_MAJOR: u64 = 2;
+
+impl GitCapabilities {
+    /// Whether the binary meets the supported floor (major ≥ 2).
+    pub fn is_supported(&self) -> bool {
+        self.version.major >= MIN_SUPPORTED_MAJOR
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs git
+    /// ≥ 2, found 1.9.5" instead of a cryptic argv failure later.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::Spawn {
+            program: BINARY.to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-git requires git >= {MIN_SUPPORTED_MAJOR} (validated on 2.54), \
+                     found {}",
+                    self.version
+                ),
+            ),
+        })
+    }
+}
+
 /// The Git operations this crate exposes — the interface consumers code against
 /// and mock in tests.
 #[cfg_attr(feature = "mock", mockall::automock)]
@@ -207,6 +250,10 @@ pub trait GitApi: Send + Sync {
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed Git version (`git --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GitCapabilities`]
+    /// (`git --version`). A value type — probe once and keep it; an
+    /// unrecognisable version string is an [`Error::Parse`].
+    async fn capabilities(&self) -> Result<GitCapabilities>;
     /// Working-tree status (`git status --porcelain=v1 -z`).
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
     /// Raw porcelain status text (`git status --porcelain=v1`) — the unparsed
@@ -466,6 +513,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.text(self.core.command(["--version"])).await
+    }
+
+    async fn capabilities(&self) -> Result<GitCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_git_version(&raw).ok_or_else(|| Error::Parse {
+            program: BINARY.to_string(),
+            message: format!("unrecognisable `git --version` output: {raw:?}"),
+        })?;
+        Ok(GitCapabilities { version })
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
@@ -1430,6 +1486,7 @@ git_at_forwarders! {
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GitCapabilities>;
         fn clone_repo(url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
     }
     dir {
@@ -2197,6 +2254,53 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), 1);
+    }
+
+    // capabilities parses real-world version shapes (incl. the Windows build
+    // trailer) and gates on the major floor only.
+    #[tokio::test]
+    async fn capabilities_parse_and_gate_versions() {
+        let gh = Git::with_runner(
+            ScriptedRunner::new().on(["--version"], Reply::ok("git version 2.54.0.windows.1\n")),
+        );
+        let caps = gh.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "2.54.0");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Two-part versions parse (patch defaults to 0); an ancient major fails
+        // the gate with a clear message.
+        let old = Git::with_runner(
+            ScriptedRunner::new().on(["--version"], Reply::ok("git version 1.9\n")),
+        );
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GitVersion {
+                major: 1,
+                minor: 9,
+                patch: 0
+            }
+        );
+        let err = caps.ensure_supported().expect_err("unsupported");
+        // The message must name the floor and the found version.
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 2"), "names the floor: {message}");
+        assert!(
+            message.contains("1.9.0"),
+            "names the found version: {message}"
+        );
+
+        // Garbage output is a parse error, not a silent zero version.
+        let garbage =
+            Git::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("not a version")));
+        assert!(matches!(
+            garbage.capabilities().await.unwrap_err(),
+            Error::Parse { .. }
+        ));
     }
 
     // clone_repo is dir-less and appends only the requested flags.

@@ -103,22 +103,35 @@ colocates by default depends on the jj version *and* `git.colocate` config, so
   `evolog`, `file_annotate` (+ bonus `file_show`, the twin of git's
   `show_file`).
 
-## 5. Infrastructure and quality
+## 5. Infrastructure and quality — ✅ done
 
-- **5.1 `vcs-testkit` crate.** Builders for temp repositories (git / jj /
-  colocated; with commits, conflicts, a bare remote). Both consumers carry
-  hundreds of lines of this in their test trees, and our own `--ignored`
-  integration tests re-implement the same scaffolding.
-- **5.2 Streaming / progress hooks** for long operations (clone/fetch/push):
-  a per-line stderr callback. Likely a `processkit` capability first —
-  written up as an upstream spec, same as the `Error::Exit.stdout` change
-  (we do not fork processkit).
-- **5.3 Capability detection.** jj's CLI changes between releases (the
-  parsers here are validated against jj 0.38). `Jj::capabilities()` — a
-  cached version probe that gates flags and fails with a clear
-  "needs jj ≥ X" instead of an argv error.
-- **5.4 Command observation hook** (`on_command(argv, dir)`) for tracing, UI
-  progress, and a dry-run mode.
+- **5.1 ✅ `vcs-testkit` crate.** Shipped: `TempDir`, `configure_identity`,
+  `GitSandbox`, `BareRemote::seeded`, `JjSandbox`, free `git()`/`jj()` raw
+  steps — dependency-free, synchronous, panics on failure. Our own test
+  suites migrated onto it (the 3× `TempDir` / 2× `bare_remote` / per-file
+  init-helper duplication is gone); consumers use it as a crates.io
+  dev-dependency.
+- **5.2 ✅ Streaming / progress hooks — spec delivered upstream** (toolkit
+  adoption pending a processkit release). Finding: processkit 0.6 already
+  ships per-line callbacks (`Command::on_stdout_line`/`on_stderr_line`), so
+  the requirements note handed to the ProcessKit project asks for
+  hardening, not streaming: callback panic isolation (primary), documented
+  ordering guarantees, and ScriptedRunner replaying canned output through
+  handlers so streaming consumers are hermetically testable. We do not fork
+  processkit.
+- **5.3 ✅ Capability detection.** `capabilities()` on both clients →
+  `GitCapabilities`/`JjCapabilities` (parsed version + `is_supported()` /
+  `ensure_supported()` with a clear "needs jj ≥ 0.38, found 0.35.0"). jj's
+  floor is precise (0.38, the empirically validated release); git gates the
+  major only (validated on 2.54, expected ≥ 2.30 — an untested minor isn't
+  hard-gated). Value types: callers cache the probe; the client holds no
+  state.
+- **5.4 ✅ Command observation** — satisfied by existing seams, documented in
+  the README ("Observing commands"): wrap-the-runner argv observation
+  (`RecordingRunner::new(JobRunner::new())`), live per-line streaming
+  (processkit 0.6), the `tracing` feature, and `ScriptedRunner::fallback` as
+  a dry-run harness. A first-class `on_command` hook is listed in the 5.2
+  spec as a secondary, optional upstream ask.
 
 ## 6. Longer-horizon directions (independent of today's consumers)
 

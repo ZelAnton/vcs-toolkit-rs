@@ -151,8 +151,9 @@ Each crate releases **independently** — they do not share a version.
 - **Tag per crate** as `<crate>-v<version>` (e.g. `vcs-git-v0.2.0`) so each
   crate's history and compare links stay independent.
 - **Publish order is almost flat.** The three CLI wrappers depend only on the
-  already-published external `processkit` crate (by version), so each publishes
-  independently. The **`vcs-core` facade is the one exception**: it depends on
+  already-published external `processkit` crate (by version), and `vcs-testkit`
+  on nothing (a published, dev-dependency-only fixtures crate), so each
+  publishes independently. The **`vcs-core` facade is the one exception**: it depends on
   `vcs-git`/`vcs-jj`, so it publishes **last** (the `all` plan orders it after its
   deps), and its `^MAJOR.MINOR` requirement on them must be kept in range when they cross
   a minor/major boundary (and the new version must be live on crates.io first). If
@@ -160,7 +161,8 @@ Each crate releases **independently** — they do not share a version.
   ensure that `processkit` version is live on crates.io first.
 - **Release workflow.** `.github/workflows/release.yml` (`workflow_dispatch`,
   needs the `CRATES_IO_TOKEN` secret) is the only way to release. Pick **which
-  crate** (`vcs-git`/`vcs-jj`/`vcs-github`/`vcs-core`, or **`all`**) and a **bump**
+  crate** (`vcs-git`/`vcs-jj`/`vcs-github`/`vcs-testkit`/`vcs-core`, or
+  **`all`**) and a **bump**
   (`patch`/`minor`/`major`) — the version is **never typed by hand**. For each
   selected crate it derives the next version from that crate's current
   `Cargo.toml` (a crate's **first release** — no `<crate>-v*` tag yet — ships the

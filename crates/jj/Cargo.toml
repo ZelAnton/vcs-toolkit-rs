@@ -28,3 +28,6 @@ tracing = ["processkit/tracing"]
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Throwaway git/jj repos for the ignored integration tests. Path-only: dev-deps
+# are stripped on publish, so this adds no release coupling.
+vcs-testkit = { path = "../testkit" }

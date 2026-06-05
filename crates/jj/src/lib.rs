@@ -21,7 +21,7 @@ pub use processkit::{Error, ProcessResult, Result};
 mod parse;
 pub use parse::{
     AnnotationLine, Bookmark, BookmarkRef, Change, ChangeKind, ChangedPath, DiffLine, DiffStat,
-    FileDiff, Hunk, Operation, Workspace,
+    FileDiff, Hunk, JjVersion, Operation, Workspace,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -125,6 +125,50 @@ fn first_bookmark(rendered: &str) -> Option<String> {
     (!rendered.is_empty()).then(|| rendered.split(',').next().unwrap_or(rendered).to_string())
 }
 
+/// What the installed `jj` binary supports, probed via
+/// [`JjApi::capabilities`]. A value type — the client holds no state, so probe
+/// once and keep the result (callers cache it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct JjCapabilities {
+    /// The binary's parsed version.
+    pub version: JjVersion,
+}
+
+/// The validated jj floor: every parser and flag in this crate was verified
+/// empirically against this release. jj's CLI moves fast, so unlike vcs-git's
+/// major-only gate the jj floor is precise.
+const MIN_SUPPORTED: JjVersion = JjVersion {
+    major: 0,
+    minor: 38,
+    patch: 0,
+};
+
+impl JjCapabilities {
+    /// Whether the binary meets the validated floor (jj ≥ 0.38).
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs jj
+    /// ≥ 0.38, found 0.35.0" instead of a cryptic argv/template failure later.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::Spawn {
+            program: BINARY.to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-jj requires jj >= {MIN_SUPPORTED} (the validated floor), found {}",
+                    self.version
+                ),
+            ),
+        })
+    }
+}
+
 /// The jj operations this crate exposes — the interface consumers code against
 /// and mock in tests.
 #[cfg_attr(feature = "mock", mockall::automock)]
@@ -137,6 +181,10 @@ pub trait JjApi: Send + Sync {
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed Jujutsu version (`jj --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`JjCapabilities`]
+    /// (`jj --version`). A value type — probe once and keep it; an
+    /// unrecognisable version string is an [`Error::Parse`].
+    async fn capabilities(&self) -> Result<JjCapabilities>;
     /// Parsed working-copy changes — the files changed in `@`
     /// (`jj diff -r @ --summary`), mirroring `vcs_git` `status`.
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
@@ -378,6 +426,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.text(self.core.command(["--version"])).await
+    }
+
+    async fn capabilities(&self) -> Result<JjCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_jj_version(&raw).ok_or_else(|| Error::Parse {
+            program: BINARY.to_string(),
+            message: format!("unrecognisable `jj --version` output: {raw:?}"),
+        })?;
+        Ok(JjCapabilities { version })
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>> {
@@ -1176,6 +1233,7 @@ jj_at_forwarders! {
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn capabilities() -> Result<JjCapabilities>;
         fn git_clone(url: &str, dest: &Path, colocate: bool) -> Result<()>;
     }
     dir {
@@ -1895,6 +1953,44 @@ mod tests {
             .await
             .expect("transaction");
         assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir.as_os_str()));
+    }
+
+    // capabilities parses jj's version line (incl. dev-build suffixes) and
+    // gates precisely on the validated 0.38 floor.
+    #[tokio::test]
+    async fn capabilities_parse_and_gate_versions() {
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.38.0\n")));
+        let caps = jj.capabilities().await.expect("capabilities");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // A dev-build suffix parses; an older release fails the precise gate.
+        let dev = Jj::with_runner(
+            ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.39.0-dev+abc123\n")),
+        );
+        assert!(dev.capabilities().await.unwrap().is_supported());
+
+        let old =
+            Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.35.0\n")));
+        let caps = old.capabilities().await.expect("capabilities");
+        assert!(!caps.is_supported());
+        let err = caps.ensure_supported().expect_err("unsupported");
+        // The message must name both the floor and the found version.
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains("0.38.0"), "names the floor: {message}");
+        assert!(
+            message.contains("0.35.0"),
+            "names the found version: {message}"
+        );
+
+        let garbage = Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("nope")));
+        assert!(matches!(
+            garbage.capabilities().await.unwrap_err(),
+            Error::Parse { .. }
+        ));
     }
 
     // git_clone is dir-less; the colocate flag is ALWAYS explicit (jj's default

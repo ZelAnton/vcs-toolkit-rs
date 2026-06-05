@@ -40,6 +40,7 @@ on:
           - vcs-git
           - vcs-jj
           - vcs-github
+          - vcs-testkit
           - vcs-core
         default: all
       bump:
@@ -103,10 +104,11 @@ jobs:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          declare -A DIR=( [vcs-git]=crates/git [vcs-jj]=crates/jj [vcs-github]=crates/github [vcs-core]=crates/core )
+          declare -A DIR=( [vcs-git]=crates/git [vcs-jj]=crates/jj [vcs-github]=crates/github [vcs-testkit]=crates/testkit [vcs-core]=crates/core )
           if [ "$SELECTED" = "all" ]; then
             # vcs-core last: it depends on vcs-git/vcs-jj, so they publish first.
-            NAMES=(vcs-git vcs-jj vcs-github vcs-core)
+            # vcs-testkit has no workspace deps (any position); vcs-core last.
+            NAMES=(vcs-git vcs-jj vcs-github vcs-testkit vcs-core)
           else
             NAMES=("$SELECTED")
           fi

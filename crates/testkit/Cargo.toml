@@ -1,0 +1,15 @@
+[package]
+name = "vcs-testkit"
+version = "0.1.0"
+description = "Test fixtures for git/jj automation: throwaway repos, sandboxes, and a seeded bare remote."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+# Deliberately dependency-free: the sandboxes shell out to the real `git`/`jj`
+# binaries through std::process (synchronous — test setup needs no runtime) and
+# never depend on the typed wrapper crates, so any of them can use this as a
+# dev-dependency without a cycle.
+[dependencies]
