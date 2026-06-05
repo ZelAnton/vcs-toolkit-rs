@@ -17,13 +17,113 @@ use processkit::ProcessRunner;
 pub use processkit::{Error, ProcessResult, Result};
 
 mod parse;
-pub use parse::{Issue, PullRequest, Repo};
+pub use parse::{
+    CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, Repo, Review, WorkflowRun,
+};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
 const PR_FIELDS: &str = "number,title,state,headRefName,baseRefName,url";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
+const ISSUE_LIST_FIELDS: &str = "number,title,state";
+const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url";
+const RUN_FIELDS: &str =
+    "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
+const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedAt";
+const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt";
+const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isPrerelease";
+
+/// How [`GitHubApi::pr_merge`] merges the PR — exactly one of gh's mutually
+/// exclusive strategy flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MergeStrategy {
+    /// A merge commit (`--merge`).
+    Merge,
+    /// Squash into one commit (`--squash`).
+    Squash,
+    /// Rebase the commits onto the base (`--rebase`).
+    Rebase,
+}
+
+impl MergeStrategy {
+    fn flag(self) -> &'static str {
+        match self {
+            MergeStrategy::Merge => "--merge",
+            MergeStrategy::Squash => "--squash",
+            MergeStrategy::Rebase => "--rebase",
+        }
+    }
+}
+
+/// Options for [`GitHubApi::pr_merge`] (`gh pr merge`).
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](PrMerge::merge) / [`squash`](PrMerge::squash) /
+/// [`rebase`](PrMerge::rebase), then [`auto`](PrMerge::auto) /
+/// [`delete_branch`](PrMerge::delete_branch) — rather than a struct literal.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PrMerge {
+    /// The merge strategy (exactly one of gh's `--merge`/`--squash`/`--rebase`).
+    pub strategy: MergeStrategy,
+    /// Enable auto-merge: merge once requirements are met (`--auto`).
+    pub auto: bool,
+    /// Delete the head branch after the merge (`--delete-branch`).
+    pub delete_branch: bool,
+}
+
+impl PrMerge {
+    /// Merge with a merge commit (`gh pr merge --merge`).
+    pub fn merge() -> Self {
+        Self::with(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge (`gh pr merge --squash`).
+    pub fn squash() -> Self {
+        Self::with(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge (`gh pr merge --rebase`).
+    pub fn rebase() -> Self {
+        Self::with(MergeStrategy::Rebase)
+    }
+
+    fn with(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Merge automatically once requirements are met (`--auto`).
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Delete the head branch after merging (`--delete-branch`).
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
+/// What [`GitHubApi::pr_review`] submits (`gh pr review`). The body lives in
+/// the variant because gh *requires* one for request-changes/comment reviews —
+/// an empty-body request-changes is unrepresentable here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReviewAction {
+    /// Approve, with an optional body (`--approve [--body <body>]`).
+    Approve(Option<String>),
+    /// Request changes; gh requires the body (`--request-changes --body <body>`).
+    RequestChanges(String),
+    /// A comment-only review; gh requires the body (`--comment --body <body>`).
+    Comment(String),
+}
 
 /// The GitHub operations this crate exposes — the interface consumers code
 /// against and mock in tests.
@@ -70,6 +170,74 @@ pub trait GitHubApi: Send + Sync {
     ) -> Result<String>;
     /// Raw GitHub REST/GraphQL response body (`gh api <endpoint>`).
     async fn api(&self, endpoint: &str) -> Result<String>;
+
+    // --- PR lifecycle ----------------------------------------------------
+
+    /// Merge a pull request (`gh pr merge <n> --merge|--squash|--rebase
+    /// [--auto] [--delete-branch]`) — see [`PrMerge`].
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
+    /// Mark a draft pull request as ready for review (`gh pr ready <n>`).
+    async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Close a pull request without merging (`gh pr close <n>
+    /// [--delete-branch]`).
+    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
+    /// The PR's checks (`gh pr checks <n> --json …`). gh signals the overall
+    /// outcome through its exit code — 0 all passed, 8 still pending, 1 some
+    /// failed — and emits the same JSON either way, so all three return the
+    /// parsed list; branch on each entry's [`bucket`](CheckRun::bucket). A PR
+    /// with no checks at all yields an empty list (gh's "no checks reported"
+    /// exit). Any other exit (no such PR, auth required, …) errors.
+    async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>>;
+    /// Submit a review (`gh pr review <n> --approve|--request-changes|--comment
+    /// [--body <body>]`) — see [`ReviewAction`] (the body travels in the variant).
+    async fn pr_review(&self, dir: &Path, number: u64, action: ReviewAction) -> Result<()>;
+    /// Add a conversation comment, returning its URL
+    /// (`gh pr comment <n> --body <body>`).
+    async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String>;
+    /// The PR's submitted reviews and conversation comments
+    /// (`gh pr view <n> --json reviews,comments`).
+    async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback>;
+
+    // --- Actions runs ------------------------------------------------------
+
+    /// Recent workflow runs, newest first (`gh run list --limit <n>
+    /// [--branch <b>] --json …`). `branch` is an owned `Option<String>` to keep
+    /// the trait `mockall`-friendly.
+    async fn run_list(
+        &self,
+        dir: &Path,
+        limit: u64,
+        branch: Option<String>,
+    ) -> Result<Vec<WorkflowRun>>;
+    /// A single workflow run by id (`gh run view <id> --json …`); the id is
+    /// [`WorkflowRun::database_id`].
+    async fn run_view(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
+    /// Block until the run finishes, then return its final state
+    /// (`gh run watch <id>`, then a `run view`). Inspect
+    /// [`conclusion`](WorkflowRun::conclusion) for the outcome — exit codes
+    /// can't distinguish a failed run from a cancelled one.
+    ///
+    /// **Blocks for the whole run.** A client
+    /// [`default_timeout`](GitHub::default_timeout) kills the watch when it
+    /// elapses (`Error::Timeout`) — drive this from a client with no (or a
+    /// generous) timeout.
+    async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
+
+    // --- Issues / releases ---------------------------------------------------
+
+    /// Open an issue, returning its URL
+    /// (`gh issue create --title <title> --body <body>`).
+    async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+    /// A single issue by number, with `body`/`url` filled
+    /// (`gh issue view <n> --json …`).
+    async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
+    /// Releases, newest first (`gh release list --json …`); `body`/`url` are
+    /// not fetched here — use [`release_view`](GitHubApi::release_view).
+    async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
+    /// A single release by tag, with `body`/`url` filled
+    /// (`gh release view <tag> --json …`). gh reports `is_latest` only from
+    /// [`release_list`](GitHubApi::release_list); here it defaults to `false`.
+    async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 }
 
 processkit::cli_client!(
@@ -158,7 +326,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         self.core
             .try_parse(
                 self.core
-                    .command_in(dir, ["issue", "list", "--json", "number,title,state"]),
+                    .command_in(dir, ["issue", "list", "--json", ISSUE_LIST_FIELDS]),
                 parse::from_json,
             )
             .await
@@ -186,6 +354,201 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
 
     async fn api(&self, endpoint: &str) -> Result<String> {
         self.core.text(self.core.command(["api", endpoint])).await
+    }
+
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()> {
+        let n = number.to_string();
+        let mut args = vec!["pr", "merge", n.as_str(), merge.strategy.flag()];
+        if merge.auto {
+            args.push("--auto");
+        }
+        if merge.delete_branch {
+            args.push("--delete-branch");
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()> {
+        let n = number.to_string();
+        self.core
+            .unit(self.core.command_in(dir, ["pr", "ready", n.as_str()]))
+            .await
+    }
+
+    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()> {
+        let n = number.to_string();
+        let mut args = vec!["pr", "close", n.as_str()];
+        if delete_branch {
+            args.push("--delete-branch");
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>> {
+        let n = number.to_string();
+        let res = self
+            .core
+            .capture(
+                self.core
+                    .command_in(dir, ["pr", "checks", n.as_str(), "--json", CHECK_FIELDS]),
+            )
+            .await?;
+        match res.code() {
+            // gh's exit code carries the *overall* outcome (0 = all pass,
+            // 8 = pending, 1 = some failed) but prints the same JSON for all
+            // three — parse it and let the caller branch on each `bucket`.
+            // A parse failure here is a real schema problem and must surface
+            // as `Error::Parse`, not be masked by the exit code.
+            Some(0) => parse::from_json(res.stdout()),
+            Some(1 | 8) if !res.stdout().trim().is_empty() => parse::from_json(res.stdout()),
+            // gh exits 1 with NO JSON for a PR that simply has no checks — the
+            // one bare non-zero we read as an empty list (cf. jj's
+            // `resolve_list` and its "No conflicts" exit).
+            _ if res.stderr().contains("no checks reported") => Ok(Vec::new()),
+            // Anything else (no such PR, auth required, timeout, signal…) is a
+            // genuine failure; `ensure_success` builds the faithful error.
+            _ => {
+                res.ensure_success()?;
+                Ok(Vec::new()) // unreachable: a non-zero exit always errors above.
+            }
+        }
+    }
+
+    async fn pr_review(&self, dir: &Path, number: u64, action: ReviewAction) -> Result<()> {
+        let n = number.to_string();
+        let mut args = vec!["pr", "review", n.as_str()];
+        let body = match &action {
+            ReviewAction::Approve(body) => {
+                args.push("--approve");
+                body.as_deref()
+            }
+            ReviewAction::RequestChanges(body) => {
+                args.push("--request-changes");
+                Some(body.as_str())
+            }
+            ReviewAction::Comment(body) => {
+                args.push("--comment");
+                Some(body.as_str())
+            }
+        };
+        if let Some(body) = body {
+            args.push("--body");
+            args.push(body);
+        }
+        self.core.unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        // `--body` is mandatory here: without it gh falls back to an
+        // interactive prompt, which would hang a headless run.
+        let n = number.to_string();
+        self.core
+            .text(
+                self.core
+                    .command_in(dir, ["pr", "comment", n.as_str(), "--body", body]),
+            )
+            .await
+    }
+
+    async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback> {
+        let n = number.to_string();
+        self.core
+            .try_parse(
+                self.core.command_in(
+                    dir,
+                    ["pr", "view", n.as_str(), "--json", "reviews,comments"],
+                ),
+                parse::parse_feedback,
+            )
+            .await
+    }
+
+    async fn run_list(
+        &self,
+        dir: &Path,
+        limit: u64,
+        branch: Option<String>,
+    ) -> Result<Vec<WorkflowRun>> {
+        let limit = limit.to_string();
+        let mut args = vec!["run", "list", "--limit", limit.as_str()];
+        if let Some(branch) = branch.as_deref() {
+            args.push("--branch");
+            args.push(branch);
+        }
+        args.extend(["--json", RUN_FIELDS]);
+        self.core
+            .try_parse(self.core.command_in(dir, args), parse::from_json)
+            .await
+    }
+
+    async fn run_view(&self, dir: &Path, id: u64) -> Result<WorkflowRun> {
+        let id = id.to_string();
+        self.core
+            .try_parse(
+                self.core
+                    .command_in(dir, ["run", "view", id.as_str(), "--json", RUN_FIELDS]),
+                parse::from_json,
+            )
+            .await
+    }
+
+    async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun> {
+        // Block until the run completes. `--exit-status` is deliberately NOT
+        // passed: it would map the run's outcome onto the exit code (1 failed,
+        // 2 cancelled), which can't be reported faithfully — the follow-up
+        // `run view`'s `conclusion` can. Without it, a non-zero watch exit is a
+        // genuine error (no such run, auth, …). `capture` does NOT error on a
+        // timeout (it returns the result with a timeout flag), so
+        // `ensure_success` is what surfaces a killed watch as `Error::Timeout`
+        // instead of reading a half-finished run below.
+        let id_str = id.to_string();
+        self.core
+            .capture(self.core.command_in(dir, ["run", "watch", id_str.as_str()]))
+            .await?
+            .ensure_success()?;
+        self.run_view(dir, id).await
+    }
+
+    async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
+        self.core
+            .text(
+                self.core
+                    .command_in(dir, ["issue", "create", "--title", title, "--body", body]),
+            )
+            .await
+    }
+
+    async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue> {
+        let n = number.to_string();
+        self.core
+            .try_parse(
+                self.core.command_in(
+                    dir,
+                    ["issue", "view", n.as_str(), "--json", ISSUE_VIEW_FIELDS],
+                ),
+                parse::from_json,
+            )
+            .await
+    }
+
+    async fn release_list(&self, dir: &Path) -> Result<Vec<Release>> {
+        self.core
+            .try_parse(
+                self.core
+                    .command_in(dir, ["release", "list", "--json", RELEASE_LIST_FIELDS]),
+                parse::from_json,
+            )
+            .await
+    }
+
+    async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release> {
+        self.core
+            .try_parse(
+                self.core
+                    .command_in(dir, ["release", "view", tag, "--json", RELEASE_VIEW_FIELDS]),
+                parse::from_json,
+            )
+            .await
     }
 }
 
@@ -271,6 +634,20 @@ github_at_forwarders! {
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn pr_create(title: &str, body: &str, head: Option<String>, base: Option<String>) -> Result<String>;
+        fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
+        fn pr_ready(number: u64) -> Result<()>;
+        fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
+        fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
+        fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
+        fn pr_comment(number: u64, body: &str) -> Result<String>;
+        fn pr_feedback(number: u64) -> Result<PrFeedback>;
+        fn run_list(limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
+        fn run_view(id: u64) -> Result<WorkflowRun>;
+        fn run_watch(id: u64) -> Result<WorkflowRun>;
+        fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn issue_view(number: u64) -> Result<Issue>;
+        fn release_list() -> Result<Vec<Release>>;
+        fn release_view(tag: &str) -> Result<Release>;
     }
 }
 
@@ -301,9 +678,13 @@ mod tests {
 
         gh.pr_list_for_branch(dir, "feat", "main").await.unwrap();
         gh.at(dir).pr_list_for_branch("feat", "main").await.unwrap();
+        // One of the new lifecycle methods.
+        gh.run_list(dir, 3, None).await.unwrap();
+        gh.at(dir).run_list(3, None).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
+        assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
     }
 
@@ -436,6 +817,265 @@ mod tests {
         );
         assert!(!call.has_flag("--base"), "no base was given");
         assert!(!call.has_flag("--head"), "no head was given");
+    }
+
+    // pr_merge builds the strategy flag plus the optional --auto/--delete-branch.
+    #[tokio::test]
+    async fn pr_merge_builds_strategy_and_flags() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_merge(Path::new("/r"), 7, PrMerge::squash().auto().delete_branch())
+            .await
+            .expect("pr_merge");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "merge", "7", "--squash", "--auto", "--delete-branch"]
+        );
+
+        let bare = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&bare);
+        gh.pr_merge(Path::new("/r"), 7, PrMerge::merge())
+            .await
+            .expect("pr_merge");
+        let call = bare.only_call();
+        assert_eq!(call.args_str(), ["pr", "merge", "7", "--merge"]);
+        assert!(!call.has_flag("--auto"));
+        assert!(!call.has_flag("--delete-branch"));
+    }
+
+    #[tokio::test]
+    async fn pr_ready_and_close_build_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_ready(Path::new("/r"), 3).await.expect("pr_ready");
+        gh.pr_close(Path::new("/r"), 3, true).await.expect("close");
+        gh.pr_close(Path::new("/r"), 4, false).await.expect("close");
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["pr", "ready", "3"]);
+        assert_eq!(calls[1].args_str(), ["pr", "close", "3", "--delete-branch"]);
+        assert_eq!(calls[2].args_str(), ["pr", "close", "4"]);
+    }
+
+    // gh signals the checks outcome via exit code (0 pass / 8 pending / 1 some
+    // failed) but emits the same JSON for all three — all must parse. Other
+    // exits (and timeouts) are genuine errors.
+    #[tokio::test]
+    async fn pr_checks_parses_all_outcome_exit_codes() {
+        let json = r#"[{"name":"build","state":"SUCCESS","bucket":"pass",
+            "workflow":"CI","link":"l","startedAt":"s","completedAt":"c"}]"#;
+        for reply in [
+            Reply::ok(json),
+            Reply::fail(8, "checks pending").with_stdout(json),
+            Reply::fail(1, "some checks failed").with_stdout(json),
+        ] {
+            let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "checks"], reply));
+            let checks = gh.pr_checks(Path::new("."), 7).await.expect("pr_checks");
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0].bucket, "pass");
+        }
+
+        // A PR with no checks at all: gh exits 1 with NO JSON and a
+        // "no checks reported" message — an empty list, not an error.
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["pr", "checks"],
+            Reply::fail(1, "no checks reported on the 'feat/x' branch"),
+        ));
+        assert!(
+            gh.pr_checks(Path::new("."), 7)
+                .await
+                .expect("no checks → empty")
+                .is_empty()
+        );
+        // …while a bare exit 1 for a different reason stays an error.
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["pr", "checks"],
+            Reply::fail(1, "no pull requests found for branch 'feat/x'"),
+        ));
+        assert!(matches!(
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
+            Error::Exit { .. }
+        ));
+
+        // Exit 4 (auth required) is a real failure, not an outcome.
+        let gh = GitHub::with_runner(
+            ScriptedRunner::new().on(["pr", "checks"], Reply::fail(4, "auth required")),
+        );
+        assert!(matches!(
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
+            Error::Exit { .. }
+        ));
+
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "checks"], Reply::timeout()));
+        assert!(matches!(
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
+            Error::Timeout { .. }
+        ));
+    }
+
+    // Each review action maps to its flag; the body is embedded in the variant
+    // (approve's is optional and omitted when None).
+    #[tokio::test]
+    async fn pr_review_builds_action_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_review(Path::new("/r"), 7, ReviewAction::Approve(None))
+            .await
+            .expect("approve");
+        gh.pr_review(
+            Path::new("/r"),
+            7,
+            ReviewAction::RequestChanges("fix the parser".into()),
+        )
+        .await
+        .expect("request changes");
+        gh.pr_review(Path::new("/r"), 7, ReviewAction::Comment("nice".into()))
+            .await
+            .expect("comment");
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["pr", "review", "7", "--approve"]);
+        assert!(!calls[0].has_flag("--body"));
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "pr",
+                "review",
+                "7",
+                "--request-changes",
+                "--body",
+                "fix the parser"
+            ]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            ["pr", "review", "7", "--comment", "--body", "nice"]
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_comment_and_issue_create_return_urls() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/x\n"));
+        let gh = GitHub::with_runner(&rec);
+        assert_eq!(
+            gh.pr_comment(Path::new("/r"), 7, "hello").await.unwrap(),
+            "https://gh/x"
+        );
+        assert_eq!(
+            gh.issue_create(Path::new("/r"), "T", "B").await.unwrap(),
+            "https://gh/x"
+        );
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["pr", "comment", "7", "--body", "hello"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["issue", "create", "--title", "T", "--body", "B"]
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_feedback_requests_reviews_and_comments() {
+        let json = r#"{"reviews":[{"author":{"login":"a"},"state":"APPROVED",
+            "body":"","submittedAt":""}],"comments":[]}"#;
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(["pr", "view"], Reply::ok(json)));
+        let gh = GitHub::with_runner(&rec);
+        let feedback = gh.pr_feedback(Path::new("."), 7).await.expect("feedback");
+        assert_eq!(feedback.reviews[0].author, "a");
+        assert!(feedback.comments.is_empty());
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "view", "7", "--json", "reviews,comments"]
+        );
+    }
+
+    // run_list appends --branch only when given one.
+    #[tokio::test]
+    async fn run_list_appends_branch_only_when_some() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec);
+        gh.run_list(Path::new("/r"), 5, None).await.expect("list");
+        gh.run_list(Path::new("/r"), 5, Some("main".into()))
+            .await
+            .expect("list");
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["run", "list", "--limit", "5", "--json", RUN_FIELDS]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "run", "list", "--limit", "5", "--branch", "main", "--json", RUN_FIELDS
+            ]
+        );
+    }
+
+    // run_watch blocks on `run watch` (no `--exit-status`, so a failed run still
+    // exits 0 — the outcome is read via the follow-up view, the only channel
+    // that can distinguish failed from cancelled).
+    #[tokio::test]
+    async fn run_watch_then_views_final_state() {
+        let json = r#"{"databaseId":42,"name":"CI","displayTitle":"t",
+            "status":"completed","conclusion":"failure","workflowName":"CI",
+            "headBranch":"main","event":"push","url":"u","createdAt":"c"}"#;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["run", "watch"], Reply::ok("✓ run completed"))
+                .on(["run", "view"], Reply::ok(json)),
+        );
+        let gh = GitHub::with_runner(&rec);
+        let run = gh.run_watch(Path::new("."), 42).await.expect("run_watch");
+        assert_eq!(run.conclusion, "failure");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args_str(), ["run", "watch", "42"]);
+        assert_eq!(
+            calls[1].args_str(),
+            ["run", "view", "42", "--json", RUN_FIELDS]
+        );
+    }
+
+    // A timed-out or failing watch must error — NOT report a half-finished run
+    // via the follow-up view. (`capture` does not error on a timeout; the
+    // `ensure_success` in run_watch is what surfaces it.)
+    #[tokio::test]
+    async fn run_watch_surfaces_timeout_and_watch_errors() {
+        let rec =
+            RecordingRunner::new(ScriptedRunner::new().on(["run", "watch"], Reply::timeout()));
+        let gh = GitHub::with_runner(&rec);
+        assert!(matches!(
+            gh.run_watch(Path::new("."), 42).await.unwrap_err(),
+            Error::Timeout { .. }
+        ));
+        assert_eq!(rec.calls().len(), 1, "no view after a timed-out watch");
+
+        let gh = GitHub::with_runner(
+            ScriptedRunner::new().on(["run", "watch"], Reply::fail(1, "no such run")),
+        );
+        assert!(matches!(
+            gh.run_watch(Path::new("."), 42).await.unwrap_err(),
+            Error::Exit { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn release_view_requests_view_fields() {
+        let json = r#"{"tagName":"v1","name":"","body":"notes","url":"u",
+            "publishedAt":"p","isDraft":false,"isPrerelease":false}"#;
+        let rec =
+            RecordingRunner::new(ScriptedRunner::new().on(["release", "view"], Reply::ok(json)));
+        let gh = GitHub::with_runner(&rec);
+        let release = gh
+            .release_view(Path::new("."), "v1")
+            .await
+            .expect("release_view");
+        assert_eq!(release.tag_name, "v1");
+        assert_eq!(release.body, "notes");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "view", "v1", "--json", RELEASE_VIEW_FIELDS]
+        );
     }
 
     // repo_view builds the --json request and flattens gh's nested owner/branch

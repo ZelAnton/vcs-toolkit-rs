@@ -10,7 +10,30 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- PR lifecycle mutations: `pr_merge(dir, n, PrMerge)` — a `PrMerge` builder
+  (`merge()`/`squash()`/`rebase()`, `.auto()`, `.delete_branch()`);
+  `pr_ready(dir, n)`; `pr_close(dir, n, delete_branch)`.
+- `pr_checks(dir, n)` → `Vec<CheckRun>` (`pr checks --json …`). gh signals the
+  overall outcome via its exit code (0 pass / 8 pending / 1 some failed) but
+  prints the same JSON for all three — all return the parsed list; branch on
+  `CheckRun::bucket` (`pass`/`fail`/`pending`/`skipping`/`cancel`).
+- Reviews and comments: `pr_review(dir, n, ReviewAction)` — the body travels in
+  the variant (`Approve(Option<String>)` / `RequestChanges(String)` /
+  `Comment(String)`), so an empty-body request-changes is unrepresentable;
+  `pr_comment(dir, n, body)` → URL; `pr_feedback(dir, n)` → `PrFeedback`
+  (reviews + conversation comments from `pr view --json reviews,comments`,
+  nested authors flattened).
+- GitHub Actions runs: `run_list(dir, limit, branch)` / `run_view(dir, id)` →
+  `WorkflowRun` (`conclusion` is an *empty string* until the run completes —
+  gh's shape), and `run_watch(dir, id)` — blocks until the run finishes, then
+  returns the final `WorkflowRun` (the watch exit code can't distinguish a
+  failed run from a cancelled one, so the outcome is read via `run view`).
+  `run_watch` under a client `default_timeout` is killed at the deadline.
+- Issues and releases: `issue_create(dir, title, body)` → URL;
+  `issue_view(dir, n)` (fills the new `Issue::body`/`Issue::url`);
+  `release_list(dir)` / `release_view(dir, tag)` → `Release` (`is_latest` is
+  reported by `list` only).
+- All new dir-taking methods are mirrored on the `GitHubAt` bound view.
 
 ### Changed
 -

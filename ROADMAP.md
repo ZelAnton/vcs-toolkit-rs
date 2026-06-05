@@ -59,19 +59,25 @@ only — panic-rollback is impossible without async `Drop`), and
   `Git::switch_with_stash(dir, branch)` (also on `GitAt`), with a clean-tree
   fast path that skips the stash round-trip.
 
-## 3. Widen `vcs-github` for PR-lifecycle automation
+## 3. Widen `vcs-github` for PR-lifecycle automation — ✅ done
 
 The `gh` wrapper is the thinnest crate (views + `pr_create`). Agent-style
 consumers need the rest of the loop — "open a PR, watch CI, react to review,
-merge":
+merge". **Status:** implemented; gh CLI facts (exit codes, JSON shapes, flag
+spellings) validated empirically on gh 2.93.
 
-- **3.1** `pr_merge` (merge/squash/rebase strategy, `--auto`,
-  `--delete-branch`), `pr_ready`, `pr_close`
-- **3.2** `pr_checks` (CI status per check) and `run_list` / `run_view` /
-  `run_watch` for GitHub Actions runs
-- **3.3** `pr_review` / `pr_comment`, plus reading reviews and comments
-  (`pr view --json reviews,comments`)
-- **3.4** `issue_create` / `issue_view`; `release_list` / `release_view`
+- **3.1 ✅** `pr_merge` (merge/squash/rebase strategy via a `PrMerge` builder,
+  `--auto`, `--delete-branch`), `pr_ready`, `pr_close`
+- **3.2 ✅** `pr_checks` → `Vec<CheckRun>` (gh's 0/8/1 outcome exit codes all
+  return the parsed list; branch on `bucket`) and `run_list` / `run_view` /
+  `run_watch` for GitHub Actions runs. `run_watch` returns the final
+  `WorkflowRun` rather than an exit-code bool — gh exits 1 on failure but 2 on
+  cancellation, so only `conclusion` reports the outcome faithfully.
+- **3.3 ✅** `pr_review` (body embedded in `ReviewAction` — request-changes
+  without a body is unrepresentable) / `pr_comment`, plus `pr_feedback`
+  reading reviews and comments (`pr view --json reviews,comments`)
+- **3.4 ✅** `issue_create` / `issue_view` (extends `Issue` with `body`/`url`);
+  `release_list` / `release_view`
 
 ## 4. Coverage gaps in the git/jj clients
 
