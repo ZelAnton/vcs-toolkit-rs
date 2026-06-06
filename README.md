@@ -36,7 +36,8 @@ timeouts, the structured `Error`, and the test seams these wrappers build on.
 This is a Cargo workspace, each crate **versioned and published independently**:
 three CLI wrappers built on the external
 [`processkit`](https://crates.io/crates/processkit) crate, a facade over the
-git/jj pair, and a dependency-free test-fixture crate:
+git/jj pair, two foundational crates the wrappers share, and a dependency-free
+test-fixture crate:
 
 | Crate | Drives | crates.io name |
 |---|---|---|
@@ -44,7 +45,14 @@ git/jj pair, and a dependency-free test-fixture crate:
 | [`crates/jj`](crates/jj) | the `jj` (Jujutsu) binary | `vcs-jj` |
 | [`crates/github`](crates/github) | the `gh` (GitHub CLI) binary | `vcs-github` |
 | [`crates/core`](crates/core) | — (facade over `vcs-git`/`vcs-jj`) | `vcs-core` |
+| [`crates/diff`](crates/diff) | — (shared std-only diff model + parser, `Version`) | `vcs-diff` |
+| [`crates/cli-support`](crates/cli-support) | — (shared argv guard, fetch policy, error classifiers) | `vcs-cli-support` |
 | [`crates/testkit`](crates/testkit) | — (test fixtures: git/jj sandboxes, bare remote) | `vcs-testkit` |
+
+`vcs-diff` and `vcs-cli-support` are foundational: `vcs-git`/`vcs-jj`/`vcs-github`/
+`vcs-core` depend on them and re-export their types (so `vcs_git::FileDiff`,
+`vcs_git::is_merge_conflict`, … still resolve), since `git diff` and
+`jj diff --git` are byte-identical and the wrappers share one parser/guard.
 
 Each **CLI wrapper** exposes an **interface trait** (`GitApi`/`JjApi`/`GitHubApi`) and a
 real client (`Git`/`Jj`/`GitHub`) with typed, repo-scoped async commands that
@@ -158,7 +166,7 @@ that aren't modelled yet, plus `version()`.
 | `diff_is_empty` → `bool` | | `pr_merge` / `pr_ready` / `pr_close` |
 | `worktree_list` → `Vec<Worktree>`, `worktree_add`/`_remove`/`_move`/`_prune` | `workspace_list` → `Vec<Workspace>`, `workspace_add`/`_root`/`_forget` | `pr_checks` → `Vec<CheckRun>` |
 | `branch_exists`/`remote_branch_exists` → `bool`, `common_dir`/`git_dir`/`remote_head_branch` | `root`/`trunk`/`current_bookmark`, `bookmark_create`/`_move`/`_rename`/`_delete` | `run_list`/`run_view`/`run_watch` → `WorkflowRun` |
-| `diff_shortstat` → `DiffStat`, `is_merged`, `rev_list_count` | `diff_summary`/`diff_stat`, `commit_count`, `is_conflicted`, `template_query` | `pr_review` / `pr_comment`, `pr_feedback` → reviews+comments |
+| `diff_stat` → `DiffStat`, `is_merged`, `rev_list_count` | `diff_summary`/`diff_stat`, `commit_count`, `is_conflicted`, `template_query` | `pr_review` / `pr_comment`, `pr_feedback` → reviews+comments |
 | `merge_*` / `rebase_*` / `reset_*` / `fetch` | `rebase`/`edit`/`squash_into`/`new_merge`/`git_import`, `op_head`/`op_restore`/`op_undo` | `issue_create`/`issue_view`, `release_list`/`release_view` |
 | `clone_repo`, `tag_*`, `show_file`, `blame` → `Vec<BlameLine>`, `config_get`/`_set`, `cherry_pick`/`revert`/`rebase_skip` | `git_clone`, `absorb`/`split_paths`/`duplicate`, `op_log` → `Vec<Operation>`, `evolog`, `file_annotate`/`file_show` | |
 
@@ -360,8 +368,8 @@ caught before users hit it.
 Releases go through the **`Release` GitHub Action** (`workflow_dispatch`) — you
 never type a version. Click *Run workflow* and pick:
 
-- **Crate** — `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-testkit`, `vcs-core`, or
-  **`all`** (release every crate in one run).
+- **Crate** — `vcs-diff`, `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`,
+  `vcs-testkit`, `vcs-core`, or **`all`** (release every crate in one run).
 - **Bump** — `patch` / `minor` / `major`.
 
 For each selected crate it reads the current version from that crate's
@@ -371,12 +379,15 @@ promotes its `CHANGELOG.md`, **publishes to crates.io before tagging**
 `<crate>-v<version>`, and opens a GitHub Release from the curated notes. `all`
 does them in a single commit + atomic push.
 
-The CLI wrappers depend only on the already-published
-[`processkit`](https://crates.io/crates/processkit) crate, and `vcs-testkit`
-depends on nothing at all, so they release independently. The **`vcs-core`
-facade is the exception** — it depends on `vcs-git`/`vcs-jj`, so `all`
-publishes it **last**, and its `^MAJOR.MINOR` requirement on them must stay in
-range when they cross a minor/major boundary.
+The dependency layers drive the publish order. The two foundational crates
+(`vcs-diff` — std-only — and `vcs-cli-support`, which depends only on the
+already-published [`processkit`](https://crates.io/crates/processkit)) publish
+**first**; the CLI wrappers depend on them (plus `processkit`), so they publish
+next; and the **`vcs-core` facade publishes last** since it additionally depends
+on `vcs-git`/`vcs-jj`. `vcs-testkit` depends on nothing and can go anywhere. So
+`all` releases in that order, and each `^MAJOR.MINOR` requirement on an
+in-workspace dependency must stay in range when that dependency crosses a
+minor/major boundary.
 
 ## Conventions
 

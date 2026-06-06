@@ -20,6 +20,11 @@ exclude = ["fuzz"]
 # version (see each crate's [package]).
 [workspace.package]
 edition = "2024"
+# Minimum supported Rust: edition 2024 needs 1.85, but the wrappers use
+# let-chains (stabilised in 1.88), so 1.88 is the real floor. Declared here (and
+# inherited via `rust-version.workspace = true`) so the contract is machine-checked
+# — `cargo build` on an older toolchain fails early with a clear message.
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/ZelAnton/vcs-toolkit-rs"
 authors = ["Anton Zhelezniakou"]

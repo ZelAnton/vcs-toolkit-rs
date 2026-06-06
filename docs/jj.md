@@ -745,8 +745,9 @@ implements `Display`.
 ### `JjFileset`
 An exact-path jj fileset (`file:"<path>"`), so path metacharacters like `(`,
 `)`, `|`, `*` are treated literally rather than as fileset operators. Build it
-with `JjFileset::path(path)` (repo-root-relative); the path is escaped (`\` →
-`\\`, `"` → `\"`).
+with `JjFileset::path(path)` (repo-root-relative); a Windows backslash separator
+is normalised to `/` (jj filesets are forward-slash — a literal-backslash path
+would match nothing), and a `"` is escaped for the `file:"…"` literal.
 
 ```rust
 # use vcs_jj::JjFileset;

@@ -3,6 +3,7 @@ name = "vcs-core"
 version = "0.2.0"
 description = "Unified facade over vcs-git and vcs-jj: repo detection and a backend-agnostic VCS handle."
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

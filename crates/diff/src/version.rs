@@ -2,8 +2,9 @@
 //! `<tool> --version` banners that `vcs-git`/`vcs-jj` read.
 
 /// A parsed CLI version (`major.minor.patch`). `Ord` compares numerically, so a
-/// caller can gate a feature on a minimum version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// caller can gate a feature on a minimum version; `Hash` lets it key a map (e.g.
+/// a per-version capability cache).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Version {
     /// Major component (`2` in `2.54.0`).
     pub major: u64,
@@ -94,5 +95,28 @@ mod tests {
     fn displays_dotted() {
         let v = parse_dotted_version("git version 2.54.1").unwrap();
         assert_eq!(v.to_string(), "2.54.1");
+    }
+}
+
+// `parse_dotted_version` is a pure parser over an arbitrary `<tool> --version`
+// banner (a binary on the user's machine), with byte-offset slicing in
+// `leading_number` — so the load-bearing invariant is "never panic, whatever the
+// bytes". Lock it against future edits.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn never_panics_on_arbitrary_text(s in any::<String>()) {
+            let _ = parse_dotted_version(&s);
+        }
+
+        // …and on version-ish input that reaches the digit-run slicing branches.
+        #[test]
+        fn never_panics_on_versionish_text(s in r"[a-z]{0,6} ?[0-9.\-+a-z]{0,20}") {
+            let _ = parse_dotted_version(&s);
+        }
     }
 }

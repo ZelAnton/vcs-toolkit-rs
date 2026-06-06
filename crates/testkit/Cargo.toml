@@ -3,6 +3,7 @@ name = "vcs-testkit"
 version = "0.1.0"
 description = "Test fixtures for git/jj automation: throwaway repos, sandboxes, and a seeded bare remote."
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

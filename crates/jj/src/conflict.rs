@@ -453,9 +453,12 @@ mod tests {
     fn git_style_and_malformed_are_rejected() {
         let git_style = "<<<<<<< abc 123 \"side-a\"\nx\n||||||| base\ny\n=======\nz\n>>>>>>> def\n";
         let err = parse_conflicts(git_style).unwrap_err();
+        assert!(matches!(err, Error::Parse { .. }), "structured parse error");
+        // The message must actively steer the caller to the right parser, not just
+        // fail — that redirect is the point of rejecting a git-style file here.
         assert!(
-            err.to_string().contains("could not parse") || matches!(err, Error::Parse { .. }),
-            "git-style routed to vcs_git::conflict: {err}"
+            err.to_string().contains("vcs_git::conflict"),
+            "git-style error should redirect to vcs_git::conflict: {err}"
         );
         assert!(parse_conflicts("<<<<<<< conflict 1 of 1\nstray content\n").is_err());
         assert!(has_conflict_markers(DIFF_STYLE));
@@ -495,8 +498,10 @@ mod proptests {
         fn parse_never_panics_on_arbitrary_text(s in any::<String>()) {
             let _ = has_conflict_markers(&s);
             if let Ok(segments) = parse_conflicts(&s) {
-                // Exercise the materializers + writer on whatever parsed.
-                let _ = render(&segments);
+                // Whatever arbitrary text parses must round-trip byte-exact — the
+                // load-bearing invariant, asserted on this generator too.
+                prop_assert_eq!(render(&segments), s.clone());
+                // Exercise the materializers on whatever parsed.
                 for seg in &segments {
                     if let JjConflictSegment::Conflict(r) = seg {
                         let _ = r.sides();

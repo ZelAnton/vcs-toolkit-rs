@@ -182,9 +182,17 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
                 None => MergeProbe::Clean,
             })
         }
-        // The original failure is the cause; a secondary restore/probe failure
-        // must not mask it.
-        (Err(err), _) | (Ok(()), Err(err)) => Err(err.into()),
+        // The merge succeeded but the probe errored. Surface a *failed* rollback
+        // first — it means the probe change is still in the working copy, the
+        // condition the caller must act on (mirrors the git path's abort-failure
+        // propagation); otherwise surface the probe error.
+        (Ok(()), Err(err)) => {
+            restored?;
+            Err(err.into())
+        }
+        // The merge itself failed — that's the root cause; a secondary
+        // restore/probe failure must not mask it.
+        (Err(err), _) => Err(err.into()),
     }
 }
 

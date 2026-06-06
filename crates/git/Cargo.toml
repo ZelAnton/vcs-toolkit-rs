@@ -3,6 +3,7 @@ name = "vcs-git"
 version = "0.4.0"
 description = "Automate the Git CLI from Rust through process execution."
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

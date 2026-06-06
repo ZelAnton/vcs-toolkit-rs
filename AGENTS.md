@@ -126,12 +126,14 @@ compiled as its own crate; prefer shared helpers in `tests/common/mod.rs`.
 
 This workspace fixes **no** allow-list of crates — add whatever a crate
 genuinely needs. The wrappers stay lean: `vcs-git` and `vcs-jj` depend on
-`processkit` + `async-trait`; `vcs-github` additionally adds `serde`/`serde_json`
-to deserialize `gh … --json`. `processkit` (external) brings the job FFI, the
-`tokio` runtime, and the structured `Error`, so the wrappers don't depend on
-`tokio` directly except `tokio` (`macros`, `rt-multi-thread`) as a `dev-dependency`
-for `#[tokio::test]`. Don't add more to a wrapper unless there's a real reason. The
-convention is about *how* you add dependencies, not *which*:
+`processkit` + `async-trait` + the two foundational crates (`vcs-diff`,
+`vcs-cli-support`); `vcs-github` depends on `processkit` + `async-trait` +
+`vcs-cli-support` and additionally adds `serde`/`serde_json` to deserialize
+`gh … --json`. `processkit` (external) brings the job FFI, the `tokio` runtime,
+and the structured `Error`, so the wrappers don't depend on `tokio` directly
+except as a `dev-dependency` (`macros`, `rt-multi-thread`) for `#[tokio::test]`.
+Don't add more to a wrapper unless there's a real reason. The convention is about
+*how* you add dependencies, not *which*:
 
 - **Document every dependency.** Each entry in `Cargo.toml` gets an inline
   comment explaining *why* it's there. A future reader should never guess.
@@ -171,19 +173,23 @@ Each crate releases **independently** — they do not share a version.
   `docs`/`chore`/`test`→skipped).
 - **Tag per crate** as `<crate>-v<version>` (e.g. `vcs-git-v0.2.0`) so each
   crate's history and compare links stay independent.
-- **Publish order is almost flat.** The three CLI wrappers depend only on the
-  already-published external `processkit` crate (by version), and `vcs-testkit`
-  on nothing (a published, dev-dependency-only fixtures crate), so each
-  publishes independently. The **`vcs-core` facade is the one exception**: it depends on
-  `vcs-git`/`vcs-jj`, so it publishes **last** (the `all` plan orders it after its
-  deps), and its `^MAJOR.MINOR` requirement on them must be kept in range when they cross
-  a minor/major boundary (and the new version must be live on crates.io first). If
-  a crate needs a newer `processkit`, bump the `[workspace.dependencies]` req and
-  ensure that `processkit` version is live on crates.io first.
+- **Publish order follows the dependency layers.** The two foundational crates
+  publish **first**: `vcs-diff` (std-only) and `vcs-cli-support` (depends only on
+  the already-published external `processkit`). The three CLI wrappers depend on
+  those two (plus `processkit`), so they publish **next**. The **`vcs-core` facade
+  publishes last** since it additionally depends on `vcs-git`/`vcs-jj`.
+  `vcs-testkit` depends on nothing (a published, dev-dependency-only fixtures
+  crate) and can go anywhere. The `all` plan orders them
+  `vcs-diff, vcs-cli-support, vcs-git, vcs-jj, vcs-github, vcs-testkit, vcs-core`,
+  and each `^MAJOR.MINOR` requirement on an in-workspace dependency must be kept
+  in range when that dependency crosses a minor/major boundary (and the new
+  version must be live on crates.io first). If a crate needs a newer `processkit`,
+  bump the `[workspace.dependencies]` req and ensure that `processkit` version is
+  live on crates.io first.
 - **Release workflow.** `.github/workflows/release.yml` (`workflow_dispatch`,
   needs the `CRATES_IO_TOKEN` secret) is the only way to release. Pick **which
-  crate** (`vcs-git`/`vcs-jj`/`vcs-github`/`vcs-testkit`/`vcs-core`, or
-  **`all`**) and a **bump**
+  crate** (`vcs-diff`/`vcs-cli-support`/`vcs-git`/`vcs-jj`/`vcs-github`/
+  `vcs-testkit`/`vcs-core`, or **`all`**) and a **bump**
   (`patch`/`minor`/`major`) — the version is **never typed by hand**. For each
   selected crate it derives the next version from that crate's current
   `Cargo.toml` (a crate's **first release** — no `<crate>-v*` tag yet — ships the

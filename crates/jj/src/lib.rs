@@ -84,9 +84,13 @@ impl SparseMode {
 pub struct JjFileset(String);
 
 impl JjFileset {
-    /// Wrap a repo-relative `path` as an exact-path fileset, escaping `\` and `"`.
+    /// Wrap a repo-relative `path` as an exact-path fileset. Backslash separators
+    /// are normalised to `/` first — jj filesets are forward-slash and
+    /// repo-root-relative, so a Windows caller's `src\a.rs` would otherwise become
+    /// a literal-backslash filename that matches nothing — then `"` is escaped for
+    /// the `file:"…"` string literal.
     pub fn path(path: impl AsRef<str>) -> Self {
-        let escaped = path.as_ref().replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped = path.as_ref().replace('\\', "/").replace('"', "\\\"");
         JjFileset(format!("file:\"{escaped}\""))
     }
 
@@ -1558,8 +1562,11 @@ mod tests {
             JjFileset::path("src/a(b).rs").as_str(),
             "file:\"src/a(b).rs\""
         );
-        // Backslash and quote are escaped.
-        assert_eq!(JjFileset::path("a\\\"b").as_str(), "file:\"a\\\\\\\"b\"");
+        // A Windows backslash separator is normalised to `/` so jj matches it
+        // (a literal-backslash filename would match nothing).
+        assert_eq!(JjFileset::path("src\\a.rs").as_str(), "file:\"src/a.rs\"");
+        // A literal quote is escaped for the `file:"…"` string literal.
+        assert_eq!(JjFileset::path("a\"b").as_str(), "file:\"a\\\"b\"");
     }
 
     #[tokio::test]

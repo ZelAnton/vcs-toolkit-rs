@@ -350,7 +350,9 @@ impl<R: ProcessRunner> Repo<R> {
     /// which **excludes untracked files**), while jj counts the `@` change against
     /// its parent (which **includes** newly-added files). So on git a brand-new
     /// file shows in [`changed_files`](Self::changed_files) but not here, whereas
-    /// on jj it shows in both.
+    /// on jj it shows in both. On an unborn git repo (no commits yet) the count is
+    /// taken against the empty tree, so a pre-first-commit working tree stats
+    /// instead of erroring.
     pub async fn diff_stat(&self) -> Result<DiffStat> {
         match &self.backend {
             Backend::Git(g) => git_backend::diff_stat(g, &self.cwd).await,
@@ -502,7 +504,10 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// Remove the worktree/workspace at `path`. For jj this resolves the
-    /// workspace name by matching `path`, deletes the directory, then forgets it.
+    /// workspace name by matching `path`, deletes the directory, then forgets it;
+    /// a `path` that matches no attached jj workspace returns
+    /// [`Error::WorktreeNotFound`]. (For the best-effort, never-erroring variant,
+    /// see [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
     pub async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::remove_worktree(g, &self.cwd, path, force).await,
@@ -714,7 +719,8 @@ mod tests {
     impl TempDir {
         fn new(tag: &str) -> Self {
             // Unique without a temp crate: process id + a monotonic counter, so
-            // parallel tests never collide.
+            // parallel tests never collide. Kept short — a long prefix can tip a
+            // nested jj `op_store` path over Windows' MAX_PATH.
             use std::sync::atomic::{AtomicU64, Ordering};
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -1224,6 +1230,69 @@ mod tests {
                 .iter()
                 .any(|c| c.args_str() == ["merge", "--abort"]),
             "{:?}",
+            rec.calls()
+        );
+    }
+
+    // git surfaces an interrupted op as on-disk state: in_progress_state returns
+    // Merge when MERGE_HEAD is present and Rebase when a rebase dir is — the
+    // documented asymmetry (git's conflict IS that paused state, never `Conflict`
+    // from this method).
+    #[tokio::test]
+    async fn git_in_progress_state_maps_merge_and_rebase() {
+        let merging = TempDir::new("inprog-merge");
+        std::fs::write(merging.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let merge_repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(
+                ScriptedRunner::new()
+                    .on(["rev-parse"], Reply::ok(merging.path().to_str().unwrap())),
+            ),
+        );
+        assert_eq!(
+            merge_repo.in_progress_state().await.unwrap(),
+            OperationState::Merge
+        );
+
+        let rebasing = TempDir::new("inprog-rebase");
+        std::fs::create_dir_all(rebasing.path().join("rebase-merge")).unwrap();
+        let rebase_repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(
+                ScriptedRunner::new()
+                    .on(["rev-parse"], Reply::ok(rebasing.path().to_str().unwrap())),
+            ),
+        );
+        assert_eq!(
+            rebase_repo.in_progress_state().await.unwrap(),
+            OperationState::Rebase
+        );
+    }
+
+    // On an unborn git repo (no commits) diff_stat probes is_unborn and stats
+    // against the empty tree instead of the unresolvable HEAD, so a fresh working
+    // tree reports its additions rather than erroring.
+    #[tokio::test]
+    async fn git_diff_stat_unborn_uses_empty_tree() {
+        use processkit::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["rev-parse"], Reply::fail(1, "")) // HEAD unborn
+                .on(
+                    ["diff", "--shortstat"],
+                    Reply::ok(" 1 file changed, 2 insertions(+)\n"),
+                ),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        let stat = repo.diff_stat().await.unwrap();
+        assert_eq!(stat.insertions, 2);
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["diff", "--shortstat", vcs_git::EMPTY_TREE]),
+            "diff_stat should target the empty tree on an unborn repo: {:?}",
             rec.calls()
         );
     }

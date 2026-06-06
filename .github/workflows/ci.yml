@@ -56,17 +56,19 @@ jobs:
   # on runner-default versions; this is Linux-only to keep the matrix cheap.
   integration:
     name: integration (jj ${{ matrix.jj }}${{ matrix.os == 'ubuntu-22.04' && ', old git' || '' }})
-    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Combinations spelled out explicitly (an `include` with a key that matches
+      # a base-axis value would MERGE into that combination rather than add a job).
+      # Floor / mid / latest jj on ubuntu-latest, plus one cheap older-git data
+      # point: the floor jj on ubuntu-22.04 (its git is older, no install step).
       matrix:
-        # Floor (the validated version), a mid release, and the latest.
-        jj: ["0.38.0", "0.40.0", "0.42.0"]
-        # One cheap older-git data point: the floor jj on an older image (its
-        # git is older than ubuntu-latest's), no git-install step needed.
         include:
-          - jj: "0.38.0"
-            os: ubuntu-22.04
+          - { jj: "0.38.0", os: ubuntu-latest }
+          - { jj: "0.40.0", os: ubuntu-latest }
+          - { jj: "0.42.0", os: ubuntu-latest }
+          - { jj: "0.38.0", os: ubuntu-22.04 }
     env:
       # Let the read-only gh integration tests (run/release reads against this
       # repo) run too; the rest skip gracefully when unauthenticated.

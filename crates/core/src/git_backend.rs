@@ -95,9 +95,17 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 }
 
 pub(crate) async fn diff_stat<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<DiffStat> {
-    // Working tree vs the last commit. `git.diff_stat` already returns the shared
-    // `vcs_diff::DiffStat` the facade exposes — no remap.
-    git.diff_stat(dir, "HEAD").await.map_err(Into::into)
+    // Working tree vs the last commit. On an unborn repo `HEAD` doesn't resolve
+    // (`git diff HEAD` errors), so stat against the empty tree — a fresh repo's
+    // working copy then reports its files as additions instead of hard-failing,
+    // matching `changed_files()` (status-based) and `git.diff_text(WorkingTree)`.
+    // `git.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
+    let range = if git.is_unborn(dir).await? {
+        vcs_git::EMPTY_TREE
+    } else {
+        "HEAD"
+    };
+    git.diff_stat(dir, range).await.map_err(Into::into)
 }
 
 pub(crate) async fn commit_paths<R: ProcessRunner>(
@@ -291,13 +299,16 @@ fn file_change_from_status(entry: StatusEntry) -> FileChange {
 }
 
 /// Map a porcelain `XY` status code to a [`ChangeKind`]. Rename wins over the
-/// others; an untracked (`??`) entry counts as added.
+/// others; an untracked (`??`) or copied (`C`) entry counts as added (a copy is a
+/// new file — `parse_porcelain` even records its source as `old_path`, like a
+/// rename); unmerged states (`UU`/`AA`/`DD`/…) fold into their underlying kind —
+/// use [`conflicted_files`](crate::Repo::conflicted_files) for the conflict signal.
 fn change_kind_from_code(code: &str) -> ChangeKind {
     if code.contains('R') {
         ChangeKind::Renamed
     } else if code.contains('D') {
         ChangeKind::Deleted
-    } else if code.contains('A') || code.contains('?') {
+    } else if code.contains('A') || code.contains('?') || code.contains('C') {
         ChangeKind::Added
     } else {
         ChangeKind::Modified
@@ -315,5 +326,7 @@ mod tests {
         assert_eq!(change_kind_from_code("A "), ChangeKind::Added);
         assert_eq!(change_kind_from_code(" D"), ChangeKind::Deleted);
         assert_eq!(change_kind_from_code("R "), ChangeKind::Renamed);
+        // A copy (only emitted with copy detection on) is a new file, not a modify.
+        assert_eq!(change_kind_from_code("C "), ChangeKind::Added);
     }
 }

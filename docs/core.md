@@ -328,7 +328,9 @@ caller to clean up. A consumer needing resume-existing or rollback semantics
 should drive the underlying client via `jj()` / `git()`.
 
 `remove_worktree` removes the worktree/workspace at `path`. For jj this resolves
-the workspace name by matching `path`, deletes the directory, then forgets it.
+the workspace name by matching `path`, deletes the directory, then forgets it; a
+jj `path` that matches no attached workspace returns `Error::WorktreeNotFound`
+(contrast `cleanup_worktree_blocking` below, where no-match is a `Ok` no-op).
 
 `cleanup_worktree_blocking` is the **synchronous** counterpart — for a context
 that cannot `.await`, chiefly a `Drop` guard. It force-removes the worktree at

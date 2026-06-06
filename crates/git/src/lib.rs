@@ -493,8 +493,14 @@ pub trait GitApi: Send + Sync {
         no_ff: bool,
         message: Option<String>,
     ) -> Result<()>;
-    /// Merge without committing, for a dry run
-    /// (`merge --no-commit [--squash|--no-ff] <branch>`).
+    /// Merge a branch but stop before committing, so the result can be inspected
+    /// (`merge --no-commit [--squash | --no-ff] <branch>`). With `no_ff` (and not
+    /// `squash`) git records `MERGE_HEAD`, so the in-progress merge is abortable
+    /// via [`merge_abort`](GitApi::merge_abort) — the dry-run pattern. With
+    /// `squash`, git stages the squashed result but records **no** `MERGE_HEAD`,
+    /// so it is *not* an abortable merge: undo it with
+    /// [`reset_merge`](GitApi::reset_merge) / [`reset_hard`](GitApi::reset_hard),
+    /// not `merge_abort`.
     async fn merge_no_commit(
         &self,
         dir: &Path,
@@ -506,7 +512,11 @@ pub trait GitApi: Send + Sync {
     async fn merge_abort(&self, dir: &Path) -> Result<()>;
     /// Finish a merge after resolving conflicts (`commit --no-edit`).
     async fn merge_continue(&self, dir: &Path) -> Result<()>;
-    /// Clear merge state, squash-safe (`reset --merge`).
+    /// Undo an in-progress (or just-staged) merge: `reset --merge` resets the
+    /// index and the merge-touched working-tree files back to `HEAD` and drops
+    /// `MERGE_HEAD`, **discarding the merge's changes** while keeping unrelated
+    /// unstaged edits. Use it after `merge_squash` / `merge_no_commit(squash)`,
+    /// where there is no `MERGE_HEAD` for `merge_abort` to act on.
     async fn reset_merge(&self, dir: &Path) -> Result<()>;
     /// Hard-reset the working tree to a revision (`reset --hard <rev>`).
     async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
@@ -1452,8 +1462,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 // this module); what remains here is git-specific.
 
 /// Git's well-known empty-tree object id — a stable stand-in for `HEAD` when
-/// diffing the working tree of an unborn (no-commits-yet) repository.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// diffing the working tree of an unborn (no-commits-yet) repository. Public so a
+/// caller can diff/stat a pre-first-commit working tree against it directly.
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Total attempts / fixed backoff for a transient-retried `fetch` — the shared
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
@@ -2272,6 +2283,37 @@ mod tests {
             rec.only_call().args_str(),
             ["push", "-u", "origin", "feat:feature"]
         );
+    }
+
+    // The common bare-branch push: `push origin <branch>` (no `-u`), with prompts
+    // off so a credential-needing remote fails fast instead of hanging.
+    #[tokio::test]
+    async fn push_bare_branch_builds_origin_branch_prompt_off() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.push(Path::new("/r"), GitPush::branch("feature"))
+            .await
+            .unwrap();
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["push", "origin", "feature"]);
+        assert!(call.envs.iter().any(|(k, v)| {
+            k.to_str() == Some("GIT_TERMINAL_PROMPT")
+                && v.as_deref().and_then(|o| o.to_str()) == Some("0")
+        }));
+    }
+
+    // `.remote()` swaps the remote token in place.
+    #[tokio::test]
+    async fn push_remote_override_swaps_remote() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.push(
+            Path::new("/r"),
+            GitPush::branch("feature").remote("upstream"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["push", "upstream", "feature"]);
     }
 
     #[tokio::test]

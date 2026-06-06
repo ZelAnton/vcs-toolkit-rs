@@ -31,7 +31,10 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// A unique temporary directory, removed on drop.
 ///
 /// Unique without a temp-dir crate: process id + a process-wide monotonic
-/// counter, so parallel tests never collide.
+/// counter, so parallel tests within a run never collide. The name is kept
+/// deliberately short — jj's `op_store` paths are deep, and a long prefix here
+/// can tip a nested `.jj/repo/op_store/operations/<id>` path over Windows'
+/// `MAX_PATH` (260) limit.
 pub struct TempDir(PathBuf);
 
 impl TempDir {

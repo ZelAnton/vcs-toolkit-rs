@@ -3,6 +3,7 @@ name = "vcs-cli-support"
 version = "0.1.0"
 description = "Shared CLI-wrapper plumbing for vcs-toolkit-rs: the argv injection guard, fetch-retry policy, and processkit::Error classifiers."
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

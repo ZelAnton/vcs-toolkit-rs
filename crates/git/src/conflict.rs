@@ -383,7 +383,12 @@ mod proptests {
         #[test]
         fn parse_never_panics_on_arbitrary_text(s in any::<String>()) {
             let _ = has_conflict_markers(&s);
-            let _ = parse_conflicts(&s);
+            // Whatever arbitrary text happens to parse must also round-trip
+            // byte-exact — the load-bearing invariant, asserted on this generator
+            // too (not just the structured one below).
+            if let Ok(segments) = parse_conflicts(&s) {
+                prop_assert_eq!(render(&segments), s);
+            }
         }
 
         #[test]

@@ -289,6 +289,97 @@ async fn conflicted_files_and_status_tracked() {
     );
 }
 
+// `merge_commit` with `no_ff` must create a real 2-parent merge commit even when
+// a fast-forward was possible — the headline subtlety of the flag, and the one
+// the conflict test (which only asserts the failing path) can't catch.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn merge_commit_no_ff_creates_a_merge_commit() {
+    let tmp = TempDir::new("mergenoff");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    let main = git.current_branch(dir).await.expect("branch");
+
+    // A feature branch one commit ahead; main does not move, so a plain merge
+    // would fast-forward.
+    git.create_branch(dir, "feature").await.expect("branch");
+    git.checkout(dir, "feature").await.expect("checkout");
+    std::fs::write(dir.join("b.txt"), "feature\n").expect("write");
+    git.add(dir, &[PathBuf::from("b.txt")]).await.expect("add");
+    git.commit(dir, "feature work").await.expect("commit");
+    git.checkout(dir, &main).await.expect("checkout");
+
+    git.merge_commit(dir, "feature", true, Some("merge feature".into()))
+        .await
+        .expect("merge_commit");
+
+    // A 2-parent merge commit resolves `HEAD^2`; a fast-forward would not.
+    assert!(
+        git.resolve_commit(dir, "HEAD^2").await.is_ok(),
+        "no_ff merge must create a 2-parent merge commit (HEAD^2 should resolve)"
+    );
+    assert_eq!(
+        git.last_commit_message(dir).await.expect("msg").trim(),
+        "merge feature"
+    );
+}
+
+// `is_merged` must distinguish a branch already merged into the target from one
+// that isn't — the hermetic test only feeds canned output, so this pins the real
+// `branch --merged` semantics.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn is_merged_distinguishes_merged_and_unmerged() {
+    let tmp = TempDir::new("ismerged");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    let main = git.current_branch(dir).await.expect("branch");
+
+    // `done` branches off base and is merged back into main.
+    git.create_branch(dir, "done").await.expect("branch");
+    git.checkout(dir, "done").await.expect("checkout");
+    std::fs::write(dir.join("b.txt"), "done\n").expect("write");
+    git.add(dir, &[PathBuf::from("b.txt")]).await.expect("add");
+    git.commit(dir, "done work").await.expect("commit");
+    git.checkout(dir, &main).await.expect("checkout");
+    git.merge_commit(dir, "done", true, Some("merge done".into()))
+        .await
+        .expect("merge_commit");
+
+    // `pending` has a commit that was never merged into main.
+    git.create_branch(dir, "pending").await.expect("branch");
+    git.checkout(dir, "pending").await.expect("checkout");
+    std::fs::write(dir.join("c.txt"), "pending\n").expect("write");
+    git.add(dir, &[PathBuf::from("c.txt")]).await.expect("add");
+    git.commit(dir, "pending work").await.expect("commit");
+    git.checkout(dir, &main).await.expect("checkout");
+
+    assert!(
+        git.is_merged(dir, "done", &main)
+            .await
+            .expect("is_merged done"),
+        "`done` was merged into main"
+    );
+    assert!(
+        !git.is_merged(dir, "pending", &main)
+            .await
+            .expect("is_merged pending"),
+        "`pending` was never merged into main"
+    );
+}
+
 // `switch_with_stash` carries dirty state (tracked + untracked) across a branch
 // switch, and restores it on the original branch when the checkout fails.
 #[tokio::test]

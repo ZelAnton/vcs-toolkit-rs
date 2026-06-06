@@ -3,6 +3,7 @@ name = "vcs-diff"
 version = "0.1.0"
 description = "Shared git-format unified-diff model + parser and a version type for the vcs-toolkit-rs wrappers."
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
