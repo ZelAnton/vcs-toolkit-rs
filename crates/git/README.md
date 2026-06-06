@@ -10,6 +10,9 @@ optional timeout.
 
 [`processkit`]: https://crates.io/crates/processkit
 
+> 📖 **Full guide:** [docs/git.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/git.md)
+> — every command by theme, result types, builder/newtype APIs, and worked examples.
+
 Inside an async context (every method is `async`):
 
 ```rust

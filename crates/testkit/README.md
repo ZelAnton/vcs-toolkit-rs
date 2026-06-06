@@ -3,6 +3,10 @@
 Test fixtures for git/jj automation: throwaway repositories for integration
 tests.
 
+> 📖 **Full guide:** [docs/testkit.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/testkit.md)
+> — every fixture with examples, plus the
+> [Testing & mocking](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/testing.md) guide.
+
 - **`TempDir`** — a unique, self-cleaning temp directory (pid + counter, no
   temp-dir dependency).
 - **`GitSandbox`** — a configured git repo on branch `main` (deterministic

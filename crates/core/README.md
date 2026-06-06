@@ -9,6 +9,9 @@ that downstream tools kept re-implementing. Rich, tool-specific operations stay
 on the underlying `vcs-git` / `vcs-jj` clients, reachable through the
 `Repo::git()` / `Repo::jj()` escape hatches.
 
+> 📖 **Full guide:** [docs/core.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/core.md)
+> — detection, the unified facade surface, the DTOs, and when to drop to the raw client.
+
 ## What it gives you
 
 - **`detect(dir) -> Option<Located>`** — walk up from `dir` to find a `.git`/`.jj`

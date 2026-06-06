@@ -66,6 +66,19 @@ mechanism is platform-specific and observable at runtime via its `Mechanism`:
 
 v1 guarantees kill-on-close; resource limits are intentionally out of scope.
 
+## Documentation
+
+This README is the overview. For depth — every command grouped by theme, the
+parsed result types, the builder and validating-newtype APIs, and worked
+examples — see the **[guide set in `docs/`](docs/README.md)**:
+
+- Per-crate references: [vcs-git](docs/git.md) · [vcs-jj](docs/jj.md) ·
+  [vcs-github](docs/github.md) · [vcs-core](docs/core.md) (the facade) ·
+  [vcs-testkit](docs/testkit.md) (fixtures).
+- Cross-cutting topics: [Conflict resolution](docs/conflicts.md) ·
+  [Testing & mocking](docs/testing.md) · [Security & hardening](docs/security.md) ·
+  [Process model, errors & observability](docs/process-model.md).
+
 ## Quick start
 
 Add the wrapper(s) you need. Every method is `async`, so call them from a tokio
@@ -263,6 +276,9 @@ crate (a dev-dependency) provides throwaway `GitSandbox`/`JjSandbox` repos, a
 seeded `BareRemote` to clone/fetch against, and a self-cleaning `TempDir` — the
 same fixtures this workspace's own ignored tests run on.
 
+→ Full guide: **[Testing & mocking](docs/testing.md)** and the
+**[vcs-testkit fixtures](docs/testkit.md)**.
+
 ## Untrusted input and repos
 
 Two layers, both on by default or one call away:
@@ -286,6 +302,9 @@ Conflicted files parse into a typed model too: `vcs_git::conflict` /
 `render` and a `resolve(side)` writer — the primitive for programmatic
 conflict resolution.
 
+→ Full guides: **[Security & hardening](docs/security.md)** and
+**[Conflict resolution](docs/conflicts.md)**.
+
 ## Observing commands
 
 Four seams, no extra configuration:
@@ -306,6 +325,8 @@ Four seams, no extra configuration:
   executes nothing and answers everything, so a whole flow can be exercised
   without touching a repository; add `.on(…)` rules for the calls that need
   realistic replies.
+
+→ Full guide: **[Process model, errors & observability](docs/process-model.md)**.
 
 ## Build, test
 

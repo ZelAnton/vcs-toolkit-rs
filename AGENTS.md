@@ -22,6 +22,12 @@ one facade:
 | `crates/github` | `vcs-github` | `gh` (GitHub CLI) |
 | `crates/core` | `vcs-core` | — (facade over `vcs-git`/`vcs-jj`) |
 
+(There is also `crates/testkit` = `vcs-testkit`, a dependency-free dev-only
+fixture crate.) User-facing reference docs live in **[`docs/`](docs/README.md)** —
+a guide per crate plus cross-cutting topic guides (conflicts, testing, security,
+process model). When you change a public API, update the matching `docs/*.md`
+guide alongside the crate's `CHANGELOG.md`.
+
 Each **CLI wrapper** (`vcs-git`/`vcs-jj`/`vcs-github`) exposes the same shape — an **interface trait**
 (`GitApi`/`JjApi`/`GitHubApi`) and a real client struct
 (`Git`/`Jj`/`GitHub`) generic over a `processkit::ProcessRunner`. Methods are
