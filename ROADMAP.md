@@ -136,8 +136,10 @@ colocates by default depends on the jj version *and* `git.colocate` config, so
 ## 6. Longer-horizon directions (independent of today's consumers)
 
 Where the toolkit could go as a general-purpose "typed CLI automation" SDK,
-regardless of what the current consumers need. Unordered; each item should be
-picked up only when a concrete use case appears.
+regardless of what the current consumers need. Being executed as a program of
+waves: **A** = 6.2+6.3+6.7 (safety substrate — ✅ done), **B** = 6.9+6.10,
+**C** = 6.4+6.5+6.11+6.12, **D** = 6.1 (forges), **E** = 6.6 (watching),
+**F** = 6.8 (vcs-mcp; depends on Wave A).
 
 ### New forges
 
@@ -148,18 +150,20 @@ picked up only when a concrete use case appears.
 
 ### Safety for untrusted input and untrusted repos
 
-- **6.2 Typed argument newtypes.** `RefName` (git `check-ref-format` rules),
-  `Revset`, `Fileset`, `Refspec` with validating constructors, so a
-  caller-supplied string can never smuggle a flag into argv; audit every
-  builder for `--` separators. Matters as soon as any input is not a literal
-  in the caller's source (UIs, bots, agents).
-- **6.3 Hardened execution profile.** Cloning a repository and running `git`
-  inside it executes that repository's hooks and honours its config —
-  arbitrary code execution for any automation that touches repos it didn't
-  create. Offer a profile that scrubs `GIT_*` env, pins config via `-c`,
-  disables hooks (`core.hooksPath`), and keeps terminal prompts off
-  (partially done today), so "inspect this untrusted checkout" is safe by
-  construction.
+- **6.2 ✅ Typed argument newtypes + injection guards.** Shipped as two
+  layers: automatic guards on every exposed positional (a leading-`-`/empty
+  value is refused before spawning — verified git/jj parse such values as
+  flags), plus optional validating newtypes `RefName`/`RevSpec` (vcs-git)
+  and `RevsetExpr` (vcs-jj). Signatures stay `&str` — a full newtype
+  migration would be breaking churn with no added safety once the guards
+  exist (recorded decision). Paths already went through `--`/embedding.
+- **6.3 ✅ Hardened execution profile.** Shipped as `Git::harden()` /
+  `Git::hardened()`: hooks off via env-based config
+  (`core.hooksPath=/dev/null`, verified to suppress hooks on Windows),
+  `core.fsmonitor=false`, repo-redirecting `GIT_*` scrubbed, system config
+  skipped, prompts off — applied to every command via processkit's
+  `default_env`/`default_env_remove` (no upstream work needed). jj
+  deliberately has no equivalent (no repo-local hooks; documented).
 
 ### Performance
 
@@ -181,11 +185,14 @@ picked up only when a concrete use case appears.
 
 ### Structured conflicts
 
-- **6.7 Typed conflict model.** Parse conflict markers (`diff3`/`zdiff3`,
-  jj's materialized conflicts) into structured regions — base/ours/theirs
-  per hunk — plus a writer to apply a chosen resolution. This is the missing
-  primitive for programmatic and assisted conflict resolution; today every
-  tool re-greps `<<<<<<<` by hand.
+- **6.7 ✅ Typed conflict model.** Shipped as `vcs_git::conflict` (git's
+  `merge`/`diff3`/`zdiff3` styles, variable marker size, CRLF preserved —
+  also parses jj's `git` marker style) and `vcs_jj::conflict` (jj's native
+  `diff` and `snapshot` styles, `conflict N of M` counters): structured
+  regions, byte-exact `render`, and a `resolve(side)` writer. Nuance
+  recorded: in jj's default `diff` style one side is stored as a unified
+  diff against the base, so `resolve` reconstructs it by applying the diff.
+  Round-tripped against real conflicts in integration tests.
 
 ### Agent-facing surface
 

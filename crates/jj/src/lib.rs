@@ -8,6 +8,12 @@
 //! Two test seams: enable the `mock` feature for a `mockall`-generated
 //! `MockJjApi`, or inject a fake runner with
 //! `Jj::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//!
+//! There is deliberately **no `Jj::hardened()`** counterpart to vcs-git's
+//! untrusted-repo profile: jj has no repo-local hooks, and its config comes
+//! from the user/repo TOML files jj itself trusts. In a *colocated* repo the
+//! risk lives on the git side — git hooks fire when **git** commands run
+//! there, so harden the `Git` client you point at it.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -18,6 +24,7 @@ use processkit::ProcessRunner;
 // `Error`/`Result`/`ProcessResult` into scope here).
 pub use processkit::{Error, ProcessResult, Result};
 
+pub mod conflict;
 mod parse;
 pub use parse::{
     AnnotationLine, Bookmark, BookmarkRef, Change, ChangeKind, ChangedPath, DiffLine, DiffStat,
@@ -125,6 +132,58 @@ fn first_bookmark(rendered: &str) -> Option<String> {
     (!rendered.is_empty()).then(|| rendered.split(',').next().unwrap_or(rendered).to_string())
 }
 
+/// Injection guard for bare positional argv slots: a caller-supplied value
+/// with a leading `-` is parsed by jj's CLI as a *flag* (verified: `jj edit
+/// -evil` → "unexpected argument"), and an empty value changes a command's
+/// meaning. Refuse both before anything spawns. Flag-VALUE positions
+/// (`-r <revset>`, `-m <msg>`) need no guard — jj itself rejects dash-values
+/// there with a clear error rather than misparsing them.
+fn reject_flag_like(what: &str, value: &str) -> Result<()> {
+    if value.is_empty() || value.starts_with('-') {
+        return Err(Error::Spawn {
+            program: BINARY.to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} would be parsed as a flag (or is empty) — \
+                     refusing to pass it as a positional argument"
+                ),
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// A pre-validated revset expression, for callers that accept revsets from
+/// untrusted input (UIs, bots, agents) and want to fail early. Deliberately
+/// *minimal* — jj's revset grammar is too rich to validate here — it only
+/// guarantees the expression is non-empty and cannot be parsed as a flag
+/// (no leading `-`), matching the internal guard the positional-revset
+/// methods apply anyway. The dir-taking methods stay `&str`; this type is
+/// **optional** up-front validation, not a required wrapper.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RevsetExpr(String);
+
+impl RevsetExpr {
+    /// Validate `revset` (non-empty, no leading `-`).
+    pub fn new(revset: impl Into<String>) -> Result<Self> {
+        let revset = revset.into();
+        reject_flag_like("revset", &revset)?;
+        Ok(RevsetExpr(revset))
+    }
+
+    /// The validated expression.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RevsetExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// What the installed `jj` binary supports, probed via
 /// [`JjApi::capabilities`]. A value type — the client holds no state, so probe
 /// once and keep the result (callers cache it).
@@ -171,6 +230,13 @@ impl JjCapabilities {
 
 /// The jj operations this crate exposes — the interface consumers code against
 /// and mock in tests.
+///
+/// **Injection safety:** every method that places a caller-supplied bookmark
+/// name, revset, or operation id in a positional argv slot rejects a value
+/// that is empty or begins with `-` (jj would parse it as a flag) with an
+/// [`Error::Spawn`] *before* spawning. Flag-value slots (`-r <revset>`,
+/// `-m <msg>`) and the `run`/`run_raw` escape hatches are not guarded. For
+/// eager validation at an input boundary, see [`RevsetExpr`].
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait JjApi: Send + Sync {
@@ -540,6 +606,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()> {
+        // A leading-`-` name makes the whole `{name}@{remote}` token start with
+        // `-`, which jj parses as a global flag (e.g. `--config`); guard it.
+        reject_flag_like("bookmark name", name)?;
         let target = format!("{name}@{remote}");
         self.core
             .unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
@@ -547,6 +616,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
+        reject_flag_like("bookmark name", name)?;
         self.core
             .unit(self.cmd_in(dir, ["bookmark", "set", name, "-r", revision]))
             .await
@@ -626,18 +696,22 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn bookmark_create(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
+        reject_flag_like("bookmark name", name)?;
         self.core
             .unit(self.cmd_in(dir, ["bookmark", "create", name, "-r", revision]))
             .await
     }
 
     async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
+        reject_flag_like("bookmark name", old)?;
+        reject_flag_like("bookmark name", new)?;
         self.core
             .unit(self.cmd_in(dir, ["bookmark", "rename", old, new]))
             .await
     }
 
     async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()> {
+        reject_flag_like("bookmark name", name)?;
         self.core
             .unit(self.cmd_in(dir, ["bookmark", "delete", name]))
             .await
@@ -650,6 +724,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         to: &str,
         allow_backwards: bool,
     ) -> Result<()> {
+        reject_flag_like("bookmark name", name)?;
         let mut args = vec!["bookmark", "move", name, "--to", to];
         if allow_backwards {
             args.push("--allow-backwards");
@@ -817,14 +892,26 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         path: &str,
         revset: Option<String>,
     ) -> Result<Vec<AnnotationLine>> {
-        let mut args = vec!["file", "annotate", path];
+        // `file annotate` takes a plain PATH (not a fileset — the `file:"…"`
+        // form is rejected), so a leading-`-` path would be parsed as a flag.
+        // The `--` separator before it keeps even a `-dash.txt` literal safe —
+        // but global flags (`--color never`) MUST precede `--`, so this builds
+        // the command directly instead of via `cmd_in` (which trails them).
+        let mut args = vec!["file", "annotate"];
         if let Some(revset) = revset.as_deref() {
             args.push("-r");
             args.push(revset);
         }
-        args.extend(["-T", parse::ANNOTATE_TEMPLATE]);
+        args.extend([
+            "-T",
+            parse::ANNOTATE_TEMPLATE,
+            "--color",
+            "never",
+            "--",
+            path,
+        ]);
         self.core
-            .parse(self.cmd_in(dir, args), parse::parse_annotate)
+            .parse(self.core.command_in(dir, args), parse::parse_annotate)
             .await
     }
 
@@ -852,6 +939,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn edit(&self, dir: &Path, revset: &str) -> Result<()> {
+        reject_flag_like("revset", revset)?;
         self.core.unit(self.cmd_in(dir, ["edit", revset])).await
     }
 
@@ -908,12 +996,18 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()> {
+        // Parents are bare positionals — a leading-`-` one (e.g.
+        // `--ignore-working-copy`) would be silently consumed as a flag.
+        for parent in &parents {
+            reject_flag_like("parent", parent)?;
+        }
         let mut args: Vec<String> = vec!["new".into(), "-m".into(), message.into()];
         args.extend(parents);
         self.core.unit(self.cmd_in(dir, args)).await
     }
 
     async fn abandon(&self, dir: &Path, revset: &str) -> Result<()> {
+        reject_flag_like("revset", revset)?;
         self.core.unit(self.cmd_in(dir, ["abandon", revset])).await
     }
 
@@ -929,6 +1023,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()> {
+        // A leading-`-` url is a bare positional — guard it (a real URL never
+        // leads with `-`, so no false positives).
+        reject_flag_like("url", url)?;
         // No working directory yet (the clone creates `dest`), so this builds
         // on the raw `command` and appends `--color never` at the end — the
         // `workspace_add` precedent for color-after-value-args. The colocate
@@ -978,6 +1075,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()> {
+        reject_flag_like("revset", revset)?;
         self.core
             .unit(self.cmd_in(dir, ["duplicate", revset]))
             .await
@@ -1022,6 +1120,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn op_restore(&self, dir: &Path, op_id: &str) -> Result<()> {
+        reject_flag_like("operation id", op_id)?;
         self.core
             .unit(self.cmd_in(dir, ["op", "restore", op_id]))
             .await
@@ -1067,6 +1166,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn workspace_forget(&self, dir: &Path, name: &str) -> Result<()> {
+        reject_flag_like("workspace name", name)?;
         self.core
             .unit(self.cmd_in(dir, ["workspace", "forget", name]))
             .await
@@ -1955,6 +2055,61 @@ mod tests {
         assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir.as_os_str()));
     }
 
+    // The injection guard: a flag-shaped value in any exposed positional slot
+    // must be refused BEFORE anything spawns.
+    #[tokio::test]
+    async fn flag_like_positionals_are_rejected_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let dir = Path::new("/r");
+
+        assert!(jj.bookmark_create(dir, "-evil", "@").await.is_err());
+        assert!(jj.bookmark_rename(dir, "ok", "-bad").await.is_err());
+        assert!(jj.bookmark_delete(dir, "--all").await.is_err());
+        assert!(jj.bookmark_move(dir, "-evil", "@", false).await.is_err());
+        assert!(jj.edit(dir, "-evil").await.is_err());
+        assert!(jj.duplicate(dir, "-r").await.is_err());
+        assert!(jj.abandon(dir, "-evil").await.is_err());
+        // Token-prefix and other bare positionals:
+        assert!(
+            jj.bookmark_track(dir, "--config=x", "origin")
+                .await
+                .is_err(),
+            "name leads the {{name}}@{{remote}} token"
+        );
+        assert!(jj.bookmark_set(dir, "-evil", "@").await.is_err());
+        assert!(jj.op_restore(dir, "--help").await.is_err());
+        assert!(jj.workspace_forget(dir, "-evil").await.is_err());
+        assert!(
+            jj.new_merge(dir, "m", vec!["@".into(), "--ignore-working-copy".into()])
+                .await
+                .is_err(),
+            "a flag-shaped parent is refused"
+        );
+        assert!(jj.git_clone("-evil", dir, false).await.is_err());
+        assert!(jj.edit(dir, "").await.is_err(), "empty refused too");
+        assert!(
+            rec.calls().is_empty(),
+            "nothing may spawn: {:?}",
+            rec.calls()
+        );
+
+        // …and legitimate values still pass through unchanged.
+        jj.edit(dir, "abc123").await.expect("edit");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["edit", "abc123", "--color", "never"]
+        );
+    }
+
+    #[test]
+    fn revset_expr_validates() {
+        assert!(RevsetExpr::new("heads(::@ & bookmarks())").is_ok());
+        assert_eq!(RevsetExpr::new("@-").unwrap().as_str(), "@-");
+        assert!(RevsetExpr::new("-evil").is_err());
+        assert!(RevsetExpr::new("").is_err());
+    }
+
     // capabilities parses jj's version line (incl. dev-build suffixes) and
     // gates precisely on the validated 0.38 floor.
     #[tokio::test]
@@ -2145,9 +2300,22 @@ mod tests {
             "content"
         );
         let calls = rec.calls();
+        // The path follows a `--` separator (a leading-`-` filename stays safe);
+        // `--color never` must precede `--`, not trail it.
         assert_eq!(
-            &calls[0].args_str()[..5],
-            &["file", "annotate", "src/a.rs", "-r", "@-"]
+            calls[0].args_str(),
+            [
+                "file",
+                "annotate",
+                "-r",
+                "@-",
+                "-T",
+                parse::ANNOTATE_TEMPLATE,
+                "--color",
+                "never",
+                "--",
+                "src/a.rs"
+            ]
         );
         // file_show wraps the path as an exact-path fileset (metacharacters in
         // the name must stay literal); annotate takes a PLAIN path — quoting

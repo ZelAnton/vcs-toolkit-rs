@@ -34,6 +34,10 @@ crates; tag releases as `vcs-github-v<version>`.
   `release_list(dir)` / `release_view(dir, tag)` → `Release` (`is_latest` is
   reported by `list` only).
 - All new dir-taking methods are mirrored on the `GitHubAt` bound view.
+- Injection guards on the exposed positional arguments (`api` endpoint,
+  `release_view` tag): a leading-`-` or empty value is refused **before**
+  anything spawns. Flag-value positions (`--body`, `--branch`) need no
+  guard — gh consumes the next token verbatim there.
 
 ### Changed
 -

@@ -506,3 +506,97 @@ async fn capabilities_probe_real_binary() {
     assert!(caps.is_supported(), "got {:?}", caps.version);
     caps.ensure_supported().expect("supported");
 }
+
+// The hardened profile must suppress repo-local hooks (the code-execution
+// vector when driving an untrusted checkout) while a plain client runs them.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn hardened_client_suppresses_repo_hooks() {
+    let tmp = TempDir::new("harden");
+    let dir = tmp.path();
+    let plain = Git::new();
+    plain.init(dir).await.expect("init");
+    configure(dir);
+
+    // A pre-commit hook that drops a marker file when it runs.
+    let hooks = dir.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks).expect("hooks dir");
+    std::fs::write(
+        hooks.join("pre-commit"),
+        "#!/bin/sh\necho ran >> hook-marker.txt\n",
+    )
+    .expect("write hook");
+
+    // Plain client: the hook fires.
+    std::fs::write(dir.join("f.txt"), "one\n").expect("write");
+    plain
+        .add(dir, &[PathBuf::from("f.txt")])
+        .await
+        .expect("add");
+    plain.commit(dir, "one").await.expect("commit");
+    assert!(dir.join("hook-marker.txt").exists(), "hook ran unhardened");
+    let runs_before = std::fs::read_to_string(dir.join("hook-marker.txt"))
+        .expect("read")
+        .lines()
+        .count();
+
+    // Hardened client: the hook must NOT fire.
+    let hardened = Git::hardened();
+    std::fs::write(dir.join("f.txt"), "two\n").expect("write");
+    hardened
+        .add(dir, &[PathBuf::from("f.txt")])
+        .await
+        .expect("add");
+    hardened.commit(dir, "two").await.expect("commit");
+    let runs_after = std::fs::read_to_string(dir.join("hook-marker.txt"))
+        .expect("read")
+        .lines()
+        .count();
+    assert_eq!(runs_after, runs_before, "hook suppressed under harden()");
+}
+
+// The typed conflict model round-trips a REAL conflicted file: parse →
+// resolve(Theirs) → write back → stage → the conflict is gone.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn conflict_model_resolves_a_real_conflict() {
+    use vcs_git::conflict::{ResolutionSide, parse_conflicts, render, resolve};
+
+    let tmp = TempDir::new("conflict-model");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    git.create_branch(dir, "other").await.expect("branch");
+    std::fs::write(dir.join("a.txt"), "ours\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "ours").await.expect("commit");
+    git.checkout(dir, "other").await.expect("checkout");
+    std::fs::write(dir.join("a.txt"), "theirs\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "theirs").await.expect("commit");
+    let main = "-"; // previous branch
+    let _ = main;
+    assert!(
+        git.merge_commit(dir, "@{-1}", false, None).await.is_err(),
+        "conflict expected"
+    );
+
+    let content = std::fs::read_to_string(dir.join("a.txt")).expect("read");
+    let segments = parse_conflicts(&content).expect("parse real markers");
+    assert_eq!(render(&segments), content, "byte-exact roundtrip");
+    let resolved = resolve(&segments, ResolutionSide::Theirs).expect("resolve");
+    assert!(!resolved.contains("<<<<<<<"), "markers gone");
+    std::fs::write(dir.join("a.txt"), &resolved).expect("write resolved");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    assert!(
+        git.conflicted_files(dir)
+            .await
+            .expect("conflicted")
+            .is_empty(),
+        "conflict cleared after writing the resolution"
+    );
+}

@@ -34,6 +34,28 @@ const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedA
 const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt";
 const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isPrerelease";
 
+/// Injection guard for bare positional argv slots: a caller-supplied value
+/// with a leading `-` is parsed by gh's CLI as a *flag* (verified: `gh api -evil` →
+/// flag parsing), and an empty value changes a command's
+/// meaning. Refuse both before anything spawns. Flag-VALUE positions
+/// (`--body <b>`, `--branch <b>`) need no guard — gh consumes the next token
+/// verbatim there (verified).
+fn reject_flag_like(what: &str, value: &str) -> Result<()> {
+    if value.is_empty() || value.starts_with('-') {
+        return Err(Error::Spawn {
+            program: BINARY.to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} would be parsed as a flag (or is empty) — \
+                     refusing to pass it as a positional argument"
+                ),
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// How [`GitHubApi::pr_merge`] merges the PR — exactly one of gh's mutually
 /// exclusive strategy flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +375,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn api(&self, endpoint: &str) -> Result<String> {
+        reject_flag_like("endpoint", endpoint)?;
         self.core.text(self.core.command(["api", endpoint])).await
     }
 
@@ -542,6 +565,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release> {
+        reject_flag_like("tag", tag)?;
         self.core
             .try_parse(
                 self.core
@@ -817,6 +841,17 @@ mod tests {
         );
         assert!(!call.has_flag("--base"), "no base was given");
         assert!(!call.has_flag("--head"), "no head was given");
+    }
+
+    // The injection guard on gh's exposed positionals.
+    #[tokio::test]
+    async fn flag_like_positionals_are_rejected_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        assert!(gh.api("-evil").await.is_err());
+        assert!(gh.release_view(Path::new("."), "-evil").await.is_err());
+        assert!(gh.api("").await.is_err(), "empty refused too");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     // pr_merge builds the strategy flag plus the optional --auto/--delete-branch.

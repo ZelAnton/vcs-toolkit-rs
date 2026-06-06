@@ -46,6 +46,27 @@ crates; tag releases as `vcs-git-v<version>`.
   `is_supported()` / `ensure_supported()` gating on the major floor only
   (validated on 2.54; expected ≥ 2.30 — an untested minor is not hard-gated).
   A value type: probe once and keep it.
+- Injection guards on every exposed positional argument — names, revisions,
+  ranges, remotes, and **URLs** (`clone_repo`/`remote_*`: a leading-`-` url
+  like `--upload-pack=<cmd>` is an RCE-class flag, refused). A caller-supplied
+  value with a leading `-` (or an empty one) is rejected **before** anything
+  spawns — git would parse it as a flag (`git checkout -evil` → "unknown
+  switch", verified). Flag-value positions (`-m <msg>`) are unaffected.
+- `RefName` and `RevSpec` validating newtypes — optional up-front validation
+  for untrusted input (`check-ref-format`-shaped rules / minimal flag-shape
+  rejection). Method signatures stay `&str`; the internal guards make the
+  smuggling impossible either way.
+- `Git::harden()` / `Git::hardened()` — an untrusted-repo execution profile
+  applied to every command: hooks disabled (`core.hooksPath=/dev/null` via
+  git's env-based config; verified to suppress hooks on Windows),
+  `core.fsmonitor=false`, repo-redirecting `GIT_*` env scrubbed
+  (`GIT_DIR`/`GIT_WORK_TREE`/config overrides/…), system config skipped,
+  terminal prompts off.
+- `conflict` module — a typed model of conflict markers: `parse_conflicts`
+  → `Text`/`Conflict` segments (`merge`/`diff3`/`zdiff3` styles, variable
+  marker size, CRLF preserved), byte-exact `render`, and
+  `resolve(…, ResolutionSide::{Ours,Base,Theirs})`. Pure functions; also
+  parses files materialized by jj's `git` conflict-marker style.
 
 ### Changed
 -

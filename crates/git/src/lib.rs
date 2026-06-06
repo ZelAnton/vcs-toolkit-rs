@@ -27,6 +27,7 @@ use processkit::ProcessRunner;
 // are in scope here too via this `pub use`.)
 pub use processkit::{Error, ProcessResult, Result};
 
+pub mod conflict;
 mod parse;
 pub use parse::{
     BlameLine, Branch, ChangeKind, Commit, DiffLine, DiffStat, FileDiff, GitVersion, Hunk,
@@ -194,6 +195,83 @@ impl CloneSpec {
     }
 }
 
+/// A pre-validated git reference name (branch/tag/remote), for callers that
+/// accept names from untrusted input (UIs, bots, agents) and want to fail
+/// early with a clear error. The dir-taking methods stay `&str` — they apply
+/// the same flag-injection guard internally — so this type is **optional**
+/// up-front validation, not a required wrapper.
+///
+/// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
+/// no leading `-` or `.`, no `..`, no control characters or space, none of
+/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RefName(String);
+
+impl RefName {
+    /// Validate `name` as a reference name.
+    pub fn new(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        let bad = name.is_empty()
+            || name.starts_with('-')
+            || name.starts_with('.')
+            || name.ends_with('/')
+            || name.ends_with(".lock")
+            || name.contains("..")
+            || name
+                .chars()
+                .any(|c| c.is_control() || " ~^:?*[\\".contains(c));
+        if bad {
+            return Err(Error::Spawn {
+                program: BINARY.to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid git reference name: {name:?}"),
+                ),
+            });
+        }
+        Ok(RefName(name))
+    }
+
+    /// The validated name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RefName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A pre-validated revision/range expression (`HEAD~2`, `main..feature`).
+/// Deliberately *minimal* — git's revision grammar is too rich to validate
+/// here — it only guarantees the expression is non-empty and cannot be parsed
+/// as a flag (no leading `-`), matching the internal guard the dir-taking
+/// methods apply anyway. Optional up-front validation for untrusted input.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RevSpec(String);
+
+impl RevSpec {
+    /// Validate `rev` as a revision/range expression (non-empty, no leading `-`).
+    pub fn new(rev: impl Into<String>) -> Result<Self> {
+        let rev = rev.into();
+        reject_flag_like("revision", &rev)?;
+        Ok(RevSpec(rev))
+    }
+
+    /// The validated expression.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RevSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// What the installed `git` binary supports, probed via
 /// [`GitApi::capabilities`]. A value type — the client holds no state, so
 /// probe once and keep the result (callers cache it).
@@ -239,6 +317,15 @@ impl GitCapabilities {
 
 /// The Git operations this crate exposes — the interface consumers code against
 /// and mock in tests.
+///
+/// **Injection safety:** every method that places a caller-supplied name,
+/// revision, range, remote, or URL in a positional argv slot rejects a value
+/// that is empty or begins with `-` (it would be parsed as a flag) with an
+/// [`Error::Spawn`] *before* spawning. Flag-value slots (`-m <msg>`,
+/// `--branch <b>`), filesystem path arguments (`--`-separated pathspecs, plus
+/// worktree paths and clone destinations — typed `Path`, caller-trusted), and
+/// the `run`/`run_raw` escape hatches are not guarded. For eager validation at
+/// an input boundary, see [`RefName`] / [`RevSpec`].
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitApi: Send + Sync {
@@ -597,6 +684,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn log_range(&self, dir: &Path, range: &str, max: usize) -> Result<Vec<Commit>> {
+        reject_flag_like("range", range)?;
         let n = format!("-n{max}");
         self.core
             .parse(
@@ -616,12 +704,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
+        reject_flag_like("revision", rev)?;
         self.core
             .text(self.core.command_in(dir, ["rev-parse", rev]))
             .await
     }
 
     async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String> {
+        reject_flag_like("revision", rev)?;
         self.core
             .text(self.core.command_in(dir, ["rev-parse", "--short", rev]))
             .await
@@ -647,18 +737,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn create_branch(&self, dir: &Path, name: &str) -> Result<()> {
+        reject_flag_like("branch name", name)?;
         self.core
             .unit(self.core.command_in(dir, ["branch", name]))
             .await
     }
 
     async fn checkout(&self, dir: &Path, reference: &str) -> Result<()> {
+        reject_flag_like("reference", reference)?;
         self.core
             .unit(self.core.command_in(dir, ["checkout", reference]))
             .await
     }
 
     async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()> {
+        reject_flag_like("commit", commit)?;
         self.core
             .unit(self.core.command_in(dir, ["checkout", "--detach", commit]))
             .await
@@ -728,6 +821,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String> {
+        reject_flag_like("revision", rev)?;
         // `^{commit}` peels an annotated tag down to the commit it points at.
         let spec = format!("{rev}^{{commit}}");
         self.core
@@ -795,6 +889,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String> {
+        reject_flag_like("remote name", remote)?;
         self.core
             .text(self.core.command_in(dir, ["remote", "get-url", remote]))
             .await
@@ -820,6 +915,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn remote_branches(&self, dir: &Path, remote: &str) -> Result<Vec<String>> {
+        reject_flag_like("remote name", remote)?;
         // `GIT_TERMINAL_PROMPT=0`: a remote needing credentials must fail fast,
         // never block on an interactive auth prompt.
         let cmd = self
@@ -830,6 +926,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool> {
+        reject_flag_like("branch", branch)?;
+        reject_flag_like("target", target)?;
         let out = self
             .core
             .text(self.core.command_in(dir, ["branch", "--merged", target]))
@@ -844,6 +942,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()> {
+        reject_flag_like("branch name", branch)?;
         let flag = format!("--set-upstream-to={upstream}");
         self.core
             .unit(self.core.command_in(dir, ["branch", flag.as_str(), branch]))
@@ -851,6 +950,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()> {
+        reject_flag_like("branch name", name)?;
         let flag = if force { "-D" } else { "-d" };
         self.core
             .unit(self.core.command_in(dir, ["branch", flag, name]))
@@ -858,12 +958,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
+        reject_flag_like("branch name", old)?;
+        reject_flag_like("branch name", new)?;
         self.core
             .unit(self.core.command_in(dir, ["branch", "-m", old, new]))
             .await
     }
 
     async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize> {
+        reject_flag_like("range", range)?;
         self.core
             .try_parse(
                 self.core.command_in(dir, ["rev-list", "--count", range]),
@@ -878,6 +981,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool> {
+        reject_flag_like("range", range)?;
         // `diff --quiet <range>`: 0 = empty range, 1 = has changes.
         self.core
             .probe(self.core.command_in(dir, ["diff", "--quiet", range]))
@@ -885,6 +989,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat> {
+        reject_flag_like("range", range)?;
         self.core
             .parse(
                 self.core.command_in(dir, ["diff", "--shortstat", range]),
@@ -908,7 +1013,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     "HEAD".to_string()
                 }
             }
-            DiffSpec::Rev(rev) => rev,
+            DiffSpec::Rev(rev) => {
+                reject_flag_like("revision", &rev)?;
+                rev
+            }
         };
         self.core
             .text(self.core.command_in(
@@ -958,6 +1066,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
+        // A leading-`-` remote is a bare positional here — and a flag like
+        // `--upload-pack=<cmd>` would run an arbitrary local program for a
+        // local/ext transport, so this guard is load-bearing for security.
+        reject_flag_like("remote", remote)?;
         // Same containment as `fetch` (prompt off, transient retry), with the
         // remote named explicitly.
         let cmd = self
@@ -979,6 +1091,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()> {
+        reject_flag_like("remote", &spec.remote)?;
+        reject_flag_like("refspec", &spec.refspec)?;
         let mut args: Vec<&str> = vec!["push"];
         if spec.set_upstream {
             args.push("-u");
@@ -993,6 +1107,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()> {
+        reject_flag_like("branch", branch)?;
         self.core
             .unit(self.core.command_in(dir, ["merge", "--squash", branch]))
             .await
@@ -1005,6 +1120,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         no_ff: bool,
         message: Option<String>,
     ) -> Result<()> {
+        reject_flag_like("branch", branch)?;
         let mut args: Vec<&str> = vec!["merge"];
         if no_ff {
             args.push("--no-ff");
@@ -1028,6 +1144,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         squash: bool,
         no_ff: bool,
     ) -> Result<()> {
+        reject_flag_like("branch", branch)?;
         let mut args: Vec<&str> = vec!["merge", "--no-commit"];
         // `--squash` and `--no-ff` are mutually exclusive (git rejects the pair);
         // a squash never fast-forwards anyway, so it takes precedence.
@@ -1063,12 +1180,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()> {
+        reject_flag_like("revision", rev)?;
         self.core
             .unit(self.core.command_in(dir, ["reset", "--hard", rev]))
             .await
     }
 
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
+        reject_flag_like("rebase target", onto)?;
         // Force a no-op editor so a rebase that would open `$EDITOR` (reword, or
         // the message-confirm on `--continue`) never hangs a headless caller.
         self.core
@@ -1115,6 +1234,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
+        if let Some(name) = spec.new_branch.as_deref() {
+            reject_flag_like("branch name", name)?;
+        }
+        if let Some(commitish) = spec.commitish.as_deref() {
+            reject_flag_like("commit-ish", commitish)?;
+        }
         let mut command = self.core.command_in(dir, ["worktree", "add"]);
         if let Some(name) = spec.new_branch.as_deref() {
             command = command.arg("-b").arg(name);
@@ -1154,6 +1279,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()> {
+        // A leading-`-` url is a bare positional — `git clone --upload-pack=<cmd>`
+        // would run an arbitrary local program. A real URL never leads with `-`,
+        // so this guard has no false positives.
+        reject_flag_like("url", url)?;
         // No working directory: clone creates `dest` itself, so `dest` should
         // be absolute (a relative path would resolve against this process' cwd).
         let mut command = self.core.command(["clone"]);
@@ -1171,6 +1300,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()> {
+        reject_flag_like("tag name", name)?;
+        if let Some(rev) = rev.as_deref() {
+            reject_flag_like("revision", rev)?;
+        }
         let mut args = vec!["tag", name];
         if let Some(rev) = rev.as_deref() {
             args.push(rev);
@@ -1185,6 +1318,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         message: &str,
         rev: Option<String>,
     ) -> Result<()> {
+        reject_flag_like("tag name", name)?;
+        if let Some(rev) = rev.as_deref() {
+            reject_flag_like("revision", rev)?;
+        }
         let mut args = vec!["tag", "-a", name, "-m", message];
         if let Some(rev) = rev.as_deref() {
             args.push(rev);
@@ -1201,12 +1338,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()> {
+        reject_flag_like("tag name", name)?;
         self.core
             .unit(self.core.command_in(dir, ["tag", "-d", name]))
             .await
     }
 
     async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String> {
+        // A leading-`-` rev makes the whole `<rev>:<path>` token start with `-`,
+        // so git would parse it as a flag — guard it before building the spec.
+        reject_flag_like("revision", rev)?;
         // git rejects backslash separators in the `<rev>:<path>` spec ("exists
         // on disk, but not in <rev>") — normalise for Windows callers.
         let spec = format!("{rev}:{}", path.replace('\\', "/"));
@@ -1216,6 +1357,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>> {
+        reject_flag_like("config key", key)?;
         let res = self
             .core
             .capture(self.core.command_in(dir, ["config", "--get", key]))
@@ -1232,18 +1374,23 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()> {
+        reject_flag_like("config key", key)?;
         self.core
             .unit(self.core.command_in(dir, ["config", key, value]))
             .await
     }
 
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        reject_flag_like("remote name", name)?;
+        reject_flag_like("url", url)?;
         self.core
             .unit(self.core.command_in(dir, ["remote", "add", name, url]))
             .await
     }
 
     async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        reject_flag_like("remote name", name)?;
+        reject_flag_like("url", url)?;
         self.core
             .unit(self.core.command_in(dir, ["remote", "set-url", name, url]))
             .await
@@ -1252,6 +1399,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>> {
         let mut args = vec!["blame", "--line-porcelain"];
         if let Some(rev) = rev.as_deref() {
+            // A standalone positional rev with a leading `-` would be any blame
+            // flag (`-s`, `--reverse`, `-L…`) — guard before the `--`.
+            reject_flag_like("revision", rev)?;
             args.push(rev);
         }
         args.push("--");
@@ -1265,6 +1415,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()> {
+        reject_flag_like("revision", rev)?;
         // No editor opens non-interactively, but keep the headless backstop.
         self.core
             .unit(no_editor(self.core.command_in(dir, ["cherry-pick", rev])))
@@ -1272,6 +1423,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn revert(&self, dir: &Path, rev: &str) -> Result<()> {
+        reject_flag_like("revision", rev)?;
         self.core
             .unit(no_editor(
                 self.core.command_in(dir, ["revert", "--no-edit", rev]),
@@ -1360,6 +1512,28 @@ fn no_editor(cmd: processkit::Command) -> processkit::Command {
         .env("GIT_SEQUENCE_EDITOR", "true")
 }
 
+/// Injection guard for bare positional argv slots: a caller-supplied value
+/// with a leading `-` would be parsed by git as a *flag* (verified: `git
+/// checkout -evil` → "unknown switch"), and an empty value silently changes
+/// most commands' meaning. Refuse both before anything spawns. Flag-VALUE
+/// positions (`-m <msg>`, `--branch <b>`) don't need this — git consumes the
+/// next token verbatim there.
+fn reject_flag_like(what: &str, value: &str) -> Result<()> {
+    if value.is_empty() || value.starts_with('-') {
+        return Err(Error::Spawn {
+            program: BINARY.to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} would be parsed as a flag (or is empty) — \
+                     refusing to pass it as a positional argument"
+                ),
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl<R: ProcessRunner> Git<R> {
     /// Run `git <args>` over string slices — `git.run_args(&["status", "-s"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
@@ -1381,6 +1555,58 @@ impl<R: ProcessRunner> Git<R> {
     /// driving many directories (e.g. linked worktrees) from one client.
     pub fn at<'a>(&'a self, dir: &'a Path) -> GitAt<'a, R> {
         GitAt { git: self, dir }
+    }
+
+    /// Harden this client for driving repositories it didn't create: running
+    /// `git` inside an untrusted checkout executes that repository's hooks and
+    /// honours its config — arbitrary code execution by default. The profile
+    /// (applied to **every** command this client runs):
+    ///
+    /// - **Disables hooks** — `core.hooksPath=/dev/null` pinned via git's
+    ///   env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, git ≥ 2.31;
+    ///   verified to suppress hooks on Windows too) — and `core.fsmonitor`
+    ///   (a config-driven daemon launch).
+    /// - **Removes inherited repo redirectors** so a poisoned parent
+    ///   environment can't point commands at another repository: `GIT_DIR`,
+    ///   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+    ///   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`,
+    ///   `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`,
+    ///   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`.
+    /// - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal
+    ///   prompts off everywhere (`GIT_TERMINAL_PROMPT=0`).
+    ///
+    /// What it does NOT do: sandbox the git binary itself, or stop the repo's
+    /// *content* from being malicious. In a **colocated jj repo**, git hooks
+    /// only run when *git* commands run — harden the `Git` client; `Jj` needs
+    /// no equivalent (jj has no repo-local hooks; see the vcs-jj docs).
+    ///
+    /// Chainable — `Git::with_runner(rec).harden()` works in tests; use
+    /// [`Git::hardened()`](Git::hardened) for the common case.
+    pub fn harden(self) -> Self {
+        let removed = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_NAMESPACE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+        ];
+        let mut hardened = self;
+        for key in removed {
+            hardened = hardened.default_env_remove(key);
+        }
+        hardened
+            .default_env("GIT_CONFIG_NOSYSTEM", "1")
+            .default_env("GIT_TERMINAL_PROMPT", "0")
+            .default_env("GIT_CONFIG_COUNT", "2")
+            .default_env("GIT_CONFIG_KEY_0", "core.hooksPath")
+            .default_env("GIT_CONFIG_VALUE_0", "/dev/null")
+            .default_env("GIT_CONFIG_KEY_1", "core.fsmonitor")
+            .default_env("GIT_CONFIG_VALUE_1", "false")
     }
 
     /// Switch to `branch`, carrying uncommitted changes (tracked *and*
@@ -1432,6 +1658,14 @@ impl<R: ProcessRunner> Git<R> {
         } else {
             dir.join(git_dir)
         })
+    }
+}
+
+impl Git {
+    /// A hardened real (job-backed) client — `Git::new().harden()`; see
+    /// [`harden`](Git::harden) for what the profile does.
+    pub fn hardened() -> Self {
+        Self::new().harden()
     }
 }
 
@@ -2254,6 +2488,142 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), 1);
+    }
+
+    // The injection guard: a flag-shaped value in any exposed positional slot
+    // must be refused BEFORE anything spawns.
+    #[tokio::test]
+    async fn flag_like_positionals_are_rejected_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let dir = Path::new("/r");
+
+        assert!(git.checkout(dir, "-evil").await.is_err());
+        assert!(git.create_branch(dir, "--force").await.is_err());
+        assert!(git.delete_branch(dir, "-D", false).await.is_err());
+        assert!(git.rename_branch(dir, "ok", "-bad").await.is_err());
+        assert!(git.merge_commit(dir, "-evil", false, None).await.is_err());
+        assert!(
+            git.merge_no_commit(dir, "-evil", false, true)
+                .await
+                .is_err()
+        );
+        assert!(git.merge_squash(dir, "-evil").await.is_err());
+        assert!(git.rebase(dir, "-i").await.is_err());
+        assert!(git.cherry_pick(dir, "-n").await.is_err());
+        assert!(git.revert(dir, "-evil").await.is_err());
+        assert!(git.tag_create(dir, "-d", None).await.is_err());
+        assert!(
+            git.tag_create(dir, "ok", Some("-evil".into()))
+                .await
+                .is_err()
+        );
+        assert!(git.tag_delete(dir, "-evil").await.is_err());
+        assert!(git.remote_add(dir, "-evil", "url").await.is_err());
+        assert!(git.remote_set_url(dir, "-evil", "url").await.is_err());
+        assert!(git.set_upstream(dir, "-evil", "origin/x").await.is_err());
+        assert!(git.log_range(dir, "-evil", 5).await.is_err());
+        assert!(git.rev_list_count(dir, "-evil").await.is_err());
+        assert!(git.diff_stat(dir, "-evil").await.is_err());
+        assert!(git.diff_range_is_empty(dir, "-evil").await.is_err());
+        assert!(
+            git.diff_text(dir, DiffSpec::Rev("-evil".into()))
+                .await
+                .is_err()
+        );
+        assert!(git.rev_parse(dir, "-evil").await.is_err());
+        assert!(git.rev_parse_short(dir, "-evil").await.is_err());
+        assert!(git.resolve_commit(dir, "-evil").await.is_err());
+        assert!(git.reset_hard(dir, "-evil").await.is_err());
+        assert!(git.checkout_detach(dir, "-evil").await.is_err());
+        assert!(git.config_set(dir, "-evil", "v").await.is_err());
+        assert!(
+            git.push(dir, GitPush::branch("-evil")).await.is_err(),
+            "refspec guard"
+        );
+        // Embedded-token-prefix and standalone-rev positionals:
+        assert!(git.show_file(dir, "-evil", "f.txt").await.is_err());
+        assert!(git.blame(dir, "f.txt", Some("-s".into())).await.is_err());
+        assert!(git.remote_url(dir, "-evil").await.is_err());
+        assert!(git.remote_branches(dir, "-evil").await.is_err());
+        assert!(git.fetch_from(dir, "--upload-pack=x").await.is_err());
+        // URL positionals (a leading-`-` url is an RCE-class flag injection).
+        assert!(
+            git.clone_repo("--upload-pack=x", Path::new("/d"), CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
+        assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
+        assert!(git.is_merged(dir, "-evil", "main").await.is_err());
+        assert!(git.config_get(dir, "-evil").await.is_err());
+        assert!(
+            git.worktree_add(
+                dir,
+                WorktreeAdd::create_branch(Path::new("/wt"), "-evil", "HEAD")
+            )
+            .await
+            .is_err()
+        );
+        // Empty values are refused too.
+        assert!(git.checkout(dir, "").await.is_err());
+
+        assert!(
+            rec.calls().is_empty(),
+            "nothing may spawn: {:?}",
+            rec.calls()
+        );
+
+        // …and legitimate values still pass through unchanged.
+        git.checkout(dir, "feature/x").await.expect("checkout");
+        assert_eq!(rec.only_call().args_str(), ["checkout", "feature/x"]);
+    }
+
+    // The hardened profile lands its env pairs/removals on EVERY command, and
+    // composes with per-command env like GIT_TERMINAL_PROMPT.
+    #[tokio::test]
+    async fn harden_applies_env_profile_to_every_command() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).harden();
+        git.status(Path::new("/r")).await.expect("status");
+        git.fetch(Path::new("/r")).await.expect("fetch");
+
+        for call in rec.calls() {
+            let has = |k: &str, v: &str| {
+                call.envs.iter().any(|(key, val)| {
+                    key.to_str() == Some(k) && val.as_deref().and_then(|o| o.to_str()) == Some(v)
+                })
+            };
+            let removed = |k: &str| {
+                call.envs
+                    .iter()
+                    .any(|(key, val)| key.to_str() == Some(k) && val.is_none())
+            };
+            assert!(has("GIT_CONFIG_NOSYSTEM", "1"), "{:?}", call.args_str());
+            assert!(has("GIT_CONFIG_KEY_0", "core.hooksPath"));
+            assert!(has("GIT_CONFIG_VALUE_0", "/dev/null"));
+            assert!(has("GIT_TERMINAL_PROMPT", "0"));
+            assert!(removed("GIT_DIR"), "GIT_DIR scrubbed");
+            assert!(removed("GIT_CONFIG_GLOBAL"), "global config scrubbed");
+        }
+    }
+
+    // RefName/RevSpec accept/reject tables.
+    #[test]
+    fn ref_name_and_rev_spec_validate() {
+        for ok in ["main", "feature/x", "v1.2.3", "a-b_c"] {
+            assert!(RefName::new(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "", "-evil", ".hidden", "a..b", "a b", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b",
+            "a\\b", "end/", "x.lock",
+        ] {
+            assert!(RefName::new(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(RevSpec::new("HEAD~2").is_ok());
+        assert!(RevSpec::new("main..feature").is_ok());
+        assert!(RevSpec::new("-evil").is_err());
+        assert!(RevSpec::new("").is_err());
     }
 
     // capabilities parses real-world version shapes (incl. the Windows build

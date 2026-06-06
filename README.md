@@ -263,6 +263,29 @@ crate (a dev-dependency) provides throwaway `GitSandbox`/`JjSandbox` repos, a
 seeded `BareRemote` to clone/fetch against, and a self-cleaning `TempDir` — the
 same fixtures this workspace's own ignored tests run on.
 
+## Untrusted input and repos
+
+Two layers, both on by default or one call away:
+
+- **Injection guards (automatic).** Every exposed positional argument
+  (branch/tag/bookmark names, revisions, revsets, endpoints) refuses a
+  leading-`-` or empty value *before* anything spawns — a caller-supplied
+  string can't smuggle a flag into argv. For pre-validation at your input
+  boundary, the `RefName` / `RevSpec` (vcs-git) and `RevsetExpr` (vcs-jj)
+  newtypes validate eagerly; method signatures stay `&str`.
+- **`Git::hardened()`.** Running `git` inside a repository you didn't create
+  executes that repo's hooks and honours its config. The hardened profile
+  disables hooks and `core.fsmonitor`, scrubs repo-redirecting `GIT_*`
+  variables, skips system config, and keeps prompts off — on every command
+  the client runs. jj needs no equivalent (no repo-local hooks); in a
+  colocated repo, harden the `Git` client you point at it.
+
+Conflicted files parse into a typed model too: `vcs_git::conflict` /
+`vcs_jj::conflict` turn marker soup into structured regions
+(ours/base/theirs; jj's `diff` and `snapshot` styles) with a byte-exact
+`render` and a `resolve(side)` writer — the primitive for programmatic
+conflict resolution.
+
 ## Observing commands
 
 Four seams, no extra configuration:

@@ -404,3 +404,46 @@ async fn capabilities_probe_real_binary() {
     assert!(caps.is_supported(), "got {:?}", caps.version);
     caps.ensure_supported().expect("supported");
 }
+
+// The typed conflict model round-trips a REAL jj-materialized conflict (the
+// default `diff` style): parse → resolve(Side(1)) → write back → snapshot →
+// the conflict is gone.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn conflict_model_resolves_a_real_conflict() {
+    use vcs_jj::conflict::{JjResolution, parse_conflicts, render, resolve};
+
+    let sandbox = JjSandbox::init("conflict-model");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    sandbox.write("c.txt", "line 1\nline 2\nline 3\n");
+    sandbox.describe("base");
+    jj_raw(dir, &["new", "@", "-m", "side-a"]);
+    sandbox.write("c.txt", "line 1\nmain line 2\nline 3\n");
+    let a = jj.current_change(dir).await.expect("a").change_id;
+    jj_raw(dir, &["new", "@-", "-m", "side-b"]);
+    sandbox.write("c.txt", "line 1\nfeature line 2\nline 3\n");
+    let b = jj.current_change(dir).await.expect("b").change_id;
+    jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
+    assert_eq!(
+        jj.resolve_list(dir, "@").await.expect("resolve_list"),
+        ["c.txt"]
+    );
+
+    let content = std::fs::read_to_string(dir.join("c.txt")).expect("read");
+    let segments = parse_conflicts(&content).expect("parse real jj markers");
+    assert_eq!(render(&segments), content, "byte-exact roundtrip");
+    let resolved = resolve(&segments, JjResolution::Side(1)).expect("resolve");
+    assert_eq!(resolved, "line 1\nfeature line 2\nline 3\n");
+    std::fs::write(dir.join("c.txt"), &resolved).expect("write resolved");
+
+    // jj re-parses the materialized file on snapshot: markers gone → resolved.
+    assert!(
+        jj.resolve_list(dir, "@")
+            .await
+            .expect("resolve_list")
+            .is_empty(),
+        "conflict cleared after writing the resolution"
+    );
+}

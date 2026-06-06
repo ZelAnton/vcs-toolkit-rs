@@ -50,6 +50,25 @@ crates; tag releases as `vcs-jj-v<version>`.
   the empirically validated floor (jj's CLI moves fast; every parser and flag
   in this crate was verified against that release). A value type: probe once
   and keep it.
+- Injection guards on the exposed positional arguments (bookmark names,
+  positional revsets, `new_merge` parents, operation ids, the `git_clone`
+  url, the `bookmark_track` `name@remote` token): a leading-`-` or empty
+  value is refused **before** anything spawns; `file_annotate`'s path goes
+  after a `--` separator. Flag-value positions (`-r`, `-m`) need no guard —
+  jj's CLI rejects dash-values there itself.
+- `RevsetExpr` validating newtype — optional up-front validation for
+  untrusted input (non-empty, no leading `-`; the full revset grammar is
+  deliberately not modelled). Method signatures stay `&str`.
+- `conflict` module — a typed model of jj's **materialized** conflicts
+  (native `diff` and `snapshot` marker styles, `conflict N of M` counters,
+  marker-length matching): `parse_conflicts` → segments, byte-exact
+  `render`, `resolve(…, JjResolution::{Side(n),Base})` — for `diff` style
+  the side content is reconstructed by applying the recorded diff. Files
+  materialized with the `git` marker style parse via `vcs_git::conflict`
+  (documented asymmetry).
+- Doc note: there is deliberately no `Jj::hardened()` — jj has no repo-local
+  hooks; in a colocated repo the risk lives on the git side, so harden the
+  `Git` client instead.
 
 ### Changed
 -
