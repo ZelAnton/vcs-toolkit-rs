@@ -612,11 +612,18 @@ async fn hardened_client_suppresses_repo_hooks() {
     // A pre-commit hook that drops a marker file when it runs.
     let hooks = dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks).expect("hooks dir");
-    std::fs::write(
-        hooks.join("pre-commit"),
-        "#!/bin/sh\necho ran >> hook-marker.txt\n",
-    )
-    .expect("write hook");
+    let hook = hooks.join("pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho ran >> hook-marker.txt\n").expect("write hook");
+    // Unix git silently ignores a non-executable hook ("hook was ignored because
+    // it's not set as executable"), and `fs::write` creates 0644 — without the
+    // exec bit the plain-client half of this test never fires. Windows git runs
+    // hooks through sh regardless, so no equivalent is needed there.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+            .expect("make hook executable");
+    }
 
     // Plain client: the hook fires.
     std::fs::write(dir.join("f.txt"), "one\n").expect("write");
