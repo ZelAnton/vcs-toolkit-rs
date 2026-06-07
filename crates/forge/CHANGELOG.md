@@ -31,7 +31,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   `Closed`, every other state reads as live `Open`) and `ForgeRelease`
   (`published_at: Option<String>`, `None` for an unpublished draft) DTOs.
   `body`/`url` on `ForgeIssue` are best-effort (empty from GitHub's lean
-  `issue_list`; filled by `issue_view` everywhere).
+  `issue_list`; filled by `issue_view` everywhere). `ForgeRelease.url` is
+  **always empty on Gitea** — `tea releases list` exposes no release-page URL.
 - An `Error::Unsupported { forge, operation }` variant: Gitea's `tea` has no
   current-repo view, draft toggle, checks command, or single-release view, so
   `repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` return it for the

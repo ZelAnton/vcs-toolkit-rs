@@ -5,8 +5,9 @@ execution. Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-
 workspace.
 
 Typed, **async** commands over the Gitea CLI (`tea`) that deserialize
-`tea … --output json` (the Gitea REST shape `tea` marshals) into structs, behind
-a **mockable interface**. Commands run inside an OS job (via [`processkit`]) so no
+`tea … --output json` (tea's print-table for lists, a typed object for the issue
+detail view — **not** the Gitea REST shape) into structs, behind a **mockable
+interface**. Commands run inside an OS job (via [`processkit`]) so no
 `tea` subprocess is ever orphaned, return the structured `Error`, and honour an
 optional timeout. The [`vcs-forge`](https://crates.io/crates/vcs-forge) facade
 unifies this with `vcs-github` and `vcs-gitlab`.

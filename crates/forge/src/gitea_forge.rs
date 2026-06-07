@@ -146,7 +146,9 @@ fn map_release(r: Release) -> ForgeRelease {
 fn map_pr(pr: PullRequest) -> ForgePr {
     ForgePr {
         number: pr.number,
-        // Gitea reports `merged` separately; a merged PR is also `state="closed"`.
+        // tea folds the merge flag into its `state` column: a merged PR reads
+        // `"merged"` (not `"closed"`). `pr.merged` is derived from that, so key
+        // off it first, then the closed/open spelling.
         state: if pr.merged {
             ForgePrState::Merged
         } else if pr.state.eq_ignore_ascii_case("closed") {

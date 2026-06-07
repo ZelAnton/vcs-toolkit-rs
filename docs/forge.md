@@ -102,8 +102,11 @@ everything else reads as `Open`, so an unmodelled state is treated as live),
 doesn't fetch them (empty there); `issue_view` fills them on every forge.
 
 [`ForgeRelease`] is `tag` / `title` / `url` / `published_at: Option<String>`
-(`None` for an unpublished draft or when the backend doesn't report one; the URL
-is empty from GitHub's lean `release_list`).
+(`None` for an unpublished draft or when the backend doesn't report one). The
+`url` is **best-effort**: empty from GitHub's lean `release_list` (filled by
+`release_view`), and **always empty on Gitea** — `tea releases list` exposes no
+release-page URL at all (only a tar/zip download URL, deliberately not surfaced),
+and `tea` has no `release_view`.
 
 ## Capability matrix
 

@@ -468,7 +468,10 @@ mod tests {
     // Gitea's `merged` flag drives Merged even though `state` is "closed".
     #[tokio::test]
     async fn gitea_pr_view_filters_and_maps_merged() {
-        let json = r#"[{"number":9,"title":"Nine","state":"closed","merged":true,"head":{"ref":"f"},"base":{"ref":"main"},"html_url":"u"}]"#;
+        // tea's table shape: all-string values, flat head/base, merge folded
+        // into the `state` column.
+        let json =
+            r#"[{"index":"9","title":"Nine","state":"merged","head":"f","base":"main","url":"u"}]"#;
         let forge = gitea(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
         let pr = forge.pr_view(9).await.unwrap();
         assert_eq!(pr.state, ForgePrState::Merged);
@@ -510,7 +513,8 @@ mod tests {
         assert_eq!(issues[0].state, ForgeIssueState::Open);
         assert_eq!(issues[0].body, "d");
 
-        let json = r#"[{"index":9,"title":"Y","state":"open","body":"b","html_url":"u"}]"#;
+        // tea's table shape: all-string values, `index` column.
+        let json = r#"[{"index":"9","title":"Y","state":"open","body":"b","url":"u"}]"#;
         let forge = gitea(ScriptedRunner::new().on(["issues", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].number, 9);
@@ -537,11 +541,15 @@ mod tests {
         assert_eq!(rels[0].url, "u");
         assert!(rels[0].published_at.is_some());
 
-        let json = r#"[{"tag_name":"v1","name":"One","published_at":"2026-01-01T00:00:00Z","html_url":"u"}]"#;
+        // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
+        // `published _at`), no release-page URL column.
+        let json = r#"[{"tag-_name":"v1","title":"One","status":"released","published _at":"2026-01-01T00:00:00Z"}]"#;
         let forge = gitea(ScriptedRunner::new().on(["releases", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(rels[0].title, "One");
+        assert_eq!(rels[0].url, ""); // tea exposes no release-page URL
+        assert!(rels[0].published_at.is_some());
     }
 
     // The unified MergeStrategy maps to each CLI's own flag.

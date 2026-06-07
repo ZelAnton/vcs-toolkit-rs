@@ -7,8 +7,12 @@
 //!
 //! The surface is the **lean lifecycle** `tea` actually supports — auth, the PR
 //! lifecycle (list / view / create / merge / close), issues (list / view /
-//! create), and release listing — deserializing `tea … --output json` (the
-//! Gitea REST shape `tea` marshals). It is deliberately narrower than
+//! create), and release listing — deserializing `tea … --output json`. Note that
+//! `tea`'s JSON is **not** the Gitea REST shape: its *list* commands emit a
+//! string-valued print-table (snake-cased column-header keys) and its issue
+//! *detail* view a separate typed object; the parsers model both (the `#[ignore]`
+//! real-`tea` tests in `tests/cli.rs` are the contract check). It is
+//! deliberately narrower than
 //! [`vcs-github`](https://crates.io/crates/vcs-github) /
 //! [`vcs-gitlab`](https://crates.io/crates/vcs-gitlab): `tea` has **no**
 //! single-PR `view`, **no** current-repo view, **no** draft toggle, **no** PR
@@ -82,6 +86,13 @@ impl PrCreate {
 /// caller-owns-the-argv escape hatch. So there is nothing here to guard with
 /// `vcs_cli_support::reject_flag_like`.
 pub const BINARY: &str = "tea";
+
+// tea's `list` commands serialize a print-table whose columns are chosen with
+// `--fields`. We request exactly the columns the parsers read; every value comes
+// back as a JSON string (see `parse.rs`). These names are validated by tea
+// against its `PullFields`/`IssueFields` lists — keep them in that set.
+const PR_FIELDS: &str = "index,title,state,head,base,url";
+const ISSUE_FIELDS: &str = "index,title,state,body,url";
 
 /// How [`GiteaApi::pr_merge`] merges the PR — maps to `tea pr merge --style`
 /// (Gitea's default is a merge commit).
@@ -223,11 +234,17 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
         // `--limit 100` overrides tea's default page size (30), which would
-        // otherwise silently truncate the list.
+        // otherwise silently truncate the list. `--fields` selects exactly the
+        // table columns we parse — tea's default field set omits `head`/`base`/
+        // `url`, so without this the branches and URL would always be empty.
         self.core
             .try_parse(
-                self.core
-                    .command_in(dir, ["pr", "list", "--limit", "100", "--output", "json"]),
+                self.core.command_in(
+                    dir,
+                    [
+                        "pr", "list", "--limit", "100", "--fields", PR_FIELDS, "--output", "json",
+                    ],
+                ),
                 parse::parse_pr_list,
             )
             .await
@@ -237,13 +254,15 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         // `tea` has no single-PR view; list all states and filter by number. A
         // high `--limit` is essential here: without it, tea's default page size
         // (30) would make any PR past the first page a false "not found".
+        // `--fields` selects the columns we parse (see `pr_list`).
         let prs = self
             .core
             .try_parse(
                 self.core.command_in(
                     dir,
                     [
-                        "pr", "list", "--state", "all", "--limit", "999", "--output", "json",
+                        "pr", "list", "--state", "all", "--limit", "999", "--fields", PR_FIELDS,
+                        "--output", "json",
                     ],
                 ),
                 parse::parse_pr_list,
@@ -296,12 +315,23 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
         // `--limit 100` overrides tea's default page size (30), mirroring
-        // `pr_list`, so the list is not silently truncated.
+        // `pr_list`, so the list is not silently truncated. `--fields` selects
+        // the columns we parse — tea's default issue fields omit `body`/`url`,
+        // so without this both would always come back empty.
         self.core
             .try_parse(
                 self.core.command_in(
                     dir,
-                    ["issues", "list", "--limit", "100", "--output", "json"],
+                    [
+                        "issues",
+                        "list",
+                        "--limit",
+                        "100",
+                        "--fields",
+                        ISSUE_FIELDS,
+                        "--output",
+                        "json",
+                    ],
                 ),
                 parse::parse_issue_list,
             )
@@ -475,10 +505,11 @@ mod tests {
     }
 
     // Hermetic: real pr_list() arg-building + JSON deserialization against canned
-    // output — no `tea` binary or network needed, so this runs on CI.
+    // output — no `tea` binary or network needed, so this runs on CI. The fixture
+    // is tea's *table* shape: all-string values, flat `head`/`base`, `url` column.
     #[tokio::test]
     async fn pr_list_parses_scripted_json() {
-        let json = r#"[{"number":7,"title":"Add X","state":"open","merged":false,"html_url":"u","head":{"ref":"feat/x"},"base":{"ref":"main"}}]"#;
+        let json = r#"[{"index":"7","title":"Add X","state":"open","head":"feat/x","base":"main","url":"u"}]"#;
         let tea = Gitea::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
         let prs = tea.pr_list(Path::new(".")).await.expect("pr_list");
         assert_eq!(prs.len(), 1);
@@ -486,12 +517,13 @@ mod tests {
         assert_eq!(prs[0].head_branch, "feat/x");
     }
 
-    // pr_view lists all states and filters by number.
+    // pr_view lists all states and filters by number; tea folds merge into the
+    // `state` column (`"merged"`), from which the `merged` flag is derived.
     #[tokio::test]
     async fn pr_view_filters_listing_by_number() {
         let json = r#"[
-            {"number":7,"title":"Seven","state":"open"},
-            {"number":9,"title":"Nine","state":"closed","merged":true}
+            {"index":"7","title":"Seven","state":"open","head":"a","base":"main","url":"u"},
+            {"index":"9","title":"Nine","state":"merged","head":"b","base":"main","url":"u"}
         ]"#;
         let tea = Gitea::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
         let pr = tea.pr_view(Path::new("."), 9).await.expect("pr_view");
@@ -499,8 +531,8 @@ mod tests {
         assert!(pr.merged);
     }
 
-    // pr_view passes `--state all` so a closed/merged PR is found, and a missing
-    // number is a parse error rather than a panic.
+    // pr_view passes `--state all` + `--fields` so a closed/merged PR is found
+    // with its branches/url, and a missing number is a parse error, not a panic.
     #[tokio::test]
     async fn pr_view_requests_all_states_and_errors_when_missing() {
         let rec = RecordingRunner::replying(Reply::ok("[]"));
@@ -510,21 +542,39 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             [
-                "pr", "list", "--state", "all", "--limit", "999", "--output", "json"
+                "pr",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "999",
+                "--fields",
+                "index,title,state,head,base,url",
+                "--output",
+                "json"
             ]
         );
     }
 
-    // pr_list pins an explicit `--limit 100` so tea's default page size (30) does
-    // not silently truncate the list.
+    // pr_list pins an explicit `--limit 100` (so tea's default page size of 30
+    // does not silently truncate) and `--fields` (so head/base/url are present).
     #[tokio::test]
-    async fn pr_list_pins_limit_100() {
+    async fn pr_list_pins_limit_and_fields() {
         let rec = RecordingRunner::replying(Reply::ok("[]"));
         let tea = Gitea::with_runner(&rec);
         tea.pr_list(Path::new("/repo")).await.expect("pr_list");
         assert_eq!(
             rec.only_call().args_str(),
-            ["pr", "list", "--limit", "100", "--output", "json"]
+            [
+                "pr",
+                "list",
+                "--limit",
+                "100",
+                "--fields",
+                "index,title,state,head,base,url",
+                "--output",
+                "json"
+            ]
         );
     }
 
@@ -609,10 +659,11 @@ mod tests {
         assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
     }
 
-    // issue_list parses the JSON array and pins `--limit 100 --output json`.
+    // issue_list parses tea's table shape (all-string `index` column) and pins
+    // `--limit 100 --fields … --output json`.
     #[tokio::test]
     async fn issue_list_parses_scripted_json() {
-        let json = r#"[{"number":12,"title":"Bug","state":"open","body":"broken","html_url":"u"}]"#;
+        let json = r#"[{"index":"12","title":"Bug","state":"open","body":"broken","url":"u"}]"#;
         let tea = Gitea::with_runner(ScriptedRunner::new().on(["issues", "list"], Reply::ok(json)));
         let issues = tea.issue_list(Path::new(".")).await.expect("issue_list");
         assert_eq!(issues.len(), 1);
@@ -621,7 +672,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn issue_list_pins_limit_100() {
+    async fn issue_list_pins_limit_and_fields() {
         let rec = RecordingRunner::replying(Reply::ok("[]"));
         let tea = Gitea::with_runner(&rec);
         tea.issue_list(Path::new("/repo"))
@@ -629,16 +680,25 @@ mod tests {
             .expect("issue_list");
         assert_eq!(
             rec.only_call().args_str(),
-            ["issues", "list", "--limit", "100", "--output", "json"]
+            [
+                "issues",
+                "list",
+                "--limit",
+                "100",
+                "--fields",
+                "index,title,state,body,url",
+                "--output",
+                "json"
+            ]
         );
     }
 
     // issue_view is a first-class `tea issues <index> --output json` returning a
-    // single object — not a list+filter like pr_view.
+    // single **typed** object (numeric `index`) — not a list+filter like pr_view.
     #[tokio::test]
     async fn issue_view_uses_bare_index_and_parses_object() {
         let rec = RecordingRunner::replying(Reply::ok(
-            r#"{"number":7,"title":"One","state":"closed","body":"b","html_url":"u"}"#,
+            r#"{"index":7,"title":"One","state":"closed","body":"b","url":"u"}"#,
         ));
         let tea = Gitea::with_runner(&rec);
         let issue = tea
@@ -676,10 +736,12 @@ mod tests {
         );
     }
 
-    // release_list parses the JSON array and pins `--limit 100 --output json`.
+    // release_list parses tea's fixed release table (all-string values, tea's
+    // `toSnakeCase`d `tag-_name`/`published _at`/`status` keys) and pins the argv.
+    // tea exposes no release-page URL, so `url` is empty.
     #[tokio::test]
     async fn release_list_parses_scripted_json() {
-        let json = r#"[{"tag_name":"0.1","name":"First","draft":false,"prerelease":false,"published_at":"2023-07-26T13:02:36Z","html_url":"u"}]"#;
+        let json = r#"[{"tag-_name":"0.1","title":"First","status":"released","published _at":"2023-07-26T13:02:36Z","tar/_zip url":"https://gitea/0.1.tar.gz\nhttps://gitea/0.1.zip"}]"#;
         let tea =
             Gitea::with_runner(ScriptedRunner::new().on(["releases", "list"], Reply::ok(json)));
         let releases = tea
@@ -689,6 +751,8 @@ mod tests {
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].tag, "0.1");
         assert_eq!(releases[0].title, "First");
+        assert_eq!(releases[0].url, "");
+        assert!(!releases[0].draft);
     }
 
     #[tokio::test]

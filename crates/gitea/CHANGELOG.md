@@ -14,20 +14,36 @@ crates; tag releases as `vcs-gitea-v<version>`.
   mirroring `vcs-github`'s shape (async, `#[non_exhaustive]` DTOs, the structured
   `processkit::Error`, the `mock` feature → `MockGiteaApi`, and the
   `Gitea::with_runner` scripted-runner seam).
-- The **lean pull-request lifecycle** `tea` supports, deserializing
-  `tea … --output json` (the Gitea REST shape): `auth_status` (a non-empty
+- The **lean pull-request lifecycle** `tea` supports: `auth_status` (a non-empty
   `login list`), `pr_list` (`PullRequest`), `pr_view` (synthesized by listing
   with `--state all` and filtering by number — `tea` has no single-PR view),
   `pr_create(PrCreate)`, `pr_merge(number, MergeStrategy)`
   (`--style merge|rebase|squash`), and `pr_close`.
+- **Issues and releases**: `issue_list` (`Vec<Issue>`), `issue_view(number)` (the
+  first-class `tea issues <n>` single-issue view), `issue_create(title, body)`,
+  and `release_list` (`Vec<Release>`). No `release_view` — `tea releases` always
+  lists.
 - Raw escape hatches `run`/`run_raw` (+ inherent `run_args`/`run_raw_args`), and
   a `Gitea::at(dir)` → `GiteaAt` bound view mirroring every repo-scoped method.
 
 ### Notes
 - Deliberately narrower than `vcs-github`/`vcs-gitlab`: `tea` exposes no
-  current-repo view, no draft toggle, and no PR-checks command, so `repo_view`,
-  `pr_mark_ready`, and `pr_checks` are absent (the `vcs-forge` facade reports them
-  as `Unsupported` for the Gitea backend).
+  current-repo view, no draft toggle, no PR-checks command, and no single-release
+  view, so `repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are
+  absent (the `vcs-forge` facade reports them as `Unsupported` for the Gitea
+  backend).
+- **`tea --output json` is modeled, not the Gitea REST API.** Its **list**
+  commands emit tea's print-*table* (a JSON array of string-maps; snake-cased
+  column-header keys that can contain spaces/slashes; **all values strings**; no
+  `html_url`, no nested branch objects), and its **detail** view (`issues <n>`) a
+  separate *typed* object. The parsers select columns with `--fields` and
+  string-parse the `index`. Consequences: a PR's merge state rides the `state`
+  column (`"merged"`), and a `Release` carries **no web URL** (`tea releases`
+  exposes only a tar/zip download URL, not surfaced). **This contract is derived
+  by reading tea's source (`gitea.com/gitea/tea` `main`; the `PullFields`/
+  `IssueFields` sets confirmed identical on the released v0.14.1), not validated
+  end-to-end** — confirm it against a live `tea` (the `#[ignore]` integration
+  tests in `tests/cli.rs`) before the first release.
 
 ### Changed
 - Bumped `processkit` to **0.7** — the re-exported `Error` is now

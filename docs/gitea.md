@@ -3,8 +3,17 @@
 `vcs-gitea` drives the Gitea (and Forgejo) CLI (`tea`) from Rust. Every operation
 is `async`, runs inside an OS job (via [`processkit`]) so a `tea` subprocess is
 never orphaned, and returns the structured `processkit::Error`. Commands ask for
-`--output json` and are deserialized into typed structs (the Gitea REST shape
-`tea` marshals); the crate never scrapes human-readable output.
+`--output json` and are deserialized into typed structs; the crate never scrapes
+human-readable output.
+
+> **`tea --output json` is not the Gitea REST shape.** Its **list** commands
+> serialize tea's print-*table* — a JSON array of string-maps whose keys are
+> snake-cased column headers (which can contain spaces/slashes) and whose values
+> are **all strings** (no `html_url`, no nested branch objects, no typed bools);
+> we pick columns with `--fields`. Its **detail** view (`issues <n>`) is a
+> separate *typed* object. The parsers model both shapes (pinned by
+> verified-shape unit tests); the `#[ignore]` real-`tea` tests are the definitive
+> contract check.
 
 The surface is the **lean pull-request lifecycle** `tea` actually supports. It is
 deliberately **narrower** than `vcs-github` / `vcs-gitlab` — see the capability
@@ -67,15 +76,16 @@ configured.
 
 | Method | Runs | Returns |
 |---|---|---|
-| `pr_list(dir)` | `tea pr list --output json` | `Vec<PullRequest>` |
-| `pr_view(dir, number)` | `tea pr list --state all --output json` + filter | [`PullRequest`] |
+| `pr_list(dir)` | `tea pr list --limit 100 --fields index,title,state,head,base,url --output json` | `Vec<PullRequest>` |
+| `pr_view(dir, number)` | `tea pr list --state all --limit 999 --fields … --output json` + filter | [`PullRequest`] |
 | `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …]` | `String` |
 | `pr_merge(dir, number, strategy)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
 
-`PullRequest` carries `number`, `title`, `state` (`"open"`/`"closed"`), `merged`
-(a merged PR is also `state="closed"`), `head_branch`, `base_branch`, and `url`
-(flattened from Gitea's nested `head.ref` / `base.ref` / `html_url`).
+`PullRequest` carries `number` (tea's `index` column), `title`, `state`, `merged`,
+`head_branch`, `base_branch`, and `url` — read from tea's table columns (we select
+them with `--fields`). tea folds the merge flag into the `state` column: a merged
+PR reads `state="merged"` (not `"closed"`), and `merged` is derived from that.
 
 ```rust
 # use std::path::Path;
@@ -107,28 +117,33 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 
 | Method | Runs | Returns |
 |---|---|---|
-| `issue_list(dir)` | `tea issues list --limit 100 --output json` | `Vec<Issue>` |
+| `issue_list(dir)` | `tea issues list --limit 100 --fields index,title,state,body,url --output json` | `Vec<Issue>` |
 | `issue_view(dir, number)` | `tea issues <number> --output json` | [`Issue`] |
 | `issue_create(dir, title, body)` | `tea issues create --title … --description …` | `String` |
 | `release_list(dir)` | `tea releases list --limit 100 --output json` | `Vec<Release>` |
 
 The list methods pin `--limit 100` so tea's default page size of 30 can't silently
-truncate them; reach beyond 100 through `run`. Unlike `pr_view` (which lists and
-filters), **`issue_view` is a first-class single-issue view** — `tea issues
-<number>` (the bare-index form), deserializing one object. `issue_create`, like
-`pr_create`, returns tea's textual summary verbatim — its final line is the new
-issue's URL, but there is no flag to shape the output, so it is **not** a parsed
-URL. There is intentionally **no `release_view`**: `tea releases` takes no
-positional and always lists, so a single-release-by-tag view doesn't exist in
-`tea` (the [`vcs-forge`](forge.md) facade reports it `Unsupported`).
+truncate them; reach beyond 100 through `run`. `issue_list` also pins `--fields`
+to fetch `body`/`url` (tea's default issue columns omit them). Unlike `pr_view`
+(which lists and filters the string-table), **`issue_view` is a first-class
+single-issue view** — `tea issues <number>` (the bare-index form), which returns a
+*typed* detail object (numeric `index`), a different shape from the list.
+`issue_create`, like `pr_create`, returns tea's textual summary verbatim — its
+final line is the new issue's URL, but there is no flag to shape the output, so it
+is **not** a parsed URL. There is intentionally **no `release_view`**: `tea
+releases` takes no positional and always lists, so a single-release-by-tag view
+doesn't exist in `tea` (the [`vcs-forge`](forge.md) facade reports it
+`Unsupported`).
 
-`Issue` carries `number` (Gitea's `number`; tea's `index` is accepted as an
-alias), `title`, `state` (`"open"`/`"closed"`), `body`, and `url` (Gitea's
-`html_url`).
+`Issue` carries `number` (tea's `index`), `title`, `state` (`"open"`/`"closed"`),
+`body`, and `url` — from tea's table columns (list) or the typed detail object
+(`issue_view`).
 
-`Release` carries `tag` (Gitea's `tag_name`), `title` (Gitea's `name`),
-`published_at` (e.g. `"2023-07-26T13:02:36Z"`, empty for an unpublished draft),
-`draft`, `prerelease`, and `url` (Gitea's `html_url`).
+`Release` carries `tag` (tea's `Tag-Name` column), `title`, `published_at` (e.g.
+`"2023-07-26T13:02:36Z"`, empty for an unpublished draft), and `draft`/`prerelease`
+(derived from tea's `Status` column). **`url` is always empty**: `tea releases
+list` exposes no release-page URL (only a tar/zip download URL, which is
+deliberately not surfaced).
 
 ```rust
 # use std::path::Path;
