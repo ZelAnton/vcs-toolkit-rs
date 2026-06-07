@@ -27,13 +27,31 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 # Emit a `tracing` debug event when a re-query is skipped (e.g. a transient
 # mid-operation failure). Off by default; pulls in `tracing` only when enabled.
 tracing = ["dep:tracing"]
+# `impl futures_core::Stream for RepoWatcher`, so the watcher drops into
+# `select!`/stream combinators. Off by default; pulls in only the tiny
+# `futures-core` trait crate (already in the workspace's dependency graph).
+stream = ["dep:futures-core"]
 
 [dependencies.tracing]
 version = "0.1"
 optional = true
 
+# Just the `Stream` trait for the `stream` feature — not futures-util.
+[dependencies.futures-core]
+version = "0.3"
+optional = true
+
 [dev-dependencies]
-# `#[tokio::test]` for the async watcher tests, and `time` for timeouts.
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+# `#[tokio::test]` for the async watcher tests; `test-util` gives the paused
+# clock (`tokio::time::pause`/`advance`) the hermetic pipeline tests run on.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+# `StreamExt::next` to drive the `stream`-feature test (works on any
+# `futures_core::Stream`; lighter than futures-util and already in the graph).
+tokio-stream = "0.1"
+# The `ScriptedRunner` seam backing the hermetic fake-`Repo` the pipeline tests
+# re-query, plus `ProcessRunner` to write the delaying/flaky test runners.
+processkit.workspace = true
+# `#[async_trait]` to implement `ProcessRunner` for the custom test runners.
+async-trait = "0.1"
 # Real throwaway git/jj repositories for the `#[ignore]` integration tests.
 vcs-testkit = { path = "../testkit" }

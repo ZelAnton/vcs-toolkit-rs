@@ -656,6 +656,103 @@ async fn hardened_client_suppresses_repo_hooks() {
     assert_eq!(runs_after, runs_before, "hook suppressed under harden()");
 }
 
+// The vcs-cli-support classifiers branch on the REAL CLI's failure output; the
+// hermetic tests in cli-support feed canned strings, so these three tests pin
+// the classifiers against what live git actually prints. They run in the CI
+// integration lane across git/jj versions, so any message drift that breaks a
+// classifier gets caught here rather than at a consumer.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn classifier_matches_real_merge_conflict() {
+    let tmp = TempDir::new("cls-conflict");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+    let main = git.current_branch(dir).await.expect("branch");
+
+    // Branch A edits the line; main then edits the SAME line — a merge can't
+    // auto-resolve, so it fails on a content conflict.
+    git.create_branch(dir, "a").await.expect("branch");
+    git.checkout(dir, "a").await.expect("checkout");
+    std::fs::write(dir.join("a.txt"), "a change\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "a edit").await.expect("commit");
+    git.checkout(dir, &main).await.expect("checkout");
+    std::fs::write(dir.join("a.txt"), "main change\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "main edit").await.expect("commit");
+
+    let err = git
+        .merge_commit(dir, "a", false, None)
+        .await
+        .expect_err("conflicting merge must fail");
+    assert!(
+        vcs_git::is_merge_conflict(&err),
+        "real merge-conflict output must classify, got {err:?}"
+    );
+}
+
+// A `commit` on a clean tree fails with git's "nothing to commit" — the
+// classifier must recognise the real wording.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn classifier_matches_real_nothing_to_commit() {
+    let tmp = TempDir::new("cls-nothing");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "x\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "seed").await.expect("commit");
+
+    // Tree is clean now: a second commit has nothing to record.
+    let err = git
+        .commit(dir, "empty")
+        .await
+        .expect_err("commit on a clean tree must fail");
+    assert!(
+        vcs_git::is_nothing_to_commit(&err),
+        "real nothing-to-commit output must classify, got {err:?}"
+    );
+}
+
+// A fetch from an unreachable remote is a transient network failure — the
+// classifier must recognise the real connection error. `fetch_from` retries
+// transient errors (3 attempts x 500ms backoff), so this takes ~1-1.5s; the
+// connection-refused on a closed port is immediate per attempt.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn classifier_matches_real_transient_fetch() {
+    let tmp = TempDir::new("cls-fetch");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // Port 1 is reserved and never listening, so git's connection is refused
+    // immediately ("Connection refused"/"failed to connect" — both in the
+    // transient-marker list) rather than waiting on a DNS/connect timeout.
+    git.remote_add(dir, "dead", "http://127.0.0.1:1/x.git")
+        .await
+        .expect("remote add");
+    let err = git
+        .fetch_from(dir, "dead")
+        .await
+        .expect_err("fetch from an unreachable remote must fail");
+    assert!(
+        vcs_git::is_transient_fetch_error(&err),
+        "real connection-refused output must classify as transient, got {err:?}"
+    );
+}
+
 // The typed conflict model round-trips a REAL conflicted file: parse →
 // resolve(Theirs) → write back → stage → the conflict is gone.
 #[tokio::test]

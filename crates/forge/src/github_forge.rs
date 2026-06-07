@@ -135,3 +135,27 @@ fn aggregate(checks: &[CheckRun]) -> CiStatus {
         CiStatus::None
     }
 }
+
+// `state_of` is private; the proptest lives in-module where it's visible. The
+// mapper must never panic on an arbitrary state string, and an UNKNOWN state
+// must default to `Open` (the documented fallback) — so a future GitHub state
+// we don't model is treated as live, never silently as closed/merged.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn pr_state_mapping_never_panics_and_unknowns_default(s in any::<String>()) {
+            let mapped = state_of(&s);
+            // The only inputs that map off `Open` are the three known states
+            // (case-insensitively); everything else must default to `Open`.
+            match s.to_ascii_uppercase().as_str() {
+                "MERGED" => prop_assert_eq!(mapped, ForgePrState::Merged),
+                "CLOSED" => prop_assert_eq!(mapped, ForgePrState::Closed),
+                _ => prop_assert_eq!(mapped, ForgePrState::Open, "unknown must default to Open: {:?}", s),
+            }
+        }
+    }
+}

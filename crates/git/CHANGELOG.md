@@ -104,6 +104,10 @@ crates; tag releases as `vcs-git-v<version>`.
   primitive no longer opportunistically rewrites `.git/index` — a filesystem
   watcher re-querying through it (vcs-watch) had its own query re-trigger the
   watch for a couple of extra rounds per change burst.
+- `conflict::parse_conflicts`: a repeated `|`-run line inside a diff3 region is
+  base **content**, not a replacement base marker — the overwrite dropped a
+  line on `render`, breaking the byte-exact roundtrip (found by the roundtrip
+  proptest; its seed is now committed under `proptest-regressions/`).
 
 ## [0.4.0] - 2026-06-04
 

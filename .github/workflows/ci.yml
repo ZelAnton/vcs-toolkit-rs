@@ -48,6 +48,49 @@ jobs:
       # use newer toolchain features). --all-features covers `mock` and `tracing`.
       - run: cargo check --workspace --all-features
 
+  # Check every optional feature compiles SOLO on the crate that declares it. The
+  # `clippy`/`test`/`msrv` jobs all build `--all-features` (every feature ON at
+  # once) and the default build (every optional feature OFF) — neither catches a
+  # feature that's broken *in isolation* (a missing dep, or a `#[cfg(feature)]`
+  # block that only compiles because some OTHER feature happened to pull the
+  # symbol in). This job pins exactly that gap.
+  features:
+    name: feature isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check each optional feature in isolation
+        # Data-driven: one `<crate> <feature>` pair per line. Adding a pair is a
+        # one-line change here.
+        run: |
+          set -euo pipefail
+          pairs="
+          vcs-git mock
+          vcs-jj mock
+          vcs-github mock
+          vcs-gitlab mock
+          vcs-gitea mock
+          vcs-git tracing
+          vcs-jj tracing
+          vcs-github tracing
+          vcs-gitlab tracing
+          vcs-gitea tracing
+          vcs-core tracing
+          vcs-forge tracing
+          vcs-watch tracing
+          vcs-watch stream
+          vcs-diff serde
+          vcs-core serde
+          vcs-forge serde
+          "
+          echo "$pairs" | while read -r crate feature; do
+            [ -z "$crate" ] && continue
+            echo "::group::cargo check -p $crate --features $feature"
+            cargo check -p "$crate" --features "$feature"
+            echo "::endgroup::"
+          done
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

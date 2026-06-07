@@ -281,9 +281,9 @@ additive follow-ups, not a blocking wave.
   `Command::cancel_on`, but the typed wrappers consume their `Command`
   internally, so adopting it would mean either `CancellationToken` parameters
   in the object-safe `*Api` traits or per-call plumbing at every construction
-  site — both rejected. The requirements note
-  (`Ideas/Requests/processkit-client-cancellation-spec.md`, sibling of the 5.2
-  streaming spec) asks for a **client-level** `CliClient::default_cancel_on`
+  site — both rejected. The requirements note handed to the ProcessKit project
+  (the client-cancellation spec, sibling of the 5.2 streaming spec) asks for a
+  **client-level** `CliClient::default_cancel_on`
   (+ `cli_client!` emission, + a doubles story so cancellation is hermetically
   testable). Once shipped, adoption needs **zero new vcs-* API** — consumers
   pass a pre-configured client through the existing

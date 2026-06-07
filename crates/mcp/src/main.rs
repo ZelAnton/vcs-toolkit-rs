@@ -71,7 +71,7 @@ struct Args {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(args) = parse_args()? else {
+    let Some(args) = parse_args(std::env::args().skip(1))? else {
         // --help was requested; usage already printed.
         return Ok(());
     };
@@ -125,13 +125,13 @@ fn hardened_git(timeout: Option<Duration>) -> Git {
 
 /// Parse argv. Returns `Ok(None)` when `--help` was printed (caller should exit
 /// successfully); `Err` on an unknown flag or a bad value.
-fn parse_args() -> Result<Option<Args>, String> {
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
     let mut repo = PathBuf::from(".");
     let mut forge = None;
     let mut allow_write = false;
     let mut timeout = Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
 
-    let mut it = std::env::args().skip(1);
+    let mut it = args;
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "-h" | "--help" => {
@@ -230,4 +230,111 @@ async fn detect_forge_kind(root: &Path, timeout: Option<Duration>) -> Option<For
         .await
         .ok()?;
     ForgeKind::from_remote_url(&url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run `parse_args` over a borrowed slice of `&str` args, as if they were argv.
+    fn parse(args: &[&str]) -> Result<Option<Args>, String> {
+        parse_args(args.iter().map(|s| s.to_string()))
+    }
+
+    /// The error message from a parse expected to fail (`Args` has no `Debug`, so
+    /// we can't lean on `unwrap_err`).
+    fn parse_err(args: &[&str]) -> String {
+        match parse(args) {
+            Err(e) => e,
+            Ok(_) => panic!("expected parse error for {args:?}"),
+        }
+    }
+
+    #[test]
+    fn defaults_with_no_args() {
+        let args = parse(&[]).unwrap().expect("no --help, so Some(Args)");
+        assert_eq!(args.repo, PathBuf::from("."));
+        assert_eq!(args.forge, None);
+        assert!(!args.allow_write);
+        assert_eq!(
+            args.timeout,
+            Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        );
+    }
+
+    #[test]
+    fn help_short_circuits() {
+        assert!(parse(&["--help"]).unwrap().is_none());
+        assert!(parse(&["-h"]).unwrap().is_none());
+    }
+
+    #[test]
+    fn unknown_flag_errors() {
+        let err = parse_err(&["--bogus"]);
+        assert!(err.contains("unknown argument"), "got: {err}");
+    }
+
+    #[test]
+    fn missing_values_error() {
+        assert!(parse(&["--repo"]).is_err());
+        assert!(parse(&["--forge"]).is_err());
+        assert!(parse(&["--timeout"]).is_err());
+    }
+
+    #[test]
+    fn timeout_zero_disables() {
+        let args = parse(&["--timeout", "0"]).unwrap().unwrap();
+        assert_eq!(args.timeout, None);
+    }
+
+    #[test]
+    fn timeout_positive_sets_duration() {
+        let args = parse(&["--timeout", "45"]).unwrap().unwrap();
+        assert_eq!(args.timeout, Some(Duration::from_secs(45)));
+    }
+
+    #[test]
+    fn timeout_junk_errors() {
+        let err = parse_err(&["--timeout", "junk"]);
+        assert!(err.contains("invalid --timeout"), "got: {err}");
+        // A negative value isn't a valid `u64` either.
+        assert!(parse(&["--timeout", "-5"]).is_err());
+    }
+
+    #[test]
+    fn forge_parsing() {
+        assert_eq!(
+            parse(&["--forge", "github"]).unwrap().unwrap().forge,
+            Some(ForgeKind::GitHub)
+        );
+        assert_eq!(
+            parse(&["--forge", "gitlab"]).unwrap().unwrap().forge,
+            Some(ForgeKind::GitLab)
+        );
+        assert_eq!(
+            parse(&["--forge", "gitea"]).unwrap().unwrap().forge,
+            Some(ForgeKind::Gitea)
+        );
+        let err = parse_err(&["--forge", "bitbucket"]);
+        assert!(err.contains("unknown forge"), "got: {err}");
+    }
+
+    #[test]
+    fn combined_flags() {
+        let args = parse(&[
+            "--repo",
+            "X",
+            "--forge",
+            "gitea",
+            "--allow-write",
+            "--timeout",
+            "7",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(args.repo, PathBuf::from("X"));
+        assert_eq!(args.forge, Some(ForgeKind::Gitea));
+        assert!(args.allow_write);
+        assert_eq!(args.timeout, Some(Duration::from_secs(7)));
+    }
 }

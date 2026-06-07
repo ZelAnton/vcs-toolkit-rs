@@ -227,6 +227,82 @@ mod tests {
     }
 }
 
+// Property-based fuzzing of `from_remote_url`. The URL/host parsing slices on
+// `://`, `@`, `:`, and `/` and must never panic on a hostile string; and the
+// anchored `host_is` match must never classify a *lookalike* host (an
+// attacker-controlled `github.com.evil.net`) as a trusted forge — the
+// regression net for the unit tests above, which only cover hand-picked cases.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A URL shape embedding `host` in each position `from_remote_url` parses —
+    /// scheme URLs (with/without userinfo and port) and the scp-like form — so a
+    /// lookalike host is tested wherever it could appear.
+    fn url_around(host: impl Strategy<Value = String>) -> impl Strategy<Value = String> {
+        host.prop_flat_map(|h| {
+            prop_oneof![
+                Just(format!("https://{h}/o/r.git")),
+                Just(format!("https://user:pass@{h}/o/r")),
+                Just(format!("ssh://git@{h}:22/o/r.git")),
+                Just(format!("git@{h}:o/r.git")),
+                Just(format!("{h}/o/r")),
+            ]
+        })
+    }
+
+    /// Hosts that merely *resemble* a trusted SaaS host but aren't it: a trusted
+    /// domain as a left label (`github.com.evil.net`), a no-dot suffix
+    /// (`notgithub.com`), or the trusted domain buried mid-host — every one must
+    /// classify as `None`.
+    fn lookalike_host() -> impl Strategy<Value = String> {
+        // `prop_oneof!` consumes its strategies, so name the reusable ones as
+        // closures that build a fresh strategy at each use site.
+        let trusted = || {
+            prop_oneof![
+                Just("github.com"),
+                Just("gitlab.com"),
+                Just("gitea.com"),
+                Just("codeberg.org"),
+            ]
+        };
+        // TLDs disjoint from every trusted domain's (`com`/`org`), so a generated
+        // suffix can never BE a trusted domain — `github.com.gitea.com` would be
+        // a genuine subdomain of gitea.com and *correctly* classify, which is not
+        // what this strategy probes.
+        let evil = || "[a-z]{1,8}\\.(net|io|dev|xyz)";
+        prop_oneof![
+            // Trusted domain as a *prefix* label of an attacker domain.
+            (trusted(), evil()).prop_map(|(t, e)| format!("{t}.{e}")),
+            // Trusted domain glued on with no separating dot.
+            (prop_oneof![Just("not"), Just("my"), Just("x")], trusted())
+                .prop_map(|(p, t)| format!("{p}{t}")),
+            // Trusted domain buried as an *inner* label, not the suffix.
+            (evil(), trusted()).prop_map(|(e, t)| format!("x.{t}.{e}")),
+        ]
+    }
+
+    proptest! {
+        // Panic-freedom on completely arbitrary input.
+        #[test]
+        fn from_remote_url_never_panics(s in any::<String>()) {
+            let _ = ForgeKind::from_remote_url(&s);
+        }
+
+        // A lookalike host must NEVER be classified as a trusted forge.
+        #[test]
+        fn from_remote_url_rejects_lookalikes(url in url_around(lookalike_host())) {
+            prop_assert_eq!(
+                ForgeKind::from_remote_url(&url),
+                None,
+                "lookalike must not classify: {}",
+                url
+            );
+        }
+    }
+}
+
 // The optional `serde` feature derives `Serialize` on the unified DTOs.
 #[cfg(all(test, feature = "serde"))]
 mod serde_tests {

@@ -144,7 +144,10 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<ConflictSegment>> {
                     marker_ours.trim_end()
                 )));
             };
-            if marker_run(line, '|') == Some(n) {
+            // Only the FIRST `|`-run is the diff3 base marker; a later matching
+            // line is base *content* (a region has exactly one base marker — a
+            // repeated one used to overwrite it and lose a line on render).
+            if base.is_none() && marker_run(line, '|') == Some(n) {
                 base_label = Some(marker_label(line, n));
                 marker_base = Some(line.to_string());
                 base = Some(Vec::new());
@@ -280,6 +283,25 @@ mod tests {
         };
         assert_eq!(region.base_label.as_deref(), Some("0b025ce"));
         assert_eq!(region.base.as_deref(), Some(&["line 2\n".to_string()][..]));
+    }
+
+    // Proptest-found regression (seed committed in proptest-regressions/): a
+    // SECOND `|`-run line inside a diff3 region is base *content*, not a
+    // replacement base marker — the overwrite used to drop a line on render,
+    // breaking the byte-exact roundtrip.
+    #[test]
+    fn repeated_base_marker_line_is_base_content() {
+        let s = "<<<<<<<< HEAD\n|||||||| base\n|||||||| base\n========\n>>>>>>>> branché\n";
+        let segments = parse_conflicts(s).expect("parse");
+        let ConflictSegment::Conflict(region) = &segments[0] else {
+            panic!("expected a conflict, got {segments:?}");
+        };
+        assert_eq!(
+            region.base.as_deref(),
+            Some(&["|||||||| base\n".to_string()][..]),
+            "the second |-run line is content of the base section"
+        );
+        assert_eq!(render(&segments), s, "roundtrip must be byte-exact");
     }
 
     // Roundtrip must be byte-exact — including CRLF, custom marker sizes,

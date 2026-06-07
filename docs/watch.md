@@ -82,17 +82,31 @@ let watcher = RepoWatcher::builder(repo)
     .working_tree(true)                       // also watch the working tree
     .debounce(Duration::from_millis(150))     // quiet window (default 250 ms)
     .max_wait(Duration::from_secs(2))         // re-query ceiling (default 1 s)
+    .requery_timeout(Some(Duration::from_secs(10))) // per-query deadline (default 30 s)
     .build()
     .await?;
 # let _ = watcher; Ok(()) }
 ```
 
+Two **orthogonal** timing knobs are easy to confuse: `max_wait` bounds how long
+a continuous event stream may *defer* a re-query (cadence under load);
+`requery_timeout` bounds how long one re-query may *run* — a wedged command
+(say, a held `index.lock` on a client with no timeout of its own) is killed and
+skipped as transient instead of stalling the watch forever
+(`requery_timeout(None)` disables it).
+
 - **`recv().await -> Option<RepoChange>`** — the next settled change; `None` once
   the watcher is dropped. `current() -> &RepoSnapshot` is the last known state —
-  the build-time baseline, advanced **only when you call `recv`** (it is as fresh
-  as your last `recv`, not a live view). There is no `Stream` impl yet (the
-  receiver is internal and `recv` maintains `current()`); drive it with the
-  `recv()` loop — a `futures::Stream` adapter is a possible future addition.
+  the build-time baseline, advanced **only when you pull a change** (via `recv`
+  or the stream — it is as fresh as your last pull, not a live view).
+- **`stats()`** — lock-free health counters: re-queries run, changes emitted,
+  skips (transient failures + deadline overruns) and what the last skip failed
+  on. A climbing `skipped` with flat `requeries` means the repository is wedged —
+  poll it from a health check instead of inferring health from event silence.
+- **The `stream` feature** adds `impl futures_core::Stream for RepoWatcher`, so
+  the watcher drops into `tokio::select!`/stream combinators directly. `recv()`
+  and the stream pull from the **same** channel — an item is delivered to
+  whichever is polled first, never duplicated — and both advance `current()`.
 - **Drop stops everything** — dropping the `RepoWatcher` ends the OS watch and the
   background task.
 
@@ -122,10 +136,11 @@ are observed from a watched worktree too.
 ## Semantics & limits
 
 - **Transient re-query failures are skipped, not surfaced.** A snapshot taken
-  while an operation holds `index.lock` may fail; the watcher skips that re-check
-  and the next event re-queries the settled state. Setup failures (the watch can't
-  start) surface from `build()`. Enable the `tracing` feature for a debug line on
-  each skip.
+  while an operation holds `index.lock` may fail (or overrun `requery_timeout`);
+  the watcher skips that re-check and the next event re-queries the settled
+  state. Setup failures (the watch can't start) surface from `build()`. Skips
+  are **counted** — `stats()` reports them (with the failure kind) — and the
+  `tracing` feature adds a debug line on each.
 - **Runtime.** Unlike the rest of the toolkit, `vcs-watch` uses **tokio at
   runtime** (the watch task + debounce timer). Build/await it inside a tokio
   runtime.

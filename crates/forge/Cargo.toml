@@ -36,3 +36,6 @@ serde = ["dep:serde"]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Exercise the `serde` feature's derives (used only by the feature-gated test).
 serde_json = "1"
+# Property-based fuzzing of the pure mappers (`from_remote_url` panic-freedom +
+# lookalike rejection, PR-state mapping). Stable Rust, dev-only.
+proptest = "1"

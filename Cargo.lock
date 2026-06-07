@@ -1157,6 +1157,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "processkit",
+ "proptest",
  "serde",
  "serde_json",
  "tokio",
@@ -1253,8 +1254,12 @@ version = "0.1.0"
 name = "vcs-watch"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures-core",
  "notify",
+ "processkit",
  "tokio",
+ "tokio-stream",
  "tracing",
  "vcs-core",
  "vcs-testkit",

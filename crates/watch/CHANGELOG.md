@@ -29,6 +29,21 @@ crates; tag releases as `vcs-watch-v<version>`.
 - The pure snapshot-`diff` is hermetically unit-tested; the notify → debounce →
   re-query → emit pipeline is covered by `#[ignore]` real-repo integration tests
   (git + jj).
+- `Builder::requery_timeout(Option<Duration>)` (default **30 s**,
+  `DEFAULT_REQUERY_TIMEOUT`): a deadline on each re-query, so a wedged command
+  (a held `index.lock` on a client with no timeout configured) is killed
+  (kill-on-drop) and skipped as transient instead of stalling the watch loop
+  forever. Orthogonal to `max_wait` (that bounds how long signals *defer* a
+  re-query; this bounds how long one re-query *runs*).
+- `RepoWatcher::stats() -> WatcherStats` — lock-free health counters
+  (re-queries run / changes emitted / skips, plus what the last skip failed
+  on), so a long-running consumer can notice a silently wedged repository
+  instead of inferring health from event silence.
+- `stream` feature: `impl futures_core::Stream for RepoWatcher`, so the watcher
+  drops straight into `select!`/stream combinators. `recv()` and the stream
+  share one channel (an item goes to whichever is polled first) and both
+  advance `current()`. Off by default; pulls in only the `futures-core` trait
+  crate.
 
 ### Notes
 - This is the workspace's **first runtime tokio dependency** (everything else
@@ -37,7 +52,15 @@ crates; tag releases as `vcs-watch-v<version>`.
   skipped and retried on the next event (settled-state semantics).
 
 ### Changed
--
+- The `max_wait` ceiling is now **exact**: a dedicated timer arm fires the
+  re-query at the deadline even when the signal stream pauses right after it —
+  previously the ceiling was only observed when the *next* signal arrived.
+- The debounce → ceiling → re-query pipeline is now **hermetically tested**:
+  `watch_loop` runs against a fake signal channel, a `ScriptedRunner`-backed
+  repo, and a paused tokio clock (9 tests pinning coalescing, the `max_wait`
+  ceiling, transient skip + recovery, the re-query deadline, teardown,
+  backpressure, and the stream adapter) — no real filesystem or process
+  involved.
 
 ### Fixed
 - A watcher on a **linked git worktree** now also watches the shared `.git`
