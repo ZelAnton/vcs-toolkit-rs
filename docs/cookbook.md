@@ -142,6 +142,18 @@ treats it as non-transient and will not replay a cancelled run. Through the faca
 build the wrapped client the same way (`GitHub::new().default_cancel_on(t)`) and
 hand it to `Forge::for_github(cwd, client)` / `Repo::from_git(root, cwd, client)`.
 
+**Cancellation is "stop now", not "stop and clean up".** A fired token kills
+*every* command the client still runs — **including any cleanup the toolkit itself
+issues**. A multi-step facade operation that is cancelled mid-flight can therefore
+be left part-done: [`Repo::try_merge`](../crates/core) probes a throwaway merge and
+rolls it back with `op_restore` (jj) / `merge --abort` (git), but that rollback runs
+on the same client, so a token that fired during the probe also cancels the rollback
+— the probe change may remain. Likewise [`Jj::transaction`]'s op-log rollback runs
+on `Err`, and a cancellation *is* an `Err`, but the `op_restore` it would run is
+itself cancelled. If you need a guaranteed-clean state after cancelling, re-probe
+(`Repo::in_progress_state` / `Jj::op_head`) and reset with a **fresh, un-cancelled
+client** rather than assuming the interrupted call tidied up after itself.
+
 ## Stash-safe branch switch
 
 Carry a dirty working tree across a checkout without losing it.

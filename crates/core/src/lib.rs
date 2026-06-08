@@ -59,6 +59,11 @@ pub use error::{Error, Result};
 // through the facade or straight to the tool.
 pub use vcs_git;
 pub use vcs_jj;
+// Re-exported under the `cancellation` feature so a `vcs-core`-only consumer can
+// name the token for a `default_cancel_on` client (built via `Git`/`Jj`, then
+// passed to `Repo::from_git`/`from_jj`) without a direct `processkit` dependency.
+#[cfg(feature = "cancellation")]
+pub use processkit::CancellationToken;
 
 /// The result of [`detect`]: which backend, and the repository root it was found
 /// at.
@@ -464,6 +469,11 @@ impl<R: ProcessRunner> Repo<R> {
     ///   propagates as a plain error, not as [`MergeProbe::Conflicts`].
     /// - A failing rollback **propagates as an error** rather than returning a
     ///   result that misdescribes the on-disk state.
+    /// - **Cancellation caveat:** the rollback runs on the same client, so if the
+    ///   client carries a `default_cancel_on` token (the `cancellation` feature)
+    ///   that fires during the probe, the rollback command is cancelled too and the
+    ///   probe change may be left behind (`Error::Cancelled` surfaces). Re-probe and
+    ///   reset with an un-cancelled client if you need a clean tree.
     pub async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
         match &self.backend {
             Backend::Git(g) => git_backend::try_merge(g, &self.cwd, source).await,
@@ -837,6 +847,60 @@ mod tests {
         assert_eq!(s.change_count, 0);
         assert!(!s.conflicted);
         assert_eq!(s.operation, OperationState::Clear);
+    }
+
+    // jj `list_worktrees` resolves each workspace's root via the batched
+    // `workspace_roots` fan-out (one `workspace root --name <n>` per `workspace
+    // list` row), then builds a `WorktreeInfo` per workspace. Hermetic: scripts the
+    // template rows + the per-name root replies — the backend glue that the
+    // `#[ignore]` integration tests otherwise cover only with a real `jj`.
+    #[tokio::test]
+    async fn jj_list_worktrees_batches_root_lookups() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["workspace", "list"],
+                    Reply::ok("default\tc0ffee\tmain\nws1\tdecaf0\t\n"),
+                )
+                .on(
+                    ["workspace", "root", "--name", "default"],
+                    Reply::ok("/repo\n"),
+                )
+                .on(
+                    ["workspace", "root", "--name", "ws1"],
+                    Reply::ok("/repo/ws1\n"),
+                ),
+        );
+        let worktrees = repo.list_worktrees().await.expect("list_worktrees");
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, Path::new("/repo"));
+        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+        assert_eq!(worktrees[1].path, Path::new("/repo/ws1"));
+        assert_eq!(worktrees[1].branch, None);
+    }
+
+    // A workspace whose `workspace root` lookup errors is skipped (no useful path),
+    // mirroring the old sequential loop — the batch maps that slot to `Err`.
+    #[tokio::test]
+    async fn jj_list_worktrees_skips_unresolvable_root() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["workspace", "list"],
+                    Reply::ok("default\tc0ffee\tmain\ngone\tdecaf0\t\n"),
+                )
+                .on(
+                    ["workspace", "root", "--name", "default"],
+                    Reply::ok("/repo\n"),
+                )
+                .on(
+                    ["workspace", "root", "--name", "gone"],
+                    Reply::fail(1, "Error: No such workspace"),
+                ),
+        );
+        let worktrees = repo.list_worktrees().await.expect("list_worktrees");
+        assert_eq!(worktrees.len(), 1, "the unresolvable workspace is skipped");
+        assert_eq!(worktrees[0].path, Path::new("/repo"));
     }
 
     #[tokio::test]

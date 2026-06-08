@@ -308,6 +308,17 @@ additive follow-ups, not a blocking wave.
   *was* adopted (see `vcs-jj`'s `workspace_roots`). Revisit the rest only when a
   consumer appears.
 
+  - **`vcs-mcp` cancellation — deferred (request-lifecycle plumbing, not a feature
+    flag).** The server deliberately has no `cancellation` feature: every client it
+    builds already carries a `default_timeout` (configurable, surfaces as
+    `Error::Timeout`), and it exposes no `run_watch` tool — so the unbounded-by-nature
+    operation cancellation targets isn't reachable through mcp. The genuine gap is
+    cancel-on-peer-disconnect / cancel-on-shutdown, which needs the server to own a
+    token **per in-flight tool call** and bridge rmcp's cancellation/disconnect
+    signal to it (rmcp's `#[tool]` dispatch doesn't hand that over for free) —
+    strictly more than turning on `vcs-mcp/cancellation`. Pick it up if/when an
+    agent harness needs soft-disconnect teardown.
+
 ## 7. Architecture program R → A → S (post-§6 fresh-eyes review)
 
 A whole-workspace architecture review (2026-06-07; no users yet → breaking

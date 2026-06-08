@@ -58,6 +58,11 @@ pub use error::{Error, Result};
 pub use vcs_gitea;
 pub use vcs_github;
 pub use vcs_gitlab;
+// Re-exported under the `cancellation` feature so a `vcs-forge`-only consumer can
+// name the token for a `default_cancel_on` client (built via `GitHub`/… then passed
+// to `Forge::for_github`/…) without a direct `processkit` dependency.
+#[cfg(feature = "cancellation")]
+pub use processkit::CancellationToken;
 
 /// The per-CLI client behind a [`Forge`]. Shared via `Arc` so [`Forge::at`] can
 /// re-anchor the cwd cheaply without rebuilding the client.
