@@ -1,6 +1,6 @@
 [package]
 name = "vcs-jj"
-version = "0.4.0"
+version = "0.5.0"
 description = "Automate the Jujutsu (jj) CLI from Rust through process execution."
 edition.workspace = true
 rust-version.workspace = true

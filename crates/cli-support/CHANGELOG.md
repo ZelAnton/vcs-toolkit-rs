@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: the `processkit`-coupled plumbing the CLI wrappers share —
   `reject_flag_like` (the argv injection guard, parameterized by program name),
   the `FETCH_ATTEMPTS`/`FETCH_BACKOFF` fetch-retry policy, and the error
@@ -34,4 +45,5 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/cli-support
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-cli-support-v0.1.0

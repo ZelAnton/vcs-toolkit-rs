@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: `GitLabApi` trait + `GitLab` client wrapping the `glab` CLI,
   mirroring `vcs-github`'s shape (async, `#[non_exhaustive]` DTOs, the structured
   `processkit::Error`, the `mock` feature → `MockGitLabApi`, and the
@@ -58,4 +69,5 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `mr_list` passes `--per-page 100` — glab's default of 30 silently truncated
   larger result sets. The cap is now explicit and documented.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/gitlab
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-gitlab-v0.1.0

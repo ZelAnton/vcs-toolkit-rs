@@ -10,6 +10,17 @@ crates; tag releases as `vcs-testkit-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: `TempDir` (unique, remove-on-drop), `configure_identity`,
   `GitSandbox` (init on `main` + deterministic identity; `commit_file`,
   `branch`, `checkout`, `rev_parse`, raw `git`), `BareRemote::seeded` (local
@@ -33,4 +44,5 @@ crates; tag releases as `vcs-testkit-v<version>`.
   hooks a test installs on purpose still run (`core.hooksPath` is deliberately
   not touched).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/testkit
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-testkit-v0.1.0

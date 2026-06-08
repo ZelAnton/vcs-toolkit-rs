@@ -10,6 +10,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: the shared git-format unified-diff model and parser —
   `ChangeKind`, `DiffLine`, `Hunk`, `FileDiff`, `DiffStat`, and `parse_diff` —
   plus the `Version` type and `parse_dotted_version`. Extracted from the
@@ -29,4 +40,5 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/diff
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-diff-v0.1.0

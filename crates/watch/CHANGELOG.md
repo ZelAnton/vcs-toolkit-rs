@@ -10,6 +10,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: `RepoWatcher` filesystem-watches a git/jj repository and
   streams typed `RepoEvent`s. On each filesystem change it debounces the burst,
   re-queries `vcs-core`'s batched `Repo::snapshot()` (+ `local_branches()`), and
@@ -69,4 +80,5 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/watch
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-watch-v0.1.0

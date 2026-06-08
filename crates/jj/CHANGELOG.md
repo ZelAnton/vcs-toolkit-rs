@@ -10,6 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.5.0] - 2026-06-08
+
+### Added
 - `description(dir, revset)` — the full (multiline) description of the commit a
   revset resolves to (`log --limit 1 -T description`); empty for an undescribed
   change, newest commit only (log order) for a multi-commit revset.
@@ -270,7 +281,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.4.0...vcs-jj-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.1...vcs-jj-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.0...vcs-jj-v0.3.1
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.2.1...vcs-jj-v0.3.0

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: a backend-agnostic facade over `vcs-github`, `vcs-gitlab`, and
   `vcs-gitea` — the forge analogue of `vcs-core`. `Forge<R>` is a cwd-bound handle
   dispatching the common forge operations to whichever CLI backs it; the
@@ -61,4 +72,5 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/forge
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-forge-v0.1.0

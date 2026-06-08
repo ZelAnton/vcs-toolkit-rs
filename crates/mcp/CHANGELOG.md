@@ -10,6 +10,17 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: `vcs-mcp`, a Model Context Protocol (MCP) server exposing the
   `vcs-core` (`Repo`) and `vcs-forge` (`Forge`) operations as agent-callable
   tools. A lib (`VcsMcpServer`, hermetically testable) plus the `vcs-mcp` binary,
@@ -57,4 +68,5 @@ crates; tag releases as `vcs-mcp-v<version>`.
   Read-only by default. The wrappers' argv injection guards apply under every
   tool.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/mcp
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-mcp-v0.1.0

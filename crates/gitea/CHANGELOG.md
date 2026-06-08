@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.1.0] - 2026-06-08
+
+### Added
 - Initial release: `GiteaApi` trait + `Gitea` client wrapping the `tea` CLI,
   mirroring `vcs-github`'s shape (async, `#[non_exhaustive]` DTOs, the structured
   `processkit::Error`, the `mock` feature → `MockGiteaApi`, and the
@@ -76,4 +87,5 @@ crates; tag releases as `vcs-gitea-v<version>`.
   `--limit 999`, so a PR beyond the first page is no longer a false "not found"
   (PRs beyond 999 still are; documented).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/commits/main/crates/gitea
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.1.0...HEAD
+[0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-gitea-v0.1.0

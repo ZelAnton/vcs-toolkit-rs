@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.5.0] - 2026-06-08
+
+### Added
 - PR lifecycle mutations: `pr_merge(dir, n, PrMerge)` — a `PrMerge` builder
   (`merge()`/`squash()`/`rebase()`, `.auto()`, `.delete_branch()`);
   `pr_ready(dir, n)`; `pr_close(dir, n, delete_branch)`.
@@ -217,7 +228,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.4.0...vcs-github-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.3.1...vcs-github-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.3.0...vcs-github-v0.3.1
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.2.1...vcs-github-v0.3.0

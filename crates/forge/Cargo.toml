@@ -16,7 +16,7 @@ processkit.workspace = true
 # The transient-fetch-error classifier reused by the facade `Error`.
 vcs-cli-support = { path = "../cli-support", version = "0.1" }
 # The three forge wrappers this facade dispatches across.
-vcs-github = { path = "../github", version = "0.4" }
+vcs-github = { path = "../github", version = "0.5" }
 vcs-gitlab = { path = "../gitlab", version = "0.1" }
 vcs-gitea = { path = "../gitea", version = "0.1" }
 # `async fn` in the object-safe `ForgeApi` trait (dyn-friendly).

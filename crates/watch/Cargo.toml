@@ -12,7 +12,7 @@ readme = "README.md"
 [dependencies]
 # Re-query the repository state on each filesystem change and diff snapshots —
 # `detect`/`Repo::open`/`snapshot`/`local_branches` and the `RepoSnapshot` DTO.
-vcs-core = { path = "../core", version = "0.2" }
+vcs-core = { path = "../core", version = "0.3" }
 # Cross-platform filesystem watcher (inotify / FSEvents / ReadDirectoryChangesW).
 # Raw events only — we debounce ourselves and re-query state, so the heavier
 # debouncer crates buy nothing here.
