@@ -581,179 +581,118 @@ impl<R: ProcessRunner> Repo<R> {
     }
 }
 
-/// The backend-agnostic common surface of [`Repo`], as a trait — so a consumer can
-/// hold a `Box<dyn VcsRepo>` / `&dyn VcsRepo` and code against the operations
-/// without naming the [`ProcessRunner`] generic or wrapping `Repo` themselves.
+/// Generate a facade trait from one signature table: the `#[async_trait]` trait
+/// declaration *and* the delegating `impl … for $Ty<R>`, so the two can never drift
+/// out of sync (a hazard when each is hand-maintained). Every generated body is a
+/// trivial delegation to the like-named inherent method — which method resolution
+/// prefers, so this never recurses; the real backend-`match` dispatch stays
+/// hand-written on the inherent `impl`. `async` methods doc-link to their inherent
+/// twin; `sync` methods carry an explicit doc string (their docs aren't uniform).
 ///
-/// Every method mirrors the like-named inherent method on [`Repo`]; the trait adds
-/// nothing but the abstraction boundary. Tool-specific operations stay off it (see
-/// the crate docs) — reach those through the concrete [`Repo`] and its bound
-/// handles. For hermetic tests, build a `Repo` over a fake runner with
-/// [`Repo::from_git`] / [`Repo::from_jj`] rather than mocking this trait.
-#[async_trait::async_trait]
-pub trait VcsRepo: Send + Sync {
-    /// Which backend drives this handle.
-    fn kind(&self) -> BackendKind;
-    /// The repository root detected at open time.
-    fn root(&self) -> &Path;
-    /// The directory operations run against.
-    fn cwd(&self) -> &Path;
+/// A near-identical copy lives in `vcs-forge`; the two are deliberately not shared
+/// (separate crates, ~40-line macro — duplication beats a new dependency).
+///
+/// Signatures only: each entry is a bare `&self` (or sync) method — no method-level
+/// generics, no `&mut self`, no default bodies (a new method shaped that way needs a
+/// grammar tweak, not just a table row).
+///
+/// No `mockall::automock`: a Wave-S spike proved it can't process a trait whose
+/// signatures come from `macro_rules!`. Captured `$_:ty` fragments reach `automock`
+/// as opaque nonterminal token groups; its `syn` parser rejects them ("unsupported
+/// type in this position"), whereas `#[async_trait]` tolerates them. So the facade
+/// traits stay test-seam-tested (build a handle over a fake runner — see the trait
+/// docs), which is also what their docs already recommend over mocking.
+macro_rules! facade_trait {
+    (
+        $(#[doc = $tdoc:expr])*
+        trait $Trait:ident for $Ty:ident;
+        sync {
+            $( #[doc = $sdoc:expr] fn $sn:ident( $($sa:ident: $sat:ty),* $(,)? ) -> $sr:ty; )*
+        }
+        async {
+            $( fn $an:ident( $($aa:ident: $aat:ty),* $(,)? ) -> $ar:ty; )*
+        }
+    ) => {
+        $(#[doc = $tdoc])*
+        #[async_trait::async_trait]
+        pub trait $Trait: Send + Sync {
+            $(
+                #[doc = $sdoc]
+                fn $sn(&self, $($sa: $sat),*) -> $sr;
+            )*
+            $(
+                #[doc = concat!("See [`", stringify!($Ty), "::", stringify!($an), "`].")]
+                async fn $an(&self, $($aa: $aat),*) -> $ar;
+            )*
+        }
 
-    /// See [`Repo::current_branch`].
-    async fn current_branch(&self) -> Result<Option<String>>;
-    /// See [`Repo::trunk`].
-    async fn trunk(&self) -> Result<Option<String>>;
-    /// See [`Repo::local_branches`].
-    async fn local_branches(&self) -> Result<Vec<String>>;
-    /// See [`Repo::branch_exists`].
-    async fn branch_exists(&self, name: &str) -> Result<bool>;
-    /// See [`Repo::has_uncommitted_changes`].
-    async fn has_uncommitted_changes(&self) -> Result<bool>;
-    /// See [`Repo::has_tracked_changes`].
-    async fn has_tracked_changes(&self) -> Result<bool>;
-    /// See [`Repo::conflicted_files`].
-    async fn conflicted_files(&self) -> Result<Vec<String>>;
-    /// See [`Repo::delete_branch`].
-    async fn delete_branch(&self, name: &str, force: bool) -> Result<()>;
-    /// See [`Repo::rename_branch`].
-    async fn rename_branch(&self, old: &str, new: &str) -> Result<()>;
-    /// See [`Repo::changed_files`].
-    async fn changed_files(&self) -> Result<Vec<FileChange>>;
-    /// See [`Repo::diff_stat`].
-    async fn diff_stat(&self) -> Result<DiffStat>;
-    /// See [`Repo::snapshot`].
-    async fn snapshot(&self) -> Result<RepoSnapshot>;
-    /// See [`Repo::commit_paths`].
-    async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()>;
-    /// See [`Repo::fetch`].
-    async fn fetch(&self) -> Result<()>;
-    /// See [`Repo::fetch_from`].
-    async fn fetch_from(&self, remote: &str) -> Result<()>;
-    /// See [`Repo::fetch_remote_branch`].
-    async fn fetch_remote_branch(&self, branch: &str) -> Result<()>;
-    /// See [`Repo::push`].
-    async fn push(&self, branch: &str) -> Result<()>;
-    /// See [`Repo::checkout`].
-    async fn checkout(&self, reference: &str) -> Result<()>;
-    /// See [`Repo::rebase`].
-    async fn rebase(&self, onto: &str) -> Result<()>;
-    /// See [`Repo::try_merge`].
-    async fn try_merge(&self, source: &str) -> Result<MergeProbe>;
-    /// See [`Repo::abort_in_progress`].
-    async fn abort_in_progress(&self) -> Result<OperationState>;
-    /// See [`Repo::continue_in_progress`].
-    async fn continue_in_progress(&self) -> Result<OperationState>;
-    /// See [`Repo::in_progress_state`].
-    async fn in_progress_state(&self) -> Result<OperationState>;
-    /// See [`Repo::list_worktrees`].
-    async fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>>;
-    /// See [`Repo::create_worktree`].
-    async fn create_worktree(&self, path: &Path, branch: &str, base: &str)
-    -> Result<CreateOutcome>;
-    /// See [`Repo::remove_worktree`].
-    async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()>;
-    /// See [`Repo::cleanup_worktree_blocking`].
-    fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()>;
+        // Delegates to the inherent methods, which method resolution prefers — so
+        // these bodies dispatch through the concrete type's real implementations,
+        // not back into the trait.
+        #[async_trait::async_trait]
+        impl<R: ProcessRunner> $Trait for $Ty<R> {
+            $(
+                fn $sn(&self, $($sa: $sat),*) -> $sr {
+                    self.$sn($($sa),*)
+                }
+            )*
+            $(
+                async fn $an(&self, $($aa: $aat),*) -> $ar {
+                    self.$an($($aa),*).await
+                }
+            )*
+        }
+    };
 }
 
-// Delegates to the inherent methods, which method resolution prefers — so these
-// bodies dispatch through `Repo`'s real implementations, not back into the trait.
-#[async_trait::async_trait]
-impl<R: ProcessRunner> VcsRepo for Repo<R> {
-    fn kind(&self) -> BackendKind {
-        self.kind()
+facade_trait! {
+    /// The backend-agnostic common surface of [`Repo`], as a trait — so a consumer can
+    /// hold a `Box<dyn VcsRepo>` / `&dyn VcsRepo` and code against the operations
+    /// without naming the [`ProcessRunner`] generic or wrapping `Repo` themselves.
+    ///
+    /// Every method mirrors the like-named inherent method on [`Repo`]; the trait adds
+    /// nothing but the abstraction boundary. Tool-specific operations stay off it (see
+    /// the crate docs) — reach those through the concrete [`Repo`] and its bound
+    /// handles. For hermetic tests, build a `Repo` over a fake runner with
+    /// [`Repo::from_git`] / [`Repo::from_jj`] rather than mocking this trait.
+    trait VcsRepo for Repo;
+    sync {
+        #[doc = "Which backend drives this handle."]
+        fn kind() -> BackendKind;
+        #[doc = "The repository root detected at open time."]
+        fn root() -> &Path;
+        #[doc = "The directory operations run against."]
+        fn cwd() -> &Path;
+        #[doc = "See [`Repo::cleanup_worktree_blocking`]."]
+        fn cleanup_worktree_blocking(path: &Path) -> Result<()>;
     }
-    fn root(&self) -> &Path {
-        self.root()
-    }
-    fn cwd(&self) -> &Path {
-        self.cwd()
-    }
-    async fn current_branch(&self) -> Result<Option<String>> {
-        self.current_branch().await
-    }
-    async fn trunk(&self) -> Result<Option<String>> {
-        self.trunk().await
-    }
-    async fn local_branches(&self) -> Result<Vec<String>> {
-        self.local_branches().await
-    }
-    async fn branch_exists(&self, name: &str) -> Result<bool> {
-        self.branch_exists(name).await
-    }
-    async fn has_uncommitted_changes(&self) -> Result<bool> {
-        self.has_uncommitted_changes().await
-    }
-    async fn has_tracked_changes(&self) -> Result<bool> {
-        self.has_tracked_changes().await
-    }
-    async fn conflicted_files(&self) -> Result<Vec<String>> {
-        self.conflicted_files().await
-    }
-    async fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
-        self.delete_branch(name, force).await
-    }
-    async fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
-        self.rename_branch(old, new).await
-    }
-    async fn changed_files(&self) -> Result<Vec<FileChange>> {
-        self.changed_files().await
-    }
-    async fn diff_stat(&self) -> Result<DiffStat> {
-        self.diff_stat().await
-    }
-    async fn snapshot(&self) -> Result<RepoSnapshot> {
-        self.snapshot().await
-    }
-    async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()> {
-        self.commit_paths(paths, message).await
-    }
-    async fn fetch(&self) -> Result<()> {
-        self.fetch().await
-    }
-    async fn fetch_from(&self, remote: &str) -> Result<()> {
-        self.fetch_from(remote).await
-    }
-    async fn fetch_remote_branch(&self, branch: &str) -> Result<()> {
-        self.fetch_remote_branch(branch).await
-    }
-    async fn push(&self, branch: &str) -> Result<()> {
-        self.push(branch).await
-    }
-    async fn checkout(&self, reference: &str) -> Result<()> {
-        self.checkout(reference).await
-    }
-    async fn rebase(&self, onto: &str) -> Result<()> {
-        self.rebase(onto).await
-    }
-    async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
-        self.try_merge(source).await
-    }
-    async fn abort_in_progress(&self) -> Result<OperationState> {
-        self.abort_in_progress().await
-    }
-    async fn continue_in_progress(&self) -> Result<OperationState> {
-        self.continue_in_progress().await
-    }
-    async fn in_progress_state(&self) -> Result<OperationState> {
-        self.in_progress_state().await
-    }
-    async fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
-        self.list_worktrees().await
-    }
-    async fn create_worktree(
-        &self,
-        path: &Path,
-        branch: &str,
-        base: &str,
-    ) -> Result<CreateOutcome> {
-        self.create_worktree(path, branch, base).await
-    }
-    async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()> {
-        self.remove_worktree(path, force).await
-    }
-    fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()> {
-        self.cleanup_worktree_blocking(path)
+    async {
+        fn current_branch() -> Result<Option<String>>;
+        fn trunk() -> Result<Option<String>>;
+        fn local_branches() -> Result<Vec<String>>;
+        fn branch_exists(name: &str) -> Result<bool>;
+        fn has_uncommitted_changes() -> Result<bool>;
+        fn has_tracked_changes() -> Result<bool>;
+        fn conflicted_files() -> Result<Vec<String>>;
+        fn delete_branch(name: &str, force: bool) -> Result<()>;
+        fn rename_branch(old: &str, new: &str) -> Result<()>;
+        fn changed_files() -> Result<Vec<FileChange>>;
+        fn diff_stat() -> Result<DiffStat>;
+        fn snapshot() -> Result<RepoSnapshot>;
+        fn commit_paths(paths: &[String], message: &str) -> Result<()>;
+        fn fetch() -> Result<()>;
+        fn fetch_from(remote: &str) -> Result<()>;
+        fn fetch_remote_branch(branch: &str) -> Result<()>;
+        fn push(branch: &str) -> Result<()>;
+        fn checkout(reference: &str) -> Result<()>;
+        fn rebase(onto: &str) -> Result<()>;
+        fn try_merge(source: &str) -> Result<MergeProbe>;
+        fn abort_in_progress() -> Result<OperationState>;
+        fn continue_in_progress() -> Result<OperationState>;
+        fn in_progress_state() -> Result<OperationState>;
+        fn list_worktrees() -> Result<Vec<WorktreeInfo>>;
+        fn create_worktree(path: &Path, branch: &str, base: &str) -> Result<CreateOutcome>;
+        fn remove_worktree(path: &Path, force: bool) -> Result<()>;
     }
 }
 
@@ -1538,13 +1477,20 @@ mod tests {
     // body that recursed would stack-overflow here instead of returning).
     #[tokio::test]
     async fn vcs_repo_trait_object_dispatches() {
-        let repo = git_repo(ScriptedRunner::new().on(["rev-parse"], Reply::ok("main\n")));
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["rev-parse"], Reply::ok("main\n"))
+                .on(["show-ref"], Reply::ok("")),
+        );
         let dynamic: &dyn VcsRepo = &repo;
         assert_eq!(dynamic.kind(), BackendKind::Git);
         assert_eq!(
             dynamic.current_branch().await.unwrap().as_deref(),
             Some("main")
         );
+        // Exercise a reference-argument async method through `&dyn` — pins the
+        // async_trait lifetime capture the macro relies on (no-arg calls don't).
+        assert!(dynamic.branch_exists("main").await.unwrap());
     }
 
     // When the backend has no native trunk (git `origin/HEAD` unset), the facade

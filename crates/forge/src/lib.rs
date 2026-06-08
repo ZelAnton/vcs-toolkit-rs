@@ -304,98 +304,95 @@ fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
     Error::Unsupported { forge, operation }
 }
 
-/// The forge-agnostic common surface of [`Forge`], as a trait — so a consumer can
-/// hold a `Box<dyn ForgeApi>` / `&dyn ForgeApi` and code against the operations
-/// without naming the [`ProcessRunner`] generic.
+/// Generate a facade trait from one signature table: the `#[async_trait]` trait
+/// declaration *and* the delegating `impl … for $Ty<R>`, so the two can never drift
+/// out of sync (a hazard when each is hand-maintained). Every generated body is a
+/// trivial delegation to the like-named inherent method — which method resolution
+/// prefers, so this never recurses; the real backend-`match` dispatch stays
+/// hand-written on the inherent `impl`. `async` methods doc-link to their inherent
+/// twin; `sync` methods carry an explicit doc string (their docs aren't uniform).
 ///
-/// Every method mirrors the like-named inherent method on [`Forge`].
-#[async_trait::async_trait]
-pub trait ForgeApi: Send + Sync {
-    /// Which forge drives this handle.
-    fn kind(&self) -> ForgeKind;
-    /// The directory operations run against.
-    fn cwd(&self) -> &Path;
-    /// See [`Forge::auth_status`].
-    async fn auth_status(&self) -> Result<bool>;
-    /// See [`Forge::repo_view`].
-    async fn repo_view(&self) -> Result<ForgeRepo>;
-    /// See [`Forge::pr_list`].
-    async fn pr_list(&self) -> Result<Vec<ForgePr>>;
-    /// See [`Forge::pr_view`].
-    async fn pr_view(&self, number: u64) -> Result<ForgePr>;
-    /// See [`Forge::pr_create`].
-    async fn pr_create(&self, spec: PrCreate) -> Result<String>;
-    /// See [`Forge::pr_merge`].
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
-    /// See [`Forge::pr_mark_ready`].
-    async fn pr_mark_ready(&self, number: u64) -> Result<()>;
-    /// See [`Forge::pr_close`].
-    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()>;
-    /// See [`Forge::pr_checks`].
-    async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
-    /// See [`Forge::issue_list`].
-    async fn issue_list(&self) -> Result<Vec<ForgeIssue>>;
-    /// See [`Forge::issue_view`].
-    async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
-    /// See [`Forge::issue_create`].
-    async fn issue_create(&self, title: &str, body: &str) -> Result<String>;
-    /// See [`Forge::release_list`].
-    async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
-    /// See [`Forge::release_view`].
-    async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
+/// A near-identical copy lives in `vcs-core` (`facade_trait!`); the two are
+/// deliberately not shared (separate crates, ~40-line macro — duplication beats a
+/// new dependency). Signatures only — each entry is a bare `&self`/sync method (no
+/// method-level generics, no `&mut self`, no default bodies; a method shaped that
+/// way needs a grammar tweak, not just a table row).
+/// No `mockall::automock`: a Wave-S spike proved it can't process a
+/// trait whose signatures come from `macro_rules!` — captured `$_:ty` fragments
+/// reach `automock` as opaque nonterminal token groups its `syn` parser rejects
+/// ("unsupported type in this position"), whereas `#[async_trait]` tolerates them.
+/// The facade stays test-seam-tested (build a [`Forge`] over a fake runner).
+macro_rules! facade_trait {
+    (
+        $(#[doc = $tdoc:expr])*
+        trait $Trait:ident for $Ty:ident;
+        sync {
+            $( #[doc = $sdoc:expr] fn $sn:ident( $($sa:ident: $sat:ty),* $(,)? ) -> $sr:ty; )*
+        }
+        async {
+            $( fn $an:ident( $($aa:ident: $aat:ty),* $(,)? ) -> $ar:ty; )*
+        }
+    ) => {
+        $(#[doc = $tdoc])*
+        #[async_trait::async_trait]
+        pub trait $Trait: Send + Sync {
+            $(
+                #[doc = $sdoc]
+                fn $sn(&self, $($sa: $sat),*) -> $sr;
+            )*
+            $(
+                #[doc = concat!("See [`", stringify!($Ty), "::", stringify!($an), "`].")]
+                async fn $an(&self, $($aa: $aat),*) -> $ar;
+            )*
+        }
+
+        // Delegates to the inherent methods, which method resolution prefers — so
+        // these bodies dispatch through the concrete type's real implementations,
+        // not back into the trait.
+        #[async_trait::async_trait]
+        impl<R: ProcessRunner> $Trait for $Ty<R> {
+            $(
+                fn $sn(&self, $($sa: $sat),*) -> $sr {
+                    self.$sn($($sa),*)
+                }
+            )*
+            $(
+                async fn $an(&self, $($aa: $aat),*) -> $ar {
+                    self.$an($($aa),*).await
+                }
+            )*
+        }
+    };
 }
 
-// Delegates to the inherent methods, which method resolution prefers — so these
-// bodies dispatch through `Forge`'s real implementations, not back into the trait.
-#[async_trait::async_trait]
-impl<R: ProcessRunner> ForgeApi for Forge<R> {
-    fn kind(&self) -> ForgeKind {
-        self.kind()
+facade_trait! {
+    /// The forge-agnostic common surface of [`Forge`], as a trait — so a consumer can
+    /// hold a `Box<dyn ForgeApi>` / `&dyn ForgeApi` and code against the operations
+    /// without naming the [`ProcessRunner`] generic.
+    ///
+    /// Every method mirrors the like-named inherent method on [`Forge`].
+    trait ForgeApi for Forge;
+    sync {
+        #[doc = "Which forge drives this handle."]
+        fn kind() -> ForgeKind;
+        #[doc = "The directory operations run against."]
+        fn cwd() -> &Path;
     }
-    fn cwd(&self) -> &Path {
-        self.cwd()
-    }
-    async fn auth_status(&self) -> Result<bool> {
-        self.auth_status().await
-    }
-    async fn repo_view(&self) -> Result<ForgeRepo> {
-        self.repo_view().await
-    }
-    async fn pr_list(&self) -> Result<Vec<ForgePr>> {
-        self.pr_list().await
-    }
-    async fn pr_view(&self, number: u64) -> Result<ForgePr> {
-        self.pr_view(number).await
-    }
-    async fn pr_create(&self, spec: PrCreate) -> Result<String> {
-        self.pr_create(spec).await
-    }
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
-        self.pr_merge(number, strategy).await
-    }
-    async fn pr_mark_ready(&self, number: u64) -> Result<()> {
-        self.pr_mark_ready(number).await
-    }
-    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()> {
-        self.pr_close(number, delete_branch).await
-    }
-    async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
-        self.pr_checks(number).await
-    }
-    async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
-        self.issue_list().await
-    }
-    async fn issue_view(&self, number: u64) -> Result<ForgeIssue> {
-        self.issue_view(number).await
-    }
-    async fn issue_create(&self, title: &str, body: &str) -> Result<String> {
-        self.issue_create(title, body).await
-    }
-    async fn release_list(&self) -> Result<Vec<ForgeRelease>> {
-        self.release_list().await
-    }
-    async fn release_view(&self, tag: &str) -> Result<ForgeRelease> {
-        self.release_view(tag).await
+    async {
+        fn auth_status() -> Result<bool>;
+        fn repo_view() -> Result<ForgeRepo>;
+        fn pr_list() -> Result<Vec<ForgePr>>;
+        fn pr_view(number: u64) -> Result<ForgePr>;
+        fn pr_create(spec: PrCreate) -> Result<String>;
+        fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn pr_mark_ready(number: u64) -> Result<()>;
+        fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
+        fn pr_checks(number: u64) -> Result<CiStatus>;
+        fn issue_list() -> Result<Vec<ForgeIssue>>;
+        fn issue_view(number: u64) -> Result<ForgeIssue>;
+        fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn release_list() -> Result<Vec<ForgeRelease>>;
+        fn release_view(tag: &str) -> Result<ForgeRelease>;
     }
 }
 
@@ -628,9 +625,19 @@ mod tests {
     #[tokio::test]
     async fn forge_api_trait_object_dispatches() {
         let json = r#"[{"iid":1,"title":"X","state":"opened","source_branch":"f","target_branch":"main","web_url":"u"}]"#;
-        let forge = gitlab(ScriptedRunner::new().on(["mr", "list"], Reply::ok(json)));
+        let forge = gitlab(
+            ScriptedRunner::new()
+                .on(["mr", "list"], Reply::ok(json))
+                .on(["issue", "create"], Reply::ok("https://gl/i/9\n")),
+        );
         let dynamic: &dyn ForgeApi = &forge;
         assert_eq!(dynamic.kind(), ForgeKind::GitLab);
         assert_eq!(dynamic.pr_list().await.unwrap()[0].number, 1);
+        // Exercise a reference-argument async method through `&dyn` — pins the
+        // async_trait lifetime capture the macro relies on (no-arg calls don't).
+        assert_eq!(
+            dynamic.issue_create("T", "B").await.unwrap(),
+            "https://gl/i/9"
+        );
     }
 }

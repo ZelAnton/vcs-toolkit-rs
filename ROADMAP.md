@@ -325,12 +325,27 @@ matrix + ≥2-pass adversarial review:
   request-changes-requires-body unrepresentable); MCP `WriteGate` with
   `--allow-tools` per-tool allowlist; docs (escape-hatch routers in
   core.md/forge.md, the three call shapes, security decision notes).
-- **7.3 Wave S — structural dedup (pending).** Macro-mirrored trait/impl
-  dispatch in vcs-core/vcs-forge (one table generates the trait decl + the
-  delegating impl; the macro never owns a non-trivial body), At-forwarder
-  co-generation with an automock spike (documented fallback if the spike
-  fails), optional marker-primitive extraction into vcs-diff (stop-the-line if
-  either conflict model would bend).
+- **7.3 ✅ Wave S — structural dedup.** A `facade_trait!` `macro_rules!` (one
+  per facade — `vcs-core`, `vcs-forge`) now generates each trait decl **and** its
+  delegating `impl … for Repo`/`Forge` from a single signature table, so the two
+  can't silently drift; the real backend-`match` bodies stay hand-written on the
+  inherent `impl` (the macro never owns a non-trivial body). Two sub-decisions
+  resolved during the wave:
+  - **automock spike — fell back (documented).** Adding `mockall::automock` to the
+    generated traits is **impossible**: `macro_rules!` captures the method
+    signatures as opaque `:ty` nonterminal fragments, which `automock`'s `syn`
+    parser rejects ("unsupported type in this position"). The `:ty` capture alone
+    is the cause (reproduced with the methods stripped to bare signatures — no
+    docs, no `concat!`); `#[async_trait]` tolerates the fragments, `mockall` does
+    not. The facade
+    traits stay seam-tested over a fake runner (already what their docs recommend
+    over mocking); no `mock` feature was added.
+  - **marker-primitive extraction into vcs-diff — rejected (stop-the-line).** git's
+    `marker_run` leaves the size constraint to call sites (variable
+    `conflictMarkerSize`); jj bakes `n>=7` in (it lengthens all of a file's markers
+    together). Disjoint vocabularies (`<=>|` vs `<%\+->`), structurally different
+    parse loops, ~4 genuinely shared lines — any extraction bends one model. Both
+    conflict modules stay independent.
 
 **Consciously rejected** (one line each, so the next reviewer doesn't re-litigate):
 codegen/templating across the five wrappers (heavy machinery vs the AGENTS.md
@@ -338,7 +353,10 @@ convention, for ~150 lines); a `Backend` trait instead of the enum (the enum +
 free-fn modules *is* the adapter, monomorphised); trait-only `Repo` (kills
 rustdoc/ergonomics); broad serde-JSON proptests (serde doesn't panic);
 Windows/macOS integration lanes (cost; revisit separately); retry jitter (needs
-processkit support — goes in an upstream spec if wanted).
+processkit support — goes in an upstream spec if wanted); `mockall::automock` on
+the facade traits (incompatible with their `macro_rules!`-generated signatures —
+§7.3; seam-testing over a fake runner is the supported path); sharing the conflict
+marker-scanner across vcs-git/vcs-jj (§7.3 — would bend one model's marker grammar).
 
 ## Deliberately out of scope
 
