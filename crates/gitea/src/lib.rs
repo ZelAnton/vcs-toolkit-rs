@@ -1,30 +1,102 @@
-//! `vcs-gitea` — automate Gitea (and Forgejo) from Rust through the `tea` CLI.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-gitea` — automate Gitea (and Forgejo) from Rust by driving the `tea` CLI.
 //!
-//! Async, mockable, and structured-error: consumers depend on the [`GiteaApi`]
-//! trait and substitute a mock for the real [`Gitea`] client in tests. Commands
-//! run inside an OS job (via [`processkit`]) so a `tea` subprocess is never
-//! orphaned, and honour an optional [timeout](Gitea::default_timeout).
+//! It shells out to the installed `tea` binary, asks each command for
+//! `--output json`, and deserializes that into typed values — so you get *tea's
+//! own* auth, config, and instance handling, not a reimplementation of the Gitea
+//! API. Async throughout, structured errors, and mockable. Every command runs
+//! inside an OS **job** (via [`processkit`]) so a `tea` subprocess tree can never
+//! be orphaned, and honours an optional per-client [timeout](Gitea::default_timeout).
 //!
-//! The surface is the **lean lifecycle** `tea` actually supports — auth, the PR
-//! lifecycle (list / view / create / merge / close), issues (list / view /
-//! create), and release listing — deserializing `tea … --output json`. Note that
-//! `tea`'s JSON is **not** the Gitea REST shape: its *list* commands emit a
-//! string-valued print-table (snake-cased column-header keys) and its issue
-//! *detail* view a separate typed object; the parsers model both (the `#[ignore]`
-//! real-`tea` tests in `tests/cli.rs` are the contract check). It is
-//! deliberately narrower than
+//! # The surface
+//!
+//! - **[`GiteaApi`]** — the object-safe trait every operation lives on. Depend on
+//!   `&dyn GiteaApi` (or generically on `impl GiteaApi`) so a test can swap the
+//!   real client for a double. The repo-scoped methods take the working directory
+//!   as the first argument and return typed results ([`PullRequest`], [`Issue`],
+//!   [`Release`]) or a structured [`Error`]; unmodelled `tea` commands go through
+//!   [`run`](GiteaApi::run).
+//! - **[`Gitea`]** — the real client. [`Gitea::new`] uses the job-backed runner;
+//!   [`Gitea::with_runner`] injects a fake one for tests. It is generic over the
+//!   [`ProcessRunner`] seam, defaulting to the production runner.
+//! - **[`GiteaAt`]** — a cwd-bound view ([`Gitea::at`]) whose repo-scoped methods
+//!   drop the leading `dir`, so `tea.at(dir).pr_list()` reads as
+//!   `tea.pr_list(dir)` — handy when one client drives one checkout.
+//! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
+//!   chained `.head` / `.base` setters named after the flags they emit) and
+//!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`).
+//!
+//! The exposed operations are the **lean lifecycle** `tea` actually supports:
+//! auth ([`auth_status`](GiteaApi::auth_status)), the PR lifecycle
+//! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
+//! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
+//! [close](GiteaApi::pr_close)), issues
+//! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
+//! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
+//! It is deliberately narrower than
 //! [`vcs-github`](https://crates.io/crates/vcs-github) /
-//! [`vcs-gitlab`](https://crates.io/crates/vcs-gitlab): `tea` has **no**
-//! single-PR `view`, **no** current-repo view, **no** draft toggle, **no** PR
-//! checks command, and **no** single-release view (`tea releases` ignores any
-//! positional and always lists), so those operations are simply absent here (the
-//! [`vcs-forge`](https://crates.io/crates/vcs-forge) facade reports them as
-//! `Unsupported` for the Gitea backend). `pr_view` is synthesized by listing and
-//! filtering; `issue_view`, by contrast, is a first-class `tea issues <index>`.
+//! [`vcs-gitlab`](https://crates.io/crates/vcs-gitlab): `tea` has **no** single-PR
+//! `view`, **no** current-repo view, **no** draft toggle, **no** PR-checks
+//! command, and **no** single-release view (`tea releases` ignores any positional
+//! and always lists), so those operations are simply absent here (the
+//! [`vcs-forge`](https://crates.io/crates/vcs-forge) facade reports them
+//! `Unsupported` for the Gitea backend). [`pr_view`](GiteaApi::pr_view) is
+//! synthesized by listing with `--state all` and filtering by number;
+//! [`issue_view`](GiteaApi::issue_view), by contrast, is a first-class
+//! `tea issues <index>`.
 //!
-//! Two test seams: enable the `mock` feature for a `mockall`-generated
-//! `MockGiteaApi`, or inject a fake runner with
-//! `Gitea::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//! One shape caveat: `tea`'s `--output json` is **not** the Gitea REST shape. Its
+//! *list* commands emit tea's print-*table* — a JSON array of string-maps whose
+//! keys are snake-cased column headers and whose values are **all strings** (no
+//! `html_url`, no nested branch objects, no typed bools); we pick columns with
+//! `--fields`. Its *detail* view (`issues <n>`) is a separate *typed* object. The
+//! parsers model both (the `#[ignore]` real-`tea` tests in `tests/cli.rs` are the
+//! contract check).
+//!
+//! # Recipes
+//!
+//! Read state — depend on the trait so the same code takes a real client or a mock:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitea::{Gitea, GiteaApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let tea = Gitea::new();
+//! let repo = Path::new(".");
+//! let authed = tea.auth_status().await?;             // any login configured?
+//! for pr in tea.pr_list(repo).await? {               // up to 100 open PRs
+//!     println!("#{} [{}] {}", pr.number, pr.state, pr.title);
+//! }
+//! # let _ = authed; Ok(()) }
+//! ```
+//!
+//! Drive the PR lifecycle — `pr_create` takes the [`PrCreate`] spec; merge picks a
+//! [`MergeStrategy`]:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
+//! # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
+//! tea.pr_create(repo, PrCreate::new("Add streaming", "Implements …")
+//!         .head("feat/streaming").base("main")).await?;
+//! tea.pr_merge(repo, 7, MergeStrategy::Squash).await?;
+//! # Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! Two seams: enable the **`mock`** feature for a `mockall`-generated
+//! `MockGiteaApi` (stub whole methods), or inject a
+//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`Gitea::with_runner`] to
+//! exercise the *real* argv-building and JSON parsing against canned output. The
+//! cross-cutting testing patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module.
 
 use std::path::Path;
 
@@ -35,6 +107,7 @@ pub use processkit::{Error, ProcessResult, Result};
 // Re-exported under the `cancellation` feature so a consumer can name the token
 // for `default_cancel_on` without taking a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 mod parse;
@@ -780,3 +853,8 @@ mod tests {
         assert!(mock.auth_status().await.unwrap());
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/gitea.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

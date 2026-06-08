@@ -1,13 +1,95 @@
-//! `vcs-github` — automate GitHub from Rust through the `gh` CLI.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-github` — automate GitHub from Rust by driving the `gh` CLI.
 //!
-//! Async, mockable, and structured-error: consumers depend on the [`GitHubApi`]
-//! trait and substitute a mock for the real [`GitHub`] client in tests. Commands
-//! run inside an OS job (via [`processkit`]) so a `gh` subprocess is never
-//! orphaned, and honour an optional [timeout](GitHub::default_timeout).
+//! It shells out to the installed `gh` binary and parses its output into typed
+//! values — so you get *gh's own* behaviour, auth, and host resolution, not a
+//! reimplementation of the GitHub REST/GraphQL API. The PR / issue / Actions /
+//! release lifecycle, async throughout, with structured errors, and mockable.
+//! Every command runs inside an OS **job** (via [`processkit`]) so a `gh`
+//! subprocess tree can never be orphaned, and honours an optional per-client
+//! [timeout](GitHub::default_timeout). Read-style methods ask `gh` for `--json`
+//! and deserialize it; nothing scrapes human-readable output.
 //!
-//! Two test seams: enable the `mock` feature for a `mockall`-generated
-//! `MockGitHubApi`, or inject a fake runner with
-//! `GitHub::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//! # The surface
+//!
+//! - **[`GitHubApi`]** — the object-safe trait every operation lives on. Depend
+//!   on `&dyn GitHubApi` (or generically on `impl GitHubApi`) so a test can swap
+//!   the real client for a double. Repo-scoped methods take the working
+//!   directory as the first argument and return typed results ([`PullRequest`],
+//!   [`Issue`], [`Repo`], [`CheckRun`], [`WorkflowRun`], [`Release`],
+//!   [`PrFeedback`], …) or a structured [`Error`].
+//! - **[`GitHub`]** — the real client. [`GitHub::new`] uses the job-backed
+//!   runner; [`GitHub::with_runner`] injects a fake one for tests. It is generic
+//!   over the [`ProcessRunner`] seam, defaulting to the production runner.
+//! - **[`GitHubAt`]** — a cwd-bound view ([`GitHub::at`]) whose methods drop the
+//!   leading `dir`, so `gh.at(dir).pr_list()` reads as `gh.pr_list(dir)` — handy
+//!   when one client drives one checkout.
+//! - **Method groups** on the trait: PRs ([`pr_list`](GitHubApi::pr_list),
+//!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
+//!   [`pr_merge`](GitHubApi::pr_merge), [`pr_review`](GitHubApi::pr_review),
+//!   [`pr_checks`](GitHubApi::pr_checks),
+//!   [`pr_feedback`](GitHubApi::pr_feedback), …); Actions runs
+//!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
+//!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
+//!   timeout); issues & releases ([`issue_create`](GitHubApi::issue_create),
+//!   [`release_view`](GitHubApi::release_view), …); plus the escape hatches
+//!   [`run`](GitHubApi::run) / [`api`](GitHubApi::api) for anything unmodelled.
+//! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
+//!   with optional `head`/`base`), [`PrMerge`] (strategy [`MergeStrategy`],
+//!   `--auto`, `--delete-branch`), and [`ReviewAction`] (whose private fields make
+//!   an empty-body request-changes unrepresentable) — each `#[non_exhaustive]`,
+//!   built with a constructor and chained setters, named after the flags they emit.
+//!
+//! # Recipes
+//!
+//! Read state — depend on the trait so the same code takes a real client or a mock:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_github::{GitHub, GitHubApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let gh = GitHub::new();
+//! let dir = Path::new(".");
+//! let authed = gh.auth_status().await?;          // is `gh` logged in?
+//! let open = gh.pr_list(dir).await?;             // up to 100 open PRs
+//! # let _ = (authed, open); Ok(()) }
+//! ```
+//!
+//! Mutate through the builder specs — open a PR, approve it, then squash-merge:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_github::{GitHub, GitHubApi, PrCreate, PrMerge, ReviewAction};
+//! # async fn demo(gh: &GitHub) -> Result<(), processkit::Error> {
+//! let dir = Path::new(".");
+//! let url = gh.pr_create(dir, PrCreate::new("Add X", "…").base("main")).await?;
+//! gh.pr_review(dir, 7, ReviewAction::approve().with_body("LGTM")).await?;
+//! gh.pr_merge(dir, 7, PrMerge::squash().delete_branch()).await?;
+//! # let _ = url; Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! Two seams: enable the **`mock`** feature for a `mockall`-generated
+//! `MockGitHubApi` (stub whole methods), or inject a
+//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`GitHub::with_runner`]
+//! to exercise the *real* argv-building and parsing against canned output — no
+//! `gh` binary or network needed, so it runs on CI. The cross-cutting testing
+//! patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # Safety
+//!
+//! Caller values placed in a bare positional argv slot (an `api` endpoint, a
+//! release `tag`) are refused before spawning if empty or starting with `-` —
+//! `gh` would parse them as flags. Flag-value slots (`--body <b>`,
+//! `--branch <b>`) are consumed verbatim and need no guard.
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module.
 
 use std::path::Path;
 
@@ -18,6 +100,7 @@ pub use processkit::{Error, ProcessResult, Result};
 // Re-exported under the `cancellation` feature so a consumer can name the token
 // for `default_cancel_on` without taking a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 mod parse;
@@ -1332,3 +1415,8 @@ mod tests {
         assert!(mock.auth_status().await.unwrap());
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/github.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

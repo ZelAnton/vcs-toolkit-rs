@@ -1,19 +1,52 @@
-//! Shared CLI-wrapper plumbing for the
-//! [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-cli-support` — the [`processkit`]-coupled plumbing the CLI wrappers reuse.
 //!
-//! The bits `vcs-git` / `vcs-jj` / `vcs-github` all need that touch
-//! [`processkit::Error`] — so they can't live in the std-only `vcs-diff`:
+//! `vcs-git` / `vcs-jj` / `vcs-github` all drive a CLI through [`processkit`], so
+//! they share three concerns that *touch* [`processkit::Error`]: an argv injection
+//! guard, a fetch-retry policy, and a set of [`Error`] classifiers. Extracting them
+//! here keeps the std-only `vcs-diff` clean of the `processkit` dependency, and —
+//! more to the point — keeps the marker lists and classifier logic from drifting
+//! between backends. The wrapper crates re-export these items (so you reach them
+//! as `vcs_git::is_merge_conflict`, not via this crate's name) and rarely name
+//! `vcs-cli-support` directly.
 //!
-//! - [`reject_flag_like`] — the injection guard for bare positional argv slots.
-//! - [`FETCH_ATTEMPTS`] / [`FETCH_BACKOFF`] — the transient-retry policy for
-//!   `fetch`.
-//! - [`is_merge_conflict`] / [`is_nothing_to_commit`] / [`is_transient_fetch_error`]
-//!   — classify a returned [`processkit::Error`] so callers branch on intent
-//!   ("conflict, resolve it"; "nothing to commit, no-op"; "transient, retry")
-//!   instead of matching on error internals.
+//! # The surface
 //!
-//! The wrapper crates re-export the classifiers (e.g. `vcs_git::is_merge_conflict`)
-//! and call [`reject_flag_like`] with their own binary name.
+//! - **[`reject_flag_like`]** — the injection guard for bare positional argv slots.
+//!   A caller value that is empty/whitespace, or starts with `-`, is refused before
+//!   spawning (the CLI would parse it as a flag); flag-*value* slots (`-m <msg>`)
+//!   are consumed verbatim and skip the check. Wrappers call it with their own
+//!   binary name so the surfaced [`Error::Spawn`] names the right `program`.
+//! - **[`FETCH_ATTEMPTS`] / [`FETCH_BACKOFF`]** — the shared transient-retry policy
+//!   for `fetch` (one try plus two retries, fixed backoff between them).
+//! - **[`is_merge_conflict`] / [`is_nothing_to_commit`] / [`is_transient_fetch_error`]**
+//!   — classify a returned [`Error`] so callers branch on *intent* ("conflict,
+//!   resolve it"; "nothing to commit, no-op"; "transient, retry") instead of
+//!   matching on error internals. They inspect captured [`Error::Exit`] output
+//!   against fixed marker lists (and treat a [`processkit`] [`Error::Timeout`] as
+//!   transient); any unfamiliar `#[non_exhaustive]` variant falls through to "no".
+//!
+//! # Recipes
+//!
+//! Classify a failed `fetch` to drive a retry decision — branch on intent, not on
+//! the error's internals:
+//!
+//! ```no_run
+//! use vcs_cli_support::{is_transient_fetch_error, FETCH_ATTEMPTS, FETCH_BACKOFF};
+//! # fn run() -> Result<(), processkit::Error> { todo!() }
+//! # fn demo() -> Result<(), processkit::Error> {
+//! for attempt in 1..=FETCH_ATTEMPTS {
+//!     match run() {
+//!         Ok(()) => break,
+//!         Err(e) if is_transient_fetch_error(&e) && attempt < FETCH_ATTEMPTS => {
+//!             std::thread::sleep(FETCH_BACKOFF); // DNS/timeout — worth a retry
+//!         }
+//!         Err(e) => return Err(e),               // anything else: give up
+//!     }
+//! }
+//! # Ok(()) }
+//! ```
 
 use std::time::Duration;
 

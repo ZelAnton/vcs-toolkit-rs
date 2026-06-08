@@ -14,7 +14,7 @@ unifies this with `vcs-github` and `vcs-gitlab`.
 
 [`processkit`]: https://crates.io/crates/processkit
 
-> 📖 **Full guide:** [docs/gitea.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/gitea.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-gitea/latest/vcs_gitea/guide/)
 
 `tea`'s surface is narrower than `gh`/`glab`: it has **no** single-PR view (this
 crate synthesizes `pr_view` by listing and filtering), **no** current-repo view,

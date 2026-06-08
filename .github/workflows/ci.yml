@@ -33,6 +33,31 @@ jobs:
       # `tracing` (the per-command observability events).
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  # Build the rustdoc the way docs.rs will, and keep it from rotting. `-D warnings`
+  # turns a broken intra-doc link — which doctests do NOT catch but which silently
+  # degrades the docs.rs page — into a failure. Three builds: the docs.rs config
+  # (every feature, so the optional surfaces show), the lean no-default config, and
+  # a nightly `--cfg docsrs` build that exercises the `doc(cfg(...))` feature badges
+  # (doc_cfg is nightly-only; docs.rs builds on nightly). The doctest run keeps the
+  # embedded guide/example code compiling against the public API.
+  doc:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --no-deps --workspace --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo doc --no-deps --workspace --no-default-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo test --doc --workspace --all-features
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo +nightly doc --no-deps --workspace --all-features
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
+
   # Enforce the documented MSRV so the "machine-checked" claim is real. Pin the
   # FULL 1.88.0 (not the `1.88` channel alias) so the floor can't silently drift.
   msrv:

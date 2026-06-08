@@ -9,11 +9,11 @@ human-readable output.
 
 The surface is the **lean merge-request lifecycle** — it mirrors `vcs-github`'s
 shape but covers only auth, project view, and the MR lifecycle. The
-[`vcs-forge`](forge.md) facade unifies it with `vcs-github` and `vcs-gitea`.
+[`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade unifies it with `vcs-github` and `vcs-gitea`.
 
 Consumers code against the [`GitLabApi`] trait and substitute a fake in tests —
 the real [`GitLab`] client only appears at the edges. See
-[Testing & mocking](testing.md) for the two seams (the `mock` feature →
+[Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) for the two seams (the `mock` feature →
 `MockGitLabApi`, or a `ScriptedRunner`).
 
 Requires the `glab` binary on `PATH`, authenticated via `glab auth login`.
@@ -31,7 +31,7 @@ Requires the `glab` binary on `PATH`, authenticated via `glab auth login`.
 
 ## Construction
 
-```rust
+```rust,ignore
 use vcs_gitlab::GitLab;
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ leading `dir` argument.
 
 ## Auth & version
 
-```rust
+```rust,ignore
 # use vcs_gitlab::{GitLab, GitLabApi};
 # async fn demo(glab: &GitLab) -> Result<(), processkit::Error> {
 let v = glab.version().await?;          // String — "glab version 1.x …"
@@ -76,7 +76,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 `state` (GitLab's `"opened"`/`"closed"`/`"merged"`/`"locked"`), `source_branch`,
 `target_branch`, `web_url`, and `draft`.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
 # async fn demo(glab: &GitLab, repo: &Path) -> Result<(), processkit::Error> {
@@ -128,7 +128,7 @@ release title, may default to the tag), `url` (pulled off GitLab's nested
 `_links.self` — releases have no top-level `web_url`), and `published_at` (GitLab's
 `released_at`, ISO 8601, empty for an unpublished release).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_gitlab::{GitLab, GitLabApi};
 # async fn demo(glab: &GitLab, repo: &Path) -> Result<(), processkit::Error> {
@@ -150,9 +150,9 @@ and errors on a non-zero exit, `run_raw` hands back the captured `ProcessResult`
 
 ## See also
 
-- [vcs-forge guide](forge.md) — the facade that unifies this with GitHub/Gitea.
-- [vcs-github guide](github.md) — the broader-surfaced sibling this mirrors.
-- [Testing & mocking](testing.md) — the `mock` feature and the `ScriptedRunner` seam.
-- [Process model & errors](process-model.md) — OS-job containment, timeouts, and
+- [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the facade that unifies this with GitHub/Gitea.
+- [vcs-github guide](https://docs.rs/vcs-github/latest/vcs_github/guide/) — the broader-surfaced sibling this mirrors.
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature and the `ScriptedRunner` seam.
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — OS-job containment, timeouts, and
   the `Error` / `ProcessResult` shapes.
-- [crate README](../crates/gitlab/README.md) — quickstart and crate-level docs.
+- [crate docs](https://docs.rs/vcs-gitlab) — quickstart and crate-level docs.

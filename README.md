@@ -10,6 +10,8 @@ protocol, these crates shell out to the official binaries
 (`git`, `jj`, `gh`, `glab`, `tea`) and capture their output — thin, predictable
 wrappers you can compose into automation.
 
+![Cover](https://raw.githubusercontent.com/ZelAnton/vcs-flow-rs/main/cover.png)
+
 Every command is **async** (tokio) and runs inside an OS **job** (a Windows Job
 Object or a Linux cgroup v2) so the whole process tree dies with the parent — no
 orphaned subprocesses. That mechanism comes from the external
@@ -91,16 +93,16 @@ This README is the overview. For depth — every command grouped by theme, the
 parsed result types, the builder and validating-newtype APIs, and worked
 examples — see the **[guide set in `docs/`](docs/README.md)**:
 
-- Per-crate references: [vcs-git](docs/git.md) · [vcs-jj](docs/jj.md) ·
-  [vcs-github](docs/github.md) · [vcs-gitlab](docs/gitlab.md) ·
-  [vcs-gitea](docs/gitea.md) · [vcs-core](docs/core.md) (the git/jj facade) ·
-  [vcs-forge](docs/forge.md) (the forge facade) ·
-  [vcs-watch](docs/watch.md) (repo-event stream) ·
-  [vcs-mcp](docs/mcp.md) (the MCP server) ·
-  [vcs-testkit](docs/testkit.md) (fixtures).
-- Cross-cutting topics: [Conflict resolution](docs/conflicts.md) ·
-  [Testing & mocking](docs/testing.md) · [Security & hardening](docs/security.md) ·
-  [Process model, errors & observability](docs/process-model.md).
+- Per-crate references: [vcs-git](crates/git/docs/git.md) · [vcs-jj](crates/jj/docs/jj.md) ·
+  [vcs-github](crates/github/docs/github.md) · [vcs-gitlab](crates/gitlab/docs/gitlab.md) ·
+  [vcs-gitea](crates/gitea/docs/gitea.md) · [vcs-core](crates/core/docs/core.md) (the git/jj facade) ·
+  [vcs-forge](crates/forge/docs/forge.md) (the forge facade) ·
+  [vcs-watch](crates/watch/docs/watch.md) (repo-event stream) ·
+  [vcs-mcp](crates/mcp/docs/mcp.md) (the MCP server) ·
+  [vcs-testkit](crates/testkit/docs/testkit.md) (fixtures).
+- Cross-cutting topics: [Conflict resolution](crates/git/docs/conflicts.md) ·
+  [Testing & mocking](crates/testkit/docs/testing.md) · [Security & hardening](crates/git/docs/security.md) ·
+  [Process model, errors & observability](crates/core/docs/process-model.md).
 
 ## Quick start
 
@@ -189,7 +191,7 @@ that aren't modelled yet, plus `version()`.
 
 A few inline snippets below; the full collection — a prompt line in one call,
 open-a-PR-and-watch-CI, stash-safe switch, programmatic conflict resolution,
-backend dispatch — is in the **[Cookbook](docs/cookbook.md)**.
+backend dispatch — is in the **[Cookbook](crates/core/docs/cookbook.md)**.
 
 **Stage everything changed and commit (git):**
 
@@ -303,8 +305,8 @@ crate (a dev-dependency) provides throwaway `GitSandbox`/`JjSandbox` repos, a
 seeded `BareRemote` to clone/fetch against, and a self-cleaning `TempDir` — the
 same fixtures this workspace's own ignored tests run on.
 
-→ Full guide: **[Testing & mocking](docs/testing.md)** and the
-**[vcs-testkit fixtures](docs/testkit.md)**.
+→ Full guide: **[Testing & mocking](crates/testkit/docs/testing.md)** and the
+**[vcs-testkit fixtures](crates/testkit/docs/testkit.md)**.
 
 ## Untrusted input and repos
 
@@ -329,8 +331,8 @@ Conflicted files parse into a typed model too: `vcs_git::conflict` /
 `render` and a `resolve(side)` writer — the primitive for programmatic
 conflict resolution.
 
-→ Full guides: **[Security & hardening](docs/security.md)** and
-**[Conflict resolution](docs/conflicts.md)**.
+→ Full guides: **[Security & hardening](crates/git/docs/security.md)** and
+**[Conflict resolution](crates/git/docs/conflicts.md)**.
 
 ## Observing commands
 
@@ -353,7 +355,7 @@ Four seams, no extra configuration:
   without touching a repository; add `.on(…)` rules for the calls that need
   realistic replies.
 
-→ Full guide: **[Process model, errors & observability](docs/process-model.md)**.
+→ Full guide: **[Process model, errors & observability](crates/core/docs/process-model.md)**.
 
 ## Build, test
 

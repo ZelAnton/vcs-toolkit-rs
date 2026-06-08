@@ -1,19 +1,124 @@
-//! `vcs-jj` — automate Jujutsu (`jj`) from Rust through CLI process execution.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-jj` — automate Jujutsu (`jj`) from Rust by driving the `jj` CLI.
 //!
-//! Async, mockable, and structured-error: consumers depend on the [`JjApi`]
-//! trait and substitute a mock for the real [`Jj`] client in tests. Commands run
-//! inside an OS job (via [`processkit`]) so a `jj` subprocess is never orphaned,
-//! and honour an optional [timeout](Jj::default_timeout).
+//! It shells out to the installed `jj` binary and parses its templated output
+//! into typed values — so you get *jj's own* behaviour and config, not a
+//! reimplementation of the operation log or backend. Async throughout,
+//! structured errors, and mockable. Every command runs inside an OS **job** (via
+//! [`processkit`]) so a `jj` subprocess tree can never be orphaned, and honours
+//! an optional per-client [timeout](Jj::default_timeout).
 //!
-//! Two test seams: enable the `mock` feature for a `mockall`-generated
-//! `MockJjApi`, or inject a fake runner with
-//! `Jj::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//! # The surface
+//!
+//! - **[`JjApi`]** — the object-safe trait every operation lives on. Depend on
+//!   `&dyn JjApi` (or generically on `impl JjApi`) so a test can swap the real
+//!   client for a double. Most methods take the working directory as the first
+//!   argument and return typed results ([`Change`], [`Bookmark`],
+//!   [`BookmarkRef`], [`Operation`], [`Workspace`], [`ChangedPath`],
+//!   [`FileDiff`], [`AnnotationLine`], …) or a structured [`Error`]. The groups:
+//!   changes ([`status`](JjApi::status), [`log`](JjApi::log),
+//!   [`describe`](JjApi::describe), [`new_change`](JjApi::new_change)),
+//!   bookmarks ([`bookmarks`](JjApi::bookmarks),
+//!   [`bookmark_create`](JjApi::bookmark_create),
+//!   [`bookmark_move`](JjApi::bookmark_move), …), the operation log
+//!   ([`op_log`](JjApi::op_log), [`op_head`](JjApi::op_head),
+//!   [`op_restore`](JjApi::op_restore), [`op_undo`](JjApi::op_undo)),
+//!   diff/query ([`diff`](JjApi::diff), [`diff_stat`](JjApi::diff_stat),
+//!   [`evolog`](JjApi::evolog), [`file_annotate`](JjApi::file_annotate),
+//!   [`template_query`](JjApi::template_query)), mutations
+//!   ([`rebase`](JjApi::rebase), [`squash_paths`](JjApi::squash_paths),
+//!   [`split_paths`](JjApi::split_paths), [`absorb`](JjApi::absorb),
+//!   [`abandon`](JjApi::abandon)), git sync
+//!   ([`git_fetch`](JjApi::git_fetch), [`git_push`](JjApi::git_push),
+//!   [`git_clone`](JjApi::git_clone), [`git_import`](JjApi::git_import)), and
+//!   workspaces ([`workspace_list`](JjApi::workspace_list),
+//!   [`workspace_root`](JjApi::workspace_root),
+//!   [`workspace_add`](JjApi::workspace_add)).
+//! - **[`Jj`]** — the real client. [`Jj::new`] uses the job-backed runner;
+//!   [`Jj::with_runner`] injects a fake one for tests. It is generic over the
+//!   [`ProcessRunner`] seam, defaulting to the production runner.
+//! - **[`JjAt`]** — a cwd-bound view ([`Jj::at`]) whose methods drop the leading
+//!   `dir`, so `jj.at(dir).status()` reads as `jj.status(dir)` — handy when one
+//!   client drives one checkout.
+//! - **[`Jj::transaction`]** — run a mutation sequence with op-log rollback:
+//!   capture the current operation, run a closure, and on `Err` restore the repo
+//!   to it. The op log is jj's safety net; this wraps it as a scope.
+//!   [`Jj::workspace_roots`] is a sibling inherent method — a bounded fan-out
+//!   resolving many workspace roots at once.
+//! - **Builder specs** for the multi-option commands — [`WorkspaceAdd`],
+//!   [`SquashPaths`] — each `#[non_exhaustive]`, built with a constructor +
+//!   chained setters, named after the flags they emit. [`JjFileset`] wraps a
+//!   repo-relative path as an exact-path `file:"…"` fileset; [`RevsetExpr`] is an
+//!   optional up-front-validated revset newtype for untrusted input.
+//! - **[`conflict`]** — a typed model of jj's *native* conflict markers (the
+//!   `diff`/`snapshot` styles): parse a materialized file into structured
+//!   regions, re-render byte-exact, and resolve to a chosen side. (Files
+//!   materialized in the `git` style are parsed by `vcs_git::conflict` instead.)
+//! - **[`capabilities`](JjApi::capabilities)** — probe the installed binary's
+//!   version against this crate's validated floor (jj ≥ 0.38); see
+//!   [`JjCapabilities`].
 //!
 //! There is deliberately **no `Jj::hardened()`** counterpart to vcs-git's
-//! untrusted-repo profile: jj has no repo-local hooks, and its config comes
-//! from the user/repo TOML files jj itself trusts. In a *colocated* repo the
-//! risk lives on the git side — git hooks fire when **git** commands run
-//! there, so harden the `Git` client you point at it.
+//! untrusted-repo profile: jj has no repo-local hooks, and its config comes from
+//! the user/repo TOML files jj itself trusts. In a *colocated* repo the risk
+//! lives on the git side — git hooks fire when **git** commands run there, so
+//! harden the `Git` client you point at it.
+//!
+//! # Recipes
+//!
+//! Read state — depend on the trait so the same code takes a real client or a mock:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_jj::{Jj, JjApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let jj = Jj::new();
+//! let dir = Path::new(".");
+//! let current = jj.current_change(dir).await?;       // the working-copy change `@`
+//! let dirty = !jj.status(dir).await?.is_empty();     // any working-copy edit?
+//! # let _ = (current, dirty); Ok(()) }
+//! ```
+//!
+//! Mutate inside a [`transaction`](Jj::transaction) — an `Err` rolls the op log back:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_jj::Jj;
+//! # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
+//! let dir = Path::new(".");
+//! jj.transaction(dir, |tx| async move {
+//!     tx.describe("wip").await?;
+//!     tx.new_change("next").await        // an Err here undoes the describe
+//! })
+//! .await?;
+//! # Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! Two seams: enable the **`mock`** feature for a `mockall`-generated
+//! `MockJjApi` (stub whole methods), or inject a
+//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`Jj::with_runner`] to
+//! exercise the *real* argv-building and parsing against canned output. The
+//! cross-cutting testing patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # Safety
+//!
+//! Every caller value placed in a bare positional argv slot (bookmark name,
+//! revset, operation id, merge parent, …) is refused before spawning if it is
+//! empty or starts with `-` (jj would parse it as a flag); flag-value slots
+//! (`-r <revset>`, `-m <msg>`) and the `run`/`run_raw` escape hatches are not
+//! guarded. For eager validation at an input boundary, [`RevsetExpr`] validates
+//! up front. Paths go through the exact-path [`JjFileset`] form.
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module. The conflict model is covered by
+//! [vcs-git's conflicts guide](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/),
+//! which spans both backends.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -26,6 +131,7 @@ pub use processkit::{Error, ProcessResult, Result};
 // Re-exported under the `cancellation` feature so a consumer can name the token
 // for `default_cancel_on` without taking a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 pub mod conflict;
@@ -2460,3 +2566,8 @@ mod tests {
         assert!(mock.describe(Path::new("."), "msg").await.is_ok());
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/jj.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

@@ -40,3 +40,13 @@ cancellation = ["processkit/cancellation"]
 # `#[tokio::test]` for the async unit/integration tests; `time` + `test-util`
 # back the paused-clock cancellation test (`start_paused`, `time::timeout`).
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+
+[package.metadata.docs.rs]
+# Build docs.rs with every feature so the optional surfaces (mock / tracing /
+# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

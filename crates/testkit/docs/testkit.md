@@ -44,7 +44,7 @@ collide.
 - `Drop` — best-effort `remove_dir_all` on the way out; a leaked temp dir must
   not fail the run, so the cleanup error is swallowed.
 
-```rust
+```rust,ignore
 use vcs_testkit::TempDir;
 
 let tmp = TempDir::new("scratch");
@@ -76,7 +76,7 @@ A throwaway **git** repository: owns its [`TempDir`], initialised on branch
 - `checkout(name)` — switch to a branch (`git checkout`).
 - `rev_parse(rev)` — resolve a revision to its full 40-char hash (`String`).
 
-```rust
+```rust,ignore
 use vcs_testkit::GitSandbox;
 
 let repo = GitSandbox::init("scenario");
@@ -107,7 +107,7 @@ integration tests, no network. Seeded with one commit on `main` containing
 - `temp_dir()` — the owning temp dir (`&Path`), kept alive as long as the remote
   is in use.
 
-```rust
+```rust,ignore
 use vcs_testkit::{BareRemote, GitSandbox};
 
 let remote = BareRemote::seeded("origin");
@@ -133,7 +133,7 @@ A throwaway **jj** repository (git-backed) with a repo-scoped identity
 - `new_change(msg)` — start a new change on top (`jj new -m <msg>`).
 - `bookmark(name)` — create a bookmark at `@` (`jj bookmark create <name> -r @`).
 
-```rust
+```rust,ignore
 use vcs_testkit::JjSandbox;
 
 let repo = JjSandbox::init("jj-scenario");
@@ -160,7 +160,7 @@ fresh clones, or repos initialised by the code under test.
   for tests whose *subject* is repository initialisation itself: they run their
   own `init` and only need the identity applied afterwards.
 
-```rust
+```rust,ignore
 use std::path::Path;
 use vcs_testkit::{configure_identity, git, TempDir};
 
@@ -178,7 +178,7 @@ git(tmp.path(), &["commit", "--allow-empty", "-qm", "root"]);
 Sandbox + bare remote, exercising a push then a fetch round-trip — the shape of
 the crate's own ignored integration test.
 
-```rust
+```rust,ignore
 use vcs_testkit::{BareRemote, GitSandbox};
 
 #[test]
@@ -206,6 +206,6 @@ fn push_then_fetch_round_trip() {
 
 ---
 
-See also: [Testing & mocking](testing.md) for the trait / mock / runner seams
+See also: [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) for the trait / mock / runner seams
 that let most tests skip real binaries entirely, and the
-[crate README](../crates/testkit/README.md).
+[crate docs](https://docs.rs/vcs-testkit).

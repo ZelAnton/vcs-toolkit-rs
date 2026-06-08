@@ -13,7 +13,7 @@ wrappers' argv injection guards still underneath. **Read tools are always
 available; mutating tools are gated** behind `--allow-write` (all mutations) or
 `--allow-tools <name,…>` (a per-tool allowlist) and annotated `destructiveHint`.
 
-> 📖 **Full guide:** [docs/mcp.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/mcp.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-mcp/latest/vcs_mcp/guide/)
 
 ## The binary
 

@@ -10,7 +10,7 @@ optional timeout.
 
 [`processkit`]: https://crates.io/crates/processkit
 
-> 📖 **Full guide:** [docs/jj.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/jj.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
 > — every command by theme, result types, builder/newtype APIs, and worked examples.
 
 Inside an async context (every method is `async`):

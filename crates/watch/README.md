@@ -10,7 +10,7 @@ and **diffs** it against the previous state — so noise (git's ref temp-renames
 `index.lock`, reflog churn) coalesces into one re-check instead of being mis-read
 as events. The foundation for prompts, status bars, TUIs, and daemons.
 
-> 📖 **Full guide:** [docs/watch.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/watch.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-watch/latest/vcs_watch/guide/)
 
 ```rust
 use vcs_core::Repo;

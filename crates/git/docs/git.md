@@ -15,7 +15,7 @@ be smuggled in as a flag.
 
 ## Construction & configuration
 
-```rust
+```rust,ignore
 # use std::time::Duration;
 use vcs_git::Git;
 
@@ -25,7 +25,7 @@ let git = Git::new().default_timeout(Duration::from_secs(30)); // every cmd → 
 
 - `Git::new()` — the production client over the real job-backed runner.
 - `Git::with_runner(runner)` — inject a fake `ProcessRunner` (e.g.
-  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](testing.md).
+  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 - `default_timeout(Duration)` — builder; arms a per-command timeout.
 
 `new`, `with_runner`, and `default_timeout` all come from the
@@ -52,9 +52,9 @@ command the client runs:
 It does **not** sandbox the git binary or vet the repo's *content*. `harden()` is
 chainable on any runner — `Git::with_runner(rec).harden()` works in tests — but
 `Git::hardened()` is the shorthand for the common case. See
-[Security & hardening](security.md).
+[Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/).
 
-```rust
+```rust,ignore
 use vcs_git::Git;
 
 let git = Git::hardened();   // drive a repo you didn't create — hooks/config neutered
@@ -66,7 +66,7 @@ Most `GitApi` methods take a leading `dir: &Path`. When you drive one directory
 repeatedly, bind it once with `git.at(&path)` — the returned `GitAt` drops that
 argument:
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::Git;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -87,7 +87,7 @@ handle.
 The object-safe `GitApi` trait can't take `&[&str]`, so two inherent helpers do —
 no `Vec<String>` allocation:
 
-```rust
+```rust,ignore
 # use vcs_git::Git;
 # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 let out = git.run_args(&["status", "-s"]).await?;   // String, errors on non-zero exit
@@ -99,7 +99,7 @@ let res = git.run_raw_args(&["rev-parse", "HEAD"]).await?; // ProcessResult<Stri
 
 Working-tree inspection and the index.
 
-```rust
+```rust,ignore
 async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
 async fn status_text(&self, dir: &Path) -> Result<String>;
 async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
@@ -116,7 +116,7 @@ async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
 - **`branch_status`** — a combined branch + working-tree snapshot in **one** spawn
   (`status --porcelain=v2 --branch -z`): HEAD, branch, upstream, ahead/behind, and
   change counts ([`BranchStatus`](#branchstatus)) — the cheap primitive behind the
-  facade's [`Repo::snapshot`](core.md#status--files). Use it for a prompt/status-bar
+  facade's [`Repo::snapshot`](https://docs.rs/vcs-core/latest/vcs_core/guide/). Use it for a prompt/status-bar
   line without N round-trips.
 - **`add`** — `git add -- <paths>` (the `--` keeps a path from being read as a flag).
 - **`staged_is_empty`** — `git diff --cached --quiet`, exit-code mapped: `true` =
@@ -124,7 +124,7 @@ async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
 - **`conflicted_files`** — `git diff --name-only --diff-filter=U -z`; repo-relative
   paths with `/` separators, empty when there are none.
 
-```rust
+```rust,ignore
 # use std::path::{Path, PathBuf};
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -148,7 +148,7 @@ for path in git.conflicted_files(repo).await? {             // Vec<String>
 
 ## Commits & log
 
-```rust
+```rust,ignore
 async fn log(&self, dir: &Path, max: usize) -> Result<Vec<Commit>>;
 async fn log_range(&self, dir: &Path, range: &str, max: usize) -> Result<Vec<Commit>>;
 async fn commit(&self, dir: &Path, message: &str) -> Result<()>;
@@ -169,7 +169,7 @@ async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize>;
   <range>`), e.g. how far ahead of the upstream you are — cheaper than fetching
   and counting `log_range`.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -189,7 +189,7 @@ error.
 
 ## Branches
 
-```rust
+```rust,ignore
 async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
 async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
 async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
@@ -211,7 +211,7 @@ async fn current_branch(&self, dir: &Path) -> Result<String>;
 - **`current_branch`** — `rev-parse --abbrev-ref HEAD` (e.g. `"main"`; `"HEAD"` when
   detached).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -230,7 +230,7 @@ for b in git.branches(repo).await? {                       // Vec<Branch>
 
 ## Revisions
 
-```rust
+```rust,ignore
 async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
 async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String>;
 async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String>;
@@ -250,7 +250,7 @@ async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
 - **`checkout_detach`** — check out a commit as a detached HEAD (`checkout --detach
   <commit>`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -269,7 +269,7 @@ To carry uncommitted changes across a switch, see the composed inherent helper
 
 ## Worktrees
 
-```rust
+```rust,ignore
 async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
 async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
 async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()>;
@@ -284,7 +284,7 @@ async fn worktree_prune(&self, dir: &Path) -> Result<()>;
 - **`worktree_move`** — `worktree move <from> <to>`.
 - **`worktree_prune`** — `worktree prune`, dropping stale admin entries.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi, WorktreeAdd};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -304,7 +304,7 @@ For a synchronous best-effort removal in a `Drop` guard, see
 
 ## Diff
 
-```rust
+```rust,ignore
 async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
 async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
 async fn diff_is_empty(&self, dir: &Path) -> Result<bool>;
@@ -325,7 +325,7 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
 [`DiffSpec`](#diffspec) selects what is compared: `WorkingTree` (vs HEAD) or
 `Rev(String)` (a revision or range).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi, DiffSpec};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -344,14 +344,14 @@ let _ = raw;
 
 ## Blame
 
-```rust
+```rust,ignore
 async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
 ```
 
 Per-line authorship of `path` (`blame --line-porcelain [<rev>] -- <path>`); `None`
 blames the working tree's HEAD.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -363,7 +363,7 @@ for line in git.blame(repo, "src/lib.rs", None).await? {    // Vec<BlameLine>
 
 ## Remotes & upstream
 
-```rust
+```rust,ignore
 async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
 async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
 async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
@@ -385,7 +385,7 @@ async fn upstream(&self, dir: &Path) -> Result<Option<String>>;
 - **`upstream`** — the current branch's upstream, e.g. `Some("origin/main")`; `None`
   when unset.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -402,7 +402,7 @@ let _ = exists;
 
 ## Fetch / push / merge
 
-```rust
+```rust,ignore
 async fn fetch(&self, dir: &Path) -> Result<()>;
 async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
 async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()>;
@@ -437,7 +437,7 @@ async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
   staged and unstaged changes (`reset --hard <rev>`) — destructive; there is no
   undo for uncommitted work.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi, GitPush, MergeCommit, is_merge_conflict};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -457,7 +457,7 @@ match git.merge_commit(repo, MergeCommit::branch("feature").no_ff()).await {  //
 
 ## Rebase & sequencer
 
-```rust
+```rust,ignore
 async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
 async fn rebase_abort(&self, dir: &Path) -> Result<()>;
 async fn rebase_continue(&self, dir: &Path) -> Result<()>;
@@ -477,7 +477,7 @@ Every command here suppresses the editor (`GIT_EDITOR=true`,
   conflict surfaces as an error classifiable by `is_merge_conflict`.
 - **`revert`** — revert a commit with the default message (`revert --no-edit <rev>`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi, is_merge_conflict};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -494,7 +494,7 @@ match git.cherry_pick(repo, "abc123").await {
 
 ## Stash
 
-```rust
+```rust,ignore
 async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
 async fn stash_pop(&self, dir: &Path) -> Result<()>;
 ```
@@ -503,7 +503,7 @@ async fn stash_pop(&self, dir: &Path) -> Result<()>;
   state before a copy-on-write restore.
 - **`stash_pop`** — restore the most recent stash and drop it (`stash pop`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -515,7 +515,7 @@ git.stash_pop(repo).await?;
 
 ## In-progress state
 
-```rust
+```rust,ignore
 async fn is_rebase_in_progress(&self, dir: &Path) -> Result<bool>;
 async fn is_merge_in_progress(&self, dir: &Path) -> Result<bool>;
 ```
@@ -524,7 +524,7 @@ async fn is_merge_in_progress(&self, dir: &Path) -> Result<bool>;
   under the git dir.
 - **`is_merge_in_progress`** — `true` when `MERGE_HEAD` exists under the git dir.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -536,7 +536,7 @@ if git.is_rebase_in_progress(repo).await? || git.is_merge_in_progress(repo).awai
 
 ## Clone / tags / config / show
 
-```rust
+```rust,ignore
 async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
 async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()>;
 async fn tag_create_annotated(&self, dir: &Path, spec: AnnotatedTag) -> Result<()>;
@@ -561,7 +561,7 @@ async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
   A multi-valued key errors; read those via `run`.
 - **`config_set`** — set a key in the repo's local config (`config <key> <value>`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi, AnnotatedTag, CloneSpec};
 # async fn demo(git: &Git) -> Result<(), processkit::Error> {
@@ -583,7 +583,7 @@ let _ = readme;
 
 ## Discovery
 
-```rust
+```rust,ignore
 async fn version(&self) -> Result<String>;
 async fn capabilities(&self) -> Result<GitCapabilities>;
 async fn common_dir(&self, dir: &Path) -> Result<PathBuf>;
@@ -600,7 +600,7 @@ async fn init(&self, dir: &Path) -> Result<()>;
 - **`git_dir`** — this worktree's git directory (`rev-parse --git-dir`).
 - **`init`** — initialise a repository (`git init`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -614,7 +614,7 @@ let _ = common;
 
 ## Raw escape hatches
 
-```rust
+```rust,ignore
 async fn run(&self, args: &[String]) -> Result<String>;
 async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
 ```
@@ -627,7 +627,7 @@ async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
 These are **not** flag-guarded — the caller owns the argv. The inherent
 `run_args` / `run_raw_args` take `&[&str]` to skip the `Vec<String>` allocation.
 
-```rust
+```rust,ignore
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 let out = git.run(&["describe".into(), "--tags".into()]).await?; // String
@@ -648,7 +648,7 @@ multi-step operations, not 1:1 CLI verbs, so mock their underlying calls instead
   checkout the stash is popped back to restore the original state; on a conflicting
   pop the target branch stays checked out with the stash entry preserved.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_git::Git;
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -658,7 +658,7 @@ git.switch_with_stash(repo, "feature").await?;  // dirty tree comes along
 
 ### Blocking helpers
 
-```rust
+```rust,ignore
 pub fn blocking::worktree_remove(dir: &Path, path: &Path, force: bool) -> std::io::Result<()>;
 ```
 
@@ -831,7 +831,7 @@ Result<()>` (a clear "needs git ≥ 2" error otherwise).
 Options for `worktree_add`. `#[non_exhaustive]` — build it through the constructors,
 not a struct literal.
 
-```rust
+```rust,ignore
 pub fn checkout(path: impl Into<PathBuf>, commitish: impl Into<String>) -> Self;
 pub fn create_branch(path: impl Into<PathBuf>, name: impl Into<String>, commitish: impl Into<String>) -> Self;
 pub fn no_checkout(self) -> Self;   // chainable: register without populating files (--no-checkout)
@@ -848,7 +848,7 @@ pub fn no_checkout(self) -> Self;   // chainable: register without populating fi
 Fields: `path: PathBuf`, `new_branch: Option<String>`, `commitish: Option<String>`,
 `no_checkout: bool`.
 
-```rust
+```rust,ignore
 # use vcs_git::WorktreeAdd;
 let a = WorktreeAdd::checkout("/wt", "main");                       // existing branch
 let b = WorktreeAdd::create_branch("/wt", "feature", "HEAD");       // new branch off HEAD
@@ -860,7 +860,7 @@ let c = WorktreeAdd::checkout("/wt", "main").no_checkout();         // skeleton 
 
 Options for `push`. `#[non_exhaustive]` — build it through the constructors.
 
-```rust
+```rust,ignore
 pub fn branch(name: impl Into<String>) -> Self;                          // push origin <name>
 pub fn refspec(local: impl AsRef<str>, remote_branch: impl AsRef<str>) -> Self; // push origin <local>:<remote_branch>
 pub fn remote(self, remote: impl Into<String>) -> Self;                  // chainable: non-default remote
@@ -870,7 +870,7 @@ pub fn set_upstream(self) -> Self;                                       // chai
 Fields: `remote: String` (defaults to `origin`), `refspec: String`,
 `set_upstream: bool`.
 
-```rust
+```rust,ignore
 # use vcs_git::GitPush;
 let p = GitPush::branch("feature").set_upstream();           // push -u origin feature
 let q = GitPush::refspec("local", "remote_branch").remote("upstream");
@@ -882,7 +882,7 @@ let q = GitPush::refspec("local", "remote_branch").remote("upstream");
 Options for `clone_repo`. `#[non_exhaustive]`, `Default` — build through `new` and
 the chained setters.
 
-```rust
+```rust,ignore
 pub fn new() -> Self;                          // a plain full clone of the default branch
 pub fn branch(self, branch: impl Into<String>) -> Self; // --branch
 pub fn depth(self, depth: u32) -> Self;        // --depth (see local-path caveat below)
@@ -894,7 +894,7 @@ Fields: `branch: Option<String>`, `depth: Option<u32>`, `bare: bool`.
 `depth` is silently ignored by git for a plain local-path source (it warns and
 clones fully); use a `file://` URL to shallow-clone locally.
 
-```rust
+```rust,ignore
 # use vcs_git::CloneSpec;
 let spec = CloneSpec::new().branch("main").depth(1);
 let bare = CloneSpec::new().bare();
@@ -906,7 +906,7 @@ let bare = CloneSpec::new().bare();
 Options for `commit_paths`. `#[non_exhaustive]` — build through `new` and the
 chained setter.
 
-```rust
+```rust,ignore
 pub fn new(paths: impl IntoIterator<Item = impl Into<PathBuf>>, message: impl Into<String>) -> Self;
 pub fn amend(self) -> Self;                    // chainable: amend the previous commit (--amend)
 ```
@@ -914,7 +914,7 @@ pub fn amend(self) -> Self;                    // chainable: amend the previous 
 Fields: `paths: Vec<PathBuf>` (`--only -- <paths>`), `message: String` (`-m`),
 `amend: bool` (`--amend`).
 
-```rust
+```rust,ignore
 # use vcs_git::CommitPaths;
 let c = CommitPaths::new(["src/lib.rs"], "feat: thing");
 let a = CommitPaths::new(["src/lib.rs"], "feat: thing").amend();
@@ -926,7 +926,7 @@ let a = CommitPaths::new(["src/lib.rs"], "feat: thing").amend();
 Options for `merge_commit`. `#[non_exhaustive]` — build through `branch` and the
 chained setters.
 
-```rust
+```rust,ignore
 pub fn branch(name: impl Into<String>) -> Self; // merge --no-edit <name> (default message)
 pub fn no_ff(self) -> Self;                     // chainable: always create a merge commit (--no-ff)
 pub fn message(self, m: impl Into<String>) -> Self; // chainable: merge message (-m)
@@ -935,7 +935,7 @@ pub fn message(self, m: impl Into<String>) -> Self; // chainable: merge message 
 Fields: `branch: String`, `no_ff: bool` (`--no-ff`), `message: Option<String>`
 (`-m`; `None` takes the default message non-interactively via `--no-edit`).
 
-```rust
+```rust,ignore
 # use vcs_git::MergeCommit;
 let m = MergeCommit::branch("feature").no_ff();             // --no-ff, default message
 let n = MergeCommit::branch("feature").message("merge it"); // -m "merge it"
@@ -947,7 +947,7 @@ let n = MergeCommit::branch("feature").message("merge it"); // -m "merge it"
 Options for `merge_no_commit`. `#[non_exhaustive]` — build through `branch` and the
 chained setters.
 
-```rust
+```rust,ignore
 pub fn branch(name: impl Into<String>) -> Self; // merge --no-commit <name>
 pub fn squash(self) -> Self;                    // chainable: stage the squashed result (--squash)
 pub fn no_ff(self) -> Self;                     // chainable: record a real abortable merge (--no-ff)
@@ -958,7 +958,7 @@ Fields: `branch: String`, `squash: bool` (`--squash`; takes precedence over
 `MERGE_HEAD`, so the merge is abortable via `merge_abort`; with `squash` no
 `MERGE_HEAD` is recorded — undo via `reset_merge` / `reset_hard`.
 
-```rust
+```rust,ignore
 # use vcs_git::MergeNoCommit;
 let dry = MergeNoCommit::branch("feature").no_ff();   // abortable dry-run merge
 let sq = MergeNoCommit::branch("feature").squash();   // stage squashed, no MERGE_HEAD
@@ -970,7 +970,7 @@ let sq = MergeNoCommit::branch("feature").squash();   // stage squashed, no MERG
 Options for `tag_create_annotated`. `#[non_exhaustive]` — build through `new` and
 the chained setter.
 
-```rust
+```rust,ignore
 pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self; // tag -a <name> -m <message> at HEAD
 pub fn rev(self, r: impl Into<String>) -> Self;  // chainable: tag <rev> instead of HEAD
 ```
@@ -978,7 +978,7 @@ pub fn rev(self, r: impl Into<String>) -> Self;  // chainable: tag <rev> instead
 Fields: `name: String`, `message: String` (`-m`), `rev: Option<String>` (`<rev>`;
 `None` tags `HEAD`).
 
-```rust
+```rust,ignore
 # use vcs_git::AnnotatedTag;
 let t = AnnotatedTag::new("v1.0.0", "first release");
 let u = AnnotatedTag::new("v1.0.0", "first release").rev("abc123");
@@ -1004,7 +1004,7 @@ of `git check-ref-format`. Rejects a name that is:
 - contains a control character or space, or any of `~ ^ : ? * [ \`,
 - ends with `/` or `.lock`.
 
-```rust
+```rust,ignore
 pub fn new(name: impl Into<String>) -> Result<Self>;
 pub fn as_str(&self) -> &str;
 ```
@@ -1016,12 +1016,12 @@ A pre-validated revision/range expression (`HEAD~2`, `main..feature`). Deliberat
 guarantees the expression is non-empty and cannot be parsed as a flag (no leading
 `-`), matching the internal guard.
 
-```rust
+```rust,ignore
 pub fn new(rev: impl Into<String>) -> Result<Self>;
 pub fn as_str(&self) -> &str;
 ```
 
-```rust
+```rust,ignore
 # use vcs_git::{RefName, RevSpec};
 # fn demo() -> Result<(), processkit::Error> {
 let name = RefName::new("feature/login")?;   // Ok
@@ -1040,22 +1040,22 @@ git writes load-bearing diagnostics to *either* stream on failure, so these free
 functions probe both `stdout` and `stderr` of an `Error::Exit` — call them instead
 of re-implementing the string-scraping yourself.
 
-```rust
+```rust,ignore
 pub fn is_merge_conflict(err: &Error) -> bool;        // a merge/cherry-pick stopped on conflicts
 pub fn is_nothing_to_commit(err: &Error) -> bool;     // a commit found a clean tree
 pub fn is_transient_fetch_error(err: &Error) -> bool; // DNS/timeout/dropped connection — retryable
 ```
 
 `is_transient_fetch_error` also treats a processkit-level `Error::Timeout` as
-retryable. See [Process model & errors](process-model.md) for the `Error` shape.
+retryable. See [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) for the `Error` shape.
 
 ## See also
 
-- [Conflict resolution](conflicts.md) — `vcs_git::conflict`: parse conflict markers
+- [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/) — `vcs_git::conflict`: parse conflict markers
   into structured regions and resolve a chosen side.
-- [Testing & mocking](testing.md) — the `mock` feature's `MockGitApi` and the
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature's `MockGitApi` and the
   `ScriptedRunner` / `RecordingRunner` seams.
-- [Security & hardening](security.md) — `Git::hardened()` and the injection guards.
-- [Process model & errors](process-model.md) — job containment, timeouts, and the
+- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — `Git::hardened()` and the injection guards.
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — job containment, timeouts, and the
   structured `Error`.
-- [the crate README](../crates/git/README.md).
+- [the crate docs](https://docs.rs/vcs-git).

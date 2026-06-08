@@ -13,7 +13,7 @@ optional timeout. The surface is the **lean merge-request lifecycle**; the
 
 [`processkit`]: https://crates.io/crates/processkit
 
-> 📖 **Full guide:** [docs/gitlab.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/gitlab.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-gitlab/latest/vcs_gitlab/guide/)
 
 Inside an async context (every method is `async`):
 

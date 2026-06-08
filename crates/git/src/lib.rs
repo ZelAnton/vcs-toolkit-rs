@@ -1,22 +1,87 @@
-//! `vcs-git` — automate Git from Rust through CLI process execution.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-git` — automate Git from Rust by driving the `git` CLI.
 //!
-//! Async, mockable, and structured-error: consumers depend on the [`GitApi`]
-//! trait and substitute a mock for the real [`Git`] client in tests. Commands
-//! run inside an OS job (via [`processkit`]) so a `git` subprocess is never
-//! orphaned, and honour an optional [timeout](Git::default_timeout).
+//! It shells out to the installed `git` binary and parses its output into typed
+//! values — so you get *git's own* behaviour, config, and credential handling,
+//! not a reimplementation of the object format. Async throughout, structured
+//! errors, and mockable. Every command runs inside an OS **job** (via
+//! [`processkit`]) so a `git` subprocess tree can never be orphaned, and honours
+//! an optional per-client [timeout](Git::default_timeout).
+//!
+//! # The surface
+//!
+//! - **[`GitApi`]** — the object-safe trait every operation lives on. Depend on
+//!   `&dyn GitApi` (or generically on `impl GitApi`) so a test can swap the real
+//!   client for a double. Methods take the working directory as the first
+//!   argument and return typed results ([`StatusEntry`], [`Branch`], [`Commit`],
+//!   [`FileDiff`], [`BlameLine`], …) or a structured [`Error`].
+//! - **[`Git`]** — the real client. [`Git::new`] uses the job-backed runner;
+//!   [`Git::with_runner`] injects a fake one for tests. It is generic over the
+//!   [`ProcessRunner`] seam, defaulting to the production runner.
+//! - **[`GitAt`]** — a cwd-bound view ([`Git::at`]) whose methods drop the
+//!   leading `dir`, so `git.at(dir).status()` reads as `git.status(dir)` — handy
+//!   when one client drives one checkout.
+//! - **Builder specs** for the multi-option commands — [`CommitPaths`],
+//!   [`MergeCommit`] / [`MergeNoCommit`], [`GitPush`], [`CloneSpec`],
+//!   [`WorktreeAdd`], [`AnnotatedTag`] — each `#[non_exhaustive]`, built with a
+//!   constructor + chained setters, named after the flags they emit.
+//! - **[`conflict`]** — a typed conflict-marker model: parse marker soup into
+//!   structured regions, re-render byte-exact, and resolve to a chosen side.
+//! - **[`Git::hardened`]** — a profile for untrusted repositories (hooks off,
+//!   `GIT_*` scrubbed, system config skipped); see the [`guide::security`] guide.
+//!
+//! # Recipes
+//!
+//! Read state — depend on the trait so the same code takes a real client or a mock:
 //!
 //! ```no_run
-//! use vcs_git::{Git, GitApi};
 //! use std::path::Path;
-//!
-//! # async fn run(git: &dyn GitApi) -> Result<(), processkit::Error> {
-//! let branch = git.current_branch(Path::new(".")).await?;
-//! # let _ = branch; Ok(()) }
+//! use vcs_git::{Git, GitApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let git = Git::new();
+//! let dir = Path::new(".");
+//! let branch = git.current_branch(dir).await?;        // the checked-out branch
+//! let dirty = !git.status(dir).await?.is_empty();     // any uncommitted change?
+//! # let _ = (branch, dirty); Ok(()) }
 //! ```
 //!
-//! Two test seams: enable the `mock` feature for a `mockall`-generated
-//! `MockGitApi`, or inject a fake runner with
-//! `Git::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//! Mutate through the builder specs — `fetch` retries transient network failures:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_git::{CommitPaths, Git, GitApi, GitPush};
+//! # async fn demo(git: &Git) -> Result<(), processkit::Error> {
+//! let dir = Path::new(".");
+//! git.fetch(dir).await?;
+//! git.commit_paths(dir, CommitPaths::new(["src/a.rs"], "wip")).await?;
+//! git.push(dir, GitPush::branch("feature").set_upstream()).await?;
+//! # Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! Two seams: enable the **`mock`** feature for a `mockall`-generated
+//! `MockGitApi` (stub whole methods), or inject a
+//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`Git::with_runner`] to
+//! exercise the *real* argv-building and parsing against canned output. The
+//! cross-cutting testing patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # Safety
+//!
+//! Every caller value placed in a bare positional argv slot is refused before
+//! spawning if it is empty or starts with `-` (git would parse it as a flag);
+//! flag-value slots (`-b <name>`) are consumed verbatim and don't need it. For
+//! eager validation at an input boundary, the [`RefName`] / [`RevSpec`] newtypes
+//! validate up front. Paths always go through `--` / pathspec.
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module (and its
+//! [`security`](crate::guide::security) / [`conflicts`](crate::guide::conflicts)
+//! sub-guides).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,6 +94,7 @@ pub use processkit::{Error, ProcessResult, Result};
 // Re-exported under the `cancellation` feature so a consumer can name the token
 // for `default_cancel_on` without taking a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 pub mod conflict;
@@ -3200,4 +3266,16 @@ mod tests {
             .returning(|_| Ok("main".to_string()));
         assert!(on_branch(&mock, "main").await);
     }
+}
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/git.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {
+    #[doc = include_str!("../docs/security.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod security {}
+    #[doc = include_str!("../docs/conflicts.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod conflicts {}
 }

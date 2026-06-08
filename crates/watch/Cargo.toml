@@ -55,3 +55,13 @@ processkit.workspace = true
 async-trait = "0.1"
 # Real throwaway git/jj repositories for the `#[ignore]` integration tests.
 vcs-testkit = { path = "../testkit" }
+
+[package.metadata.docs.rs]
+# Build docs.rs with every feature so the optional surfaces (mock / tracing /
+# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

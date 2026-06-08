@@ -10,7 +10,7 @@ return the structured `Error`, and honour an optional timeout.
 
 [`processkit`]: https://crates.io/crates/processkit
 
-> 📖 **Full guide:** [docs/github.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/github.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-github/latest/vcs_github/guide/)
 > — every command by theme, result types, config types, and worked examples.
 
 Inside an async context (every method is `async`):

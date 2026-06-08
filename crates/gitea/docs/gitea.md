@@ -17,10 +17,10 @@ human-readable output.
 
 The surface is the **lean pull-request lifecycle** `tea` actually supports. It is
 deliberately **narrower** than `vcs-github` / `vcs-gitlab` — see the capability
-note below. The [`vcs-forge`](forge.md) facade unifies it with the other two.
+note below. The [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade unifies it with the other two.
 
 Consumers code against the [`GiteaApi`] trait and substitute a fake in tests. See
-[Testing & mocking](testing.md) for the two seams (the `mock` feature →
+[Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) for the two seams (the `mock` feature →
 `MockGiteaApi`, or a `ScriptedRunner`).
 
 Requires the `tea` binary on `PATH`, configured via `tea login add`.
@@ -45,12 +45,12 @@ positional and always lists). Consequences:
   number — a missing number is an `Error::Parse`. (`issue_view`, by contrast, is
   a *first-class* `tea issues <index>` — see [Issues & releases](#issues--releases).)
 - **`repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are simply
-  absent** from `GiteaApi`. Through the [`vcs-forge`](forge.md) facade they return
+  absent** from `GiteaApi`. Through the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade they return
   `Error::Unsupported` for the Gitea backend (`err.is_unsupported()`).
 
 ## Construction
 
-```rust
+```rust,ignore
 use vcs_gitea::Gitea;
 let tea = Gitea::new();                 // real job-backed runner
 ```
@@ -60,7 +60,7 @@ let tea = Gitea::new();                 // real job-backed runner
 
 ## Auth & version
 
-```rust
+```rust,ignore
 # use vcs_gitea::{Gitea, GiteaApi};
 # async fn demo(tea: &Gitea) -> Result<(), processkit::Error> {
 let v = tea.version().await?;          // String
@@ -87,7 +87,7 @@ configured.
 them with `--fields`). tea folds the merge flag into the `state` column: a merged
 PR reads `state="merged"` (not `"closed"`), and `merged` is derived from that.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
 # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
@@ -132,7 +132,7 @@ single-issue view** — `tea issues <number>` (the bare-index form), which retur
 final line is the new issue's URL, but there is no flag to shape the output, so it
 is **not** a parsed URL. There is intentionally **no `release_view`**: `tea
 releases` takes no positional and always lists, so a single-release-by-tag view
-doesn't exist in `tea` (the [`vcs-forge`](forge.md) facade reports it
+doesn't exist in `tea` (the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade reports it
 `Unsupported`).
 
 `Issue` carries `number` (tea's `index`), `title`, `state` (`"open"`/`"closed"`),
@@ -145,7 +145,7 @@ doesn't exist in `tea` (the [`vcs-forge`](forge.md) facade reports it
 list` exposes no release-page URL (only a tar/zip download URL, which is
 deliberately not surfaced).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_gitea::{Gitea, GiteaApi};
 # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
@@ -167,9 +167,9 @@ for rel in tea.release_list(repo).await? {
 
 ## See also
 
-- [vcs-forge guide](forge.md) — the facade; note the Gitea `Unsupported` ops.
-- [vcs-github guide](github.md) — the fuller-surfaced sibling this mirrors.
-- [Testing & mocking](testing.md) — the `mock` feature and the `ScriptedRunner` seam.
-- [Process model & errors](process-model.md) — OS-job containment, timeouts, and
+- [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the facade; note the Gitea `Unsupported` ops.
+- [vcs-github guide](https://docs.rs/vcs-github/latest/vcs_github/guide/) — the fuller-surfaced sibling this mirrors.
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature and the `ScriptedRunner` seam.
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — OS-job containment, timeouts, and
   the `Error` / `ProcessResult` shapes.
-- [crate README](../crates/gitea/README.md) — quickstart and crate-level docs.
+- [crate docs](https://docs.rs/vcs-gitea) — quickstart and crate-level docs.

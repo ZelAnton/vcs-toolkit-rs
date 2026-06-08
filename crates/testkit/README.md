@@ -3,9 +3,9 @@
 Test fixtures for git/jj automation: throwaway repositories for integration
 tests.
 
-> 📖 **Full guide:** [docs/testkit.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/testkit.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/)
 > — every fixture with examples, plus the
-> [Testing & mocking](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/testing.md) guide.
+> [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) guide.
 
 - **`TempDir`** — a unique, self-cleaning temp directory (pid + counter, no
   temp-dir dependency).

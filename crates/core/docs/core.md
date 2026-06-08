@@ -7,13 +7,14 @@ codes against "the repository" rather than against `git` or `jj` specifically.
 
 It is deliberately a thin common surface — not a replacement for the underlying
 clients. Rich, tool-specific operations (a full `merge`, jj's `op restore`,
-range/revset-scoped queries) stay on [`vcs-git`](git.md) / [`vcs-jj`](jj.md) and
+range/revset-scoped queries) stay on [`vcs-git`](https://docs.rs/vcs-git/latest/vcs_git/guide/) / [`vcs-jj`](https://docs.rs/vcs-jj/latest/vcs_jj/guide/) and
 are reachable through escape hatches on the handle. Reach for the facade when the
 code must work on both backends; drop to the raw client the moment you need
 power only one of them offers.
 
-Examples use `vcs_core::Result<()>` and hidden `# ` setup lines; they are
-illustrative, not compiled.
+Examples use `vcs_core::Result<()>` and hidden `# ` setup lines. The `no_run`
+ones compile against this crate's API (but don't spawn `git`/`jj`); a few
+signature snippets are marked `ignore`.
 
 ```rust,no_run
 use vcs_core::Repo;
@@ -25,7 +26,7 @@ println!("backend: {}", repo.kind().as_str()); // "git" / "jj"
 
 ## Detection
 
-```rust
+```rust,ignore
 pub fn detect(start: &Path) -> Option<Located>
 ```
 
@@ -40,7 +41,7 @@ subprocess is ever spawned.
 ancestors. A relative path like `"."` has no ancestor chain — only its own
 directory is checked. (`Repo::open` absolutises for you; `detect` does not.)
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct Located {
     pub kind: BackendKind, // Git / Jj
@@ -51,7 +52,7 @@ pub struct Located {
 `BackendKind` is `Git` or `Jj`, with `as_str(self) -> &'static str` returning
 `"git"` / `"jj"`.
 
-```rust,no_run
+```rust,ignore
 # use std::path::Path;
 # use vcs_core::{detect, BackendKind};
 # fn run() {
@@ -66,7 +67,7 @@ if let Some(loc) = detect(Path::new("/abs/path/to/checkout/src")) {
 
 ## Opening a repo
 
-```rust
+```rust,ignore
 impl Repo<JobRunner> {
     pub fn open(dir: impl AsRef<Path>) -> Result<Self>;
 }
@@ -80,14 +81,14 @@ to the filesystem root.
 For tests or a pre-configured client, build a handle from an explicit client —
 these are generic over the `ProcessRunner` so you can inject a fake:
 
-```rust
+```rust,ignore
 pub fn from_git(root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Git<R>) -> Self;
 pub fn from_jj (root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Jj<R>)  -> Self;
 ```
 
 ### Properties and re-anchoring
 
-```rust
+```rust,ignore
 pub fn kind(&self) -> BackendKind;  // which backend drives this handle
 pub fn root(&self) -> &Path;        // the repo root detected at open time
 pub fn cwd(&self)  -> &Path;        // the directory operations run against
@@ -110,7 +111,7 @@ let dirty = wt.has_uncommitted_changes().await?;
 The facade only covers what both tools share. For anything else — tool-specific
 operations, range queries, jj transactions — drop to the typed client:
 
-```rust
+```rust,ignore
 pub fn git(&self) -> Option<&Git<R>>;       // None when jj-backed
 pub fn jj(&self)  -> Option<&Jj<R>>;        // None when git-backed
 pub fn git_at(&self) -> Option<GitAt<'_, R>>; // bound to self.cwd(); None when jj-backed
@@ -137,7 +138,7 @@ git.fetch().await?;
 
 ## Status & files
 
-```rust
+```rust,ignore
 pub async fn current_branch(&self) -> Result<Option<String>>;
 pub async fn trunk(&self)          -> Result<Option<String>>;
 pub async fn local_branches(&self) -> Result<Vec<String>>;
@@ -195,7 +196,7 @@ println!("{} files, +{} -{}", stat.files_changed, stat.insertions, stat.deletion
 
 ## Uncommitted state
 
-```rust
+```rust,ignore
 pub async fn has_uncommitted_changes(&self) -> Result<bool>;
 pub async fn has_tracked_changes(&self)     -> Result<bool>;
 ```
@@ -210,7 +211,7 @@ files, so it has no untracked concept and this is identical to
 
 ## Branch mutations
 
-```rust
+```rust,ignore
 pub async fn delete_branch(&self, name: &str, force: bool) -> Result<()>;
 pub async fn rename_branch(&self, old: &str, new: &str)     -> Result<()>;
 ```
@@ -222,7 +223,7 @@ to git only** (`branch -D` vs `-d`); jj has no force and ignores the flag.
 
 ## Commits & paths
 
-```rust
+```rust,ignore
 pub async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()>;
 ```
 
@@ -231,7 +232,7 @@ Commit exactly `paths` with `message` (git `commit --only`, jj
 
 ## Remotes
 
-```rust
+```rust,ignore
 pub async fn fetch(&self)                          -> Result<()>;
 pub async fn fetch_from(&self, remote: &str)       -> Result<()>;
 pub async fn fetch_remote_branch(&self, branch: &str) -> Result<()>;
@@ -255,7 +256,7 @@ higher-level flow, classify with `Error::is_transient_fetch_error`.
 
 ## Checkout / rebase
 
-```rust
+```rust,ignore
 pub async fn checkout(&self, reference: &str) -> Result<()>;
 pub async fn rebase(&self, onto: &str)        -> Result<()>;
 ```
@@ -269,7 +270,7 @@ dispatches to whichever the backend uses.
 
 ## Merge probe & operation state
 
-```rust
+```rust,ignore
 pub async fn try_merge(&self, source: &str)    -> Result<MergeProbe>;
 pub async fn in_progress_state(&self)          -> Result<OperationState>;
 pub async fn continue_in_progress(&self)       -> Result<OperationState>;
@@ -287,7 +288,7 @@ merge would do.
 - A failing *rollback* **propagates as an error** rather than returning a result
   that would misdescribe the on-disk state.
 
-```rust,no_run
+```rust,ignore
 # use vcs_core::MergeProbe;
 # async fn f(repo: vcs_core::Repo) -> vcs_core::Result<()> {
 match repo.try_merge("feature").await? {
@@ -326,7 +327,7 @@ progress.
 
 ## Worktrees / workspaces
 
-```rust
+```rust,ignore
 pub async fn list_worktrees(&self)  -> Result<Vec<WorktreeInfo>>;
 pub async fn create_worktree(&self, path: &Path, branch: &str, base: &str) -> Result<CreateOutcome>;
 pub async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()>;
@@ -381,7 +382,7 @@ All facade DTOs are `#[non_exhaustive]` — construct via the facade, match with
 
 ### `FileChange`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct FileChange {
     pub path: String,             // the path (the *new* path for a rename)
@@ -392,7 +393,7 @@ pub struct FileChange {
 
 ### `DiffStat`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct DiffStat {
     pub files_changed: usize,
@@ -405,7 +406,7 @@ pub struct DiffStat {
 
 ### `WorktreeInfo`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct WorktreeInfo {
     pub path: PathBuf,             // working copy of the worktree
@@ -430,7 +431,7 @@ Unifies the backends' different models of "mid-operation":
 
 The batched state from [`snapshot`](#status--files). `#[non_exhaustive]`.
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct RepoSnapshot {
     pub head: Option<String>,      // working-copy commit's FULL oid (both backends); None on an unborn git repo; truncate for display
@@ -467,11 +468,11 @@ The facade error wraps `processkit::Error` and adds detection failures:
 internals: `is_merge_conflict()`, `is_nothing_to_commit()`, `is_transient_fetch_error()`
 (named to match the wrapper classifiers — one name per concept workspace-wide).
 `Result<T>` is `std::result::Result<T, Error>`. See
-[Process model & errors](process-model.md).
+[Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/).
 
 ### The `VcsRepo` trait
 
-```rust
+```rust,ignore
 #[async_trait::async_trait]
 pub trait VcsRepo: Send + Sync { /* … */ }
 ```
@@ -529,8 +530,8 @@ much context the call site already holds:
 
 ## See also
 
-- [vcs-git guide](git.md)
-- [vcs-jj guide](jj.md)
-- [Testing & mocking](testing.md)
-- [Process model & errors](process-model.md)
-- [crate README](../crates/core/README.md)
+- [vcs-git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/)
+- [vcs-jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/)
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/)
+- [crate docs](https://docs.rs/vcs-core)

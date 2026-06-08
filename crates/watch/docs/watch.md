@@ -2,11 +2,11 @@
 
 `vcs-watch` filesystem-watches a git or jj repository and streams **typed
 state-change events** — the foundation for prompts, status bars, TUIs, and
-daemons. It's built on [`vcs-core`](core.md): on each filesystem change it
-**re-queries** the repo's batched [`snapshot`](core.md#status--files), **diffs** it
+daemons. It's built on [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/): on each filesystem change it
+**re-queries** the repo's batched [`snapshot`](https://docs.rs/vcs-core/latest/vcs_core/guide/), **diffs** it
 against the previous state, and emits the deltas.
 
-```rust
+```rust,ignore
 use vcs_core::Repo;
 use vcs_watch::{RepoWatcher, RepoEvent};
 
@@ -32,7 +32,7 @@ while let Some(change) = watcher.recv().await {
 Interpreting raw filesystem events is a trap: git writes refs through a temp-file
 rename, churns `index.lock`, and appends to `.git/logs/` constantly. `vcs-watch`
 treats **any** event as "something changed — re-check", coalesces the burst, takes
-one fresh [`RepoSnapshot`](core.md#reposnapshot) (+ the branch list), and diffs.
+one fresh [`RepoSnapshot`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (+ the branch list), and diffs.
 Noise that doesn't change observable state produces **no** event. This also means
 a stray event can't desync the consumer — every emission carries the true current
 state.
@@ -73,7 +73,7 @@ operation, conflict; created/deleted names sorted).
 
 ## Building the watcher
 
-```rust
+```rust,ignore
 # use std::time::Duration;
 # use vcs_core::Repo;
 # use vcs_watch::RepoWatcher;
@@ -147,6 +147,6 @@ are observed from a watched worktree too.
 
 ## See also
 
-- [vcs-core guide](core.md) — the `Repo`/`RepoSnapshot` it re-queries.
-- [Cookbook](cookbook.md) — a live status-line recipe.
-- [crate README](../crates/watch/README.md) — quickstart.
+- [vcs-core guide](https://docs.rs/vcs-core/latest/vcs_core/guide/) — the `Repo`/`RepoSnapshot` it re-queries.
+- [Cookbook](https://docs.rs/vcs-core/latest/vcs_core/guide/cookbook/) — a live status-line recipe.
+- [crate docs](https://docs.rs/vcs-watch) — quickstart.

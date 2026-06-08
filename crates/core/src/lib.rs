@@ -1,37 +1,165 @@
-//! `vcs-core` — a unified facade over [`vcs-git`](vcs_git) and [`vcs-jj`](vcs_jj).
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-core` — one backend-agnostic facade over [`vcs-git`](vcs_git) and
+//! [`vcs-jj`](vcs_jj).
 //!
-//! Two pieces both downstream tools kept re-implementing:
+//! It [`detect`]s whether a directory is a git or a jj checkout, then dispatches
+//! the operations *both* tools share to whichever backend is present — returning
+//! backend-agnostic DTOs ([`RepoSnapshot`], [`FileChange`], [`MergeProbe`], …), so
+//! a caller codes against "the repository" instead of against `git` or `jj`. Async
+//! throughout, structured errors, and every subprocess inherits the underlying
+//! client's OS-**job** containment (via [`processkit`]) so no `git`/`jj` tree is
+//! ever orphaned.
 //!
-//! * [`detect`] — walk up from a directory to find a `.git`/`.jj` repository
-//!   (jj wins when colocated), returning the [`BackendKind`] and root.
-//! * [`Repo`] — a cwd-bound handle that dispatches the *common* VCS operations
-//!   (status, diff stat, partial commit, worktree create/remove, …) to whichever
-//!   backend is present, returning backend-agnostic DTOs. Open it
-//!   once with [`Repo::open`]; re-anchor it to another directory with
-//!   [`Repo::at`] without threading a `dir` argument through every call.
+//! It is the **honest least-common-denominator**, not a god-object. The common
+//! surface carries only what unifies *without lying*; operations the backends
+//! model too differently are deliberately left on the bound per-tool handles
+//! rather than faked (see [below](#whats-deliberately-not-unified)). Reach for the
+//! facade when code must work on both backends; drop to the raw client the moment
+//! you need power only one of them offers.
 //!
-//! Tool-specific operations stay on the underlying typed clients, reachable via
-//! the cwd-bound [`Repo::git_at`] / [`Repo::jj_at`] handles (or the raw
-//! [`Repo::git`] / [`Repo::jj`] escape hatches). Some operations are deliberately
-//! *not* on the common surface because the backends model them too differently to
-//! unify without lying: a full `merge` (jj composes `new` + `squash` + bookmark
-//! moves — though the conflict *probe* is unified as [`Repo::try_merge`]),
-//! operation rollback (jj's `op restore` has no faithful git analogue; see
-//! [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client), and
-//! range/revset-scoped queries
-//! (`commit_count`, diff stats over a range — git's `a..b` and jj's revsets
-//! aren't interchangeable). Reach those through the bound handles.
+//! # Mental model
+//!
+//! The surface is three layers, narrowing from "which tool is this?" to "do the
+//! thing":
+//!
+//! - **[`detect`]** — walk up from a directory to the filesystem root for a
+//!   `.git`/`.jj` repo (jj wins when colocated — it's the tool driving the working
+//!   copy). Pure filesystem probing, no subprocess; yields a [`Located`]
+//!   ([`BackendKind`] + worktree root).
+//! - **[`Repo`]** — the cwd-bound facade handle, the thing you hold. Open one with
+//!   [`Repo::open`] (real job-backed runner) or build it over an explicit client
+//!   with [`Repo::from_git`] / [`Repo::from_jj`] (the test seam). Re-anchor it to
+//!   another directory cheaply with [`Repo::at`] — the backend is shared behind an
+//!   `Arc`, so threading work across worktrees never re-detects or rebuilds the
+//!   client. Inspect it with [`kind`](Repo::kind) / [`root`](Repo::root) /
+//!   [`cwd`](Repo::cwd).
+//! - **[`VcsRepo`]** — the same common surface as an object-safe trait, so a
+//!   consumer can hold a `Box<dyn VcsRepo>` / `&dyn VcsRepo` without naming the
+//!   [`ProcessRunner`] generic. Every method mirrors the like-named inherent method
+//!   on [`Repo`]; it adds nothing but the abstraction boundary.
+//!
+//! ## The common operations
+//!
+//! All on [`Repo`] (and [`VcsRepo`]), dir-free, dispatched per backend:
+//!
+//! - **Refs** — [`current_branch`](Repo::current_branch),
+//!   [`trunk`](Repo::trunk), [`local_branches`](Repo::local_branches),
+//!   [`branch_exists`](Repo::branch_exists),
+//!   [`delete_branch`](Repo::delete_branch),
+//!   [`rename_branch`](Repo::rename_branch) (branch on git, bookmark on jj).
+//! - **Status** — [`changed_files`](Repo::changed_files),
+//!   [`diff_stat`](Repo::diff_stat),
+//!   [`has_uncommitted_changes`](Repo::has_uncommitted_changes),
+//!   [`has_tracked_changes`](Repo::has_tracked_changes),
+//!   [`conflicted_files`](Repo::conflicted_files), and
+//!   [`snapshot`](Repo::snapshot) — a **batched** prompt/status-bar read of the
+//!   lot in one or two spawns.
+//! - **Mutations** — [`commit_paths`](Repo::commit_paths) (partial commit),
+//!   [`fetch`](Repo::fetch) / [`fetch_from`](Repo::fetch_from) /
+//!   [`fetch_remote_branch`](Repo::fetch_remote_branch) /
+//!   [`push`](Repo::push), [`checkout`](Repo::checkout),
+//!   [`rebase`](Repo::rebase).
+//! - **Merge & operation state** — [`try_merge`](Repo::try_merge) (a
+//!   trace-free conflict probe → [`MergeProbe`]),
+//!   [`in_progress_state`](Repo::in_progress_state) /
+//!   [`abort_in_progress`](Repo::abort_in_progress) /
+//!   [`continue_in_progress`](Repo::continue_in_progress) → [`OperationState`].
+//! - **Worktrees / workspaces** — [`list_worktrees`](Repo::list_worktrees),
+//!   [`create_worktree`](Repo::create_worktree),
+//!   [`remove_worktree`](Repo::remove_worktree), and the **synchronous**
+//!   [`cleanup_worktree_blocking`](Repo::cleanup_worktree_blocking) for a `Drop`
+//!   guard that cannot `.await`.
+//!
+//! Because the backends genuinely diverge in places, several common methods carry
+//! a documented asymmetry (e.g. `upstream`/`ahead`/`behind` are always `None` on
+//! jj; [`diff_stat`](Repo::diff_stat) excludes untracked files on git but not jj;
+//! [`in_progress_state`](Repo::in_progress_state) never returns `Conflict` on git).
+//! The method docs spell each one out — the facade unifies the *shape*, not away
+//! the truth.
+//!
+//! ## The escape hatches
+//!
+//! Tool-specific work reaches the underlying typed clients without adding
+//! `vcs-git`/`vcs-jj` as separate dependencies (both are re-exported):
+//! [`git_at`](Repo::git_at) / [`jj_at`](Repo::jj_at) hand out a cwd-bound view
+//! ([`GitAt`] / [`JjAt`], `dir` dropped); the raw
+//! [`git`](Repo::git) / [`jj`](Repo::jj) hand out a borrow of the client itself.
+//! Each returns `None` for the other backend.
+//!
+//! ## What's deliberately *not* unified
+//!
+//! Three families stay off the common surface because no honest single shape
+//! exists — reach them through the bound handles:
+//!
+//! - **Full `merge`** — jj composes `new` + `squash` + bookmark moves; git runs a
+//!   single command. Only the *conflict probe* unifies, as
+//!   [`try_merge`](Repo::try_merge).
+//! - **Operation rollback** — jj's `op restore` has no faithful git analogue; use
+//!   [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client.
+//! - **Range / revset queries** — commit counts and diff stats over a range: git's
+//!   `a..b` and jj's revsets aren't interchangeable, so neither is forced onto a
+//!   shared signature.
+//!
+//! # Recipes
+//!
+//! Open a repo and read a [`snapshot`](Repo::snapshot) for a one-line prompt:
 //!
 //! ```no_run
 //! use vcs_core::Repo;
-//! # fn run() -> vcs_core::Result<()> {
-//! let repo = Repo::open(".")?;
-//! # let _ = repo.kind();
+//! # async fn demo() -> vcs_core::Result<()> {
+//! let repo = Repo::open(".")?;            // detects git vs jj
+//! let s = repo.snapshot().await?;         // one or two spawns, not a call per field
+//! let branch = s.branch.as_deref().unwrap_or("(detached)");
+//! let head = s.head.as_deref().map(|h| &h[..7.min(h.len())]).unwrap_or("-");
+//! println!("{}@{head} {}", branch, if s.dirty { "*" } else { "" });
 //! # Ok(()) }
 //! ```
 //!
-//! The handle is generic over the [`ProcessRunner`] so tests can inject a fake;
-//! [`Repo::open`] uses the real job-backed runner.
+//! Probe a merge for conflicts (trace-free), or spin up a worktree:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_core::{MergeProbe, Repo};
+//! # async fn demo(repo: &Repo) -> vcs_core::Result<()> {
+//! match repo.try_merge("feature").await? {
+//!     MergeProbe::Clean            => println!("merges cleanly"),
+//!     MergeProbe::Conflicts(paths) => println!("would conflict in {paths:?}"),
+//!     _                            => {} // #[non_exhaustive]
+//! }
+//! let wt = repo.create_worktree(Path::new("/tmp/feat"), "feature", "main").await?;
+//! # let _ = wt;
+//! # Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! There is **no mock feature** on the facade traits — the runner is the seam.
+//! Build a [`Repo`] over a fake [`ProcessRunner`] with [`Repo::from_git`] /
+//! [`Repo::from_jj`] (e.g. a [`ScriptedRunner`](processkit::ScriptedRunner)
+//! replying to canned argv), so the *real* per-backend dispatch, argv-building and
+//! parsing run against canned output — exactly what a mocked `VcsRepo` would skip.
+//! The cross-cutting patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! ```no_run
+//! use processkit::{Reply, ScriptedRunner};
+//! use vcs_core::{vcs_git::Git, Repo};
+//! # async fn demo() -> vcs_core::Result<()> {
+//! let runner = ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0"));
+//! let repo = Repo::from_git("/repo", "/repo", Git::with_runner(runner));
+//! assert!(repo.has_uncommitted_changes().await?);
+//! # Ok(()) }
+//! ```
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module, which walks every operation in depth
+//! and hosts the cross-cutting sub-guides: a [`cookbook`](guide::cookbook) of
+//! end-to-end flows, the [`process_model`](guide::process_model) (job containment,
+//! errors, cancellation), [`positioning`](guide::positioning) (facade-vs-raw-client
+//! and the three call shapes), and the [`stability`](guide::stability) contract.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,6 +191,7 @@ pub use vcs_jj;
 // name the token for a `default_cancel_on` client (built via `Git`/`Jj`, then
 // passed to `Repo::from_git`/`from_jj`) without a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 /// The result of [`detect`]: which backend, and the repository root it was found
@@ -1582,4 +1711,22 @@ mod tests {
         // A non-Vcs error classifies as none of them.
         assert!(!Error::NotARepository("/x".into()).is_merge_conflict());
     }
+}
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/core.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {
+    #[doc = include_str!("../docs/cookbook.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod cookbook {}
+    #[doc = include_str!("../docs/process-model.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod process_model {}
+    #[doc = include_str!("../docs/positioning.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod positioning {}
+    #[doc = include_str!("../docs/stability.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod stability {}
 }

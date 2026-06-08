@@ -11,7 +11,7 @@ question — pick the cheapest one that proves what you need.
 | [The `mock` feature](#2-the-mock-feature) | whole methods (`mockall`) | logic given a method's return, ignoring argv |
 | [Inject a runner](#3-inject-a-runner) | the process, not the method | the real argv-building + output parsing |
 
-A fourth path — real binaries through [vcs-testkit](testkit.md) fixtures — is for
+A fourth path — real binaries through [vcs-testkit](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/) fixtures — is for
 the handful of end-to-end checks the seams above can't cover; see
 [below](#integration-tests-with-real-binaries).
 
@@ -25,7 +25,7 @@ Production code takes `&dyn GitApi` / `&dyn JjApi` / `&dyn GitHubApi` (or
 whatever stand-in is convenient. This is the seam that makes the other two
 possible.
 
-```rust
+```rust,ignore
 use std::path::Path;
 use vcs_git::{Git, GitApi};
 
@@ -83,7 +83,7 @@ The trait is annotated `#[cfg_attr(feature = "mock", mockall::automock)]`, so th
 mock only exists under the feature. Stub a method and drive code that depends on
 the trait:
 
-```rust
+```rust,ignore
 use std::path::Path;
 use vcs_git::{GitApi, MockGitApi};
 
@@ -126,7 +126,7 @@ matches a call when the argv contains those substrings, and replies with a
 
 ### git
 
-```rust
+```rust,ignore
 use processkit::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
@@ -144,7 +144,7 @@ use vcs_git::{Git, GitApi};
 
 ### jj
 
-```rust
+```rust,ignore
 use processkit::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_jj::{Jj, JjApi};
@@ -163,7 +163,7 @@ use vcs_jj::{Jj, JjApi};
 
 ### github
 
-```rust
+```rust,ignore
 use processkit::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_github::{GitHub, GitHubApi};
@@ -187,7 +187,7 @@ a `ScriptedRunner` with per-call rules). Read `rec.calls()` (a slice of
 invocations) or `rec.only_call()` when exactly one is expected; each invocation
 exposes `args_str()`, `cwd`, and `envs`.
 
-```rust
+```rust,ignore
 use processkit::{RecordingRunner, Reply};
 use std::path::Path;
 use vcs_github::{GitHub, GitHubApi, PrCreate};
@@ -209,7 +209,7 @@ use vcs_github::{GitHub, GitHubApi, PrCreate};
 The same applies to env and cwd. A git example asserting a flag's effect, the
 exact ref, and an injected environment variable:
 
-```rust
+```rust,ignore
 use processkit::{RecordingRunner, Reply};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
@@ -276,7 +276,7 @@ with empty success and executes nothing. Add `.on(…)` rules for the specific
 calls that need a realistic reply (a branch name, a JSON blob, a non-zero exit);
 everything else falls through to the fallback.
 
-```rust
+```rust,ignore
 use processkit::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
@@ -312,11 +312,11 @@ want to assert *which* commands the flow would have run.
 
 When a check genuinely needs the real `git` / `jj` / `gh` — output formats,
 version-specific behaviour, a true push/fetch round-trip — build the scenario
-with [vcs-testkit](testkit.md) fixtures and gate it behind `#[ignore]` so a
+with [vcs-testkit](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/) fixtures and gate it behind `#[ignore]` so a
 hermetic CI without the binaries stays green. Run them locally (or in the
 binary-equipped CI lane) with `cargo test -- --ignored`.
 
-```rust
+```rust,ignore
 use vcs_testkit::{BareRemote, GitSandbox};
 
 #[test]
@@ -335,10 +335,10 @@ fn fetch_brings_back_the_seed() {
 
 CI runs the `--ignored` suites against a **matrix of jj versions** (oldest
 supported … latest) plus an older-git image, so CLI/template drift is caught in
-the parsers before users hit it — see the [workspace README](../README.md).
+the parsers before users hit it — see the [workspace README](https://github.com/ZelAnton/vcs-toolkit-rs#readme).
 
 ---
 
-See also: [vcs-testkit fixtures](testkit.md),
-[Process model & errors](process-model.md), and the per-crate guides
-[git](git.md) / [jj](jj.md) / [github](github.md).
+See also: [vcs-testkit fixtures](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/),
+[Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/), and the per-crate guides
+[git](https://docs.rs/vcs-git/latest/vcs_git/guide/) / [jj](https://docs.rs/vcs-jj/latest/vcs_jj/guide/) / [github](https://docs.rs/vcs-github/latest/vcs_github/guide/).

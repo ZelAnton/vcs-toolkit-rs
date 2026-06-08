@@ -11,7 +11,7 @@ plus CI status), issues (list / view / create), and releases (list / view) — t
 whichever CLI backs it, returning forge-agnostic DTOs ([`ForgePr`],
 [`ForgeIssue`], [`ForgeRelease`], [`ForgeRepo`], [`CiStatus`]).
 
-> 📖 **Full guide:** [docs/forge.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/forge.md)
+> 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 
 A forge has **no filesystem marker** (it's the remote host), so a `Forge` is
 constructed explicitly — optionally guided by `ForgeKind::from_remote_url` on a

@@ -46,3 +46,13 @@ vcs-testkit = { path = "../testkit" }
 # Property-based fuzzing of the pure parsers (panic-freedom on arbitrary input,
 # byte-exact conflict roundtrip). Stable Rust, dev-only.
 proptest = "1"
+
+[package.metadata.docs.rs]
+# Build docs.rs with every feature so the optional surfaces (mock / tracing /
+# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

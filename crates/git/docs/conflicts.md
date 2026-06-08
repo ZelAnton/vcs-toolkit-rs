@@ -53,7 +53,7 @@ separator.
 
 ### Types
 
-```rust
+```rust,ignore
 pub enum ResolutionSide { Ours, Base, Theirs }   // Base is diff3/zdiff3 only
 
 pub enum ConflictSegment {
@@ -81,7 +81,7 @@ hand-built region can't exist and `render` can stay byte-exact.
 
 ### Functions
 
-```rust
+```rust,ignore
 pub fn has_conflict_markers(content: &str) -> bool;
 pub fn parse_conflicts(content: &str) -> Result<Vec<ConflictSegment>>;
 pub fn render(segments: &[ConflictSegment]) -> String;
@@ -98,7 +98,7 @@ when you ask for `Base` on a 2-way `merge`-style conflict that records none.
 
 Detect, then parse:
 
-```rust
+```rust,ignore
 # use vcs_git::conflict::{has_conflict_markers, parse_conflicts};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 if has_conflict_markers(content) {
@@ -110,7 +110,7 @@ if has_conflict_markers(content) {
 
 Iterate regions, printing each side:
 
-```rust
+```rust,ignore
 # use vcs_git::conflict::{parse_conflicts, ConflictSegment};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 for segment in parse_conflicts(content)? {
@@ -127,7 +127,7 @@ for segment in parse_conflicts(content)? {
 
 Resolve every region to ours:
 
-```rust
+```rust,ignore
 # use vcs_git::conflict::{parse_conflicts, resolve, ResolutionSide};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 let segments = parse_conflicts(content)?;
@@ -138,7 +138,7 @@ let resolved = resolve(&segments, ResolutionSide::Ours)?;   // String, write it 
 
 The round-trip invariant, made concrete:
 
-```rust
+```rust,ignore
 # use vcs_git::conflict::{parse_conflicts, render};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 let segments = parse_conflicts(content)?;
@@ -179,7 +179,7 @@ contains marker-like runs, so a shorter run is content, not a marker.
 
 ### Types
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub enum JjConflictSection {
     Diff {                             // `%%%%%%%` — one side as a unified diff
@@ -213,7 +213,7 @@ pub enum JjResolution {
 `JjConflictRegion` carries two materializers — they apply the recorded diff so
 you don't reason about `-`/`+` prefixes yourself:
 
-```rust
+```rust,ignore
 impl JjConflictRegion {
     pub fn sides(&self) -> Vec<Vec<String>>;   // each side's content, file order
     pub fn base(&self) -> Option<Vec<String>>; // the base, when one is recorded
@@ -228,7 +228,7 @@ region records neither.
 
 ### Functions
 
-```rust
+```rust,ignore
 pub fn has_conflict_markers(content: &str) -> bool;
 pub fn parse_conflicts(content: &str) -> Result<Vec<JjConflictSegment>>;
 pub fn render(segments: &[JjConflictSegment]) -> String;
@@ -247,7 +247,7 @@ conflict number and its side count.
 
 Parse, then materialize each side and the base — no prefix-stripping by hand:
 
-```rust
+```rust,ignore
 # use vcs_jj::conflict::{parse_conflicts, JjConflictSegment};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 for segment in parse_conflicts(content)? {
@@ -265,7 +265,7 @@ for segment in parse_conflicts(content)? {
 
 Resolve to the first side, or to the base:
 
-```rust
+```rust,ignore
 # use vcs_jj::conflict::{parse_conflicts, resolve, JjResolution};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 let segments = parse_conflicts(content)?;
@@ -277,7 +277,7 @@ let base   = resolve(&segments, JjResolution::Base)?;      // errors if none rec
 
 Round-trip — exact even with a conflict at EOF and no trailing newline:
 
-```rust
+```rust,ignore
 # use vcs_jj::conflict::{parse_conflicts, render};
 # fn demo(content: &str) -> Result<(), processkit::Error> {
 let segments = parse_conflicts(content)?;
@@ -293,7 +293,7 @@ client crate, then hand them over.
 git: list the unmerged paths, read each file's working-tree content (the worktree
 holds the conflict markers), and parse:
 
-```rust
+```rust,ignore
 # use std::{fs, path::Path};
 # use vcs_git::{Git, GitApi, conflict};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
@@ -313,7 +313,7 @@ want a stage rather than the worktree.
 
 jj: list conflicted paths in a revset, materialize each, and parse:
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi, conflict};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -327,7 +327,7 @@ for path in jj.resolve_list(repo, "@").await? {           // Vec<String> of path
 ```
 
 For the full client surface — handles, mocking, error shapes — see the per-crate
-guides: [vcs-git guide](git.md) and [vcs-jj guide](jj.md).
+guides: [vcs-git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/) and [vcs-jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/).
 
 ## Robustness
 
@@ -347,11 +347,11 @@ The round-trip is the load-bearing invariant and is pinned three ways:
 - **`cargo-fuzz`** targets in `fuzz/` for continuous coverage beyond the
   proptest corpus.
 
-See the [workspace README](../README.md) for how to run the build, tests, and
+See the [workspace README](https://github.com/ZelAnton/vcs-toolkit-rs#readme) for how to run the build, tests, and
 fuzz targets.
 
 ## See also
 
-- [vcs-git guide](git.md)
-- [vcs-jj guide](jj.md)
-- [Testing & mocking](testing.md)
+- [vcs-git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/)
+- [vcs-jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/)

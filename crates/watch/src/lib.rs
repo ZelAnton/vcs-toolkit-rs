@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-watch` — filesystem-watch a git/jj repository and emit typed state-change
 //! events.
 //!
@@ -8,11 +10,50 @@
 //! **diffs** it against the previous state to yield typed [`RepoEvent`]s. Each
 //! settled change arrives as a [`RepoChange`] carrying both the new
 //! [`RepoSnapshot`] (to render a prompt/status line) and the deltas (to react).
+//! It's the foundation for prompts, status bars, TUIs, and repo daemons.
 //!
 //! Re-query-and-diff — rather than interpreting raw filesystem events — is what
 //! makes it robust: git's ref temp-file renames, `index.lock` churn, and reflog
 //! noise all just coalesce into one "re-check the settled state" instead of being
-//! (mis)read as events.
+//! (mis)read as events. Noise that doesn't move observable state emits nothing,
+//! and every emission carries the true current state, so a stray event can't
+//! desync the consumer.
+//!
+//! # The surface
+//!
+//! - **[`RepoWatcher`]** — a live watch over one repository. Start it with
+//!   [`RepoWatcher::watch`] (defaults) or the [`Builder`]; drop it to stop the OS
+//!   watch and the background task.
+//! - **[`Builder`]** ([`RepoWatcher::builder`]) — set the watch scope and timing,
+//!   then [`build`](Builder::build): [`working_tree`](Builder::working_tree) to
+//!   also watch the tree recursively, [`debounce`](Builder::debounce) (the quiet
+//!   window), [`max_wait`](Builder::max_wait) (the re-query ceiling under a
+//!   continuous stream), [`requery_timeout`](Builder::requery_timeout) (the
+//!   per-re-query deadline). The [`DEFAULT_REQUERY_TIMEOUT`] et al. name the
+//!   defaults.
+//! - **[`RepoEvent`]** — one typed delta, derived by diffing two snapshots:
+//!   [`HeadMoved`](RepoEvent::HeadMoved),
+//!   [`BranchSwitched`](RepoEvent::BranchSwitched),
+//!   [`BranchCreated`](RepoEvent::BranchCreated) /
+//!   [`BranchDeleted`](RepoEvent::BranchDeleted),
+//!   [`WorkingCopyChanged`](RepoEvent::WorkingCopyChanged), and the
+//!   upstream/ahead-behind/operation/conflict variants (`#[non_exhaustive]`).
+//! - **[`RepoChange`]** — a settled change: the fresh [`RepoSnapshot`] (render a
+//!   status line off it) plus the non-empty `events` vec (react to it).
+//! - **Consumption** — pull changes with [`recv`](RepoWatcher::recv)
+//!   (`Option<RepoChange>`; `None` once dropped), or, under the **`stream`**
+//!   feature, poll the watcher as a `futures_core::Stream`. Both pull from the
+//!   same channel and advance [`current`](RepoWatcher::current), the last-pulled
+//!   snapshot.
+//! - **[`WatcherStats`]** ([`stats`](RepoWatcher::stats)) — lock-free health
+//!   counters (re-queries run, changes emitted, skips, and the last skip's
+//!   [`WatcherErrorKind`]). Climbing [`skipped`](WatcherStats::skipped) with flat
+//!   [`changes`](WatcherStats::changes) means a wedged repo — poll it from a
+//!   health check rather than inferring health from event silence.
+//!
+//! # Recipes
+//!
+//! Watch with the defaults and react to each settled change:
 //!
 //! ```no_run
 //! use vcs_core::Repo;
@@ -24,7 +65,24 @@
 //!     for event in &change.events {
 //!         println!("{event:?}");
 //!     }
-//!     // `change.snapshot` is the fresh full state.
+//!     // `change.snapshot` is the fresh full state — render a status line off it.
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Under the **`stream`** feature the watcher *is* a `futures_core::Stream`,
+//! so it drops into stream combinators and `tokio::select!` directly (needs
+//! `futures`/`tokio-stream`'s `StreamExt` in scope):
+//!
+//! ```ignore
+//! use futures::StreamExt;
+//! use vcs_core::Repo;
+//! use vcs_watch::RepoWatcher;
+//! # async fn run() -> vcs_watch::Result<()> {
+//! let repo = Repo::open(".")?;
+//! let mut watcher = RepoWatcher::watch(repo).await?;
+//! while let Some(change) = watcher.next().await {
+//!     println!("{} event(s)", change.events.len());
 //! }
 //! # Ok(()) }
 //! ```
@@ -33,6 +91,21 @@
 //! `processkit`), `vcs-watch` uses **tokio at runtime** — the watch task and the
 //! debounce timer run on the caller's tokio runtime, so build/await it from
 //! within one.
+//!
+//! # Testing
+//!
+//! The debounce → ceiling → re-query pipeline is a free function over injected
+//! seams, so it is exercised hermetically on a **paused clock** (no real
+//! filesystem or sleeps); a consumer's own watch code tests the same way it tests
+//! any [`vcs-core`](vcs_core) consumer — build the [`Repo`](vcs_core::Repo) over a
+//! fake runner (processkit's `ScriptedRunner`) so the re-query returns canned
+//! state. See
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -337,6 +410,7 @@ impl RepoWatcher {
 /// underlying channel (an item is delivered to whichever is polled first, never
 /// duplicated) and both advance [`current`](RepoWatcher::current).
 #[cfg(feature = "stream")]
+#[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
 impl futures_core::Stream for RepoWatcher {
     type Item = RepoChange;
 
@@ -1187,3 +1261,8 @@ mod pipeline_tests {
         assert_eq!(watcher.current().head.as_deref(), Some("bbb"));
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/watch.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

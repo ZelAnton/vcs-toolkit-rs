@@ -1,21 +1,91 @@
-//! `vcs-gitlab` — automate GitLab from Rust through the `glab` CLI.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-gitlab` — automate GitLab from Rust by driving the `glab` CLI.
 //!
-//! Async, mockable, and structured-error: consumers depend on the [`GitLabApi`]
-//! trait and substitute a mock for the real [`GitLab`] client in tests. Commands
-//! run inside an OS job (via [`processkit`]) so a `glab` subprocess is never
-//! orphaned, and honour an optional [timeout](GitLab::default_timeout).
+//! It shells out to the installed `glab` binary, asks for `--output json`, and
+//! deserializes the result into typed values — so you get *glab's own* behaviour,
+//! host config, and credential handling, not a reimplementation of the GitLab API
+//! client. Async throughout, structured errors, and mockable. Every command runs
+//! inside an OS **job** (via [`processkit`]) so a `glab` subprocess tree can never
+//! be orphaned, and honours an optional per-client
+//! [timeout](GitLab::default_timeout).
 //!
-//! The surface is the **lean merge-request lifecycle** — auth, project view, and
-//! MR list / view / create / merge / mark-ready / close, plus the pipeline
-//! status. It deserializes `glab … --output json` (GitLab's REST JSON) into typed
-//! structs. The sibling [`vcs-github`](https://crates.io/crates/vcs-github) and
+//! # The surface
+//!
+//! The modelled surface is the **lean merge-request lifecycle** — auth, project
+//! view, the MR lifecycle, plus issues and releases. It deserializes `glab …
+//! --output json` (GitLab's REST JSON, which `glab` passes through) into typed
+//! structs; it never scrapes human-readable output. The sibling
+//! [`vcs-github`](https://crates.io/crates/vcs-github) and
 //! [`vcs-gitea`](https://crates.io/crates/vcs-gitea) wrappers mirror this shape,
 //! and the [`vcs-forge`](https://crates.io/crates/vcs-forge) facade unifies all
 //! three.
 //!
-//! Two test seams: enable the `mock` feature for a `mockall`-generated
-//! `MockGitLabApi`, or inject a fake runner with
-//! `GitLab::with_runner(`[`ScriptedRunner`](processkit::ScriptedRunner)`)`.
+//! - **[`GitLabApi`]** — the object-safe trait every operation lives on. Depend on
+//!   `&dyn GitLabApi` (or generically on `impl GitLabApi`) so a test can swap the
+//!   real client for a double. Project-scoped methods take the working directory
+//!   as the first argument and return typed results ([`Project`],
+//!   [`MergeRequest`], [`Issue`], [`Release`], [`CiStatus`]) or a structured
+//!   [`Error`]. Unmodelled `glab` commands go through [`run`](GitLabApi::run).
+//! - **[`GitLab`]** — the real client. [`GitLab::new`] uses the job-backed runner;
+//!   [`GitLab::with_runner`] injects a fake one for tests. It is generic over the
+//!   [`ProcessRunner`] seam, defaulting to the production runner.
+//! - **[`GitLabAt`]** — a cwd-bound view ([`GitLab::at`]) whose project-scoped
+//!   methods drop the leading `dir`, so `glab.at(dir).mr_list()` reads as
+//!   `glab.mr_list(dir)` — handy when one client drives one checkout.
+//! - **Builder specs** for the multi-option commands — [`MrCreate`] (title, body,
+//!   optional source/target branch) and the [`MergeStrategy`] enum
+//!   (`Merge`/`Squash`/`Rebase`) — `#[non_exhaustive]`, built with a constructor +
+//!   chained setters, named after the flags they emit.
+//! - **[`auth_status`](GitLabApi::auth_status)** — a best-effort signal, *not* a
+//!   guarantee: a long-standing glab bug can make `glab auth status` exit `0` even
+//!   when unauthenticated, so a `true` means "probably"; a subsequent API call is
+//!   the real test. A `false`, spawn failure, or timeout are faithful.
+//!
+//! # Recipes
+//!
+//! Read state — depend on the trait so the same code takes a real client or a mock:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitlab::{GitLab, GitLabApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let glab = GitLab::new();
+//! let dir = Path::new(".");
+//! for mr in glab.mr_list(dir).await? {                 // up to 100 open MRs
+//!     println!("!{} [{}] {}", mr.iid, mr.state, mr.title);
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Mutate through the builder specs — `mr_merge` merges *immediately*
+//! (`--auto-merge=false`) rather than enabling merge-when-pipeline-succeeds:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
+//! # async fn demo(glab: &GitLab) -> Result<(), processkit::Error> {
+//! let dir = Path::new(".");
+//! let url = glab
+//!     .mr_create(dir, MrCreate::new("Add streaming", "Implements …").target("main"))
+//!     .await?;                                          // the new MR's URL
+//! glab.mr_merge(dir, 12, MergeStrategy::Squash).await?;
+//! # let _ = url; Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! Two seams: enable the **`mock`** feature for a `mockall`-generated
+//! `MockGitLabApi` (stub whole methods), or inject a
+//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`GitLab::with_runner`] to
+//! exercise the *real* argv-building and JSON parsing against canned output. The
+//! cross-cutting testing patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module.
 
 use std::path::Path;
 
@@ -26,6 +96,7 @@ pub use processkit::{Error, ProcessResult, Result};
 // Re-exported under the `cancellation` feature so a consumer can name the token
 // for `default_cancel_on` without taking a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 mod parse;
@@ -831,3 +902,8 @@ mod tests {
         assert!(mock.auth_status().await.unwrap());
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/gitlab.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

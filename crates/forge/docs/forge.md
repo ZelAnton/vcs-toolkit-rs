@@ -1,8 +1,8 @@
 # vcs-forge — the forge facade
 
-`vcs-forge` is a **forge-agnostic facade** over [`vcs-github`](github.md),
-[`vcs-gitlab`](gitlab.md), and [`vcs-gitea`](gitea.md) — the `gh`/`glab`/`tea`
-analogue of how [`vcs-core`](core.md) sits over git and jj. A [`Forge`] handle
+`vcs-forge` is a **forge-agnostic facade** over [`vcs-github`](https://docs.rs/vcs-github/latest/vcs_github/guide/),
+[`vcs-gitlab`](https://docs.rs/vcs-gitlab/latest/vcs_gitlab/guide/), and [`vcs-gitea`](https://docs.rs/vcs-gitea/latest/vcs_gitea/guide/) — the `gh`/`glab`/`tea`
+analogue of how [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) sits over git and jj. A [`Forge`] handle
 dispatches the common forge operations to whichever CLI backs it and returns
 **unified DTOs**, so a tool can target "the forge" instead of one specifically.
 
@@ -11,11 +11,11 @@ Consumers can hold a `&dyn ForgeApi` to stay generic over the runner; build a
 
 ## No auto-detection — construct explicitly
 
-A repository has a filesystem marker (`.git`/`.jj`) that [`vcs-core`](core.md)
+A repository has a filesystem marker (`.git`/`.jj`) that [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/)
 detects; a **forge does not** — it's identified by the remote *host*. So a
 `Forge` is built explicitly:
 
-```rust
+```rust,ignore
 use vcs_forge::{Forge, ForgeApi};
 
 let forge = Forge::github(".");   // or ::gitlab(".") / ::gitea(".")
@@ -24,7 +24,7 @@ let forge = Forge::github(".");   // or ::gitlab(".") / ::gitea(".")
 [`ForgeKind::from_remote_url`] is a pure, best-effort helper for picking the kind
 from a remote URL you already hold (e.g. from a `vcs_core::Repo`):
 
-```rust
+```rust,ignore
 use vcs_forge::{Forge, ForgeKind};
 
 # fn pick(url: &str) -> Forge {
@@ -47,7 +47,7 @@ client (the test seam); `forge.at(dir)` re-binds the cwd, sharing the client.
 
 ## Operations
 
-```rust
+```rust,ignore
 pub async fn auth_status(&self)  -> Result<bool>;
 pub async fn repo_view(&self)    -> Result<ForgeRepo>;
 pub async fn pr_list(&self)      -> Result<Vec<ForgePr>>;
@@ -126,7 +126,7 @@ The CLIs differ in coverage. Gitea's `tea` lacks four operations, which return
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |
 | `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | 100 |
 
-```rust
+```rust,ignore
 # use vcs_forge::{Forge, ForgeApi, Error};
 # async fn demo(forge: &Forge) {
 match forge.pr_checks(7).await {
@@ -156,10 +156,10 @@ one constructor away — without adding a dependency.
 
 ## See also
 
-- [vcs-github](github.md) / [vcs-gitlab](gitlab.md) / [vcs-gitea](gitea.md) — the
+- [vcs-github](https://docs.rs/vcs-github/latest/vcs_github/guide/) / [vcs-gitlab](https://docs.rs/vcs-gitlab/latest/vcs_gitlab/guide/) / [vcs-gitea](https://docs.rs/vcs-gitea/latest/vcs_gitea/guide/) — the
   wrapped clients and their per-CLI surfaces.
-- [vcs-core guide](core.md) — the sibling facade over git/jj.
-- [Cookbook](cookbook.md) — the open-a-PR recipe.
-- [Process model & errors](process-model.md) — OS-job containment and the `Error`
+- [vcs-core guide](https://docs.rs/vcs-core/latest/vcs_core/guide/) — the sibling facade over git/jj.
+- [Cookbook](https://docs.rs/vcs-core/latest/vcs_core/guide/cookbook/) — the open-a-PR recipe.
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — OS-job containment and the `Error`
   shapes underneath.
-- [crate README](../crates/forge/README.md) — quickstart and crate-level docs.
+- [crate docs](https://docs.rs/vcs-forge) — quickstart and crate-level docs.

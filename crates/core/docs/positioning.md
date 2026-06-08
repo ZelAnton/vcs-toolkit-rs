@@ -99,7 +99,7 @@ it's the right factoring.
 
 ## See also
 
-- [Process model, errors & observability](process-model.md) — the OS-job
+- [Process model, errors & observability](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — the OS-job
   containment, the spawn-and-parse model, and the structured `Error` behind every
   command vcs-toolkit runs.
-- [README](../README.md) — the overview, the crate table, and the quick start.
+- [README](https://github.com/ZelAnton/vcs-toolkit-rs#readme) — the overview, the crate table, and the quick start.

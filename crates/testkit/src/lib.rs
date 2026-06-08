@@ -1,30 +1,93 @@
-//! `vcs-testkit` — test fixtures for git/jj automation.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-testkit` — throwaway git/jj sandboxes (and a bare remote) for
+//! integration tests.
 //!
-//! Throwaway repositories for integration tests: a unique self-cleaning
+//! Hands a `#[test]` a real repository to drive: a unique self-cleaning
 //! [`TempDir`], a configured [`GitSandbox`] / [`JjSandbox`] to build scenarios
-//! in, and a seeded [`BareRemote`] to clone/fetch/push against. Everything is
-//! **synchronous** (test setup needs no runtime) and shells out to the real
-//! `git` / `jj` binaries on `PATH` — gate tests that use it behind
-//! `#[ignore = "requires the git binary"]` so hermetic CI stays green.
+//! in, and a seeded [`BareRemote`] to clone/fetch/push against. It is
+//! **dependency-free** (not even the wrapper crates, so it can be a
+//! dev-dependency of any of them without a cycle), **synchronous** (test setup
+//! needs no runtime — it shells out with `std::process::Command`, not the async
+//! client under test), and **panics on failure** (a broken fixture should fail
+//! loudly at the call site, not thread `Result`s through scenario code).
 //!
-//! Sandboxes are isolated from the host's VCS config (no system/global config,
-//! no `init.templateDir` hook leakage, a deterministic identity even on the
-//! commit `jj git init` creates) — see `command`.
+//! Built for `#[test]` / `#[ignore]` integration tests that need a *real* repo:
+//! the helpers run the actual `git` / `jj` on `PATH`, so gate any test that
+//! touches one behind `#[ignore = "requires the git binary"]` — a hermetic CI
+//! with no binaries installed then stays green, and `cargo test -- --ignored`
+//! runs them locally. Every sandbox is isolated from the host's VCS config (no
+//! system/global config, no `init.templateDir` hook leakage, a deterministic
+//! identity even on the commit `jj git init` creates) — see `command`.
 //!
-//! **Every helper panics on failure.** These are test fixtures: a broken
-//! fixture should fail the test loudly at the call site, not thread `Result`s
-//! through scenario-building code.
+//! # The surface
+//!
+//! - **[`TempDir`]** — a unique temporary directory, removed on drop.
+//!   Uniqueness without a temp-dir crate: pid + a process-wide monotonic
+//!   counter, so parallel tests in a run never collide. Every fixture owns one.
+//! - **[`GitSandbox`]** — a throwaway **git** repo on branch `main` with a
+//!   deterministic identity. Build scenarios through the convenience steps
+//!   ([`commit_file`](GitSandbox::commit_file), [`branch`](GitSandbox::branch),
+//!   [`checkout`](GitSandbox::checkout), [`rev_parse`](GitSandbox::rev_parse))
+//!   plus the raw [`git`](GitSandbox::git) escape hatch for anything unmodelled.
+//! - **[`JjSandbox`]** — the same shape for a **jj** (git-backed) workspace:
+//!   [`describe`](JjSandbox::describe), [`new_change`](JjSandbox::new_change),
+//!   [`bookmark`](JjSandbox::bookmark), and the raw [`jj`](JjSandbox::jj) hatch.
+//! - **[`BareRemote`]** — a populated **bare** git repo, a local
+//!   clone/fetch/push source with no network. [`BareRemote::seeded`] gives one
+//!   commit on `main` containing `seed.txt`; [`url`](BareRemote::url) yields a
+//!   string remote URL.
+//! - **[`configure_identity`]** — stamp a git repo with a deterministic
+//!   identity and byte-stable behaviour (`user.*`, `commit.gpgsign=false`,
+//!   `core.autocrlf=false`). Standalone, for tests whose *subject* is `init`.
+//! - **Raw steps [`git`] / [`jj`]** — run one command in any `dir`, panicking
+//!   on failure: for scenario steps in directories no sandbox owns (linked
+//!   worktrees, fresh clones, repos the code under test initialised).
+//!
+//! # Recipes
+//!
+//! These are sync — no async wrapper, no `Result` (fixtures panic). They are
+//! `no_run`: they really create temp dirs and shell out to `git`/`jj`, so they
+//! compile here but only run under a binary-equipped `#[test]`.
+//!
+//! Build a git scenario — write + stage + commit is one step:
+//!
+//! ```no_run
+//! use vcs_testkit::GitSandbox;
+//! # fn demo() {
+//! let repo = GitSandbox::init("scenario");
+//! repo.commit_file("a.txt", "one\n", "first");   // write + add -A + commit
+//! repo.branch("feature");
+//! repo.checkout("feature");
+//! repo.commit_file("sub/b.txt", "two\n", "second");
+//!
+//! let head = repo.rev_parse("HEAD");
+//! assert_eq!(head.len(), 40);
+//! assert_ne!(head, repo.rev_parse("main"));       // feature has diverged
+//! # }
+//! ```
+//!
+//! Seed a bare remote and fetch from it — drop to raw `git` for the remote wiring:
 //!
 //! ```no_run
 //! use vcs_testkit::{BareRemote, GitSandbox};
-//!
-//! let repo = GitSandbox::init("my-test");
+//! # fn demo() {
+//! let repo = GitSandbox::init("local");
 //! repo.commit_file("a.txt", "one\n", "first");
-//! repo.branch("feature");
 //!
-//! let remote = BareRemote::seeded("my-remote");
+//! let remote = BareRemote::seeded("origin");
 //! repo.git(&["remote", "add", "origin", remote.url().as_str()]);
+//! repo.git(&["fetch", "-q", "origin"]);
+//! assert_eq!(repo.rev_parse("origin/main").len(), 40); // seed commit fetched
+//! # }
 //! ```
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module (and its cross-cutting
+//! [`testing`](crate::guide::testing) sub-guide on the trait / mock / runner
+//! seams that let most tests skip real binaries entirely).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -496,4 +559,13 @@ mod tests {
         );
         assert_eq!(email, "test@example.com", "init commit author.email");
     }
+}
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/testkit.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {
+    #[doc = include_str!("../docs/testing.md")]
+    #[allow(rustdoc::broken_intra_doc_links)]
+    pub mod testing {}
 }

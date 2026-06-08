@@ -31,7 +31,7 @@ out of scope. The mechanism in force is observable at runtime via processkit's
 Set a per-client deadline with `default_timeout(Duration)`; every command the
 client runs inherits it.
 
-```rust
+```rust,ignore
 use std::time::Duration;
 use vcs_git::Git;
 
@@ -60,7 +60,7 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
 - **`Timeout { program, timeout }`** — exceeded its deadline and was killed.
 - **`Spawn { program, source }`** — the child could not be started (binary not
   found, permission denied) — *and* the variant the [injection
-  guards](security.md#injection-guards-automatic) raise for a flag-shaped
+  guards](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) raise for a flag-shaped
   positional argument, before any spawn.
 - **`Parse { program, message }`** — the process succeeded but its output didn't
   match the expected shape (e.g. an unrecognisable `--version`, malformed
@@ -78,7 +78,7 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
 > There is **no** dedicated signal variant: a child killed by a signal surfaces
 > through the exit path / containment, not a separate enum arm.
 
-```rust
+```rust,ignore
 use processkit::Error;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &std::path::Path) -> Result<(), Error> {
@@ -99,7 +99,7 @@ Read the code with its `code()` accessor (`Option<i32>`); `program()`
 (processkit 0.7+) names the binary the result came from — handy where one
 facade runs both git and jj:
 
-```rust
+```rust,ignore
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 let res = git.run_raw(&["status".into(), "--porcelain".into()]).await?;
@@ -115,7 +115,7 @@ Four seams, no extra configuration:
 `RecordingRunner::new(JobRunner::new())`, hand `&rec` to `with_runner`, and read
 `rec.calls()` — the full argv, cwd, and env of every invocation, after the fact.
 
-```rust
+```rust,ignore
 use processkit::{JobRunner, RecordingRunner};
 use vcs_git::{Git, GitApi};
 
@@ -152,7 +152,7 @@ vcs-git = { version = "…", features = ["tracing"] }
 nothing and answers everything, so a whole flow can be exercised without touching
 a repository; add `.on(…)` rules for the calls that need realistic replies.
 
-```rust
+```rust,ignore
 use processkit::{Reply, ScriptedRunner};
 use vcs_git::Git;
 
@@ -167,8 +167,8 @@ let _ = git;
 
 ## See also
 
-- [Testing & mocking](testing.md) — the runner seams in full (trait, `mock`
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the runner seams in full (trait, `mock`
   feature, scripted/recording runners) and the real-binary fixtures.
-- [Security & hardening](security.md) — the injection guards behind `Error::Spawn`
+- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — the injection guards behind `Error::Spawn`
   and the untrusted-repo profile.
-- Per-crate guides: [git](git.md), [jj](jj.md), [github](github.md), [core](core.md).
+- Per-crate guides: [git](https://docs.rs/vcs-git/latest/vcs_git/guide/), [jj](https://docs.rs/vcs-jj/latest/vcs_jj/guide/), [github](https://docs.rs/vcs-github/latest/vcs_github/guide/), [core](https://docs.rs/vcs-core/latest/vcs_core/guide/).

@@ -32,7 +32,7 @@ the same variant a missing binary produces — carrying the program name and an
 `InvalidInput` IO source describing the rejected value. (It is raised *instead*
 of spawning, not by the child.)
 
-```rust
+```rust,ignore
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &std::path::Path) {
 // A caller-supplied branch name that starts with `-`:
@@ -77,7 +77,7 @@ When to reach for one — a short decision note:
 
 `vcs-git`:
 
-```rust
+```rust,ignore
 pub fn RefName::new(name: impl Into<String>) -> Result<Self>  // signature shape
 pub fn RevSpec::new(rev:  impl Into<String>) -> Result<Self>
 ```
@@ -94,7 +94,7 @@ pub fn RevSpec::new(rev:  impl Into<String>) -> Result<Self>
 - **`RevsetExpr`** mirrors `RevSpec`: non-empty, no leading `-`. (jj's revset
   grammar is likewise too rich to validate further.)
 
-```rust
+```rust,ignore
 use vcs_git::RefName;
 
 # fn demo() -> Result<(), processkit::Error> {
@@ -133,7 +133,7 @@ settings to **every** command the client runs:
 - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal prompts
   off everywhere (`GIT_TERMINAL_PROMPT=0`).
 
-```rust
+```rust,ignore
 use vcs_git::Git;
 
 let git = Git::hardened();        // == Git::new().harden()
@@ -159,11 +159,11 @@ The conflicted-file parsers treat their input as arbitrary bytes: `vcs_git::conf
 and `vcs_jj::conflict` turn marker soup into structured regions and **never
 panic** on malformed or hostile input — a bad file is an `Error::Parse`, not a
 crash. This is property-tested for panic-freedom on arbitrary input, alongside a
-byte-exact `render(parse(x)) == x` roundtrip. See the [conflicts guide](conflicts.md).
+byte-exact `render(parse(x)) == x` roundtrip. See the [conflicts guide](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
 
 ## See also
 
-- [git guide](git.md) — the full `GitApi` surface and the hardened profile in context.
-- [jj guide](jj.md) — why there is no `Jj::hardened()`, and the colocated-repo story.
-- [Process model & errors](process-model.md) — `Error::Spawn` and the other
+- [git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/) — the full `GitApi` surface and the hardened profile in context.
+- [jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/) — why there is no `Jj::hardened()`, and the colocated-repo story.
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — `Error::Spawn` and the other
   variants the guards raise, plus containment and observability.

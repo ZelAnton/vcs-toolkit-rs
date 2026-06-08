@@ -56,3 +56,13 @@ authors = ["Anton Zhelezniakou"]
 # the core `output_all` bounded fan-out (used by `vcs-jj`'s `workspace_roots`) ships
 # feature-free.
 processkit = "0.8"
+
+# ---------------------------------------------------------------------------
+# Workspace lints — inherited by every crate via `[lints] workspace = true`.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+# Teach the compiler the `docsrs` cfg: docs.rs (and our nightly doc build) pass
+# `--cfg docsrs` via each crate's `rustdoc-args` to switch on the `#[doc(cfg(...))]`
+# "Available on crate feature `x`" badges; without this, `cfg(docsrs)` would warn
+# as an unexpected cfg under `-D warnings`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }

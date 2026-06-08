@@ -1,36 +1,112 @@
-//! `vcs-forge` — a backend-agnostic facade over [`vcs-github`](vcs_github),
-//! [`vcs-gitlab`](vcs_gitlab), and [`vcs-gitea`](vcs_gitea).
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
+//! `vcs-forge` — one PR/MR lifecycle across GitHub, GitLab, and Gitea.
 //!
-//! [`Forge`] is a cwd-bound handle that dispatches the *common* forge operations
-//! (auth, repo view, the PR/MR lifecycle, issues, and releases) to whichever CLI
-//! backs it, returning forge-agnostic DTOs ([`ForgePr`], [`ForgeIssue`],
-//! [`ForgeRelease`], [`ForgeRepo`], …). It is the
-//! `gh`/`glab`/`tea` analogue of how [`vcs-core`](https://crates.io/crates/vcs-core)'s
+//! A forge-agnostic facade over the [`vcs-github`](vcs_github),
+//! [`vcs-gitlab`](vcs_gitlab), and [`vcs-gitea`](vcs_gitea) wrappers: it dispatches
+//! the *common* forge operations (auth, repo view, the PR/MR lifecycle, issues,
+//! releases) to whichever CLI backs the handle and parses each one's output into
+//! **forge-agnostic DTOs** ([`ForgePr`], [`ForgeIssue`], [`ForgeRelease`],
+//! [`ForgeRepo`], …) — so a tool can target *the forge* instead of one specifically.
+//! It is the `gh`/`glab`/`tea` analogue of how [`vcs-core`](https://docs.rs/vcs-core)'s
 //! `Repo` sits over git and jj.
 //!
-//! Unlike a repository, a forge has **no filesystem marker** — it's identified by
-//! the remote host — so a `Forge` is **constructed explicitly**
-//! ([`Forge::github`] / [`Forge::gitlab`] / [`Forge::gitea`]), optionally guided
-//! by [`ForgeKind::from_remote_url`] applied to a remote URL the caller already
-//! holds. The CLIs differ in coverage: Gitea's `tea` has no current-repo view,
-//! draft toggle, checks command, or single-release view, so
-//! [`repo_view`](ForgeApi::repo_view), [`pr_mark_ready`](ForgeApi::pr_mark_ready),
-//! [`pr_checks`](ForgeApi::pr_checks), and [`release_view`](ForgeApi::release_view)
-//! return [`Error::Unsupported`] there.
+//! Unlike a repository, a forge has **no filesystem marker** (`.git`/`.jj`) to
+//! detect — it's identified by the remote *host* — so a [`Forge`] is
+//! **constructed explicitly** ([`Forge::github`] / [`Forge::gitlab`] /
+//! [`Forge::gitea`]), optionally guided by [`ForgeKind::from_remote_url`] applied
+//! to a remote URL the caller already holds.
+//!
+//! # The surface
+//!
+//! - **[`Forge`]** — the cwd-bound, forge-agnostic handle. Operations run against
+//!   the bound directory ([`cwd`](Forge::cwd)); the CLI infers the repository from
+//!   that directory's git remote. [`Forge::github`] / [`gitlab`](Forge::gitlab) /
+//!   [`gitea`](Forge::gitea) build over the real job-backed runner;
+//!   [`at`](Forge::at) re-binds the cwd, sharing the client; [`kind`](Forge::kind)
+//!   reports which forge drives it.
+//! - **[`ForgeApi`]** — the object-safe trait the common surface lives on. Hold a
+//!   `Box<dyn ForgeApi>` / `&dyn ForgeApi` to code against the operations without
+//!   naming the [`ProcessRunner`] generic. Every method mirrors the like-named
+//!   inherent method on [`Forge`]; the trait adds nothing but the `&dyn` boundary.
+//! - **[`ForgeKind`]** — `GitHub` / `GitLab` / `Gitea`. Its pure, best-effort
+//!   [`from_remote_url`](ForgeKind::from_remote_url) classifies the *public SaaS*
+//!   hosts (github.com, gitlab.com, gitea.com, codeberg.org, and proper subdomains)
+//!   with an anchored match — a lookalike like `gitlab.com.attacker.net` and a
+//!   self-hosted instance on an arbitrary domain both return `None` (pick the kind
+//!   yourself).
+//! - **Unified DTOs** — [`ForgePr`] (+ [`ForgePrState`]), [`ForgeIssue`]
+//!   (+ [`ForgeIssueState`]), [`ForgeRelease`], [`ForgeRepo`], [`CiStatus`]; the
+//!   inputs [`PrCreate`] (open-a-PR spec: `new(title, body)` then
+//!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
+//!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
+//!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
+//!   `OPEN` / `opened` / `open` all read as one state. Some fields are
+//!   best-effort: `draft`, and the `body`/`url` not present on lean list output.
+//! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
+//!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
+//!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
+//!   [`pr_create`](Forge::pr_create) / [`pr_merge`](Forge::pr_merge) /
+//!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
+//!   [`pr_checks`](Forge::pr_checks)); issues ([`issue_list`](Forge::issue_list) /
+//!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
+//!   releases ([`release_list`](Forge::release_list) /
+//!   [`release_view`](Forge::release_view)). List ops cap at 100 — drop to the
+//!   wrapped client for more.
+//! - **Capability gaps** — `tea` has no current-repo view, draft toggle, checks
+//!   command, or single-release view, so on a Gitea handle
+//!   [`repo_view`](Forge::repo_view), [`pr_mark_ready`](Forge::pr_mark_ready),
+//!   [`pr_checks`](Forge::pr_checks), and [`release_view`](Forge::release_view)
+//!   return [`Error::Unsupported`] **without spawning**. Classify it with
+//!   [`Error::is_unsupported`].
+//!
+//! The wrappers are re-exported (`vcs_forge::vcs_github` / `vcs_gitlab` /
+//! `vcs_gitea`) so anything beyond the portable intersection — a forge-specific op,
+//! or one the facade marks `Unsupported` — is one constructor away without a new
+//! dependency.
+//!
+//! # Recipes
+//!
+//! Read the open PRs — depend on the trait so the same code takes a real handle or
+//! a test double:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
-//! # async fn run() -> vcs_forge::Result<()> {
-//! let forge = Forge::github(".");
-//! let prs = forge.pr_list().await?;
-//! # let _ = prs;
+//! # async fn demo() -> Result<(), vcs_forge::Error> {
+//! let forge = Forge::github("."); // or ::gitlab(".") / ::gitea(".")
+//! for pr in forge.pr_list().await? {
+//!     println!("#{} [{:?}] {}", pr.number, pr.state, pr.title);
+//! }
 //! # Ok(()) }
 //! ```
 //!
-//! The handle is generic over the [`ProcessRunner`] so tests can inject a fake;
-//! the [`Forge::github`]/`gitlab`/`gitea` constructors use the real job-backed
-//! runner, while [`Forge::for_github`]/`for_gitlab`/`for_gitea` take an explicit
-//! client (a test seam).
+//! Open a PR/MR with [`PrCreate`] — the facade maps `source`/`target` to each
+//! CLI's own flags, and returns the CLI's success output (a URL on GitHub/GitLab):
+//!
+//! ```no_run
+//! use vcs_forge::{Forge, ForgeApi, PrCreate};
+//! # async fn demo(forge: &Forge) -> Result<(), vcs_forge::Error> {
+//! let spec = PrCreate::new("Add widget", "Closes #12").source("feature");
+//! let out = forge.pr_create(spec).await?;
+//! # let _ = out;
+//! # Ok(()) }
+//! ```
+//!
+//! # Testing
+//!
+//! The facade trait has **no mock feature** — `mockall` can't process the
+//! macro-generated [`ForgeApi`] signatures. Test the *real* dispatch instead:
+//! build a [`Forge`] over an explicit client wrapping a fake runner — e.g.
+//! `Forge::for_github(cwd, GitHub::with_runner(ScriptedRunner::new()))` (likewise
+//! [`for_gitlab`](Forge::for_gitlab) / [`for_gitea`](Forge::for_gitea)) — and
+//! script the canned CLI output, exercising the argv-building and DTO parsing
+//! end to end. The cross-cutting testing patterns live in
+//! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/`. See the [`guide`] module.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -62,6 +138,7 @@ pub use vcs_gitlab;
 // name the token for a `default_cancel_on` client (built via `GitHub`/… then passed
 // to `Forge::for_github`/…) without a direct `processkit` dependency.
 #[cfg(feature = "cancellation")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
 pub use processkit::CancellationToken;
 
 /// The per-CLI client behind a [`Forge`]. Shared via `Arc` so [`Forge::at`] can
@@ -646,3 +723,8 @@ mod tests {
         );
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/forge.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

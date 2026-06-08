@@ -14,7 +14,7 @@ there), so harden the `Git` client you point at it instead.
 
 ## Construction & configuration
 
-```rust
+```rust,ignore
 # use std::time::Duration;
 use vcs_jj::Jj;
 
@@ -24,7 +24,7 @@ let jj = Jj::new().default_timeout(Duration::from_secs(10)); // every cmd → Er
 
 - `Jj::new()` — the production client over the real job-backed runner.
 - `Jj::with_runner(runner)` — inject a fake `ProcessRunner` (e.g.
-  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](testing.md).
+  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 - `default_timeout(Duration)` — builder; arms a per-command timeout.
 
 All three come from the `processkit::cli_client!` macro that defines `Jj`.
@@ -35,7 +35,7 @@ Most `JjApi` methods take a leading `dir: &Path`. When you drive one directory
 repeatedly, bind it once with `jj.at(&path)` — the returned `JjAt` drops that
 argument:
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::Jj;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -55,7 +55,7 @@ workspaces). Through the facade, `vcs_core::Repo::jj_at` yields the same handle.
 The object-safe `JjApi` trait can't take `&[&str]`, so two inherent helpers do —
 no `Vec<String>` allocation:
 
-```rust
+```rust,ignore
 # use vcs_jj::Jj;
 # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
 let out = jj.run_args(&["log", "-r", "@"]).await?;          // String, errors on non-zero exit
@@ -69,7 +69,7 @@ Run a closure with op-log rollback: capture the current operation
 ([`op_head`]), run `f` against a bound `JjAt`, and on `Err` restore the repo to
 that operation ([`op_restore`]) before propagating the error.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::Jj;
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -83,7 +83,7 @@ jj.transaction(repo, |tx| async move {
 
 Signature:
 
-```rust
+```rust,ignore
 pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
 where
     F: FnOnce(JjAt<'a, R>) -> Fut,
@@ -102,7 +102,7 @@ and the repo may be left mid-transaction — re-probe [`op_head`] to detect that
 
 ## Status & changes
 
-```rust
+```rust,ignore
 async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
 async fn status_text(&self, dir: &Path) -> Result<String>;
 async fn current_change(&self, dir: &Path) -> Result<Change>;
@@ -113,7 +113,7 @@ async fn current_change(&self, dir: &Path) -> Result<Change>;
 `vcs_git::status`). `status_text` is the raw human-readable `jj status` text.
 `current_change` is `log -r @` reduced to one [`Change`].
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -126,7 +126,7 @@ let head = jj.current_change(repo).await?;         // Change { change_id, commit
 
 ## Log
 
-```rust
+```rust,ignore
 async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
 async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
 ```
@@ -135,7 +135,7 @@ async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Chang
 `evolog` returns how the commit `revset` resolves to evolved — newest snapshot
 first, one [`Change`] per recorded predecessor (`jj evolog`).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -148,7 +148,7 @@ let history = jj.evolog(repo, "@", 5).await?;      // Vec<Change>
 
 ## Descriptions
 
-```rust
+```rust,ignore
 async fn describe(&self, dir: &Path, message: &str) -> Result<()>;
 async fn describe_rev(&self, dir: &Path, revset: &str, message: &str) -> Result<()>;
 async fn new_change(&self, dir: &Path, message: &str) -> Result<()>;
@@ -163,7 +163,7 @@ undescribed change *or* for a revset matching no commit (an *invalid* revset
 still errors); a multi-commit revset yields only the newest commit's
 description.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -175,7 +175,7 @@ let msg = jj.description(repo, "@-").await?;        // String (empty if undescri
 
 ## Bookmarks
 
-```rust
+```rust,ignore
 async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
 async fn bookmarks_all(&self, dir: &Path) -> Result<Vec<BookmarkRef>>;
 async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
@@ -207,7 +207,7 @@ async fn bookmark_move(&self, dir: &Path, name: &str, to: &str, allow_backwards:
 Every name-taking method rejects an empty or leading-`-` name *before* spawning
 (see [Validating newtypes](#validating-newtypes--filesets)).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -223,7 +223,7 @@ if let Some(trunk) = jj.trunk(repo).await? {          // Option<String>
 
 ## Diff & query
 
-```rust
+```rust,ignore
 async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
 async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
 async fn diff_summary(&self, dir: &Path, from: &str, to: &str) -> Result<Vec<ChangedPath>>;
@@ -244,7 +244,7 @@ async fn template_query(&self, dir: &Path, revset: &str, template: &str, limit: 
   stdout (`log -r <revset> --no-graph [--limit n] -T <template>`); the escape
   hatch the typed queries are built on.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi, DiffSpec};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -258,7 +258,7 @@ let raw   = jj.template_query(repo, "@", "change_id.short()", Some(1)).await?; /
 
 ## File inspection
 
-```rust
+```rust,ignore
 async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String>;
 async fn file_annotate(&self, dir: &Path, path: &str, revset: Option<String>) -> Result<Vec<AnnotationLine>>;
 ```
@@ -273,7 +273,7 @@ rather than erroring.
 `file annotate` rejects the `file:"…"` form), passed after a `--` separator so a
 `-dash.txt` stays literal.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -286,7 +286,7 @@ for line in jj.file_annotate(repo, "src/lib.rs", None).await? {   // Vec<Annotat
 
 ## Conflict probing
 
-```rust
+```rust,ignore
 async fn is_conflicted(&self, dir: &Path, revset: &str) -> Result<bool>;
 async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
 async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>>;
@@ -297,9 +297,9 @@ has a conflict (no localized-prose matching). `has_workingcopy_conflict` is
 `is_conflicted(dir, "@")`. `resolve_list` returns the paths with unresolved
 conflicts in `revset` (`resolve --list -r <revset>`), forward-slash normalised —
 empty when there are none. Parsing the *materialized* markers in a conflicted
-file is a separate, pure module: see [Conflict resolution](conflicts.md).
+file is a separate, pure module: see [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -313,7 +313,7 @@ if jj.has_workingcopy_conflict(repo).await? {
 
 ## Rebasing & editing
 
-```rust
+```rust,ignore
 async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
 async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()>;
 async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
@@ -324,7 +324,7 @@ async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
 the working copy to a revision (`edit <rev>`). `edit`'s revset is guarded
 against a leading-`-` value.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -335,7 +335,7 @@ jj.edit(repo, "@-").await?;
 
 ## Squash & split
 
-```rust
+```rust,ignore
 async fn squash_into(&self, dir: &Path, into: &str, use_destination_message: bool) -> Result<()>;
 async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
 async fn squash_paths(&self, dir: &Path, spec: SquashPaths) -> Result<()>;
@@ -360,7 +360,7 @@ async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset])
   the touched lines (`absorb [--from <revset>] [<filesets>…]`); an empty
   `filesets` absorbs everything.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi, JjFileset, SquashPaths};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -375,7 +375,7 @@ jj.absorb(repo, None, &[]).await?;            // absorb everything into ancestor
 
 ## Sparse
 
-```rust
+```rust,ignore
 async fn sparse_set(&self, dir: &Path, patterns: &[String]) -> Result<()>;
 ```
 
@@ -383,7 +383,7 @@ Set the working copy's sparse patterns to exactly `patterns` (`sparse set
 --clear --add <p>…`): `--clear` empties first, then each `--add` reinstates one
 pattern — an empty list clears the working copy.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -393,7 +393,7 @@ jj.sparse_set(repo, &["src".into(), "Cargo.toml".into()]).await?;
 
 ## Merging
 
-```rust
+```rust,ignore
 async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()>;
 async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()>;
 async fn abandon(&self, dir: &Path, revset: &str) -> Result<()>;
@@ -404,7 +404,7 @@ async fn abandon(&self, dir: &Path, revset: &str) -> Result<()>;
 value. `duplicate` duplicates the commits a revset resolves to. `abandon`
 abandons a revision; its revset is guarded too.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -416,7 +416,7 @@ jj.abandon(repo, "@-").await?;
 
 ## Git integration
 
-```rust
+```rust,ignore
 async fn git_fetch(&self, dir: &Path) -> Result<()>;
 async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
 async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
@@ -442,7 +442,7 @@ async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
   `git.colocate` config, so `colocate` decides deterministically. `url` is
   guarded against a leading-`-` value.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -454,7 +454,7 @@ jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), true).await?;
 
 ## Workspaces
 
-```rust
+```rust,ignore
 async fn workspace_list(&self, dir: &Path) -> Result<Vec<Workspace>>;
 async fn workspace_root(&self, dir: &Path, name: Option<String>) -> Result<PathBuf>;
 async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()>;
@@ -466,7 +466,7 @@ jj's worktrees, with structured results. `workspace_list` returns
 (`workspace root [--name <name>]`); `workspace_add` adds one from a
 [`WorkspaceAdd`] spec; `workspace_forget` forgets one by name.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi, WorkspaceAdd};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -485,7 +485,7 @@ jj.workspace_forget(repo, "feature").await?;
 
 ## Operation log
 
-```rust
+```rust,ignore
 async fn op_head(&self, dir: &Path) -> Result<String>;
 async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>>;
 async fn op_restore(&self, dir: &Path, op_id: &str) -> Result<()>;
@@ -498,7 +498,7 @@ capture it before a risky sequence to roll back to. `op_log` returns the newest
 operation (`op restore <id>`; the id is guarded). `op_undo` undoes the latest
 operation. (`transaction` is the higher-level wrapper around capture + restore.)
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -513,7 +513,7 @@ for op in jj.op_log(repo, 5).await? {          // Vec<Operation>
 
 ## Discovery
 
-```rust
+```rust,ignore
 async fn root(&self, dir: &Path) -> Result<PathBuf>;
 async fn version(&self) -> Result<String>;
 async fn capabilities(&self) -> Result<JjCapabilities>;
@@ -525,7 +525,7 @@ is the raw `jj --version` string. `capabilities` parses that into
 validated floor is **jj ≥ 0.38** (`JjCapabilities::is_supported`); an
 unrecognisable version string is an `Error::Parse`.
 
-```rust
+```rust,ignore
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
@@ -537,7 +537,7 @@ println!("jj {} (root {})", caps.version, jj.root(repo).await?.display());
 
 ## Raw escape hatches
 
-```rust
+```rust,ignore
 async fn run(&self, args: &[String]) -> Result<String>;
 async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
 ```
@@ -548,7 +548,7 @@ exit). `run_raw` never errors on a non-zero exit — it returns the captured
 are **not** injection-guarded; the inherent `run_args`/`run_raw_args` are the
 `&[&str]` siblings.
 
-```rust
+```rust,ignore
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
 let out = jj.run(&["log".into(), "-r".into(), "@".into()]).await?;   // String
@@ -710,7 +710,7 @@ Options for `workspace_add`; build through `WorkspaceAdd::new`.
 | `path` | `PathBuf` | Filesystem path for the new workspace. |
 | `sparse_patterns` | `Option<SparseMode>` | `--sparse-patterns`; `None` leaves jj's default. |
 
-```rust
+```rust,ignore
 # use vcs_jj::{WorkspaceAdd, SparseMode};
 let spec = WorkspaceAdd::new("feature", "@", "/tmp/feature")
     .sparse(SparseMode::Empty);    // start empty, then sparse_set later
@@ -732,7 +732,7 @@ setters.
 | `filesets` | `Vec<JjFileset>` | The exact filesets to move; empty squashes the whole `from` change. |
 | `use_destination_message` | `bool` | Keep the destination's description (`--use-destination-message`). |
 
-```rust
+```rust,ignore
 # use vcs_jj::{SquashPaths, JjFileset};
 let spec = SquashPaths::new("@", "@-")
     .filesets([JjFileset::path("src/parser.rs")])
@@ -758,7 +758,7 @@ internal guard the positional-revset methods apply anyway. The dir-taking
 methods stay `&str`; this type is optional validation, **not** a required
 wrapper.
 
-```rust
+```rust,ignore
 # use vcs_jj::RevsetExpr;
 let r = RevsetExpr::new("main..@")?;       // Ok
 assert!(RevsetExpr::new("").is_err());     // empty
@@ -776,7 +776,7 @@ with `JjFileset::path(path)` (repo-root-relative); a Windows backslash separator
 is normalised to `/` (jj filesets are forward-slash — a literal-backslash path
 would match nothing), and a `"` is escaped for the `file:"…"` literal.
 
-```rust
+```rust,ignore
 # use vcs_jj::JjFileset;
 let fs = JjFileset::path(r#"src/a (copy).rs"#);
 assert_eq!(fs.as_str(), r#"file:"src/a (copy).rs""#);
@@ -804,14 +804,14 @@ before spawning.
 
 ## See also
 
-- [Conflict resolution](conflicts.md) — the `vcs_jj::conflict` module (parse /
+- [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/) — the `vcs_jj::conflict` module (parse /
   render / resolve materialized jj conflict markers).
-- [Testing & mocking](testing.md) — `MockJjApi` and `ScriptedRunner`.
-- [Security & hardening](security.md) — why there is no `Jj::hardened()`, and the
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — `MockJjApi` and `ScriptedRunner`.
+- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — why there is no `Jj::hardened()`, and the
   injection-guard model.
-- [Process model & errors](process-model.md) — job containment, timeouts, the
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — job containment, timeouts, the
   `Error` variants.
-- [crate README](../crates/jj/README.md)
+- [crate docs](https://docs.rs/vcs-jj)
 
 [`op_head`]: #operation-log
 [`op_restore`]: #operation-log

@@ -8,7 +8,7 @@ crate never scrapes human-readable output.
 
 Consumers code against the [`GitHubApi`] trait and substitute a fake in tests —
 the real [`GitHub`] client only appears at the edges. See
-[Testing & mocking](testing.md) for the two seams.
+[Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) for the two seams.
 
 Requires the `gh` binary on `PATH`, authenticated via `gh auth login`. An
 unauthenticated `gh` surfaces as an `Error::Exit` (gh's auth-required exit), not
@@ -18,7 +18,7 @@ a silent empty result.
 
 ## Construction & configuration
 
-```rust
+```rust,ignore
 use vcs_github::GitHub;
 
 let gh = GitHub::new(); // GitHub<JobRunner> — the real job-backed client
@@ -27,7 +27,7 @@ let gh = GitHub::new(); // GitHub<JobRunner> — the real job-backed client
 `GitHub::new()` builds a client over `processkit`'s real job-backed runner. Two
 knobs and one test seam:
 
-```rust
+```rust,ignore
 # use vcs_github::GitHub;
 use std::time::Duration;
 use processkit::ScriptedRunner;
@@ -47,7 +47,7 @@ parks for the lifetime of a CI run.
 Most methods take a leading `dir: &Path`. When you make several calls against
 one repo, bind it once and drop the argument:
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -71,7 +71,7 @@ verbatim.
 `mockall`-friendly). On the concrete `GitHub`, two inherent methods take string
 slices so you skip the `Vec<String>` allocation:
 
-```rust
+```rust,ignore
 # use vcs_github::GitHub;
 # async fn demo() -> Result<(), processkit::Error> {
 let gh = GitHub::new();
@@ -84,7 +84,7 @@ Both are also available on the bound handle (`gh.at(dir).run_args(…)`).
 
 ## Auth & repo
 
-```rust
+```rust,ignore
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
 async fn api(&self, endpoint: &str) -> Result<String>;// `gh api <endpoint>`
@@ -96,7 +96,7 @@ authenticated, non-zero when not. But that is the only thing folded into the
 bool: a spawn failure, a timeout, or any unexpected exit still errors rather
 than reporting a silent `false`.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
 # async fn demo() -> Result<(), processkit::Error> {
 let gh = GitHub::new();
@@ -120,7 +120,7 @@ for an empty repository).
 
 ## Pull requests — listing & creation
 
-```rust
+```rust,ignore
 async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
 async fn pr_list_for_branch(&self, dir: &Path, head: &str, base: &str) -> Result<Vec<PullRequest>>;
 async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
@@ -136,7 +136,7 @@ too — branch on each entry's `state`. Empty when none match.
 (`None` = the current branch) and `base` (`None` = the repo default) branches;
 each branch is appended as `--head <b>` / `--base <b>` only when set.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi, PrCreate};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -156,7 +156,7 @@ println!("opened {url}");
 
 ## Pull requests — lifecycle
 
-```rust
+```rust,ignore
 async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
 async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()>;
 async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
@@ -166,7 +166,7 @@ async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result
 `--delete-branch`). `pr_ready` flips a draft to ready-for-review. `pr_close`
 closes without merging, optionally deleting the head branch.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi, PrMerge};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -180,7 +180,7 @@ gh.pr_close(repo, 8, true).await?; // --delete-branch
 
 ## Pull requests — review & feedback
 
-```rust
+```rust,ignore
 async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>>;
 async fn pr_review(&self, dir: &Path, number: u64, action: ReviewAction) -> Result<()>;
 async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String>;
@@ -196,7 +196,7 @@ yields an empty list. Any *other* non-zero exit — no such PR, auth required,
 timeout — is a genuine error. A JSON that fails to parse surfaces as
 `Error::Parse`, never masked by the exit code.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -219,7 +219,7 @@ headless run). `pr_feedback` fetches the PR's submitted reviews and conversation
 comments into a [`PrFeedback`], flattening gh's nested author objects (a deleted
 account's `null` author becomes an empty login).
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi, ReviewAction};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -233,7 +233,7 @@ for r in &fb.reviews { println!("{} {}", r.author, r.state); }
 
 ## Issues
 
-```rust
+```rust,ignore
 async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
 async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
 async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
@@ -243,7 +243,7 @@ async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<Stri
 empty (see [`Issue`](#issue)). `issue_view` additionally fills `body`/`url`.
 `issue_create` returns the new issue's **URL**.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -256,7 +256,7 @@ let full = gh.issue_view(repo, 3).await?; // body + url populated
 
 ## Actions runs
 
-```rust
+```rust,ignore
 async fn run_list(&self, dir: &Path, limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
 async fn run_view(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
 async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
@@ -275,7 +275,7 @@ a failed run from a cancelled one — the follow-up view's
 when it elapses (`Error::Timeout`), so drive `run_watch` from a client with no
 (or a generous) timeout.
 
-```rust
+```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -290,7 +290,7 @@ match run.conclusion.as_str() {
 
 ## Releases
 
-```rust
+```rust,ignore
 async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
 async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 ```
@@ -303,7 +303,7 @@ tag but has no `isLatest` field, so `is_latest` defaults to `false` there. The
 
 ## Raw escape hatches
 
-```rust
+```rust,ignore
 async fn run(&self, args: &[String]) -> Result<String>;                 // trimmed stdout; errors on non-zero
 async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>; // never errors on non-zero
 ```
@@ -393,7 +393,7 @@ returns `null`), `url: String`, `is_private: bool`, `default_branch: String`
 
 `#[non_exhaustive]` enum naming gh's mutually exclusive strategy flags:
 
-```rust
+```rust,ignore
 pub enum MergeStrategy {
     Merge,  // --merge   (a merge commit)
     Squash, // --squash  (one commit)
@@ -407,7 +407,7 @@ The [`pr_merge`](#pull-requests--lifecycle) options. `#[non_exhaustive]` — bui
 it through the strategy constructor, then chain the optional flags, rather than
 a struct literal:
 
-```rust
+```rust,ignore
 # use vcs_github::PrMerge;
 let _ = PrMerge::merge();                          // --merge
 let _ = PrMerge::squash().delete_branch();         // --squash --delete-branch
@@ -426,7 +426,7 @@ The [`pr_create`](#pull-requests--listing--creation) options. `#[non_exhaustive]
 with private-by-spec ergonomics — build through `PrCreate::new(title, body)` and
 chain the optional branch setters rather than a struct literal:
 
-```rust
+```rust,ignore
 # use vcs_github::PrCreate;
 let _ = PrCreate::new("Add streaming", "Implements …");        // current branch → repo default
 let _ = PrCreate::new("Add streaming", "Implements …")
@@ -447,7 +447,7 @@ are only reachable through the constructors that take one, and an empty-body
 request-changes is unrepresentable. The review kind is a separate
 [`ReviewKind`](#reviewkind) enum read back via `.kind()`.
 
-```rust
+```rust,ignore
 # use vcs_github::{ReviewAction, ReviewKind};
 let _ = ReviewAction::approve();                          // --approve (no body)
 let _ = ReviewAction::approve().with_body("LGTM");        // --approve --body LGTM
@@ -471,7 +471,7 @@ assert_eq!(a.body(), Some("LGTM"));
 `#[non_exhaustive]`, `Copy` enum naming which review `ReviewAction` submits, read
 back via [`ReviewAction::kind`](#reviewaction):
 
-```rust
+```rust,ignore
 pub enum ReviewKind {
     Approve,         // --approve
     RequestChanges,  // --request-changes
@@ -481,8 +481,8 @@ pub enum ReviewKind {
 
 ## See also
 
-- [Testing & mocking](testing.md) — the `mock` feature (`MockGitHubApi`) and the
+- [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature (`MockGitHubApi`) and the
   `ScriptedRunner` seam.
-- [Process model & errors](process-model.md) — OS-job containment, timeouts, and
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — OS-job containment, timeouts, and
   the `Error` / `ProcessResult` shapes.
-- [crate README](../crates/github/README.md) — quickstart and crate-level docs.
+- [crate docs](https://docs.rs/vcs-github) — quickstart and crate-level docs.

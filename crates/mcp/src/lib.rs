@@ -1,17 +1,51 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-mcp` — a [Model Context Protocol](https://modelcontextprotocol.io)
-//! server that exposes the toolkit's typed repository operations as MCP **tools**,
-//! so an agent harness drives a git/jj repo (and its forge) through structured,
-//! validated calls instead of raw shell.
+//! server that exposes the toolkit's typed git/jj + forge operations as
+//! agent-callable **tools**.
 //!
-//! The server wraps the two facades — [`vcs_core::Repo`] (git/jj) and
-//! [`vcs_forge::Forge`] (GitHub/GitLab/Gitea) — and serializes their DTOs to JSON.
-//! **Read tools are always available; mutating tools are gated**: they're
-//! registered (and annotated `destructiveHint`) but reject calls unless the
-//! server's [`WriteGate`] covers them — all of them (`--allow-write`) or a
-//! per-tool allowlist (`--allow-tools repo_commit,forge_pr_create`).
+//! An agent harness (Claude Code, an IDE assistant, any MCP client) drives a
+//! repository — and its forge — through structured, schema-validated calls
+//! instead of raw shell. Each tool wraps one operation on the [`vcs_core::Repo`]
+//! (git/jj) or [`vcs_forge::Forge`] (GitHub/GitLab/Gitea) facade and returns its
+//! DTO as JSON. Built on the [`rmcp`] SDK; the `vcs-mcp` binary serves over
+//! stdio. It is the workspace's first binary crate — a thin binary over a
+//! hermetically-testable library.
 //!
-//! Build a [`VcsMcpServer`] and serve it over a transport (the `vcs-mcp` binary
-//! uses stdio):
+//! # The surface
+//!
+//! - **[`VcsMcpServer`]** — the server: an `rmcp` [`ServerHandler`] bound to one
+//!   repository and (optionally) its forge. Build it with
+//!   [`new`](VcsMcpServer::new), then `serve` it over an `rmcp` transport. Held
+//!   as object-safe trait handles, so it's runner-agnostic and `Clone` is cheap
+//!   (`Arc`).
+//! - **[`WriteGate`]** — the server's write policy: [`None`](WriteGate::None)
+//!   (read-only, the default), [`All`](WriteGate::All) (`--allow-write`), or
+//!   [`Set`](WriteGate::Set) (a per-tool allowlist). [`allows`](WriteGate::allows)
+//!   answers whether a named mutating tool may run.
+//! - **Tools** are the `#[tool]` methods on [`VcsMcpServer`]: the `repo_*` group
+//!   ([`repo_snapshot`](VcsMcpServer::repo_snapshot),
+//!   [`repo_commit`](VcsMcpServer::repo_commit), …) over the `Repo` facade, and
+//!   the `forge_*` group ([`forge_pr_list`](VcsMcpServer::forge_pr_list),
+//!   [`forge_pr_create`](VcsMcpServer::forge_pr_create), …) over the `Forge` one.
+//! - **Parameter structs** — one `Deserialize` + `JsonSchema` struct per
+//!   tool-with-arguments ([`CommitParams`], [`PrCreateParams`],
+//!   [`MergeStrategyArg`], …); their schema is the tool's advertised input schema.
+//!
+//! # Tools & the write gate
+//!
+//! Read tools are **always available**; mutating tools are **gated**. Every
+//! mutation is registered and annotated `destructiveHint`, but rejects the call
+//! — naming itself, before spawning anything — unless the [`WriteGate`] covers
+//! it. `--allow-write` enables every mutation; `--allow-tools
+//! repo_commit,forge_pr_create` enables only the named ones; read tools are
+//! unaffected either way. Tool names are the method names (e.g. `"repo_commit"`).
+//! This is the crate's core safety property: a default server is read-only, and a
+//! client can surface a confirmation prompt off the `destructiveHint`.
+//!
+//! # Recipes
+//!
+//! Build a [`VcsMcpServer`] and serve it over a transport (the binary uses stdio):
 //!
 //! ```no_run
 //! # use vcs_core::Repo;
@@ -19,10 +53,29 @@
 //! # use rmcp::{ServiceExt, transport::stdio};
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let repo = Repo::open(".")?;
-//! let server = VcsMcpServer::new(repo, None, WriteGate::None);
+//! let server = VcsMcpServer::new(repo, None, WriteGate::None); // read-only
 //! server.serve(stdio()).await?.waiting().await?;
 //! # Ok(()) }
 //! ```
+//!
+//! Or point an MCP client at the installed binary — read-only over one repo, or
+//! with mutations enabled and a forge forced:
+//!
+//! ```text
+//! vcs-mcp --repo /path/to/repo
+//! vcs-mcp --repo /path/to/repo --forge github --allow-tools repo_commit,repo_push
+//! ```
+//!
+//! When `--forge` is omitted the forge is auto-detected from the `origin` remote;
+//! a pure-jj repo with no recognised remote resolves to no forge (the `repo_*`
+//! tools still work, the `forge_*` tools return a clear error).
+//!
+//! # In-depth guide
+//!
+//! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
+//! from `docs/` — covering the CLI flags, the full tool catalogue, forge
+//! auto-detection, and the binary's hardening/timeout safety model. See the
+//! [`guide`] module.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -947,3 +1000,8 @@ mod tests {
         server_handle.abort();
     }
 }
+
+// Long-form how-to guides, rendered from this crate's docs/*.md on docs.rs.
+#[doc = include_str!("../docs/mcp.md")]
+#[allow(rustdoc::broken_intra_doc_links)]
+pub mod guide {}

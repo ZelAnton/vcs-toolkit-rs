@@ -4,7 +4,7 @@
 that exposes the toolkit's typed repository operations as MCP **tools**, so an
 agent harness (Claude Code, an IDE assistant, any MCP client) drives a git/jj repo
 — and its forge — through **structured, validated calls** instead of raw shell.
-Each tool wraps a [`vcs-core`](core.md) (`Repo`) or [`vcs-forge`](forge.md)
+Each tool wraps a [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (`Repo`) or [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 (`Forge`) operation and returns its DTO as JSON. The binary drives git through a
 **hardened** client (`Git::hardened()` — repo hooks and config disabled) and every
 tool argument flows through the wrappers' injection guards (`reject_flag_like`), so
@@ -13,7 +13,7 @@ argv.
 
 It's the workspace's **first binary crate** — a thin `vcs-mcp` binary over a
 hermetically-testable library (`VcsMcpServer`) — and its **second runtime-tokio**
-crate (after [`vcs-watch`](watch.md)).
+crate (after [`vcs-watch`](https://docs.rs/vcs-watch/latest/vcs_watch/guide/)).
 
 **Read tools are always available; mutating tools are gated.** Every mutation is
 registered and annotated `destructiveHint`, but rejects calls unless the server's
@@ -73,7 +73,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 
 | Tool | Params | Returns |
 |---|---|---|
-| `repo_snapshot` | — | The batched [`RepoSnapshot`](core.md#reposnapshot): branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, operation state. |
+| `repo_snapshot` | — | The batched [`RepoSnapshot`](https://docs.rs/vcs-core/latest/vcs_core/guide/): branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, operation state. |
 | `repo_info` | — | `{ backend, root, cwd, forge }` — git/jj, the repo root, the working dir, and the configured forge (or null). |
 | `repo_status` | — | The working-copy changes (added/modified/deleted/renamed paths). |
 | `repo_diff_stat` | — | Aggregate insertion/deletion/file counts for the working copy. |
@@ -87,9 +87,9 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_list` | — | Open pull/merge requests. |
 | `forge_pr_view` | `{ number }` | A single PR/MR by number (GitLab uses the project-scoped `iid`). |
 | `forge_pr_checks` | `{ number }` | The PR/MR's coarse CI status (`Unsupported` on Gitea). |
-| `forge_issue_list` | — | Open issues (up to 100), as unified [`ForgeIssue`](forge.md)s. |
+| `forge_issue_list` | — | Open issues (up to 100), as unified [`ForgeIssue`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
-| `forge_release_list` | — | Releases, newest first (up to 100), as unified [`ForgeRelease`](forge.md)s. |
+| `forge_release_list` | — | Releases, newest first (up to 100), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
@@ -161,7 +161,7 @@ The `vcs-mcp` binary applies, in order:
 The library is independently usable — build a `VcsMcpServer` and serve it over any
 [`rmcp`](https://crates.io/crates/rmcp) transport (the binary uses stdio):
 
-```rust
+```rust,ignore
 use vcs_core::Repo;
 use vcs_mcp::{VcsMcpServer, WriteGate};
 use rmcp::{ServiceExt, transport::stdio};
@@ -179,8 +179,8 @@ expose (`vcs-core` and `vcs-forge` are pulled in with `features = ["serde"]`).
 
 ## See also
 
-- [vcs-core guide](core.md) — the `Repo` facade behind the `repo_*` tools.
-- [vcs-forge guide](forge.md) — the `Forge` facade behind the `forge_*` tools.
-- [Security & hardening](security.md) — the injection guards and hardened profile
+- [vcs-core guide](https://docs.rs/vcs-core/latest/vcs_core/guide/) — the `Repo` facade behind the `repo_*` tools.
+- [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the `Forge` facade behind the `forge_*` tools.
+- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — the injection guards and hardened profile
   that apply under every tool.
-- [crate README](../crates/mcp/README.md) — quickstart.
+- [crate docs](https://docs.rs/vcs-mcp) — quickstart.
