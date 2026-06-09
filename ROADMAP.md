@@ -11,6 +11,69 @@ of a gap worth closing. File references below point at consumer code as it
 stood when this document was written; treat them as evidence, not as live
 links.
 
+> **Planning layout.** This file holds **committed work**. Open ideas not yet
+> committed live in [`ideas/`](ideas/) (`next-` = reconsider first, `later-` = further
+> out / consumer-gated); settled rejections and scope boundaries live in
+> [`decisions/`](decisions/). See [`ideas/README.md`](ideas/README.md) for the
+> today / next / later / won't-do bucket scheme.
+
+---
+
+## Active roadmap (do now)
+
+The committed near-term worklist from the 2026-06-09 development sweep. Seven
+high-conviction items — the sweep deliberately did **not** pad to a round number; the
+toolkit is unusually mature for pre-release, so the bar for "today" is high (the tier
+just below is in [`ideas/next-*`](ideas/)). When an item ships, mark it ✅ and fold its
+evidence into the completed program below.
+
+- **R1 — Make jj worktree creation atomic + test the partial-failure path.**
+  `crates/core/src/jj_backend.rs` `create_worktree` does `workspace_add` then
+  `bookmark_create` unguarded; if step 2 fails the freshly-added workspace is orphaned
+  with no rollback, and there is no test. *Done when:* the bookmark-step failure path
+  cleans up the workspace (mirroring `remove_worktree`), and a `ScriptedRunner` test
+  drives a step-2 failure and asserts no workspace is left behind. *(The one bug-class
+  item; the `agent-workspace` consumer drives this primitive.)*
+- **R2 — Harden the load-bearing error classifiers against output truncation.**
+  processkit truncates `Error::Exit` streams to 4 KiB before `vcs_cli_support`'s
+  `is_merge_conflict` / `is_transient_fetch_error` (`crates/cli-support/src/lib.rs`) read
+  them; those drive control flow in `try_merge` (`crates/core/src/git_backend.rs`) and
+  the fetch retry. On a large real repo the decisive marker can fall past 4 KiB → silent
+  misclassification. *Done when:* the load-bearing classification sites read untruncated
+  output (or are otherwise made truncation-robust), with a regression test. Belt-and-
+  suspenders alongside the upstream fix requested in `T-20260609-vcs-processkit-feedback`.
+- **R3 — Add a `cargo-semver-checks` CI job.** Makes the documented SemVer/1.0 policy
+  (`crates/core/docs/stability.md`) mechanically enforced instead of prose-only.
+  *Done when:* CI runs `cargo-semver-checks` per published crate, **report-only** on
+  `0.x` (so pre-1.0 breaking changes aren't noise) and gating as a crate approaches 1.0.
+- **R4 — Harden the gitea `tea` parser contract.** `crates/gitea/src/parse.rs` parses
+  tea's empirically reverse-engineered string-table JSON (quirky snake_case — wrong once
+  already) with the thinnest net, and `crates/forge/src/gitea_forge.rs` lacks the
+  proptest its github/gitlab siblings have. *Done when:* `gitea_forge` parsers have
+  proptest panic-freedom and `parse.rs` case coverage matches the sibling wrappers.
+- **R5 — Bring GitLab integration tests to GitHub parity.** `crates/gitlab/tests/cli.rs`
+  (~42 lines) is roughly half of `vcs-github`'s (~83). *Done when:* the `glab` argv /
+  JSON-shape round-trips reach parity with the GitHub suite (GitLab is the forge most
+  likely to silently drift otherwise).
+- **R6 — Community-health files.** None exist today. *Done when:* `SECURITY.md` (the
+  library spawns subprocesses against untrusted repos — a real disclosure surface),
+  `CONTRIBUTING.md` (point at AGENTS.md), `CODE_OF_CONDUCT.md`, and
+  `.github/ISSUE_TEMPLATE/` + `PULL_REQUEST_TEMPLATE.md` are added (adapt ProcessKit-rs's
+  set). GitHub's "community standards" checklist goes green.
+- **R7 — Add `keywords` + `categories` to all 12 crate manifests.** Every `Cargo.toml`
+  has `description` + `readme` but **zero** `keywords`/`categories` → poor crates.io
+  discoverability for the just-published crates. *Done when:* each manifest carries
+  apt `categories` (e.g. `development-tools`) and `keywords` (`git`/`jujutsu`/`vcs`/
+  `automation`/`cli`, ≤5). Trivial, zero-risk.
+
+---
+
+## Completed program (history)
+
+The §1–§7 program below is **complete** — retained as the design record (what shipped
+and why, with the empirical CLI facts discovered along the way). It is history, not a
+worklist; live work is the Active roadmap above.
+
 ## 1. Close the remaining consumer escape hatches — ✅ done
 
 Small typed methods; each was a place a consumer built argv by hand.
@@ -372,28 +435,10 @@ matrix + ≥2-pass adversarial review:
     parse loops, ~4 genuinely shared lines — any extraction bends one model. Both
     conflict modules stay independent.
 
-**Consciously rejected** (one line each, so the next reviewer doesn't re-litigate):
-codegen/templating across the five wrappers (heavy machinery vs the AGENTS.md
-convention, for ~150 lines); a `Backend` trait instead of the enum (the enum +
-free-fn modules *is* the adapter, monomorphised); trait-only `Repo` (kills
-rustdoc/ergonomics); broad serde-JSON proptests (serde doesn't panic);
-Windows/macOS integration lanes (cost; revisit separately); retry jitter (needs
-processkit support — goes in an upstream spec if wanted); `mockall::automock` on
-the facade traits (incompatible with their `macro_rules!`-generated signatures —
-§7.3; seam-testing over a fake runner is the supported path); sharing the conflict
-marker-scanner across vcs-git/vcs-jj (§7.3 — would bend one model's marker grammar).
+## Boundaries and rejected ideas
 
-## Deliberately out of scope
-
-1. **Copy-on-write worktree cloning (reflink) and its cross-process lock.**
-   Stays in `agent-workspace`: the copy strategy is injected by the consumer,
-   and `reflink-copy` is not a toolkit dependency. The toolkit's seam is
-   `worktree_add(…, no_checkout)`, which already exists.
-2. **A single cross-backend `merge`/`undo` button on the facade.** git merge
-   and jj's `new_merge`+`squash`, and git history rewriting vs jj's op log,
-   diverge for real; §2 exposes honest per-backend primitives instead.
-3. **A blocking (non-async) API.** Both consumers run tokio; the only
-   synchronous need is `Drop`-context cleanup, which the `blocking` helper
-   modules already cover.
-4. **Index-repair / batching policy after `--no-checkout`.** Application
-   policy (progress UI, thresholds), not a CLI-wrapping primitive.
+The former **"Consciously rejected"** and **"Deliberately out of scope"** lists now live
+in [`decisions/wont-do-2026-06.md`](decisions/wont-do-2026-06.md) — consolidated with one
+reason each — so this roadmap holds only live and historical *work*. Open, not-yet-
+committed ideas are in [`ideas/`](ideas/). (One former entry, **retry jitter**, has been
+reopened as an active upstream proposal to ProcessKit-rs.)
