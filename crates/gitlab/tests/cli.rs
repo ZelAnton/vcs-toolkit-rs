@@ -64,7 +64,10 @@ async fn issue_list_and_view_round_trip() {
         eprintln!("skipping: repo has no issues");
         return;
     };
-    let viewed = glab.issue_view(dir, first.number).await.expect("issue_view");
+    let viewed = glab
+        .issue_view(dir, first.number)
+        .await
+        .expect("issue_view");
     assert_eq!(viewed.number, first.number);
     assert_eq!(viewed.title, first.title);
 }

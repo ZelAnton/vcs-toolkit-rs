@@ -1337,6 +1337,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // C locale: the retry decision classifies the failure's message.
         let cmd = c_locale(self.core.command_in(dir, ["fetch", "--quiet"]))
             .env("GIT_TERMINAL_PROMPT", "0")
+            // On a per-client timeout, terminate gracefully (then hard-kill after a
+            // grace window) so a timed-out fetch can close the connection cleanly.
+            .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
@@ -1350,6 +1353,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // with the remote named explicitly.
         let cmd = c_locale(self.core.command_in(dir, ["fetch", "--quiet", remote]))
             .env("GIT_TERMINAL_PROMPT", "0")
+            .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
@@ -1361,6 +1365,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .command_in(dir, ["fetch", "--quiet", "origin", refspec.as_str()]),
         )
         .env("GIT_TERMINAL_PROMPT", "0")
+        .timeout_grace(FETCH_TIMEOUT_GRACE)
         .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
@@ -1733,6 +1738,7 @@ pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
+const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 
 /// Point git's editor at a no-op so any command that would open `$EDITOR`
 /// (a rebase reword, the message-confirm on `rebase --continue`) succeeds

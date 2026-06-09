@@ -79,6 +79,12 @@ pub fn reject_flag_like(program: &str, what: &str, value: &str) -> Result<()> {
 pub const FETCH_ATTEMPTS: u32 = 3;
 /// Fixed backoff between fetch retries.
 pub const FETCH_BACKOFF: Duration = Duration::from_millis(500);
+/// Grace period for a timed-out fetch: on the deadline processkit signals the
+/// process tree (terminate), waits this long for it to exit cleanly — flush, close
+/// the connection, drop any lock — then hard-kills. Only takes effect when a
+/// per-client timeout is set (`Git::default_timeout` / `Jj::default_timeout`); a
+/// fetch with no deadline is unaffected.
+pub const FETCH_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 
 /// Lower-case substrings marking a merge that stopped on conflicts.
 const CONFLICT_MARKERS: &[&str] = &["conflict (", "automatic merge failed"];
@@ -128,8 +134,13 @@ pub fn is_nothing_to_commit(err: &Error) -> bool {
 /// transient (DNS, timeout, dropped connection) and is worth retrying.
 pub fn is_transient_fetch_error(err: &Error) -> bool {
     // A processkit-level timeout (a `.timeout()`-bounded run that expired) carries
-    // no captured output but is inherently transient; treat it as retryable too.
-    matches!(err, Error::Timeout { .. }) || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
+    // no captured output but is inherently transient; treat it as retryable too. So
+    // is an io-level transient from the spawn itself (interrupted / would-block /
+    // busy), which processkit classifies via `Error::is_transient()` (it covers
+    // `Spawn`/`Io`, not `Exit`, so it composes cleanly with the marker scan below).
+    matches!(err, Error::Timeout { .. })
+        || err.is_transient()
+        || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
 }
 
 #[cfg(test)]
@@ -200,6 +211,53 @@ mod tests {
             timeout: Duration::from_secs(10),
         };
         assert!(is_transient_fetch_error(&timeout));
+    }
+
+    // R9: an io-level transient from the spawn (EINTR / EAGAIN / busy) is fetch-
+    // retryable too, via processkit's `Error::is_transient()`.
+    #[test]
+    fn classifies_io_transient_as_fetch_retryable() {
+        let interrupted = Error::Spawn {
+            program: "git".into(),
+            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
+        };
+        assert!(
+            interrupted.is_transient(),
+            "processkit treats Interrupted as a transient io error"
+        );
+        assert!(is_transient_fetch_error(&interrupted));
+        // A non-transient io error (e.g. NotFound — the binary is missing) is not retried.
+        let missing = Error::Spawn {
+            program: "git".into(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+        assert!(!is_transient_fetch_error(&missing));
+    }
+
+    // R2: regression for the processkit 0.9.1 untruncated-`Error::Exit` fix. A large
+    // output (well past the old 4 KiB cap) with the decisive marker near the END must
+    // still classify — proving the classifiers see the whole captured stream.
+    #[test]
+    fn classifies_on_large_output_past_the_old_4kib_cap() {
+        let padding = "noise line that says nothing\n".repeat(500); // ~14 KiB
+        let conflict = Error::Exit {
+            program: "git".into(),
+            code: 1,
+            stdout: format!("{padding}CONFLICT (content): Merge conflict in late.rs"),
+            stderr: String::new(),
+        };
+        assert!(
+            is_merge_conflict(&conflict),
+            "a conflict marker past 4 KiB must still classify"
+        );
+
+        let transient = Error::Exit {
+            program: "git".into(),
+            code: 128,
+            stdout: String::new(),
+            stderr: format!("{padding}fatal: unable to access: Could not resolve host: x"),
+        };
+        assert!(is_transient_fetch_error(&transient));
     }
 
     // processkit 0.7's `Error` is `#[non_exhaustive]` and grows variants over

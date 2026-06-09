@@ -788,11 +788,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
         // Idempotent → `retry` replays it on a transient (network) failure.
-        let cmd = self.cmd_in(dir, ["git", "fetch"]).retry(
-            FETCH_ATTEMPTS,
-            FETCH_BACKOFF,
-            is_transient_fetch_error,
-        );
+        let cmd = self
+            .cmd_in(dir, ["git", "fetch"])
+            // Graceful terminate-then-kill on a per-client timeout, so a timed-out
+            // fetch can close its connection cleanly.
+            .timeout_grace(FETCH_TIMEOUT_GRACE)
+            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
 
@@ -800,6 +801,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // Idempotent → `retry` replays it on a transient (network) failure.
         let cmd = self
             .cmd_in(dir, ["git", "fetch", "--remote", remote])
+            .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
@@ -1173,6 +1175,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
         let cmd = self
             .cmd_in(dir, ["git", "fetch", "--remote", "origin", "-b", branch])
+            .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
@@ -1340,6 +1343,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
+const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 
 /// How many `jj workspace root` lookups [`Jj::workspace_roots`] keeps in flight at
 /// once — a cap so a repo with many workspaces doesn't spawn an unbounded burst of

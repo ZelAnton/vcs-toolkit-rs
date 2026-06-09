@@ -472,7 +472,10 @@ mod tests {
         let jj = Jj::with_runner(
             ScriptedRunner::new()
                 .on(["workspace", "add"], Reply::ok(""))
-                .on(["bookmark", "create"], Reply::fail(1, "bookmark already exists\n"))
+                .on(
+                    ["bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
                 .on(["workspace", "forget"], Reply::ok("")),
         );
 

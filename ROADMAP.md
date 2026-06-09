@@ -21,70 +21,36 @@ links.
 
 ## Active roadmap (do now)
 
-The committed near-term worklist (from the 2026-06-09 development sweep, extended after
-the **processkit 0.9.1** bump — the floor is now 0.9.1, which unlocked R8–R10 and resolved
-R2's root cause upstream). The toolkit is unusually mature for pre-release, so the bar for
-"today" is high (the tier just below is in [`ideas/next-*`](ideas/)). When an item ships,
-mark it ✅ and fold its evidence into the completed program below.
+The R1–R10 wave (2026-06-09 / 2026-06-10 sweeps) is **shipped** — summary below. With it
+cleared, the active list is empty; the next committed items get promoted from
+[`ideas/next-*`](ideas/) (forge `capabilities()`, `examples/`, MCP HTTP transport) when work
+resumes. Settled-against items live in [`decisions/`](decisions/).
 
-- **R1 — Make jj worktree creation atomic + test the partial-failure path.**
-  `crates/core/src/jj_backend.rs` `create_worktree` does `workspace_add` then
-  `bookmark_create` unguarded; if step 2 fails the freshly-added workspace is orphaned
-  with no rollback, and there is no test. *Done when:* the bookmark-step failure path
-  cleans up the workspace (mirroring `remove_worktree`), and a `ScriptedRunner` test
-  drives a step-2 failure and asserts no workspace is left behind. *(The one bug-class
-  item; the `agent-workspace` consumer drives this primitive.)*
-- **R2 — (mostly resolved upstream) optional defensive test for classifier truncation.**
-  The root cause — processkit truncating `Error::Exit` to 4 KiB before `vcs_cli_support`'s
-  `is_merge_conflict` / `is_transient_fetch_error` (`crates/cli-support/src/lib.rs`) read
-  them, risking silent misclassification in `try_merge` / fetch-retry on a large repo —
-  **shipped fixed in processkit 0.9.1** (full `Error::Exit` streams) and is now adopted, so
-  the classifiers see the whole stdout/stderr again. *Optional follow-up:* a regression test
-  pinning classification on a >4 KiB conflict/fetch output as belt-and-suspenders. Low
-  priority — the upstream data-loss is gone (closed `T-20260609-vcs-processkit-feedback`).
-- **R3 — Add a `cargo-semver-checks` CI job.** Makes the documented SemVer/1.0 policy
-  (`crates/core/docs/stability.md`) mechanically enforced instead of prose-only.
-  *Done when:* CI runs `cargo-semver-checks` per published crate, **report-only** on
-  `0.x` (so pre-1.0 breaking changes aren't noise) and gating as a crate approaches 1.0.
-- **R4 — Harden the gitea `tea` parser contract.** `crates/gitea/src/parse.rs` parses
-  tea's empirically reverse-engineered string-table JSON (quirky snake_case — wrong once
-  already) with the thinnest net, and `crates/forge/src/gitea_forge.rs` lacks the
-  proptest its github/gitlab siblings have. *Done when:* `gitea_forge` parsers have
-  proptest panic-freedom and `parse.rs` case coverage matches the sibling wrappers.
-- **R5 — Bring GitLab integration tests to GitHub parity.** `crates/gitlab/tests/cli.rs`
-  (~42 lines) is roughly half of `vcs-github`'s (~83). *Done when:* the `glab` argv /
-  JSON-shape round-trips reach parity with the GitHub suite (GitLab is the forge most
-  likely to silently drift otherwise).
-- **R6 — Community-health files.** None exist today. *Done when:* `SECURITY.md` (the
-  library spawns subprocesses against untrusted repos — a real disclosure surface),
-  `CONTRIBUTING.md` (point at AGENTS.md), `CODE_OF_CONDUCT.md`, and
-  `.github/ISSUE_TEMPLATE/` + `PULL_REQUEST_TEMPLATE.md` are added (adapt ProcessKit-rs's
-  set). GitHub's "community standards" checklist goes green.
-- **R7 — Add `keywords` + `categories` to all 12 crate manifests.** Every `Cargo.toml`
-  has `description` + `readme` but **zero** `keywords`/`categories` → poor crates.io
-  discoverability for the just-published crates. *Done when:* each manifest carries
-  apt `categories` (e.g. `development-tools`) and `keywords` (`git`/`jujutsu`/`vcs`/
-  `automation`/`cli`, ≤5). Trivial, zero-risk.
+### ✅ Shipped — the R1–R10 wave (2026-06-10)
 
-*Unlocked by the processkit 0.9.1 bump (additive features now available):*
-
-- **R8 — Adopt `Command::ok_codes([..])`** at the exit-code sites. ~12 places branch on a
-  "normal" non-zero code via `.probe()` or `.output()` + `.code()`:
-  `crates/git/src/lib.rs` `diff_is_empty` / branch & range / staged checks (~1049–1315), the
-  `auth_status` trio (`crates/github/src/lib.rs` ~481, `gitlab` ~302, `gitea` ~300), and the
-  remote-ref checks. *Done when:* those read as a plain `.run()` + `ok_codes([..])` where it
-  is clearer (`.probe()` stays where a genuine 0/1 boolean is the point). Clarity, not a bug.
-- **R9 — Lean on `Error::is_transient()`** in the fetch-retry path.
-  `crates/cli-support/src/lib.rs` `is_transient_fetch_error` classifies transient failures by
-  substring; the 6 `.retry(...)` sites in vcs-git/vcs-jj use it. *Done when:* the classifier
-  also consults processkit's io-level `is_transient()` (spawn/io transients), keeping the
-  substring set for the CLI-message cases. **Keep** the public `is_transient_fetch_error`
-  re-export (consumers depend on it).
-- **R10 — Adopt `Command::timeout_grace`** for the long git/jj ops. fetch/push/clone and
-  `run_watch` currently hard-kill on the deadline; a SIGTERM-then-kill grace window lets git
-  release `index.lock` and finish cleanup instead of an abrupt kill. *Done when:* the client
-  timeout path sets a grace window for the network/long ops (Windows has no signal tier →
-  atomic kill on the deadline, as documented upstream).
+- **R1 ✅** — jj `create_worktree` rolls back (forget workspace + remove dir) when the
+  `bookmark_create` step fails, with a hermetic `ScriptedRunner` test
+  (`crates/core/src/jj_backend.rs`).
+- **R2 ✅** — root cause fixed upstream (processkit 0.9.1 untruncated `Error::Exit`, now
+  adopted); added a >4 KiB classification regression test (`crates/cli-support/src/lib.rs`).
+- **R3 ✅** — report-only `cargo-semver-checks` CI job (`continue-on-error`; advisory while
+  every crate is 0.x, ready to enforce at 1.0).
+- **R4 ✅** — proptest panic-freedom for the gitea `tea` parsers (`crates/gitea/src/parse.rs`;
+  `proptest` added to vcs-gitea dev-deps).
+- **R5 ✅** — gitlab issue/release integration round-trips added (graceful-skip without a live
+  GitLab); the hermetic argv/parse coverage in `crates/gitlab/src/lib.rs` was found already
+  comprehensive (the line-count gap vs github was a CI-platform difference, now documented).
+- **R6 ✅** — `SECURITY.md` / `CONTRIBUTING.md` / `CODE_OF_CONDUCT.md` + `.github/` issue & PR
+  templates (and the README "Conventions" link repointed off the untracked `AGENTS.md` to
+  `CONTRIBUTING.md`).
+- **R7 ✅** — `keywords` + `categories` on all 12 crate manifests.
+- **R8 ✅ (resolved by analysis — won't implement)** — our exit-code idioms
+  (`probe` / `exit_code` / `output`) are already correct; `ok_codes` would not improve them.
+  See [`decisions/wont-do-2026-06.md`](decisions/wont-do-2026-06.md).
+- **R9 ✅** — `is_transient_fetch_error` now also consults processkit's io-level
+  `Error::is_transient()` (`crates/cli-support/src/lib.rs`), with a test.
+- **R10 ✅** — `timeout_grace` on the git/jj fetch ops (graceful terminate-then-kill on a
+  per-client timeout; `FETCH_TIMEOUT_GRACE` in `vcs-cli-support`).
 
 ---
 

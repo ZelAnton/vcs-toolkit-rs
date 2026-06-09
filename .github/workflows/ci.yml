@@ -244,3 +244,17 @@ jobs:
       # those deps publish. Their compile is covered by the `test`/`clippy` jobs
       # (against the local path deps), and the release workflow verify-builds each
       # against the local tree (or the published deps) at release time.
+
+  # Report-only SemVer check (cargo-semver-checks). Every crate is 0.x and may break
+  # its API freely pre-1.0, so this must NOT gate — `continue-on-error: true` keeps it
+  # advisory: it surfaces accidental breaking changes against each crate's crates.io
+  # baseline for awareness now, and becomes the enforcing gate as crates approach 1.0
+  # (pairs with the pre-1.0 public-API review in crates/core/docs/stability.md). Crates
+  # with no published baseline are skipped by the action.
+  semver:
+    name: semver-checks (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
