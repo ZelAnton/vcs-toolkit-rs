@@ -1,13 +1,17 @@
-# vcs-gitlab
+# vcs-gitlab — automate GitLab from Rust
 
-Automate **GitLab** from Rust through the `glab` CLI and process execution. Part
-of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-Typed, **async** commands over the GitLab CLI (`glab`) that deserialize
-`glab … --output json` (GitLab's REST JSON) into structs, behind a **mockable
-interface**. Commands run inside an OS job (via [`processkit`]) so no `glab`
-subprocess is ever orphaned, return the structured `Error`, and honour an
-optional timeout. The surface is the **lean merge-request lifecycle**; the
+**What you can do:** check auth, view the project, run the lean merge-request
+lifecycle (list/view/create/merge/mark-ready/close), read CI/pipeline status, and
+manage issues and releases — all as typed `async` methods over the `glab` CLI,
+behind a mockable interface.
+
+**How it works:** each call runs the real `glab` (its own host config and
+credentials), asks for `--output json`, and deserializes the result into structs.
+Commands run inside an OS job (an OS-level container that kills the whole process
+tree if your program exits, via [`processkit`]) so no `glab` subprocess is ever
+orphaned; calls return the structured `Error` and honour an optional timeout. The
 [`vcs-forge`](https://crates.io/crates/vcs-forge) facade unifies this with
 `vcs-github` and `vcs-gitea`.
 
@@ -15,7 +19,7 @@ optional timeout. The surface is the **lean merge-request lifecycle**; the
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-gitlab/latest/vcs_gitlab/guide/)
 
-Inside an async context (every method is `async`):
+Every method is `async`, so call it from a tokio runtime:
 
 ```rust
 use std::path::Path;

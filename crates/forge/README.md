@@ -1,15 +1,18 @@
-# vcs-forge
+# vcs-forge — one forge API for GitHub, GitLab and Gitea
 
-A backend-agnostic **forge facade** over `vcs-github`, `vcs-gitlab`, and
-`vcs-gitea` — the `gh`/`glab`/`tea` analogue of how
-[`vcs-core`](https://crates.io/crates/vcs-core) sits over git and jj. Part of the
-[vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-A [`Forge`] handle dispatches the **common forge operations** — auth, repo/project
-view, the PR/MR lifecycle (list / view / create / merge / mark-ready / close,
-plus CI status), issues (list / view / create), and releases (list / view) — to
-whichever CLI backs it, returning forge-agnostic DTOs ([`ForgePr`],
-[`ForgeIssue`], [`ForgeRelease`], [`ForgeRepo`], [`CiStatus`]).
+**What you can do:** hold one `Forge` handle and automate all three forges through one
+API — check auth, view the repo/project, the PR/MR lifecycle (list/view/create/merge/
+close, plus mark-ready and CI checks on GitHub/GitLab), issues (list/view/create), and
+releases (list/view) — all returning plain result types (`ForgePr`, `ForgeIssue`,
+`ForgeRelease`, `ForgeRepo`, `CiStatus`) that don't mention which forge produced them.
+(Gitea's `tea` is narrower — a few operations are GitHub/GitLab-only; see "Coverage
+differs per CLI" below.)
+
+**How it works:** it sends each operation to whichever CLI (`gh`/`glab`/`tea`) backs
+the handle. It's the forge analogue of how
+[`vcs-core`](https://crates.io/crates/vcs-core) sits over git and jj.
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 

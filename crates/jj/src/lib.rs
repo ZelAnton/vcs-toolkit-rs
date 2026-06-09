@@ -2,14 +2,33 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-jj` — automate Jujutsu (`jj`) from Rust by driving the `jj` CLI.
 //!
-//! It shells out to the installed `jj` binary and parses its templated output
-//! into typed values — so you get *jj's own* behaviour and config, not a
-//! reimplementation of the operation log or backend. Async throughout,
-//! structured errors, and mockable. Every command runs inside an OS **job** (via
-//! [`processkit`]) so a `jj` subprocess tree can never be orphaned, and honours
-//! an optional per-client [timeout](Jj::default_timeout).
+//! You call typed `async` methods; `vcs-jj` runs the real `jj`, parses its
+//! templated output, and hands you structured values — so you get *jj's own*
+//! behaviour and config, not a reimplementation of the operation log or backend.
+//! Async, structured errors, mockable. Every command runs inside an OS **job** (an
+//! OS-level container that kills the whole process tree if your program exits, via
+//! [`processkit`]) so a `jj` subprocess is never orphaned, with an optional
+//! per-client [timeout](Jj::default_timeout).
 //!
-//! # The surface
+//! # What you can do
+//!
+//! Working-copy status & the change log · describe / new change · bookmarks · the
+//! operation log (restore / undo — jj's safety net) · workspaces · squash / split /
+//! absorb / duplicate / abandon · diff & template queries · git sync (fetch / push
+//! / clone / import) · parse & resolve jj's native conflict markers · transactions
+//! that roll the op log back on error. One tiny call to start:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_jj::{Jj, JjApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let jj = Jj::new();
+//! // the working-copy change `@`:
+//! println!("{}", jj.current_change(Path::new(".")).await?.change_id);
+//! # Ok(()) }
+//! ```
+//!
+//! # The surface (engineering reference)
 //!
 //! - **[`JjApi`]** — the object-safe trait every operation lives on. Depend on
 //!   `&dyn JjApi` (or generically on `impl JjApi`) so a test can swap the real

@@ -4,11 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 2024](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
-A Rust toolkit for automating **Git**, **Jujutsu**, **GitHub**, **GitLab**, and
-**Gitea** through CLI process execution. Rather than reimplementing each tool's
-protocol, these crates shell out to the official binaries
-(`git`, `jj`, `gh`, `glab`, `tea`) and capture their output — thin, predictable
-wrappers you can compose into automation.
+**Automate git, Jujutsu, and the GitHub / GitLab / Gitea forges from Rust.**
+vcs-toolkit runs the command-line tools you already have — `git`, `jj`, `gh`,
+`glab`, `tea` — and hands you their output as typed Rust values. There's no
+reimplemented git here: you get the real tools' exact behavior, config, and
+credentials, wrapped in a clean async API.
 
 ![Cover](https://raw.githubusercontent.com/ZelAnton/vcs-toolkit-rs/main/cover.png)
 
@@ -17,6 +17,46 @@ Object or a Linux cgroup v2) so the whole process tree dies with the parent — 
 orphaned subprocesses. That mechanism comes from the external
 [`processkit`](https://crates.io/crates/processkit) crate, which also provides
 timeouts, the structured `Error`, and the test seams these wrappers build on.
+
+## What you can do
+
+vcs-toolkit covers the everyday automation surface for git, Jujutsu, and the
+three forges — in plain terms:
+
+- **Drive git or Jujutsu directly** — status, branches/bookmarks, commit, diff,
+  log, merge & rebase, worktrees, tags, blame, clone, and more, through one typed
+  async API per tool (`vcs-git`, `vcs-jj`).
+- **Treat "the repository" as one thing** — a single `Repo` that auto-detects
+  whether a directory is git or jj and runs whatever both support, so your code
+  doesn't have to care which it is (`vcs-core`).
+- **Automate code forges** — list, open, review, and merge pull/merge requests, and
+  manage issues and releases, on GitHub, GitLab, and Gitea — one API across all three
+  (`vcs-forge`); read CI status on the forges that expose it (GitHub, GitLab).
+- **React to repository changes** — stream typed events (HEAD moved, branch
+  switched, a conflict appeared, the working copy changed…) as they happen
+  (`vcs-watch`).
+- **Give an AI agent safe repo access** — a ready-made MCP server exposes every
+  operation as an agent-callable tool, with writes gated off by default
+  (`vcs-mcp`).
+- **Test it all without the real tools** — point your code at a mock or canned
+  command output; no installed binary, temp repo, or network needed
+  (`vcs-testkit`).
+
+## Start here
+
+Pick the crate that matches your task — each links to its guide:
+
+- **Control a repo, git *or* jj** → [`vcs-core`](crates/core/docs/core.md) (the
+  unified `Repo` — the usual starting point).
+- **Just one VCS** → [`vcs-git`](crates/git/docs/git.md) or
+  [`vcs-jj`](crates/jj/docs/jj.md).
+- **A code forge** → [`vcs-forge`](crates/forge/docs/forge.md) for all three, or
+  [`vcs-github`](crates/github/docs/github.md) /
+  [`vcs-gitlab`](crates/gitlab/docs/gitlab.md) /
+  [`vcs-gitea`](crates/gitea/docs/gitea.md) directly.
+- **Watch a repo for changes** → [`vcs-watch`](crates/watch/docs/watch.md).
+- **Serve operations to an AI agent** → [`vcs-mcp`](crates/mcp/docs/mcp.md).
+- **Write tests against a repo** → [`vcs-testkit`](crates/testkit/docs/testkit.md).
 
 ## Why
 
@@ -168,24 +208,28 @@ use vcs_jj::{Jj, JjApi};
 
 ## What each client exposes
 
-Every client also has a `run(args)` / `run_raw(args)` escape hatch for commands
-that aren't modelled yet, plus `version()`.
+Each client is a typed async API over its binary; its guide lists every method
+with the parsed return type. In brief:
 
-| `vcs-git` (`GitApi`) | `vcs-jj` (`JjApi`) | `vcs-github` (`GitHubApi`) |
-|---|---|---|
-| `status` → `Vec<StatusEntry>` | `status` → `String` | `auth_status` → `bool` |
-| `current_branch` → `String` | `current_change` → `Change` | `repo_view` → `Repo` |
-| `branches` → `Vec<Branch>` | `log` → `Vec<Change>` | `pr_list` → `Vec<PullRequest>` |
-| `log` → `Vec<Commit>` | `describe` / `new_change` | `pr_view` → `PullRequest` |
-| `rev_parse` → `String` | `bookmarks` → `Vec<Bookmark>` | `issue_list` → `Vec<Issue>` |
-| `init` / `add` / `commit` | `bookmark_set` | `pr_create` → URL |
-| `create_branch` / `checkout` | `git_fetch` / `git_push` | `api` → raw JSON |
-| `diff_is_empty` → `bool` | | `pr_merge` / `pr_ready` / `pr_close` |
-| `worktree_list` → `Vec<Worktree>`, `worktree_add`/`_remove`/`_move`/`_prune` | `workspace_list` → `Vec<Workspace>`, `workspace_add`/`_root`/`_forget` | `pr_checks` → `Vec<CheckRun>` |
-| `branch_exists`/`remote_branch_exists` → `bool`, `common_dir`/`git_dir`/`remote_head_branch` | `root`/`trunk`/`current_bookmark`, `bookmark_create`/`_move`/`_rename`/`_delete` | `run_list`/`run_view`/`run_watch` → `WorkflowRun` |
-| `diff_stat` → `DiffStat`, `is_merged`, `rev_list_count` | `diff_summary`/`diff_stat`, `commit_count`, `is_conflicted`, `template_query` | `pr_review` / `pr_comment`, `pr_feedback` → reviews+comments |
-| `merge_*` / `rebase_*` / `reset_*` / `fetch` | `rebase`/`edit`/`squash_into`/`new_merge`/`git_import`, `op_head`/`op_restore`/`op_undo` | `issue_create`/`issue_view`, `release_list`/`release_view` |
-| `clone_repo`, `tag_*`, `show_file`, `blame` → `Vec<BlameLine>`, `config_get`/`_set`, `cherry_pick`/`revert`/`rebase_skip` | `git_clone`, `absorb`/`split_paths`/`duplicate`, `op_log` → `Vec<Operation>`, `evolog`, `file_annotate`/`file_show` | |
+- **`vcs-git` (`GitApi`)** — status, branches, commit/checkout, diff & log,
+  merge/rebase/reset, worktrees, tags, blame, clone, config, cherry-pick/revert,
+  conflict parsing/resolution, and a hardened (hooks-off) mode for untrusted repos.
+  → [full reference](crates/git/docs/git.md)
+- **`vcs-jj` (`JjApi`)** — changes & descriptions, bookmarks, the operation log
+  (restore/undo), workspaces, squash/split/absorb/duplicate/abandon, diff & template
+  queries, git sync (fetch/push/clone/import), conflict parsing/resolution, and
+  op-log-rollback transactions.
+  → [full reference](crates/jj/docs/jj.md)
+- **`vcs-github` (`GitHubApi`)** — auth, repo view, the full PR lifecycle
+  (list/view/create/merge/ready/close, review/comment, checks, feedback), issues,
+  releases, and GitHub Actions runs (list/view/watch).
+  → [full reference](crates/github/docs/github.md)
+- **`vcs-gitlab` (`GitLabApi`)** / **`vcs-gitea` (`GiteaApi`)** — the lean MR/PR
+  lifecycle plus issues and releases, via `glab` / `tea`.
+  → [gitlab](crates/gitlab/docs/gitlab.md) · [gitea](crates/gitea/docs/gitea.md)
+
+Every client also has a `run(args)` / `run_raw(args)` escape hatch — drop to a raw
+command when something isn't modelled yet — plus `version()`.
 
 ## Recipes
 

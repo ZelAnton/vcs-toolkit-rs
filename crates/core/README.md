@@ -1,13 +1,17 @@
-# vcs-core
+# vcs-core — one repository API for git and jj
 
-A unified facade over [`vcs-git`](https://crates.io/crates/vcs-git) and
-[`vcs-jj`](https://crates.io/crates/vcs-jj): repository detection plus a
-backend-agnostic handle for the operations both tools share.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-It exists to lift the "detect git-vs-jj and dispatch behind one interface" layer
-that downstream tools kept re-implementing. Rich, tool-specific operations stay
-on the underlying `vcs-git` / `vcs-jj` clients, reachable through the
-`Repo::git()` / `Repo::jj()` escape hatches.
+**What you can do:** hold one `Repo` handle that auto-detects whether a directory is
+a git or a jj checkout, then run whatever *both* tools support — current branch, a
+batched status snapshot, changed files & diff, commit paths, fetch/push/checkout/
+rebase, a conflict-probe merge, in-progress merge/rebase state, and worktrees — all
+returning plain result types that don't mention the backend.
+
+**How it works:** it drives the `vcs-git` / `vcs-jj` clients under the hood and
+exposes only the shared operations. Tool-specific power (a full merge, jj's
+`op restore`, range/revset queries) stays on the raw client, reachable via
+`Repo::git()` / `Repo::jj()`.
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-core/latest/vcs_core/guide/)
 > — detection, the unified facade surface, the DTOs, and when to drop to the raw client.
@@ -34,7 +38,8 @@ println!("backend: {}", repo.kind().as_str());
 
 `current_branch`, `trunk`, `changed_files`, `diff_stat`, `commit_paths`,
 `fetch`, `push`, `list_worktrees`, `create_worktree`, `remove_worktree` — each
-returning backend-agnostic DTOs (`FileChange`, `DiffStat`, `WorktreeInfo`, …).
+returning plain result types (`FileChange`, `DiffStat`, `WorktreeInfo`, …) that
+don't mention git or jj.
 Re-anchor a handle to a sibling directory with `repo.at(other_dir)`.
 
 ## Testing

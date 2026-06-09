@@ -1,19 +1,26 @@
-# vcs-jj
+# vcs-jj — automate Jujutsu from Rust
 
-Automate the **Jujutsu** (`jj`) CLI from Rust through process execution. Part of
-the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-Typed, repo-scoped, **async** commands over the `jj` binary, behind a **mockable
-interface**. Commands run inside an OS job (via [`processkit`]) so no `jj`
-subprocess is ever orphaned, return the structured `Error`, and honour an
-optional timeout.
+**What you can do:** working-copy status & the change log, describe/new change,
+bookmarks, the operation log (restore/undo), workspaces, squash/split/absorb/
+duplicate/abandon, diff & template queries, git sync (fetch/push/clone/import),
+parse & resolve jj's native conflict markers, and transactions that roll the op log
+back on error — all as typed, repo-scoped `async` methods over the `jj` binary,
+behind a mockable interface.
+
+**How it works:** each call runs the real `jj` (its exact behaviour and config) and
+parses the templated output into typed values. Commands run inside an OS job (an
+OS-level container that kills the whole process tree if your program exits, via
+[`processkit`]) so no `jj` subprocess is ever orphaned; calls return the structured
+`Error` and honour an optional timeout.
 
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
 > — every command by theme, result types, builder/newtype APIs, and worked examples.
 
-Inside an async context (every method is `async`):
+Every method is `async`, so call it from a tokio runtime:
 
 ```rust
 use std::path::Path;

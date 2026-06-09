@@ -1,19 +1,24 @@
-# vcs-github
+# vcs-github — automate GitHub from Rust
 
-Automate **GitHub** from Rust through the `gh` CLI and process execution. Part of
-the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-Typed, **async** commands over the GitHub CLI (`gh`) that deserialize
-`gh … --json` output into structs, behind a **mockable interface**. Commands run
-inside an OS job (via [`processkit`]) so no `gh` subprocess is ever orphaned,
-return the structured `Error`, and honour an optional timeout.
+**What you can do:** check auth, view the repo, run the full pull-request lifecycle
+(list/view/create/merge/mark-ready/close, review/comment, CI checks, feedback),
+manage issues and releases, and list/view/watch GitHub Actions runs — all as typed
+`async` methods over the `gh` CLI, behind a mockable interface.
+
+**How it works:** each call runs the real `gh` (its own auth and host resolution)
+and deserializes its `--json` output into structs — nothing scrapes human-readable
+text. Commands run inside an OS job (an OS-level container that kills the whole
+process tree if your program exits, via [`processkit`]) so no `gh` subprocess is
+ever orphaned; calls return the structured `Error` and honour an optional timeout.
 
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-github/latest/vcs_github/guide/)
 > — every command by theme, result types, config types, and worked examples.
 
-Inside an async context (every method is `async`):
+Every method is `async`, so call it from a tokio runtime:
 
 ```rust
 use std::path::Path;

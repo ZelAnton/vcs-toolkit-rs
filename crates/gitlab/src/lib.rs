@@ -2,15 +2,30 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-gitlab` — automate GitLab from Rust by driving the `glab` CLI.
 //!
-//! It shells out to the installed `glab` binary, asks for `--output json`, and
-//! deserializes the result into typed values — so you get *glab's own* behaviour,
-//! host config, and credential handling, not a reimplementation of the GitLab API
-//! client. Async throughout, structured errors, and mockable. Every command runs
-//! inside an OS **job** (via [`processkit`]) so a `glab` subprocess tree can never
-//! be orphaned, and honours an optional per-client
-//! [timeout](GitLab::default_timeout).
+//! You call typed `async` methods; `vcs-gitlab` runs the real `glab`, asks for
+//! `--output json`, and deserializes the result into typed values — so you get
+//! *glab's own* behaviour, host config, and credentials, not a reimplementation of
+//! the GitLab API client. Async, structured errors, mockable. Every command runs
+//! inside an OS **job** (an OS-level container that kills the whole process tree if
+//! your program exits, via [`processkit`]) so a `glab` subprocess is never orphaned,
+//! with an optional per-client [timeout](GitLab::default_timeout).
 //!
-//! # The surface
+//! # What you can do
+//!
+//! Check auth · view the project · the lean merge-request lifecycle (list / view /
+//! create / merge / mark-ready / close) · CI/pipeline status · issues · releases.
+//! One tiny call to start:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitlab::{GitLab, GitLabApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let glab = GitLab::new();
+//! let mrs = glab.mr_list(Path::new(".")).await?; // up to 100 open MRs
+//! # let _ = mrs; Ok(()) }
+//! ```
+//!
+//! # The surface (engineering reference)
 //!
 //! The modelled surface is the **lean merge-request lifecycle** — auth, project
 //! view, the MR lifecycle, plus issues and releases. It deserializes `glab …

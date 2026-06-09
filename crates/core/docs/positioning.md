@@ -71,16 +71,21 @@ they cover *only git*. Neither knows anything about jj or GitHub.
 
 ## Comparison
 
+vcs-toolkit covers jj via `vcs-jj` and the three forges via `vcs-github` /
+`vcs-gitlab` / `vcs-gitea` (unified by `vcs-forge`); gitoxide and git2 cover git
+only. Per-operation cost for vcs-toolkit is a (contained, sometimes batched) process
+spawn; the libraries are in-process. At a glance:
+
 | | vcs-toolkit | gitoxide (`gix`) | git2 (`libgit2`) |
 |---|---|---|---|
-| Model | subprocess — shells out to `git`/`jj`/`gh`/`glab`/`tea` | in-process, pure Rust | in-process, Rust bindings to C |
-| Honours user config / credentials / hooks | yes — it *is* the user's binary | no — its own config/cred handling | no — its own config/cred handling |
-| Covers **jj** (Jujutsu) | yes (`vcs-jj`) | no — git only | no — git only |
-| Covers **forges** (GitHub/GitLab/Gitea) | yes (`vcs-github`/`vcs-gitlab`/`vcs-gitea`, unified by `vcs-forge`) | no | no |
-| Per-operation cost | a process spawn (contained; batched where it counts) | none — in-process call | none — in-process call |
-| Binary dependency | yes — needs `git`/`jj`/`gh`/`glab`/`tea` on `PATH` | none | none (links `libgit2`; C, not pure Rust) |
-| Behavioural fidelity to the CLI | exact — same binary, same version, same output | independent reimplementation | independent reimplementation |
-| Scope / maturity | workflow automation across five tools; young, consumer-driven | broad git internals, fast, pure-Rust, maturing | mature, battle-tested C core; broad git coverage |
+| Model | subprocess to the CLIs | in-process, pure Rust | in-process, C bindings |
+| Honours user config / credentials / hooks | yes — it *is* the user's binary | no | no |
+| Covers jj (Jujutsu) | yes | no | no |
+| Covers forges (GitHub/GitLab/Gitea) | yes | no | no |
+| Per-operation cost | a process spawn | none — in-process | none — in-process |
+| Binary dependency | needs the CLIs on `PATH` | none | none (links `libgit2`) |
+| Fidelity to the CLI | exact — same binary & version | reimplementation | reimplementation |
+| Maturity | young, consumer-driven | fast, maturing | mature C core |
 
 Read it as: the libraries trade the user's *exact* git for speed and
 independence; vcs-toolkit trades speed and independence for the user's exact git —

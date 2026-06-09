@@ -1,5 +1,11 @@
 # vcs-jj — Jujutsu CLI guide
 
+**What you can do:** working-copy status & the change log, describe/new change,
+bookmarks, the operation log (restore/undo), workspaces, squash/split/absorb/
+duplicate/abandon, diff & template queries, git sync, parse & resolve jj's native
+conflicts, and op-log-rollback transactions. This guide is the full reference —
+every command by theme, with examples.
+
 Typed, repo-scoped, **async** commands over the `jj` binary, behind a mockable
 interface. Every method runs `jj` inside an OS job (via [`processkit`]) so a
 subprocess is never orphaned, returns the structured `Error`, and honours an

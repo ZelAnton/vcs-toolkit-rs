@@ -1,5 +1,10 @@
 # vcs-github — GitHub CLI guide
 
+**What you can do:** check auth, view the repo, the full pull-request lifecycle
+(list/view/create/merge/ready/close, review/comment, CI checks, feedback), issues,
+releases, and GitHub Actions runs (list/view/watch). This guide is the full
+reference — every command by theme, with examples.
+
 `vcs-github` drives the GitHub CLI (`gh`) from Rust. Every operation is `async`,
 runs inside an OS job (via [`processkit`]) so a `gh` subprocess is never
 orphaned, and returns the structured `processkit::Error` instead of a stringly

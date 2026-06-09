@@ -1,24 +1,44 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(rustdoc::broken_intra_doc_links)]
-//! `vcs-core` — one backend-agnostic facade over [`vcs-git`](vcs_git) and
-//! [`vcs-jj`](vcs_jj).
+//! `vcs-core` — write code against "the repository" without caring whether it's
+//! git or jj.
 //!
-//! It [`detect`]s whether a directory is a git or a jj checkout, then dispatches
-//! the operations *both* tools share to whichever backend is present — returning
-//! backend-agnostic DTOs ([`RepoSnapshot`], [`FileChange`], [`MergeProbe`], …), so
-//! a caller codes against "the repository" instead of against `git` or `jj`. Async
-//! throughout, structured errors, and every subprocess inherits the underlying
-//! client's OS-**job** containment (via [`processkit`]) so no `git`/`jj` tree is
-//! ever orphaned.
+//! You hold one handle, [`Repo`], that auto-detects whether a directory is a git or
+//! a jj checkout and runs whatever operations *both* tools support — handing back
+//! plain result types ([`RepoSnapshot`], [`FileChange`], [`MergeProbe`], …) that
+//! don't mention the backend (whether the repo is git or jj). Async, structured
+//! errors, and every subprocess
+//! inherits the underlying client's OS-**job** containment (an OS-level container
+//! that kills the whole process tree if your program exits, via [`processkit`]) so
+//! no `git`/`jj` tree is orphaned.
 //!
-//! It is the **honest least-common-denominator**, not a god-object. The common
-//! surface carries only what unifies *without lying*; operations the backends
-//! model too differently are deliberately left on the bound per-tool handles
-//! rather than faked (see [below](#whats-deliberately-not-unified)). Reach for the
-//! facade when code must work on both backends; drop to the raw client the moment
-//! you need power only one of them offers.
+//! # What you can do
 //!
-//! # Mental model
+//! From one [`Repo`] handle: read the current branch and a batched status
+//! [`snapshot`](Repo::snapshot) · list & diff changed files · commit paths · fetch
+//! / push / checkout / rebase · probe a merge for conflicts
+//! ([`try_merge`](Repo::try_merge)) · drive in-progress merge/rebase state · manage
+//! worktrees. Open one and read a prompt line:
+//!
+//! ```no_run
+//! use vcs_core::Repo;
+//! # async fn demo() -> vcs_core::Result<()> {
+//! let repo = Repo::open(".")?;            // detects git vs jj
+//! let s = repo.snapshot().await?;         // one or two spawns, not a call per field
+//! let branch = s.branch.as_deref().unwrap_or("(detached)");
+//! println!("{branch} {}", if s.dirty { "*" } else { "" });
+//! # Ok(()) }
+//! ```
+//!
+//! **It's a thin common layer, not a god-object.** The shared surface carries only
+//! what unifies *without lying*; the few operations the two tools model too
+//! differently (a full `merge`, jj's `op restore`, range/revset queries) stay on
+//! the raw `git`/`jj` handle rather than being faked (see
+//! [below](#whats-deliberately-not-unified)). Reach for the unified handle when code
+//! must work on both backends; drop to the raw client when you need power only one
+//! of them offers.
+//!
+//! # Mental model (engineering reference)
 //!
 //! The surface is three layers, narrowing from "which tool is this?" to "do the
 //! thing":
@@ -102,19 +122,6 @@
 //!   shared signature.
 //!
 //! # Recipes
-//!
-//! Open a repo and read a [`snapshot`](Repo::snapshot) for a one-line prompt:
-//!
-//! ```no_run
-//! use vcs_core::Repo;
-//! # async fn demo() -> vcs_core::Result<()> {
-//! let repo = Repo::open(".")?;            // detects git vs jj
-//! let s = repo.snapshot().await?;         // one or two spawns, not a call per field
-//! let branch = s.branch.as_deref().unwrap_or("(detached)");
-//! let head = s.head.as_deref().map(|h| &h[..7.min(h.len())]).unwrap_or("-");
-//! println!("{}@{head} {}", branch, if s.dirty { "*" } else { "" });
-//! # Ok(()) }
-//! ```
 //!
 //! Probe a merge for conflicts (trace-free), or spin up a worktree:
 //!

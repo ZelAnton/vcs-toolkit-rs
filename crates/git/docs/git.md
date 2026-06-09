@@ -1,5 +1,10 @@
 # vcs-git — Git CLI guide
 
+**What you can do:** status & branches, stage/commit/checkout, diff & log,
+merge/rebase/reset, worktrees, tags, blame, clone, config, cherry-pick/revert,
+parse & resolve conflict markers, and a hardened (hooks-off) mode for untrusted
+repos. This guide is the full reference — every command by theme, with examples.
+
 Typed, repo-scoped, **async** commands over the `git` binary, behind a mockable
 interface. Every method runs `git` inside an OS job (via [`processkit`]) so a
 subprocess is never orphaned, returns the structured `processkit::Error`, and

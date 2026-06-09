@@ -1,5 +1,9 @@
 # vcs-gitlab — GitLab CLI guide
 
+**What you can do:** check auth, view the project, the lean merge-request lifecycle
+(list/view/create/merge/ready/close), CI/pipeline status, issues, and releases.
+This guide is the full reference — every command by theme, with examples.
+
 `vcs-gitlab` drives the GitLab CLI (`glab`) from Rust. Every operation is `async`,
 runs inside an OS job (via [`processkit`]) so a `glab` subprocess is never
 orphaned, and returns the structured `processkit::Error` instead of a stringly

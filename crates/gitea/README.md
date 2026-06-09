@@ -1,27 +1,24 @@
-# vcs-gitea
+# vcs-gitea — automate Gitea (and Forgejo) from Rust
 
-Automate **Gitea** (and Forgejo) from Rust through the `tea` CLI and process
-execution. Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs)
-workspace.
+Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-Typed, **async** commands over the Gitea CLI (`tea`) that deserialize
-`tea … --output json` (tea's print-table for lists, a typed object for the issue
-detail view — **not** the Gitea REST shape) into structs, behind a **mockable
-interface**. Commands run inside an OS job (via [`processkit`]) so no
-`tea` subprocess is ever orphaned, return the structured `Error`, and honour an
-optional timeout. The [`vcs-forge`](https://crates.io/crates/vcs-forge) facade
-unifies this with `vcs-github` and `vcs-gitlab`.
+**What you can do:** check auth, run the lean pull-request lifecycle (list/view/
+create/merge/close), manage issues (list/view/create), and list releases — all as
+typed `async` methods over the `tea` CLI, behind a mockable interface.
+
+**How it works:** each call runs the real `tea` (its own auth, config and instance
+handling), asks for `--output json`, and deserializes the result into structs.
+Commands run inside an OS job (an OS-level container that kills the whole process
+tree if your program exits, via [`processkit`]) so no `tea` subprocess is ever
+orphaned; calls return the structured `Error` and honour an optional timeout. The
+[`vcs-forge`](https://crates.io/crates/vcs-forge) facade unifies this with
+`vcs-github` and `vcs-gitlab`.
 
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-gitea/latest/vcs_gitea/guide/)
 
-`tea`'s surface is narrower than `gh`/`glab`: it has **no** single-PR view (this
-crate synthesizes `pr_view` by listing and filtering), **no** current-repo view,
-**no** draft toggle, and **no** PR-checks command — so those operations are absent
-here (the facade reports them as `Unsupported` for the Gitea backend).
-
-Inside an async context (every method is `async`):
+Every method is `async`, so call it from a tokio runtime:
 
 ```rust
 use std::path::Path;
@@ -31,6 +28,13 @@ let tea = Gitea::new();
 let prs = tea.pr_list(Path::new(".")).await?; // Vec<PullRequest>
 let authed = tea.auth_status().await?; // bool — true when a login is configured
 ```
+
+> **Narrower than `gh`/`glab`.** `tea` has no single-PR view (this crate synthesizes
+> `pr_view` by listing and filtering), no current-repo view, no draft toggle, and no
+> PR-checks command — those operations are absent here (the `vcs-forge` facade reports
+> them `Unsupported` for the Gitea backend). Its `--output json` is tea's print-table
+> for lists (a typed object only for the issue detail view), **not** the Gitea REST
+> shape.
 
 ### Open and merge a pull request
 

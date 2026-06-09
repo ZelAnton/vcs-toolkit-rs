@@ -27,25 +27,39 @@ dependency crosses a boundary — see the release process in
 
 All crates are **pre-1.0** today — the API may still change. Relative maturity:
 
-| Crate | Version | Tier | Notes |
-|---|---|---|---|
-| `vcs-diff` | 0.1 | **settling** | Small, pure (diff model + parser, `Version`); shape unlikely to change. |
-| `vcs-cli-support` | 0.1 | **settling** | The argv guard, fetch policy, and error classifiers — a narrow, stable surface. |
-| `vcs-testkit` | 0.1 | **stable-ish (dev-only)** | Test fixtures; only a dev-dependency, so churn never reaches a release build. |
-| `vcs-git` | 0.4 | **maturing** | Broad surface, consumer-validated; new typed methods still land (additive). |
-| `vcs-jj` | 0.4 | **maturing** | Tracks jj, whose CLI/template surface churns — see the CI version matrix. |
-| `vcs-github` | 0.4 | **maturing** | The `gh` PR/issue/run/release surface; additive growth. |
-| `vcs-gitlab` | 0.1 | **new** | The `glab` lean MR lifecycle; argv/JSON pinned by hermetic fixtures, only version/auth smoke-tested against the real binary — expect movement. |
-| `vcs-gitea` | 0.1 | **new** | The `tea` lean PR lifecycle (narrower — see its capability notes); expect movement. |
-| `vcs-forge` | 0.1 | **new** | The forge facade + unified DTOs; the unification will grow as the wrappers do. |
-| `vcs-core` | 0.2 | **evolving** | The facade's common surface grows as cross-backend needs surface (e.g. `snapshot`). |
-| `vcs-watch` | 0.1 | **new** | Repo-event stream over `vcs-core`; the workspace's first runtime-tokio + streaming API — the event set and the API may still shift. |
-| `vcs-mcp` | 0.1 | **new** | MCP server (a lib + the `vcs-mcp` binary) over `vcs-core`/`vcs-forge`; the workspace's first binary crate. The tool catalogue, names, and JSON shapes will grow as more operations are exposed. |
+| Crate | Version | Tier |
+|---|---|---|
+| `vcs-diff` | 0.1 | settling |
+| `vcs-cli-support` | 0.1 | settling |
+| `vcs-testkit` | 0.1 | stable-ish (dev-only) |
+| `vcs-git` | 0.4 | maturing |
+| `vcs-jj` | 0.4 | maturing |
+| `vcs-github` | 0.4 | maturing |
+| `vcs-core` | 0.2 | evolving |
+| `vcs-gitlab` | 0.1 | new |
+| `vcs-gitea` | 0.1 | new |
+| `vcs-forge` | 0.1 | new |
+| `vcs-watch` | 0.1 | new |
+| `vcs-mcp` | 0.1 | new |
 
-"Settling" = close to its 1.0 shape; "maturing" = the surface is broad and
-proven but still grows additively; "evolving" = expect the most movement; "new" =
-just landed, the surface and the empirically-validated CLI argv/JSON may still
-shift.
+**What the tiers mean — and the per-crate caveats:**
+
+- **settling** — close to its 1.0 shape; small and pure. `vcs-diff` (diff model +
+  parser, `Version`) and `vcs-cli-support` (the argv guard, fetch policy, error
+  classifiers) are narrow surfaces unlikely to change much.
+- **stable-ish (dev-only)** — `vcs-testkit` is a dev-dependency only, so its churn
+  never reaches a release build.
+- **maturing** — broad, consumer-validated surfaces that still grow *additively*:
+  `vcs-git`, `vcs-jj` (tracks jj, whose CLI/template surface churns — see the CI
+  version matrix), and `vcs-github` (the `gh` PR/issue/run/release surface).
+- **evolving** — `vcs-core`'s common facade surface grows as cross-backend needs
+  surface (e.g. `snapshot`); expect the most movement among the non-`new` crates.
+- **new** — just landed; the surface and the empirically-validated CLI argv/JSON may
+  still shift. `vcs-gitlab` / `vcs-gitea` are lean MR/PR lifecycles, mostly
+  fixture-pinned (`vcs-gitea` is the narrower of the two — see its capability notes);
+  `vcs-forge`'s unified DTOs grow with the wrappers; `vcs-watch` is the workspace's
+  first runtime-tokio + streaming API (its event set may shift); `vcs-mcp` is the MCP
+  server (a lib + binary), whose tool catalogue, names, and JSON shapes will grow.
 
 ## MSRV policy
 

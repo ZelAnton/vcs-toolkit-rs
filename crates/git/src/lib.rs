@@ -2,14 +2,31 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-git` — automate Git from Rust by driving the `git` CLI.
 //!
-//! It shells out to the installed `git` binary and parses its output into typed
-//! values — so you get *git's own* behaviour, config, and credential handling,
-//! not a reimplementation of the object format. Async throughout, structured
-//! errors, and mockable. Every command runs inside an OS **job** (via
-//! [`processkit`]) so a `git` subprocess tree can never be orphaned, and honours
-//! an optional per-client [timeout](Git::default_timeout).
+//! You call typed `async` methods; `vcs-git` runs the real `git`, parses its
+//! output, and hands you structured values — so you get *git's own* behaviour,
+//! config, and credentials, not a reimplementation of the object format. Async,
+//! structured errors, mockable. Every command runs inside an OS **job** (an
+//! OS-level container that kills the whole process tree if your program exits, via
+//! [`processkit`]) so a `git` subprocess is never orphaned, with an optional
+//! per-client [timeout](Git::default_timeout).
 //!
-//! # The surface
+//! # What you can do
+//!
+//! Status & branches · stage, commit, checkout · diff & log · merge / rebase /
+//! reset · worktrees · tags · blame · clone · config · cherry-pick / revert · parse
+//! & resolve conflict markers · a hardened (hooks-off) profile for untrusted repos.
+//! One tiny call to start:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_git::{Git, GitApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let git = Git::new();
+//! println!("{}", git.current_branch(Path::new(".")).await?); // e.g. "main"
+//! # Ok(()) }
+//! ```
+//!
+//! # The surface (engineering reference)
 //!
 //! - **[`GitApi`]** — the object-safe trait every operation lives on. Depend on
 //!   `&dyn GitApi` (or generically on `impl GitApi`) so a test can swap the real

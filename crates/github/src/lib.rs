@@ -2,16 +2,32 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-github` — automate GitHub from Rust by driving the `gh` CLI.
 //!
-//! It shells out to the installed `gh` binary and parses its output into typed
-//! values — so you get *gh's own* behaviour, auth, and host resolution, not a
-//! reimplementation of the GitHub REST/GraphQL API. The PR / issue / Actions /
-//! release lifecycle, async throughout, with structured errors, and mockable.
-//! Every command runs inside an OS **job** (via [`processkit`]) so a `gh`
-//! subprocess tree can never be orphaned, and honours an optional per-client
-//! [timeout](GitHub::default_timeout). Read-style methods ask `gh` for `--json`
-//! and deserialize it; nothing scrapes human-readable output.
+//! You call typed `async` methods; `vcs-github` runs the real `gh`, parses its
+//! output, and hands you structured values — so you get *gh's own* behaviour, auth,
+//! and host resolution, not a reimplementation of the GitHub REST/GraphQL API.
+//! Async, structured errors, mockable. Every command runs inside an OS **job** (an
+//! OS-level container that kills the whole process tree if your program exits, via
+//! [`processkit`]) so a `gh` subprocess is never orphaned, with an optional
+//! per-client [timeout](GitHub::default_timeout). Read-style methods ask `gh` for
+//! `--json` and deserialize it; nothing scrapes human-readable output.
 //!
-//! # The surface
+//! # What you can do
+//!
+//! Check auth · view the repo · the full pull-request lifecycle (list / view /
+//! create / merge / mark-ready / close, review / comment, CI checks, feedback) ·
+//! issues · releases · GitHub Actions runs (list / view / watch). One tiny call to
+//! start:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_github::{GitHub, GitHubApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let gh = GitHub::new();
+//! let prs = gh.pr_list(Path::new(".")).await?; // up to 100 open PRs
+//! # let _ = prs; Ok(()) }
+//! ```
+//!
+//! # The surface (engineering reference)
 //!
 //! - **[`GitHubApi`]** — the object-safe trait every operation lives on. Depend
 //!   on `&dyn GitHubApi` (or generically on `impl GitHubApi`) so a test can swap
@@ -27,8 +43,9 @@
 //!   when one client drives one checkout.
 //! - **Method groups** on the trait: PRs ([`pr_list`](GitHubApi::pr_list),
 //!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
-//!   [`pr_merge`](GitHubApi::pr_merge), [`pr_review`](GitHubApi::pr_review),
-//!   [`pr_checks`](GitHubApi::pr_checks),
+//!   [`pr_merge`](GitHubApi::pr_merge), [`pr_ready`](GitHubApi::pr_ready),
+//!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
+//!   [`pr_comment`](GitHubApi::pr_comment), [`pr_checks`](GitHubApi::pr_checks),
 //!   [`pr_feedback`](GitHubApi::pr_feedback), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client

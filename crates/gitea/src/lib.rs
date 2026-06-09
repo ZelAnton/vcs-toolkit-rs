@@ -2,14 +2,31 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-gitea` — automate Gitea (and Forgejo) from Rust by driving the `tea` CLI.
 //!
-//! It shells out to the installed `tea` binary, asks each command for
-//! `--output json`, and deserializes that into typed values — so you get *tea's
-//! own* auth, config, and instance handling, not a reimplementation of the Gitea
-//! API. Async throughout, structured errors, and mockable. Every command runs
-//! inside an OS **job** (via [`processkit`]) so a `tea` subprocess tree can never
-//! be orphaned, and honours an optional per-client [timeout](Gitea::default_timeout).
+//! You call typed `async` methods; `vcs-gitea` runs the real `tea`, asks each
+//! command for `--output json`, and deserializes that into typed values — so you
+//! get *tea's own* auth, config, and instance handling, not a reimplementation of
+//! the Gitea API. Async, structured errors, mockable. Every command runs inside an
+//! OS **job** (an OS-level container that kills the whole process tree if your
+//! program exits, via [`processkit`]) so a `tea` subprocess is never orphaned, with
+//! an optional per-client [timeout](Gitea::default_timeout).
 //!
-//! # The surface
+//! # What you can do
+//!
+//! Check auth · the lean pull-request lifecycle (list / view / create / merge /
+//! close) · issues (list / view / create) · release listing. This is deliberately
+//! narrower than `gh`/`glab` — `tea` itself lacks some operations (see the surface
+//! notes below). One tiny call to start:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use vcs_gitea::{Gitea, GiteaApi};
+//! # async fn demo() -> Result<(), processkit::Error> {
+//! let tea = Gitea::new();
+//! let prs = tea.pr_list(Path::new(".")).await?; // up to 100 open PRs
+//! # let _ = prs; Ok(()) }
+//! ```
+//!
+//! # The surface (engineering reference)
 //!
 //! - **[`GiteaApi`]** — the object-safe trait every operation lives on. Depend on
 //!   `&dyn GiteaApi` (or generically on `impl GiteaApi`) so a test can swap the

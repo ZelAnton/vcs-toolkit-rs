@@ -1,5 +1,10 @@
 # vcs-gitea — Gitea CLI guide
 
+**What you can do:** check auth, the lean pull-request lifecycle (list/view/create/
+merge/close), issues (list/view/create), and release listing — deliberately
+narrower than `gh`/`glab` (see the capability note below). This guide is the full
+reference — every command by theme, with examples.
+
 `vcs-gitea` drives the Gitea (and Forgejo) CLI (`tea`) from Rust. Every operation
 is `async`, runs inside an OS job (via [`processkit`]) so a `tea` subprocess is
 never orphaned, and returns the structured `processkit::Error`. Commands ask for

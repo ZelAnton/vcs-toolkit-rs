@@ -2,22 +2,37 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 //! `vcs-forge` — one PR/MR lifecycle across GitHub, GitLab, and Gitea.
 //!
-//! A forge-agnostic facade over the [`vcs-github`](vcs_github),
-//! [`vcs-gitlab`](vcs_gitlab), and [`vcs-gitea`](vcs_gitea) wrappers: it dispatches
-//! the *common* forge operations (auth, repo view, the PR/MR lifecycle, issues,
-//! releases) to whichever CLI backs the handle and parses each one's output into
-//! **forge-agnostic DTOs** ([`ForgePr`], [`ForgeIssue`], [`ForgeRelease`],
-//! [`ForgeRepo`], …) — so a tool can target *the forge* instead of one specifically.
-//! It is the `gh`/`glab`/`tea` analogue of how [`vcs-core`](https://docs.rs/vcs-core)'s
-//! `Repo` sits over git and jj.
+//! You hold one handle, [`Forge`], and run the operations all three forges share —
+//! it sends each to whichever CLI (`gh` / `glab` / `tea`) backs the handle and
+//! returns plain result types ([`ForgePr`], [`ForgeIssue`], [`ForgeRelease`],
+//! [`ForgeRepo`], …) that don't mention which forge produced them. It's the
+//! `gh`/`glab`/`tea` analogue of how [`vcs-core`](https://docs.rs/vcs-core)'s `Repo`
+//! sits over git and jj.
+//!
+//! # What you can do
+//!
+//! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
+//! lifecycle (list / view / create / merge / mark-ready / close, CI checks) · issues
+//! (list / view / create) · releases (list / view). One tiny call:
+//!
+//! ```no_run
+//! use vcs_forge::{Forge, ForgeApi};
+//! # async fn demo() -> Result<(), vcs_forge::Error> {
+//! let forge = Forge::github("."); // or ::gitlab(".") / ::gitea(".")
+//! for pr in forge.pr_list().await? {
+//!     println!("#{} {}", pr.number, pr.title);
+//! }
+//! # Ok(()) }
+//! ```
 //!
 //! Unlike a repository, a forge has **no filesystem marker** (`.git`/`.jj`) to
 //! detect — it's identified by the remote *host* — so a [`Forge`] is
 //! **constructed explicitly** ([`Forge::github`] / [`Forge::gitlab`] /
-//! [`Forge::gitea`]), optionally guided by [`ForgeKind::from_remote_url`] applied
-//! to a remote URL the caller already holds.
+//! [`Forge::gitea`]), optionally guided by [`ForgeKind::from_remote_url`] applied to
+//! a remote URL the caller already holds. Forges differ, so a few operations are
+//! `Unsupported` on some backends (see below).
 //!
-//! # The surface
+//! # The surface (engineering reference)
 //!
 //! - **[`Forge`]** — the cwd-bound, forge-agnostic handle. Operations run against
 //!   the bound directory ([`cwd`](Forge::cwd)); the CLI infers the repository from
@@ -66,19 +81,6 @@
 //! dependency.
 //!
 //! # Recipes
-//!
-//! Read the open PRs — depend on the trait so the same code takes a real handle or
-//! a test double:
-//!
-//! ```no_run
-//! use vcs_forge::{Forge, ForgeApi};
-//! # async fn demo() -> Result<(), vcs_forge::Error> {
-//! let forge = Forge::github("."); // or ::gitlab(".") / ::gitea(".")
-//! for pr in forge.pr_list().await? {
-//!     println!("#{} [{:?}] {}", pr.number, pr.state, pr.title);
-//! }
-//! # Ok(()) }
-//! ```
 //!
 //! Open a PR/MR with [`PrCreate`] — the facade maps `source`/`target` to each
 //! CLI's own flags, and returns the CLI's success output (a URL on GitHub/GitLab):

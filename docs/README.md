@@ -1,15 +1,32 @@
 # vcs-toolkit-rs documentation
 
 The full guide set for [vcs-toolkit-rs](../README.md) — a Rust toolkit that
-automates **Git**, **Jujutsu**, **GitHub**, **GitLab**, and **Gitea** by shelling
-out to the official `git` / `jj` / `gh` / `glab` / `tea` binaries and capturing
-their output. Every command is async
-(tokio), runs inside an OS **job** (so the process tree dies with the parent via
-[`processkit`](https://crates.io/crates/processkit)), and fails with a
-structured `processkit::Error`.
+automates **git**, **Jujutsu**, **GitHub**, **GitLab**, and **Gitea** by running
+those command-line tools and parsing their output into typed Rust values.
 
-New here? Start with the root [README](../README.md) for the overview and the
-quick start, then come back for depth.
+**New here?** Read the root [README](../README.md) first for the 30-second
+overview, the "what you can do" list, and a quick start — then use this page to go
+deep.
+
+## Start here — by what you're doing
+
+- **Control a repository (git *or* jj)** → **[vcs-core](../crates/core/docs/core.md)**.
+  The usual starting point: one `Repo` handle that auto-detects the backend and runs
+  whatever both share. Drop to [vcs-git](../crates/git/docs/git.md) /
+  [vcs-jj](../crates/jj/docs/jj.md) for each tool's full surface.
+- **Automate a forge** (PRs/MRs, issues, releases, CI) →
+  **[vcs-forge](../crates/forge/docs/forge.md)** for one API across all three, or the
+  per-forge guides [vcs-github](../crates/github/docs/github.md) /
+  [vcs-gitlab](../crates/gitlab/docs/gitlab.md) /
+  [vcs-gitea](../crates/gitea/docs/gitea.md).
+- **React to repository changes** → **[vcs-watch](../crates/watch/docs/watch.md)**.
+- **Expose operations to an AI agent** → **[vcs-mcp](../crates/mcp/docs/mcp.md)**.
+- **Write tests against a repo** → **[vcs-testkit](../crates/testkit/docs/testkit.md)**
+  + the [Testing & mocking](../crates/testkit/docs/testing.md) guide.
+
+Want the design rationale and runtime model (async, OS-job containment, structured
+errors)? See [When to use this vs gitoxide/git2](../crates/core/docs/positioning.md)
+and [Process model, errors & observability](../crates/core/docs/process-model.md).
 
 ## Per-crate guides
 
