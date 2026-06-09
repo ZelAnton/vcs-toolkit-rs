@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["git","jujutsu","watch","events","fsnotify"]
+categories = ["development-tools","filesystem"]
 
 [dependencies]
 # Re-query the repository state on each filesystem change and diff snapshots —

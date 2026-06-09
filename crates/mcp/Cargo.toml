@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["mcp","git","jujutsu","agent","ai"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 # The official MCP Rust SDK: the server runtime, the #[tool] macros, the stdio

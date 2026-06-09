@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["testing","fixtures","git","jujutsu","sandbox"]
+categories = ["development-tools::testing"]
 
 # Deliberately dependency-free: the sandboxes shell out to the real `git`/`jj`
 # binaries through std::process (synchronous — test setup needs no runtime) and

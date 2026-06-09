@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["git","jujutsu","vcs","facade","async"]
+categories = ["command-line-utilities","api-bindings"]
 
 [dependencies]
 # Re-exported `Error`/`ProcessRunner`/`JobRunner` and the `ScriptedRunner` test

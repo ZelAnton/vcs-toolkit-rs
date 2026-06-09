@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["git","diff","parser","vcs","unified-diff"]
+categories = ["development-tools"]
 
 # Deliberately dependency-free (std only) by default: the diff types and parser
 # are pure data + pure functions, so this foundational crate stays light and

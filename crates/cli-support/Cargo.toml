@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["cli","subprocess","vcs","retry","error"]
+categories = ["development-tools"]
 
 [dependencies]
 # The structured error these helpers guard against / classify, and the program

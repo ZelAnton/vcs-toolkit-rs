@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["gitea","forgejo","tea","cli","forge"]
+categories = ["command-line-utilities","api-bindings"]
 
 [dependencies]
 # Runs `tea` inside an OS job (Windows Job Object / Linux cgroup) so the process

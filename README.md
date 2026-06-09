@@ -458,10 +458,10 @@ in range when that dependency crosses a minor/major boundary.
 
 ## Conventions
 
-See [AGENTS.md](AGENTS.md) for code style, dependency management (every
-dependency gets a "why" comment; no fixed allow-list), the per-crate changelog
-process, and the `jj` version-control workflow. Planned future work lives in
-[ROADMAP.md](ROADMAP.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building, testing, the dependency policy
+(every dependency gets a "why" comment), the per-crate changelog process, and the
+release workflow. Planned and parked work lives in [ROADMAP.md](ROADMAP.md),
+[`ideas/`](ideas/), and [`decisions/`](decisions/).
 
 ## License
 

@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+keywords = ["forge","github","gitlab","gitea","pull-request"]
+categories = ["command-line-utilities","api-bindings"]
 
 [dependencies]
 # The `ProcessRunner` seam (so a fake runner can drive the wrapped clients in
