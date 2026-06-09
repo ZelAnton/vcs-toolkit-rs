@@ -327,7 +327,18 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     // `@`; `<ws_name>@` resolves to it regardless of the cwd. Anchor the bookmark
     // there so the worktree carries the requested branch.
     let revset = format!("{ws_name}@");
-    jj.bookmark_create(dir, branch, &revset).await?;
+    if let Err(e) = jj.bookmark_create(dir, branch, &revset).await {
+        // The two steps aren't atomic: `workspace add` already created the
+        // workspace and its on-disk dir, but the bookmark didn't land. Roll back
+        // so a failed call doesn't leak a half-made worktree — mirror
+        // `remove_worktree` (delete the dir first, then forget the workspace
+        // best-effort), then surface the original error.
+        if path.exists() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+        let _ = jj.workspace_forget(dir, &ws_name).await;
+        return Err(e.into());
+    }
     Ok(CreateOutcome::Plain)
 }
 
@@ -438,5 +449,39 @@ mod tests {
         assert_eq!(change_kind_from_status('C'), ChangeKind::Added);
         assert_eq!(change_kind_from_status('D'), ChangeKind::Deleted);
         assert_eq!(change_kind_from_status('R'), ChangeKind::Renamed);
+    }
+
+    // R1: `create_worktree` is two non-atomic steps (`workspace add` then
+    // `bookmark create`). If the bookmark step fails, the just-added workspace +
+    // its on-disk dir must be cleaned up rather than leaked. Driven hermetically:
+    // `workspace add` succeeds, `bookmark create` fails, and we assert the error
+    // propagates and the dir is gone.
+    #[tokio::test]
+    async fn create_worktree_rolls_back_when_bookmark_step_fails() {
+        use processkit::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r1-worktree-rollback");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+        // The ScriptedRunner never touches the filesystem, so stand in for the dir
+        // a real `jj workspace add` would have created.
+        std::fs::create_dir_all(&wt).unwrap();
+
+        let jj = Jj::with_runner(
+            ScriptedRunner::new()
+                .on(["workspace", "add"], Reply::ok(""))
+                .on(["bookmark", "create"], Reply::fail(1, "bookmark already exists\n"))
+                .on(["workspace", "forget"], Reply::ok("")),
+        );
+
+        let result = create_worktree(&jj, repo, &wt, "feature", "@").await;
+
+        assert!(result.is_err(), "the bookmark-step failure must propagate");
+        assert!(
+            !wt.exists(),
+            "the half-made worktree dir must be cleaned up on rollback"
+        );
     }
 }
