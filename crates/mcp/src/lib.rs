@@ -183,6 +183,30 @@ pub struct PrCloseParams {
     pub delete_branch: bool,
 }
 
+/// Post a comment to an existing pull/merge request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrCommentParams {
+    /// The PR/MR number.
+    pub number: u64,
+    /// The markdown comment body.
+    pub body: String,
+}
+
+/// Edit a pull/merge request's title and/or body.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrEditParams {
+    /// The PR/MR number.
+    pub number: u64,
+    /// The new title; omit (or null) to leave the title alone.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The new body / description; omit (or null) to leave the body alone.
+    /// At least one of `title` or `body` must be set — the facade rejects
+    /// both-absent with an `invalid_params` error before any spawn.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
 /// An issue by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IssueNumberParams {
@@ -342,14 +366,39 @@ fn core_err(e: vcs_core::Error) -> ErrorData {
     }
 }
 
-/// Map a `vcs-forge` error into an MCP error — an `Unsupported` op is a
-/// client-facing invalid-request; a forge/network failure is internal.
+/// Map a `vcs-forge` error into an MCP error — an `Unsupported` op or an
+/// `InvalidInput` (the facade's pre-spawn refusal path) is a client-facing
+/// invalid-request; a forge/network failure is internal.
 fn forge_err(e: vcs_forge::Error) -> ErrorData {
-    if e.is_unsupported() {
+    if e.is_unsupported() || matches!(e, vcs_forge::Error::InvalidInput(_)) {
         ErrorData::invalid_params(e.to_string(), None)
     } else {
         ErrorData::internal_error(e.to_string(), None)
     }
+}
+
+/// Belt-and-braces argv guard for the mutating tool's `body` / `title`
+/// fields. The wrappers already run their fields through `reject_flag_like`;
+/// this is the second line of defence at the MCP seam so a `body: "-evil"`
+/// value never reaches any subprocess. Mirrors the wrapper's `Error::Spawn`
+/// shape so the surfaced message is recognisable.
+///
+/// **Empty string is a real value** (clears the field per spec §2) — it
+/// passes through this guard. The wrappers themselves reject `""` on flag
+/// VALUE positions only when the value is whitespace; an empty quoted
+/// string (`--title ""`) is exactly what gh / glab / tea accept to clear
+/// the field.
+fn guard_argv_field(what: &str, value: &str) -> Result<(), ErrorData> {
+    if value.starts_with('-') {
+        return Err(ErrorData::invalid_params(
+            format!(
+                "{what} {value:?} would be parsed as a flag — refusing to pass it"
+            ),
+            None,
+        ));
+    }
+    let _ = what;
+    Ok(())
 }
 
 #[tool_router]
@@ -691,6 +740,76 @@ impl VcsMcpServer {
             .map_err(forge_err)?;
         ok_json(&serde_json::json!({ "closed": p.number }))
     }
+
+    #[tool(
+        description = "Post a comment to an existing pull/merge request, returning the CLI's output. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_comment(
+        &self,
+        Parameters(p): Parameters<PrCommentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_comment")?;
+        // Pre-spawn argv guard — the facade's wrapper already runs `body`
+        // through `reject_flag_like` (GitHub/GitLab) or guards the bare
+        // positional itself (Gitea), but the MCP layer adds a second line of
+        // defence: a body that starts with `--` would be parsed by the CLI as
+        // a flag. `Some("")` is a real value (clears the field) and is *not*
+        // rejected by the leading-`-` check, so we pass it through.
+        guard_argv_field("body", &p.body)?;
+        let out = self
+            .forge()?
+            .pr_comment(p.number, &p.body)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "output": out }))
+    }
+
+    #[tool(
+        description = "Edit a pull/merge request's title and/or body. At least one of `title` or `body` must be set; both absent is rejected up front as an invalid-params error. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_edit(
+        &self,
+        Parameters(p): Parameters<PrEditParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_edit")?;
+        // Same belt-and-braces argv guard as `forge_pr_comment`, applied to
+        // each `Some` field. The facade also rejects both-`None` with
+        // `InvalidInput` before spawning — a backstop the MCP tool surfaces
+        // as `invalid_params`.
+        if let Some(title) = p.title.as_deref() {
+            guard_argv_field("title", title)?;
+        }
+        if let Some(body) = p.body.as_deref() {
+            guard_argv_field("body", body)?;
+        }
+        let mut edit = vcs_forge::PrEdit::new();
+        if let Some(title) = p.title {
+            edit = edit.title(title);
+        }
+        if let Some(body) = p.body {
+            edit = edit.body(body);
+        }
+        self.forge()?
+            .pr_edit(p.number, edit)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "edited": p.number }))
+    }
+
+    #[tool(
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge, issueCreate, authed } }` for the configured forge.",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
+        let kind = self.forge()?.kind();
+        let capabilities = self.forge()?.capabilities().await.map_err(forge_err)?;
+        ok_json(&serde_json::json!({
+            "kind": kind.as_str(),
+            "capabilities": capabilities,
+        }))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -928,6 +1047,220 @@ mod tests {
         assert!(err.message.contains("release_view"), "{}", err.message);
     }
 
+    // The two new mutating tools (`forge_pr_comment`, `forge_pr_edit`) are
+    // gated like the existing `forge_pr_create` / `forge_pr_close`: the
+    // runner has no `pr comment` / `pr edit` rule, so a leak-through would
+    // error differently than the gate's `--allow-write` message.
+    #[tokio::test]
+    async fn forge_pr_comment_is_gated() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let err = server
+            .forge_pr_comment(Parameters(PrCommentParams {
+                number: 7,
+                body: "hi".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(
+            format!("{err:?}").contains("allow-write"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn forge_pr_edit_is_gated() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let err = server
+            .forge_pr_edit(Parameters(PrEditParams {
+                number: 7,
+                title: Some("T".into()),
+                body: None,
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+    }
+
+    // `forge_pr_comment` rejects a flag-like body (e.g. `-evil`) with an
+    // invalid-params error BEFORE reaching the wrapper — a leak-through would
+    // hit the runner's `pr comment` rule with argv `["pr", "comment", "7",
+    // "-evil"]` and error differently.
+    #[tokio::test]
+    async fn forge_pr_comment_rejects_flag_like_body() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["pr", "comment"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let err = server
+            .forge_pr_comment(Parameters(PrCommentParams {
+                number: 7,
+                body: "-evil".into(),
+            }))
+            .await
+            .expect_err("flag-like body rejected");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("flag"), "{}", err.message);
+    }
+
+    // `forge_pr_edit` rejects both-`None` with an invalid-params error BEFORE
+    // reaching the wrapper — the facade's `InvalidInput` shape surfaces as
+    // `invalid_params` (per the updated `forge_err` mapping).
+    #[tokio::test]
+    async fn forge_pr_edit_both_none_is_invalid_params() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let err = server
+            .forge_pr_edit(Parameters(PrEditParams {
+                number: 7,
+                title: None,
+                body: None,
+            }))
+            .await
+            .expect_err("both-None rejected");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("title"), "{}", err.message);
+    }
+
+    // `Some("")` is a real value (clears the field). The MCP tool passes it
+    // through to the wrapper, and the wrapper's argv carries `--title ""`
+    // literally. This test pins the round-trip end to end: the
+    // `ScriptedRunner::on(["pr", "edit"], …)` rule matches **only** an argv
+    // whose first two elements are exactly `["pr", "edit"]` (a different
+    // command, or a different argv shape, would fall through and the call
+    // would error). Combined with the response shape check, the round-trip
+    // is fully verified.
+    #[tokio::test]
+    async fn forge_pr_edit_some_empty_string_passes_through() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["pr", "edit"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let out = server
+            .forge_pr_edit(Parameters(PrEditParams {
+                number: 7,
+                title: Some("".into()),
+                body: None,
+            }))
+            .await
+            .expect("empty title accepted");
+        // `ok_json` uses `to_string_pretty`; pull the inner text and check
+        // the `edited` field is present (number == 7).
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.raw.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["edited"], 7, "{text}");
+    }
+
+    // `forge_info` is read-only: a no-forge server errors with the same
+    // "no forge is configured" message every other forge tool uses (per the
+    // Q6 override).
+    #[tokio::test]
+    async fn forge_info_without_a_forge_errors() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server.forge_info().await.expect_err("no forge");
+        assert!(format!("{err:?}").contains("no forge"), "{err:?}");
+    }
+
+    // `forge_info` returns the kind string + capability map for an authed
+    // GitHub handle. The auth probe is a single `auth status` call (mocked
+    // to exit 0); every static cap is `true` post-fork.
+    #[tokio::test]
+    async fn forge_info_with_authed_github_reports_all_true() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["auth", "status"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let out = server.forge_info().await.expect("forge_info ok");
+        // Extract the inner text content (the JSON value) — `result_json`
+        // re-serialises the whole `CallToolResult` with the `content`
+        // envelope, so assertions on the inner JSON need the inner text.
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.raw.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(value["kind"], "github");
+        assert_eq!(value["capabilities"]["authed"], true);
+        assert_eq!(value["capabilities"]["pr_create"], true);
+        assert_eq!(value["capabilities"]["pr_comment"], true);
+        assert_eq!(value["capabilities"]["pr_edit"], true);
+        assert_eq!(value["capabilities"]["pr_checks"], true);
+        assert_eq!(value["capabilities"]["pr_merge"], true);
+        assert_eq!(value["capabilities"]["issue_create"], true);
+    }
+
+    // The `forge_info` tool is read-only — its annotation is `readOnlyHint`,
+    // not `destructiveHint`. Pinned here alongside the existing
+    // `tool_annotations_mark_read_vs_destructive` test.
+    #[test]
+    fn tool_annotations_mark_forge_info_as_read_only() {
+        let tool = VcsMcpServer::forge_info_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.read_only_hint, Some(true));
+        assert_eq!(a.destructive_hint, None);
+
+        let tool = VcsMcpServer::forge_pr_comment_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+
+        let tool = VcsMcpServer::forge_pr_edit_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+    }
+
     // The macro-generated tool definitions carry the right MCP annotations: read
     // tools are read-only, mutation tools are destructive.
     #[test]
@@ -983,6 +1316,9 @@ mod tests {
         assert!(names.contains(&"repo_snapshot"), "{names:?}");
         assert!(names.contains(&"repo_commit"), "{names:?}");
         assert!(names.contains(&"forge_pr_list"), "{names:?}");
+        assert!(names.contains(&"forge_pr_comment"), "{names:?}");
+        assert!(names.contains(&"forge_pr_edit"), "{names:?}");
+        assert!(names.contains(&"forge_info"), "{names:?}");
 
         let result = client
             .call_tool(CallToolRequestParams::new("repo_current_branch"))
