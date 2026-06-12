@@ -26,6 +26,41 @@ crates; tag releases as `vcs-forge-v<version>`.
 - `ForgeIssue::body`/`url` are now populated by GitHub's `issue_list` too (its
   lean field list was widened), not just `issue_view`.
 
+## [0.1.1] - 2026-06-12
+
+### Added
+- `PrEdit` — the unified edit-a-PR/MR spec (optional `title` and/or `body`),
+  built with `PrEdit::new()` and chained `.title(..)` / `.body(..)` setters.
+  Mirrors `PrCreate`'s shape.
+- `ForgeCapabilities` — the flat capability map surfaced by the new
+  `Forge::capabilities` / `forge_info` MCP tool. Carries `pr_create`,
+  `pr_comment`, `pr_edit`, `pr_checks`, `pr_merge`, `issue_create`, and
+  `authed`; the latter intersects with the static "what the CLI ships" map.
+  `ForgeCapabilities::all_false()` is the all-`false` shape used for the
+  `Unknown` forge.
+- `ForgeKind::Unknown` variant — additive on a `#[non_exhaustive]` enum;
+  the new `Forge::for_unknown(cwd)` ctor returns a handle whose
+  `capabilities()` is the all-`false` shape without spawning, and whose
+  every operation returns `Error::Unsupported`. Useful for an auto-detector
+  that wants to surface "tried, no luck" rather than guess a forge kind.
+- `Forge::pr_comment(number, body)` — post a comment to an existing PR/MR.
+  Routes to `vcs-github::GitHub::pr_comment`, `vcs-gitlab::GitLab::mr_comment`,
+  and `vcs-gitea::Gitea::pr_comment`; `Unknown` returns `Unsupported`.
+- `Forge::pr_edit(number, PrEdit)` — edit a PR/MR's title and/or body.
+  Rejects both-`None` with `Error::InvalidInput` BEFORE any spawn
+  (spec §2: explicit-error path); routes to the three per-forge wrappers.
+- `Forge::capabilities()` — the flat capability map. Spawns `auth status`
+  / `login list` exactly once; the per-forge static "ships the command" map
+  is a constant. `Unknown` returns the all-`false` shape without spawning.
+- `Error::InvalidInput(String)` — new variant for the facade's refused-input
+  cases (currently just `pr_edit` both-`None`); surfaces as a client-fixable
+  error from the MCP layer.
+- `ForgeApiExt` trait extension — the three new methods (`pr_comment`,
+  `pr_edit`, `capabilities`) live on a separate trait auto-implemented for
+  any `T: ForgeApi`, with default bodies that return `Error::Unsupported`
+  / the all-`false` capability map. External implementers of `ForgeApi`
+  keep compiling when the crate bumps.
+
 ### Changed
 - The re-exported `vcs_github::CheckRun::bucket` is now the typed `CheckBucket`
   enum (was `String`) — breaking for code reaching through `vcs_forge::vcs_github`.

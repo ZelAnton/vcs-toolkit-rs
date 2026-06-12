@@ -915,13 +915,9 @@ mod tests {
         tea.pr_edit(Path::new("/r"), 7, PrEdit::new().body("New body"))
             .await
             .expect("body-only edit");
-        tea.pr_edit(
-            Path::new("/r"),
-            7,
-            PrEdit::new().title("T").body("B"),
-        )
-        .await
-        .expect("both-fields edit");
+        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
+            .await
+            .expect("both-fields edit");
 
         let calls = rec.calls();
         assert_eq!(
@@ -947,7 +943,10 @@ mod tests {
         tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title(""))
             .await
             .expect("empty title");
-        assert_eq!(rec.only_call().args_str(), ["pr", "edit", "7", "--title", ""]);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "edit", "7", "--title", ""]
+        );
     }
 
     // issue_list parses tea's table shape (all-string `index` column) and pins

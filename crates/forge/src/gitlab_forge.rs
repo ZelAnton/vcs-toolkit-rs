@@ -6,12 +6,12 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_gitlab::{
     CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MergeStrategy as GlMs, MrCreate,
-    Project, Release,
+    MrEdit as GlMrEdit, Project, Release,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate,
+    MergeStrategy, PrCreate, PrEdit,
 };
 use crate::error::Result;
 
@@ -52,6 +52,32 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
         create = create.target(target);
     }
     Ok(glab.mr_create(dir, create).await?)
+}
+
+pub(crate) async fn mr_comment<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    id: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(glab.mr_comment(dir, id, body).await?)
+}
+
+pub(crate) async fn mr_edit<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    id: u64,
+    edit: PrEdit,
+) -> Result<()> {
+    let mut gl_edit = GlMrEdit::new();
+    if let Some(title) = edit.title {
+        gl_edit = gl_edit.title(title);
+    }
+    if let Some(body) = edit.body {
+        gl_edit = gl_edit.body(body);
+    }
+    glab.mr_edit(dir, id, gl_edit).await?;
+    Ok(())
 }
 
 pub(crate) async fn pr_merge<R: ProcessRunner>(
