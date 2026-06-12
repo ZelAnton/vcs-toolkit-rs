@@ -1,6 +1,6 @@
 [package]
 name = "vcs-github"
-version = "0.5.0"
+version = "0.5.1"
 description = "Automate GitHub from Rust: a typed, async wrapper for the GitHub CLI (gh) — pull requests, issues, releases, and CI checks."
 edition.workspace = true
 rust-version.workspace = true
