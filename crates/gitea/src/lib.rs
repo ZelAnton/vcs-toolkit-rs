@@ -41,14 +41,16 @@
 //!   drop the leading `dir`, so `tea.at(dir).pr_list()` reads as
 //!   `tea.pr_list(dir)` — handy when one client drives one checkout.
 //! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
-//!   chained `.head` / `.base` setters named after the flags they emit) and
+//!   chained `.head` / `.base` setters named after the flags they emit),
+//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), and
 //!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`).
 //!
 //! The exposed operations are the **lean lifecycle** `tea` actually supports:
 //! auth ([`auth_status`](GiteaApi::auth_status)), the PR lifecycle
 //! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
 //! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
-//! [close](GiteaApi::pr_close)), issues
+//! [close](GiteaApi::pr_close) / [comment](GiteaApi::pr_comment) /
+//! [edit](GiteaApi::pr_edit)), issues
 //! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
 //! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
 //! It is deliberately narrower than
@@ -170,6 +172,53 @@ impl PrCreate {
     }
 }
 
+/// Options for [`GiteaApi::pr_edit`] (`tea pr edit`).
+///
+/// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
+/// [`title`](PrEdit::title) / [`body`](PrEdit::body) setters rather than a
+/// struct literal. At least one of `title` or `body` must be `Some`; both
+/// `None` is rejected by the facade before spawning (an explicit error, not a
+/// silent no-op). An empty string is a real value — tea clears the field on
+/// `--title ""` / `--description ""` — not a `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrEdit {
+    /// The new title (`--title`); `None` leaves the title alone.
+    pub title: Option<String>,
+    /// The new description (`--description`); `None` leaves the description alone.
+    pub body: Option<String>,
+}
+
+impl PrEdit {
+    /// An edit that leaves both fields alone (the facade rejects both-`None`
+    /// before reaching the wrapper). Start with this and add what you want to
+    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body).
+    pub fn new() -> Self {
+        Self {
+            title: None,
+            body: None,
+        }
+    }
+
+    /// Set the new title (`--title`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the new description (`--description`).
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
+impl Default for PrEdit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Name of the underlying CLI binary this crate drives.
 ///
 /// Note on injection safety: like `vcs-gitlab`, the lean surface has **no bare
@@ -208,6 +257,16 @@ impl MergeStrategy {
             MergeStrategy::Rebase => "rebase",
         }
     }
+}
+
+/// Injection guard for bare positional argv slots: a caller-supplied value
+/// with a leading `-` would be parsed by tea's CLI as a *flag* (verified:
+/// `tea … -evil` → "unknown switch"), and an empty value changes a command's
+/// meaning. Refuse both before anything spawns. Flag-VALUE positions
+/// (`--title <t>`, `--description <b>`) need no guard — tea consumes the next
+/// token verbatim there.
+fn reject_flag_like(what: &str, value: &str) -> Result<()> {
+    vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
 /// The Gitea operations this crate exposes — the interface consumers code
@@ -250,6 +309,30 @@ pub trait GiteaApi: Send + Sync {
     async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
     /// Close a pull request without merging (`tea pr close <number>`).
     async fn pr_close(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Add a comment to a pull request, returning the command's output
+    /// (`tea comment <index> <body>`). Gitea PRs and issues share the `index`
+    /// space and the same `tea comment` subcommand hits both. The `body` is a
+    /// bare positional, so the trait method guards it with
+    /// `reject_flag_like` (a leading `-` or empty value is rejected before
+    /// any process spawns). **Defaulted** to `Error::Unsupported` so external
+    /// implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "pr_comment".into(),
+        })
+    }
+    /// Edit a pull request's title and/or description
+    /// (`tea pr edit <index> [--title <title>] [--description <body>]`). At
+    /// least one of `title` or `body` must be `Some` — the facade rejects
+    /// both-`None` before reaching the wrapper. **Defaulted** to
+    /// `Error::Unsupported`.
+    #[allow(unused_variables)]
+    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_edit".into(),
+        })
+    }
     /// Open issues for `dir` (`tea issues list --limit 100 --output json`).
     /// Returns up to 100 open issues; use [`run`](GiteaApi::run) for more.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
@@ -413,6 +496,34 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             .await
     }
 
+    async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        // `body` is a bare positional, so guard it the way `release_view` does
+        // in `vcs-gitlab`. Without this, `tea comment 7 --evil` would let a
+        // caller-supplied string be parsed as a flag.
+        reject_flag_like("body", body)?;
+        let n = number.to_string();
+        self.core
+            .run(self.core.command_in(dir, ["comment", n.as_str(), body]))
+            .await
+    }
+
+    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
+        // `--title` and `--description` are flag-VALUE positions: no argv-guard
+        // needed. The facade rejects both-`None` before reaching here; an empty
+        // string is intentional (clears the field).
+        let n = number.to_string();
+        let mut args = vec!["pr", "edit", n.as_str()];
+        if let Some(title) = edit.title.as_deref() {
+            args.push("--title");
+            args.push(title);
+        }
+        if let Some(body) = edit.body.as_deref() {
+            args.push("--description");
+            args.push(body);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
         // `--limit 100` overrides tea's default page size (30), mirroring
         // `pr_list`, so the list is not silently truncated. `--fields` selects
@@ -555,6 +666,8 @@ gitea_at_forwarders! {
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
         fn pr_close(number: u64) -> Result<()>;
+        fn pr_comment(number: u64, body: &str) -> Result<String>;
+        fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
@@ -765,6 +878,76 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         tea.pr_close(Path::new("/repo"), 5).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+    }
+
+    // pr_comment builds `comment <n> <body>` — the body is a bare positional,
+    // so it's argv-guarded the way `release_view` is in `vcs-gitlab`. A
+    // flag-like or empty body is rejected BEFORE any process spawns.
+    #[tokio::test]
+    async fn pr_comment_builds_argv_and_returns_output() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        let out = tea
+            .pr_comment(Path::new("/r"), 7, "LGTM")
+            .await
+            .expect("pr_comment");
+        assert_eq!(out, "");
+        assert_eq!(rec.only_call().args_str(), ["comment", "7", "LGTM"]);
+    }
+
+    #[tokio::test]
+    async fn pr_comment_rejects_flag_like_body() {
+        let tea = Gitea::with_runner(ScriptedRunner::new());
+        assert!(tea.pr_comment(Path::new("."), 7, "-evil").await.is_err());
+        assert!(tea.pr_comment(Path::new("."), 7, "").await.is_err());
+    }
+
+    // pr_edit emits only the flags the caller set. Flag-VALUE positions pass
+    // through verbatim — the facade rejects both-`None` before reaching here.
+    #[tokio::test]
+    async fn pr_edit_emits_only_provided_fields() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+
+        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title("New title"))
+            .await
+            .expect("title-only edit");
+        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().body("New body"))
+            .await
+            .expect("body-only edit");
+        tea.pr_edit(
+            Path::new("/r"),
+            7,
+            PrEdit::new().title("T").body("B"),
+        )
+        .await
+        .expect("both-fields edit");
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["pr", "edit", "7", "--title", "New title"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["pr", "edit", "7", "--description", "New body"]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            ["pr", "edit", "7", "--title", "T", "--description", "B"]
+        );
+    }
+
+    // An empty string is a real value (clears the field) — the argv must
+    // carry `--title ""` literally, not silently drop it.
+    #[tokio::test]
+    async fn pr_edit_some_empty_string_clears_field() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title(""))
+            .await
+            .expect("empty title");
+        assert_eq!(rec.only_call().args_str(), ["pr", "edit", "7", "--title", ""]);
     }
 
     // issue_list parses tea's table shape (all-string `index` column) and pins
