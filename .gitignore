@@ -17,3 +17,6 @@ progress.md
 # Rust
 **/*.rs.bk
 *.pdb
+
+# Nix
+^/result$
