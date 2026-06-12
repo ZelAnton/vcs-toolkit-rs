@@ -53,9 +53,10 @@
 //!   methods drop the leading `dir`, so `glab.at(dir).mr_list()` reads as
 //!   `glab.mr_list(dir)` — handy when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`MrCreate`] (title, body,
-//!   optional source/target branch) and the [`MergeStrategy`] enum
-//!   (`Merge`/`Squash`/`Rebase`) — `#[non_exhaustive]`, built with a constructor +
-//!   chained setters, named after the flags they emit.
+//!   optional source/target branch), [`MrEdit`] (optional `title` and/or `body` for
+//!   `mr update`), and the [`MergeStrategy`] enum (`Merge`/`Squash`/`Rebase`) —
+//!   `#[non_exhaustive]`, built with a constructor + chained setters, named after
+//!   the flags they emit.
 //! - **[`auth_status`](GitLabApi::auth_status)** — a best-effort signal, *not* a
 //!   guarantee: a long-standing glab bug can make `glab auth status` exit `0` even
 //!   when unauthenticated, so a `true` means "probably"; a subsequent API call is
@@ -170,6 +171,53 @@ impl MrCreate {
     }
 }
 
+/// Options for [`GitLabApi::mr_edit`] (`glab mr update`).
+///
+/// `#[non_exhaustive]`, so build it through [`MrEdit::new`] and the chained
+/// [`title`](MrEdit::title) / [`body`](MrEdit::body) setters rather than a
+/// struct literal. At least one of `title` or `body` must be `Some`; both
+/// `None` is rejected by the facade before spawning (an explicit error, not a
+/// silent no-op). An empty string is a real value — glab clears the field on
+/// `--title ""` / `--description ""` — not a `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MrEdit {
+    /// The new title (`--title`); `None` leaves the title alone.
+    pub title: Option<String>,
+    /// The new description (`--description`); `None` leaves the description alone.
+    pub body: Option<String>,
+}
+
+impl MrEdit {
+    /// An edit that leaves both fields alone (the facade rejects both-`None`
+    /// before reaching the wrapper). Start with this and add what you want to
+    /// change via [`title`](MrEdit::title) / [`body`](MrEdit::body).
+    pub fn new() -> Self {
+        Self {
+            title: None,
+            body: None,
+        }
+    }
+
+    /// Set the new title (`--title`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the new description (`--description`).
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
+impl Default for MrEdit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Name of the underlying CLI binary this crate drives.
 ///
 /// Note on injection safety: most of the surface has **no bare positional string
@@ -270,6 +318,28 @@ pub trait GitLabApi: Send + Sync {
     async fn mr_ready(&self, dir: &Path, id: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
     async fn mr_close(&self, dir: &Path, id: u64) -> Result<()>;
+    /// Add a comment to a merge request, returning the command's output
+    /// (`glab mr note <id> -m <message>`). The note body rides in a
+    /// flag-VALUE position, so no argv-guard is needed. **Defaulted** to
+    /// `Error::Unsupported` so external implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_comment(&self, dir: &Path, id: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "mr_comment".into(),
+        })
+    }
+    /// Edit a merge request's title and/or description
+    /// (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
+    /// At least one of `title` or `body` must be `Some` — the facade rejects
+    /// both-`None` before reaching the wrapper. `--yes` skips glab's
+    /// confirmation prompt. **Defaulted** to `Error::Unsupported`.
+    #[allow(unused_variables)]
+    async fn mr_edit(&self, dir: &Path, id: u64, edit: MrEdit) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "mr_edit".into(),
+        })
+    }
     /// The MR's pipeline status, bucketed (`glab mr view <id> --output json`,
     /// reading `head_pipeline.status`). [`CiStatus::None`] when no pipeline ran.
     async fn mr_checks(&self, dir: &Path, id: u64) -> Result<CiStatus>;
@@ -504,6 +574,35 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
+    async fn mr_comment(&self, dir: &Path, id: u64, body: &str) -> Result<String> {
+        // `-m` is a flag-VALUE position; glab consumes the next token verbatim.
+        // No `--yes` here: `mr note` is non-destructive in spirit (adds a
+        // comment, doesn't change the MR's state) and doesn't trigger the
+        // submission prompt `mr create` does.
+        let id = id.to_string();
+        self.core
+            .run(self.core.command_in(dir, ["mr", "note", id.as_str(), "-m", body]))
+            .await
+    }
+
+    async fn mr_edit(&self, dir: &Path, id: u64, edit: MrEdit) -> Result<()> {
+        // `--title` and `--description` are flag-VALUE positions: no argv-guard
+        // needed. `--yes` skips the confirmation prompt `mr update` would
+        // otherwise show when neither --fill nor --ready is passed.
+        let id = id.to_string();
+        let mut args = vec!["mr", "update", id.as_str()];
+        if let Some(title) = edit.title.as_deref() {
+            args.push("--title");
+            args.push(title);
+        }
+        if let Some(body) = edit.body.as_deref() {
+            args.push("--description");
+            args.push(body);
+        }
+        args.push("--yes");
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
     async fn mr_checks(&self, dir: &Path, id: u64) -> Result<CiStatus> {
         let id = id.to_string();
         self.core
@@ -667,6 +766,8 @@ gitlab_at_forwarders! {
         fn mr_merge(id: u64, strategy: MergeStrategy) -> Result<()>;
         fn mr_ready(id: u64) -> Result<()>;
         fn mr_close(id: u64) -> Result<()>;
+        fn mr_comment(id: u64, body: &str) -> Result<String>;
+        fn mr_edit(id: u64, edit: MrEdit) -> Result<()>;
         fn mr_checks(id: u64) -> Result<CiStatus>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
@@ -1066,6 +1167,81 @@ mod tests {
         let glab = GitLab::with_runner(ScriptedRunner::new());
         assert!(glab.release_view(Path::new("."), "-evil").await.is_err());
         assert!(glab.release_view(Path::new("."), "").await.is_err());
+    }
+
+    // mr_comment builds `mr note <id> -m <body>` and returns the trimmed
+    // output. `-m` is the alias of `--message`; either is accepted by glab.
+    #[tokio::test]
+    async fn mr_comment_builds_argv_and_returns_output() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/7#note_99\n"));
+        let glab = GitLab::with_runner(&rec);
+        let out = glab
+            .mr_comment(Path::new("/r"), 7, "LGTM")
+            .await
+            .expect("mr_comment");
+        assert_eq!(out, "https://gl/mr/7#note_99");
+        assert_eq!(rec.only_call().args_str(), ["mr", "note", "7", "-m", "LGTM"]);
+    }
+
+    // mr_edit emits only the flags the caller set and appends --yes. Flag-VALUE
+    // positions pass through verbatim — the facade rejects both-`None` before
+    // reaching here.
+    #[tokio::test]
+    async fn mr_edit_emits_only_provided_fields() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+
+        glab.mr_edit(Path::new("/r"), 7, MrEdit::new().title("New title"))
+            .await
+            .expect("title-only edit");
+        glab.mr_edit(Path::new("/r"), 7, MrEdit::new().body("New body"))
+            .await
+            .expect("body-only edit");
+        glab.mr_edit(
+            Path::new("/r"),
+            7,
+            MrEdit::new().title("T").body("B"),
+        )
+        .await
+        .expect("both-fields edit");
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["mr", "update", "7", "--title", "New title", "--yes"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["mr", "update", "7", "--description", "New body", "--yes"]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            [
+                "mr",
+                "update",
+                "7",
+                "--title",
+                "T",
+                "--description",
+                "B",
+                "--yes"
+            ]
+        );
+    }
+
+    // An empty string is a real value (clears the field) — the argv must carry
+    // `--title ""` literally, not silently drop it.
+    #[tokio::test]
+    async fn mr_edit_some_empty_string_clears_field() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_edit(Path::new("/r"), 7, MrEdit::new().title(""))
+            .await
+            .expect("empty title");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["mr", "update", "7", "--title", "", "--yes"]
+        );
     }
 
     // repo_view parses the GitLab Project JSON.

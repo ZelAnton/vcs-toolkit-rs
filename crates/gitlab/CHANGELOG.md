@@ -26,6 +26,22 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `Release::description` — release notes (GitLab's `description`), surfaced by the
   `vcs-forge` facade as `ForgeRelease::body`.
 
+## [0.1.1] - 2026-06-12
+
+### Added
+- `mr_comment(dir, id, body)` — add a comment to a merge request, returning
+  the command's output (`glab mr note <id> -m <body>`). `-m` is a flag-VALUE
+  position so no argv-guard is needed.
+- `mr_edit(dir, id, MrEdit)` — edit a merge request's title and/or description
+  (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
+  `--yes` skips the confirmation prompt. A new `MrEdit` builder (`new()`,
+  `.title(..)`, `.body(..)`) carries the optional fields; absent flags are
+  not emitted. An empty string is treated as a real value (glab clears the
+  field on `--title ""` / `--description ""`), not as `None`. The trait
+  methods are **defaulted** to `Error::Unsupported` so external implementers
+  keep compiling when the crate bumps — only the `GitLab` concrete impl and
+  the regenerated `MockGitLabApi` override them.
+
 ### Changed
 - Bumped `processkit` to **0.11.0** (from 0.9.1), a major breaking release ahead
   of processkit's 1.0 freeze. Breaking for downstream via the re-exported
