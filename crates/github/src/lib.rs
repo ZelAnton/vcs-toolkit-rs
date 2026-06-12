@@ -477,12 +477,7 @@ pub trait GitHubApi: Send + Sync {
     /// external implementers of the trait keep compiling when the crate
     /// bumps.
     #[allow(unused_variables)]
-    async fn pr_edit(
-        &self,
-        dir: &Path,
-        number: u64,
-        edit: PrEdit,
-    ) -> Result<()> {
+    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
         Err(Error::Unsupported {
             operation: "pr_edit".into(),
         })
@@ -1471,13 +1466,9 @@ mod tests {
         gh.pr_edit(Path::new("/r"), 7, PrEdit::new().body("New body"))
             .await
             .expect("body-only edit");
-        gh.pr_edit(
-            Path::new("/r"),
-            7,
-            PrEdit::new().title("T").body("B"),
-        )
-        .await
-        .expect("both-fields edit");
+        gh.pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
+            .await
+            .expect("both-fields edit");
 
         let calls = rec.calls();
         assert_eq!(
@@ -1505,7 +1496,10 @@ mod tests {
         gh.pr_edit(Path::new("/r"), 7, PrEdit::new().title(""))
             .await
             .expect("empty title");
-        assert_eq!(rec.only_call().args_str(), ["pr", "edit", "7", "--title", ""]);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "edit", "7", "--title", ""]
+        );
     }
 
     #[tokio::test]

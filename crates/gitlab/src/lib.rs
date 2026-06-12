@@ -581,7 +581,10 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // submission prompt `mr create` does.
         let id = id.to_string();
         self.core
-            .run(self.core.command_in(dir, ["mr", "note", id.as_str(), "-m", body]))
+            .run(
+                self.core
+                    .command_in(dir, ["mr", "note", id.as_str(), "-m", body]),
+            )
             .await
     }
 
@@ -1180,7 +1183,10 @@ mod tests {
             .await
             .expect("mr_comment");
         assert_eq!(out, "https://gl/mr/7#note_99");
-        assert_eq!(rec.only_call().args_str(), ["mr", "note", "7", "-m", "LGTM"]);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["mr", "note", "7", "-m", "LGTM"]
+        );
     }
 
     // mr_edit emits only the flags the caller set and appends --yes. Flag-VALUE
@@ -1197,13 +1203,9 @@ mod tests {
         glab.mr_edit(Path::new("/r"), 7, MrEdit::new().body("New body"))
             .await
             .expect("body-only edit");
-        glab.mr_edit(
-            Path::new("/r"),
-            7,
-            MrEdit::new().title("T").body("B"),
-        )
-        .await
-        .expect("both-fields edit");
+        glab.mr_edit(Path::new("/r"), 7, MrEdit::new().title("T").body("B"))
+            .await
+            .expect("both-fields edit");
 
         let calls = rec.calls();
         assert_eq!(

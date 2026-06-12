@@ -20,6 +20,11 @@ pub enum Error {
         /// The [`ForgeApi`](crate::ForgeApi) method that isn't supported.
         operation: &'static str,
     },
+    /// The caller's input was refused by the facade before any CLI spawn —
+    /// e.g. [`crate::Forge::pr_edit`] with both `title` and `body` set to
+    /// `None`. Carries a short message naming what was wrong; surfaced by the
+    /// MCP layer as `ErrorData::invalid_params` so a client can fix the call.
+    InvalidInput(String),
 }
 
 impl Error {
@@ -45,6 +50,7 @@ impl std::fmt::Display for Error {
             Error::Unsupported { forge, operation } => {
                 write!(f, "{} does not support `{operation}`", forge.as_str())
             }
+            Error::InvalidInput(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -53,7 +59,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Forge(e) => Some(e),
-            Error::Unsupported { .. } => None,
+            Error::Unsupported { .. } | Error::InvalidInput(_) => None,
         }
     }
 }
