@@ -49,10 +49,9 @@
         # Runtime CLIs the MCP server (and watch) shell out to. The toolkit's
         # `processkit`-backed clients wrap these.
         runtimeCli = with pkgs;
-          let jj = pkgs.jj or pkgs.jujutsu or null;
-          in lib.filter (p: p != null) [
+          lib.filter (p: p != null) [
             pkgs.git
-            jj
+            pkgs.jujutsu
             pkgs.gh
             pkgs.glab
             (pkgs.tea or null)
