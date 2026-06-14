@@ -194,10 +194,15 @@ pub use error::{Error, Result};
 // through the facade or straight to the tool.
 pub use vcs_git;
 pub use vcs_jj;
-// Re-exported so a `vcs-core`-only consumer can name the token for a
-// `default_cancel_on` client (built via `Git`/`Jj`, then passed to
-// `Repo::from_git`/`from_jj`) without a direct `processkit` dependency.
-// (Cancellation is core in processkit 0.10 — always available, no feature.)
+// Re-export `processkit` itself so a `vcs-core`-only consumer can name the
+// wrapped error directly — `match err { Error::Vcs(vcs_core::processkit::Error::
+// Timeout { .. }) => … }` — and reach `Outcome`/`CancellationToken`/… without
+// adding `processkit` as a separate dependency. (`Error::Vcs` carries a
+// `processkit::Error`; the classifiers below cover the common branches.)
+pub use processkit;
+// Also surfaced at the crate root so the token a `default_cancel_on` client takes
+// (built via `Git`/`Jj`, then passed to `Repo::from_git`/`from_jj`) is one name
+// away. (Cancellation is core in processkit 0.10 — always available, no feature.)
 pub use processkit::CancellationToken;
 
 /// The result of [`detect`]: which backend, and the repository root it was found

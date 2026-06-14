@@ -12,6 +12,13 @@ crates; tag releases as `vcs-core-v<version>`.
 ### Added
 - `UpstreamTracking { branch, ahead, behind }` — the upstream ref and ahead/behind
   counts as one value, carried by `RepoSnapshot::tracking`.
+- Re-export of `processkit` itself (`vcs_core::processkit`) so a `vcs-core`-only
+  consumer can match the wrapped `Error::Vcs(processkit::Error::…)` (and reach
+  `Outcome`/`CancellationToken`/…) without taking a direct `processkit` dependency.
+- `Error::is_transient()` (transient io/spawn failure — interrupted/would-block/
+  busy) and `Error::is_not_found()` (the `git`/`jj` binary isn't installed) —
+  completing the `is_*` classifier family so callers branch on intent without
+  reaching into `processkit::Error`.
 
 ### Changed
 - **`RepoSnapshot` tracking shape (breaking).** The three coupled `Option` fields
