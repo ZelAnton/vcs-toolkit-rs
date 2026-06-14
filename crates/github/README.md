@@ -15,6 +15,12 @@ text. Commands run inside an OS job (an OS-level container that kills the whole
 process tree if your program exits, via [`processkit`]) so no `gh` subprocess is
 ever orphaned; calls return the structured `Error` and honour an optional timeout.
 
+**Credentials:** `gh`'s ambient login by default; to supply a token per operation
+(CI, vault, multi-account), the one-liner is `GitHub::new().with_token(tok)` (or
+`.with_env_token("MY_TOKEN")`); for full control attach a `CredentialProvider` with
+`.with_credentials(...)`. Either way the token is injected as `GH_TOKEN`, kept out
+of `argv`.
+
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-github/latest/vcs_github/guide/)

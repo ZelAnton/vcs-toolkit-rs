@@ -21,11 +21,39 @@ links.
 
 ## Active roadmap (do now)
 
-The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 migration**, and the
-**pre-1.0 interface wave (Tier 1–4)** (all 2026-06-14) are **shipped** — summaries below.
+The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 migration**, the
+**pre-1.0 interface wave (Tier 1–4)**, the **lock-contention retry**, and the
+**credential-provider** feature (all 2026-06-14) are **shipped** — summaries below.
 With them cleared, the active list is empty; the next committed items get promoted from
 [`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred forge fields) when work
 resumes. Settled-against items live in [`decisions/`](decisions/).
+
+### ✅ Shipped — credential provisioning (2026-06-14)
+
+An opt-in seam for supplying a secret *per operation* (CI token, vault lookup, per-account
+routing) instead of relying only on the CLI's ambient auth. Implemented in two phases, each
+adversarially reviewed (≥2 rounds), gated, and pushed.
+
+- **Core (`vcs-cli-support::credentials`).** `CredentialProvider` (async, dyn-compatible
+  trait), `Credential`/`Secret` (redacts in `Debug`/`Display`; no `Eq` — no equality oracle),
+  adapters `StaticCredential`/`EnvToken`/`provider_fn`, `CredentialService`/`CredentialRequest`,
+  and `git_credential_helper`. `ManagedClient` carries the provider + token-env binding and
+  injects per verb.
+- **Forges.** `GitHub::with_credentials` → `GH_TOKEN`; `GitLab::with_credentials` →
+  `GITLAB_TOKEN` (both per-op env, never `argv`). Gitea stays ambient (`tea` has no per-op
+  token mechanism — documented).
+- **git.** `Git::with_credentials` → HTTPS remote ops (fetch/push/clone/ls-remote) run with an
+  inline `credential.helper` feeding the secret from an env var (out of `argv`); HTTPS only,
+  SSH uses the ambient agent. jj stays ambient (in-process git backend, no per-op override).
+- Default everywhere: no provider → ambient CLI auth, unchanged.
+
+### ✅ Shipped — lock-contention retry (2026-06-14)
+
+`is_lock_contention` classifies a *pre-execution* lock-acquisition failure (git
+`index.lock`/ref/`packed-refs.lock`, jj's working-copy lock) — the one error class safe to
+retry on a mutation. `RetryPolicy` (attempts + exponential, jittered backoff) + `ManagedClient`
+apply it; `Git::with_retry`/`Jj::with_retry` enable it (opt-in, off by default). Forges
+deliberately untouched (their failures are API/rate-limit, not repo locks).
 
 ### ✅ Shipped — pre-1.0 interface wave, Tier 1–4 (2026-06-14)
 

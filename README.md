@@ -37,6 +37,10 @@ three forges — in plain terms:
 - **React to repository changes** — stream typed events (HEAD moved, branch
   switched, a conflict appeared, the working copy changed…) as they happen
   (`vcs-watch`).
+- **Supply credentials per operation** — by default every backend uses the CLI's own
+  ambient auth; opt in to a `CredentialProvider` (CI token, vault, per-account) and
+  the secret is injected per call (`GH_TOKEN`/`GITLAB_TOKEN` for forges, an inline
+  git credential helper for HTTPS) — kept out of `argv` and never persisted.
 - **Give an AI agent safe repo access** — a ready-made MCP server exposes every
   operation as an agent-callable tool, with writes gated off by default
   (`vcs-mcp`).
@@ -391,6 +395,13 @@ Two layers, both on by default or one call away:
   variables, skips system config, and keeps prompts off — on every command
   the client runs. jj needs no equivalent (no repo-local hooks); in a
   colocated repo, harden the `Git` client you point at it.
+
+A related opt-in is **supplying** a secret rather than guarding against one:
+`Git`/`GitHub`/`GitLab` accept a `CredentialProvider` via `with_credentials(...)`,
+injecting a per-operation token (a git HTTPS `credential.helper`, or
+`GH_TOKEN`/`GITLAB_TOKEN`) that is wrapped in a self-redacting `Secret`, kept out of
+`argv`, and never persisted to a credential store. Off by default → ambient CLI
+auth, unchanged.
 
 Conflicted files parse into a typed model too: `vcs_git::conflict` /
 `vcs_jj::conflict` turn marker soup into structured regions

@@ -23,6 +23,12 @@ approximating the user's git; you *are* their git. When your automation pushes,
 the same credential helper fires; when it commits, the same signing key signs;
 when it rebases, the same `merge.conflictStyle` shapes the markers you then parse.
 
+When ambient auth isn't what you want — a CI job with a short-lived token, an agent
+acting for several accounts — `Git`/`GitHub`/`GitLab` take an opt-in
+`CredentialProvider` (`with_credentials(...)`) layered *on top of* this model: the
+per-operation secret is injected without touching the user's stored credentials, and
+the default path stays exactly as above.
+
 The cost is real and worth stating plainly:
 
 - **A process spawn per command.** Each call forks a binary, pipes its output,

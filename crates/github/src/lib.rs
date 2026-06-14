@@ -38,6 +38,9 @@
 //! - **[`GitHub`]** — the real client. [`GitHub::new`] uses the job-backed
 //!   runner; [`GitHub::with_runner`] injects a fake one for tests. It is generic
 //!   over the [`ProcessRunner`] seam, defaulting to the production runner.
+//!   [`with_credentials`](GitHub::with_credentials) attaches a
+//!   [`CredentialProvider`] to supply a token per operation (injected as
+//!   `GH_TOKEN`, never in `argv`) — opt-in, off by default (ambient `gh` auth).
 //! - **[`GitHubAt`]** — a cwd-bound view ([`GitHub::at`]) whose methods drop the
 //!   leading `dir`, so `gh.at(dir).pr_list()` reads as `gh.pr_list(dir)` — handy
 //!   when one client drives one checkout.
@@ -114,7 +117,7 @@ use std::sync::Arc;
 use processkit::ProcessRunner;
 // The shared managed client (lock-retry + credential injection) and the
 // credential seam — re-exported so a consumer can supply a token provider.
-use vcs_cli_support::RetryingClient;
+use vcs_cli_support::ManagedClient;
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
     Secret, StaticCredential, provider_fn,
@@ -468,19 +471,19 @@ pub trait GitHubApi: Send + Sync {
 /// The real GitHub client. Generic over the [`ProcessRunner`] so tests can inject
 /// a fake process executor; [`GitHub::new`] uses the real job-backed runner.
 ///
-/// Wraps a [`RetryingClient`]. By default it authenticates through `gh`'s own
+/// Wraps a [`ManagedClient`]. By default it authenticates through `gh`'s own
 /// ambient login; attach a [`CredentialProvider`] with
 /// [`with_credentials`](GitHub::with_credentials) to supply a token per operation
 /// — it is injected as `GH_TOKEN` on every `gh` invocation.
 pub struct GitHub<R: ProcessRunner = processkit::JobRunner> {
-    core: RetryingClient<R>,
+    core: ManagedClient<R>,
 }
 
 impl GitHub<processkit::JobRunner> {
     /// Create a client driving the real job-backed runner.
     pub fn new() -> Self {
         Self {
-            core: RetryingClient::new(BINARY).with_token_env(CredentialService::GitHub, "GH_TOKEN"),
+            core: ManagedClient::new(BINARY).with_token_env(CredentialService::GitHub, "GH_TOKEN"),
         }
     }
 }
@@ -495,7 +498,7 @@ impl<R: ProcessRunner> GitHub<R> {
     /// Create a client driving `runner` — inject a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Self {
-            core: RetryingClient::with_runner(BINARY, runner)
+            core: ManagedClient::with_runner(BINARY, runner)
                 .with_token_env(CredentialService::GitHub, "GH_TOKEN"),
         }
     }
@@ -535,6 +538,22 @@ impl<R: ProcessRunner> GitHub<R> {
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.core = self.core.with_credentials(provider);
         self
+    }
+
+    /// Convenience for the common case: authenticate with a single static `token`,
+    /// injected as `GH_TOKEN`. Shorthand for
+    /// `with_credentials(Arc::new(StaticCredential::token(token)))`.
+    #[must_use]
+    pub fn with_token(self, token: impl Into<Secret>) -> Self {
+        self.with_credentials(Arc::new(StaticCredential::token(token)))
+    }
+
+    /// Convenience: read the token from environment variable `var` at request time
+    /// (injected as `GH_TOKEN`); if `var` is unset/empty, fall back to ambient auth.
+    /// Shorthand for `with_credentials(Arc::new(EnvToken::new(var)))`.
+    #[must_use]
+    pub fn with_env_token(self, var: impl Into<String>) -> Self {
+        self.with_credentials(Arc::new(EnvToken::new(var)))
     }
 }
 
@@ -1387,6 +1406,40 @@ mod tests {
                 .iter()
                 .any(|(k, _)| k.to_str() == Some("GH_TOKEN")),
             "no provider → no token env (ambient gh auth)"
+        );
+    }
+
+    // The `with_token` convenience is the common path: a static token, no `Arc`/
+    // `StaticCredential` ceremony, injected as GH_TOKEN.
+    #[tokio::test]
+    async fn with_token_convenience_injects_gh_token() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec).with_token("tok-conv");
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        let token = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("GH_TOKEN"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(token, Some("tok-conv"));
+    }
+
+    // A provider that yields `Ok(None)` defers to ambient auth: no GH_TOKEN is
+    // injected, exactly as if no provider were attached. Pins the None=ambient
+    // contract end-to-end (not just at the provider level).
+    #[tokio::test]
+    async fn provider_returning_none_falls_back_to_ambient() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec).with_credentials(Arc::new(provider_fn(|_| Ok(None))));
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        assert!(
+            !rec.only_call()
+                .envs
+                .iter()
+                .any(|(k, _)| k.to_str() == Some("GH_TOKEN")),
+            "Ok(None) provider injects no token (ambient)"
         );
     }
 

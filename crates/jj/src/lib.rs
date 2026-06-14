@@ -162,7 +162,7 @@ pub use vcs_diff::{
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
-use vcs_cli_support::RetryingClient;
+use vcs_cli_support::ManagedClient;
 pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_error};
 
 /// Name of the underlying CLI binary this crate drives.
@@ -624,7 +624,7 @@ pub trait JjApi: Send + Sync {
 /// The real jj client. Generic over the [`ProcessRunner`] so tests can inject a
 /// fake process executor; [`Jj::new`] uses the real job-backed runner.
 ///
-/// Wraps a [`RetryingClient`]: enable lock-contention retry with
+/// Wraps a [`ManagedClient`]: enable lock-contention retry with
 /// [`with_retry`](Jj::with_retry) (opt-in; off by default).
 ///
 /// **Remote authentication is ambient.** Unlike `vcs-git` (which accepts a
@@ -633,14 +633,14 @@ pub trait JjApi: Send + Sync {
 /// credential override — `jj git fetch`/`push` authenticate from the ambient git
 /// credential helpers / SSH agent. Configure those out of band.
 pub struct Jj<R: ProcessRunner = processkit::JobRunner> {
-    core: RetryingClient<R>,
+    core: ManagedClient<R>,
 }
 
 impl Jj<processkit::JobRunner> {
     /// Create a client driving the real job-backed runner.
     pub fn new() -> Self {
         Self {
-            core: RetryingClient::new(BINARY),
+            core: ManagedClient::new(BINARY),
         }
     }
 }
@@ -655,7 +655,7 @@ impl<R: ProcessRunner> Jj<R> {
     /// Create a client driving `runner` — inject a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Self {
-            core: RetryingClient::with_runner(BINARY, runner),
+            core: ManagedClient::with_runner(BINARY, runner),
         }
     }
 

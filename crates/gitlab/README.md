@@ -13,7 +13,14 @@ behind a mockable interface.
 credentials), asks for `--output json`, and deserializes the result into structs.
 Commands run inside an OS job (an OS-level container that kills the whole process
 tree if your program exits, via [`processkit`]) so no `glab` subprocess is ever
-orphaned; calls return the structured `Error` and honour an optional timeout. The
+orphaned; calls return the structured `Error` and honour an optional timeout.
+
+**Credentials:** `glab`'s ambient login by default; to supply a token per operation,
+the one-liner is `GitLab::new().with_token(tok)` (or `.with_env_token("MY_TOKEN")`);
+for full control attach a `CredentialProvider` with `.with_credentials(...)`. Either
+way the token is injected as `GITLAB_TOKEN`, kept out of `argv`.
+
+The
 [`vcs-forge`](https://crates.io/crates/vcs-forge) facade unifies this with
 `vcs-github` and `vcs-gitea`.
 

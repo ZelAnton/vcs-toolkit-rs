@@ -16,6 +16,12 @@ credentials) and parses the output into typed values. Commands run inside an OS 
 [`processkit`]) so no `git` subprocess is ever orphaned; calls return the
 structured `Error` and honour an optional timeout.
 
+**Credentials:** ambient git credential helpers / SSH agent by default; to supply a
+token per operation, the one-liner is `Git::new().with_token(tok)` (or
+`.with_env_token("MY_TOKEN")`); for full control attach a `CredentialProvider` with
+`.with_credentials(...)`. For HTTPS remotes the secret is fed via an inline
+`credential.helper`, kept out of `argv` (SSH remotes use the ambient agent).
+
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-git/latest/vcs_git/guide/)

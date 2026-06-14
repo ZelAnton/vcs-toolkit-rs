@@ -15,7 +15,7 @@ crates; tag releases as `vcs-jj-v<version>`.
   mutating commands (a lock-acquisition failure is pre-execution). Re-exports
   `RetryPolicy`. (jj's operation log already auto-resolves most concurrency, so
   hard lock failures are rarer than with git.) Internally `Jj` now wraps a
-  `RetryingClient` — no change to existing methods.
+  `ManagedClient` — no change to existing methods.
 
 ### Changed
 - Documented that **jj remote authentication is ambient**: unlike `vcs-git`'s new

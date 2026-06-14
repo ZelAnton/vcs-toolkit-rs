@@ -35,6 +35,11 @@ as a security issue, not just a functional one:
   / Linux cgroup v2 / POSIX process group, via
   [`processkit`](https://crates.io/crates/processkit)) so a subprocess tree can't be
   orphaned; a containment escape is a vulnerability.
+- **Credential handling.** When a caller supplies a per-operation secret via a
+  `CredentialProvider`, the toolkit wraps it in a self-redacting `Secret`, passes it
+  through the environment (never `argv`), and never persists it to a credential
+  store. A secret leaking into `argv`, a log line, an error message, or a credential
+  cache is a vulnerability.
 
 ## Supported versions
 

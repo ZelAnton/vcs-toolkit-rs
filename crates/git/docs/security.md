@@ -13,6 +13,9 @@ Pre-validation at your input boundary (the [newtypes](#validating-newtypes-eager
 is the optional third layer, for failing fast on bad input *before* it reaches a
 method.
 
+A separate, opt-in concern is **supplying** a credential rather than guarding
+against one — see [Credential provisioning](#credential-provisioning-opt-in) below.
+
 ---
 
 ## Injection guards (automatic)
@@ -161,9 +164,39 @@ panic** on malformed or hostile input — a bad file is an `Error::Parse`, not a
 crash. This is property-tested for panic-freedom on arbitrary input, alongside a
 byte-exact `render(parse(x)) == x` roundtrip. See the [conflicts guide](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
 
+## Credential provisioning (opt-in)
+
+By default the toolkit holds **no** secrets — every backend authenticates through
+its CLI's own ambient credential system (git credential helpers, the SSH agent,
+`gh`/`glab` logins). When you instead want to supply a secret *per operation* (a CI
+job's short-lived token, a vault lookup, per-account routing), attach a
+`CredentialProvider` with `Git::with_credentials(...)` (and `GitHub`/`GitLab` have
+the same method). It is **opt-in** — without a provider, behaviour is unchanged.
+
+The security properties that make this safe:
+
+- **The secret never reaches `argv`.** For git HTTPS, the provider's token is fed
+  through an inline `credential.helper` that reads it from an environment variable
+  *by name*; only the variable name appears in the command line, never the value.
+  (The forges inject `GH_TOKEN`/`GITLAB_TOKEN` as environment variables, also not
+  `argv`.) `argv` is broadly observable (`ps`, `/proc/<pid>/cmdline`); the process
+  environment is same-user only — the right channel for a secret.
+- **It is never persisted.** The git helper answers only git's `get` action (never
+  `store`/`erase`), so the token is never written to a credential cache or to any
+  config file. It lives only in the child process's environment, for that one call.
+- **It can't leak through logs.** Secrets are wrapped in `Secret`, which redacts
+  itself in `Debug`/`Display`; processkit's own command/error formatting shows
+  environment-variable *names* only, never values.
+- **HTTPS only.** git invokes a credential helper for HTTP(S) auth only, so an SSH
+  remote ignores it and falls through to the ambient SSH agent, as before.
+
+`vcs-gitea` and `vcs-jj` stay ambient-only: `tea` has no per-invocation token
+mechanism, and jj's in-process git backend offers no per-operation override.
+
 ## See also
 
 - [git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/) — the full `GitApi` surface and the hardened profile in context.
+- [`vcs-cli-support` credentials module](https://docs.rs/vcs-cli-support/latest/vcs_cli_support/credentials/) — the `CredentialProvider` seam and `git_credential_helper`.
 - [jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/) — why there is no `Jj::hardened()`, and the colocated-repo story.
 - [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — `Error::Spawn` and the other
   variants the guards raise, plus containment and observability.

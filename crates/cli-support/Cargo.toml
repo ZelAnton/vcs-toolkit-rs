@@ -1,7 +1,7 @@
 [package]
 name = "vcs-cli-support"
 version = "0.1.0"
-description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, retry policies (fetch + lock contention) with a retrying client, and processkit error classifiers."
+description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, a managed client with retry (fetch + lock contention) and credential injection, and processkit error classifiers."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,18 +13,18 @@ categories = ["development-tools","command-line-utilities"]
 
 [dependencies]
 # The structured error these helpers guard against / classify, and the program
-# launcher the wrappers share — and `RetryingClient`, the `CliClient` the wrappers
+# launcher the wrappers share — and `ManagedClient`, the `CliClient` the wrappers
 # hold. This is why this plumbing lives here and not in the std-only `vcs-diff`.
 processkit.workspace = true
 # Dyn-compatible async trait for `CredentialProvider` — matches processkit's own
 # `ProcessRunner` pattern, so `Arc<dyn CredentialProvider>` works on our MSRV.
 async-trait = "0.1"
-# The async backoff sleep in `retry_async` (the `RetryingClient` retry loop). Only
+# The async backoff sleep in `retry_async` (the `ManagedClient` retry loop). Only
 # the time driver is needed; the wrappers already run on tokio.
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
-# `#[tokio::test]` for the async `retry_async` / `RetryingClient` tests.
+# `#[tokio::test]` for the async `retry_async` / `ManagedClient` tests.
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [package.metadata.docs.rs]

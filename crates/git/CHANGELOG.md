@@ -12,8 +12,9 @@ crates; tag releases as `vcs-git-v<version>`.
 ### Added
 - **Per-operation HTTPS credentials (opt-in).** `Git::with_credentials(provider)`
   accepts a `CredentialProvider` (re-exported from `vcs-cli-support`, with
-  `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`). When the
-  provider yields a credential, every remote op (`fetch`/`fetch_from`/
+  `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`), plus the
+  convenience `Git::with_token(token)` / `with_env_token(var)` for the common cases.
+  When the provider yields a credential, every remote op (`fetch`/`fetch_from`/
   `fetch_remote_branch`/`push`/`clone_repo`/`remote_branch_exists`/
   `remote_branches`) runs with a leading inline `credential.helper` that feeds the
   secret from an environment variable — so the token never appears in `argv`.
@@ -22,7 +23,7 @@ crates; tag releases as `vcs-git-v<version>`.
   (another process holds `index.lock`, a ref lock, or `packed-refs.lock`), with
   exponential, jittered backoff. Off by default; safe even for mutating commands
   because a lock-acquisition failure is pre-execution. Re-exports `RetryPolicy`.
-  (Internally `Git` now wraps a `RetryingClient` instead of a bare `CliClient` —
+  (Internally `Git` now wraps a `ManagedClient` instead of a bare `CliClient` —
   no change to existing methods.)
 
 ### Changed

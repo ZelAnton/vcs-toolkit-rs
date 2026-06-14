@@ -12,7 +12,14 @@ typed `async` methods over the `tea` CLI, behind a mockable interface.
 handling), asks for `--output json`, and deserializes the result into structs.
 Commands run inside an OS job (an OS-level container that kills the whole process
 tree if your program exits, via [`processkit`]) so no `tea` subprocess is ever
-orphaned; calls return the structured `Error` and honour an optional timeout. The
+orphaned; calls return the structured `Error` and honour an optional timeout.
+
+**Credentials are ambient.** Unlike `vcs-github`/`vcs-gitlab`, `tea` has no
+per-invocation token mechanism (it authenticates from `tea login add` only), so this
+client offers no per-operation credential injection — configure `tea`'s logins out
+of band.
+
+The
 [`vcs-forge`](https://crates.io/crates/vcs-forge) facade unifies this with
 `vcs-github` and `vcs-gitlab`.
 

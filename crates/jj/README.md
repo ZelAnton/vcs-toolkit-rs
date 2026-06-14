@@ -17,6 +17,11 @@ OS-level container that kills the whole process tree if your program exits, via
 [`processkit`]) so no `jj` subprocess is ever orphaned; calls return the structured
 `Error` and honour an optional timeout.
 
+**Remote auth is ambient.** Unlike `vcs-git` (which takes a per-operation
+`CredentialProvider`), jj's in-process git backend has no per-invocation credential
+override, so `jj git fetch`/`push` use the ambient git credential helpers / SSH
+agent — configure those out of band.
+
 [`processkit`]: https://crates.io/crates/processkit
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)

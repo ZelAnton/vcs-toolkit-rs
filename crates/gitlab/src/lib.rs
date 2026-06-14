@@ -46,6 +46,9 @@
 //! - **[`GitLab`]** — the real client. [`GitLab::new`] uses the job-backed runner;
 //!   [`GitLab::with_runner`] injects a fake one for tests. It is generic over the
 //!   [`ProcessRunner`] seam, defaulting to the production runner.
+//!   [`with_credentials`](GitLab::with_credentials) attaches a
+//!   [`CredentialProvider`] to supply a token per operation (injected as
+//!   `GITLAB_TOKEN`, never in `argv`) — opt-in, off by default (ambient `glab` auth).
 //! - **[`GitLabAt`]** — a cwd-bound view ([`GitLab::at`]) whose project-scoped
 //!   methods drop the leading `dir`, so `glab.at(dir).mr_list()` reads as
 //!   `glab.mr_list(dir)` — handy when one client drives one checkout.
@@ -109,7 +112,7 @@ use std::sync::Arc;
 use processkit::ProcessRunner;
 // The shared managed client (lock-retry + credential injection) and the
 // credential seam — re-exported so a consumer can supply a token provider.
-use vcs_cli_support::RetryingClient;
+use vcs_cli_support::ManagedClient;
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
     Secret, StaticCredential, provider_fn,
@@ -296,19 +299,19 @@ pub trait GitLabApi: Send + Sync {
 /// The real GitLab client. Generic over the [`ProcessRunner`] so tests can inject
 /// a fake process executor; [`GitLab::new`] uses the real job-backed runner.
 ///
-/// Wraps a [`RetryingClient`]. By default it authenticates through `glab`'s own
+/// Wraps a [`ManagedClient`]. By default it authenticates through `glab`'s own
 /// ambient login; attach a [`CredentialProvider`] with
 /// [`with_credentials`](GitLab::with_credentials) to supply a token per operation
 /// — it is injected as `GITLAB_TOKEN` on every `glab` invocation.
 pub struct GitLab<R: ProcessRunner = processkit::JobRunner> {
-    core: RetryingClient<R>,
+    core: ManagedClient<R>,
 }
 
 impl GitLab<processkit::JobRunner> {
     /// Create a client driving the real job-backed runner.
     pub fn new() -> Self {
         Self {
-            core: RetryingClient::new(BINARY)
+            core: ManagedClient::new(BINARY)
                 .with_token_env(CredentialService::GitLab, "GITLAB_TOKEN"),
         }
     }
@@ -324,7 +327,7 @@ impl<R: ProcessRunner> GitLab<R> {
     /// Create a client driving `runner` — inject a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Self {
-            core: RetryingClient::with_runner(BINARY, runner)
+            core: ManagedClient::with_runner(BINARY, runner)
                 .with_token_env(CredentialService::GitLab, "GITLAB_TOKEN"),
         }
     }
@@ -364,6 +367,22 @@ impl<R: ProcessRunner> GitLab<R> {
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.core = self.core.with_credentials(provider);
         self
+    }
+
+    /// Convenience for the common case: authenticate with a single static `token`,
+    /// injected as `GITLAB_TOKEN`. Shorthand for
+    /// `with_credentials(Arc::new(StaticCredential::token(token)))`.
+    #[must_use]
+    pub fn with_token(self, token: impl Into<Secret>) -> Self {
+        self.with_credentials(Arc::new(StaticCredential::token(token)))
+    }
+
+    /// Convenience: read the token from environment variable `var` at request time
+    /// (injected as `GITLAB_TOKEN`); if `var` is unset/empty, fall back to ambient
+    /// auth. Shorthand for `with_credentials(Arc::new(EnvToken::new(var)))`.
+    #[must_use]
+    pub fn with_env_token(self, var: impl Into<String>) -> Self {
+        self.with_credentials(Arc::new(EnvToken::new(var)))
     }
 }
 
@@ -771,6 +790,22 @@ mod tests {
                 .any(|(k, _)| k.to_str() == Some("GITLAB_TOKEN")),
             "no provider → no token env (ambient glab auth)"
         );
+    }
+
+    // The `with_token` convenience injects GITLAB_TOKEN (parity with `with_credentials`).
+    #[tokio::test]
+    async fn with_token_convenience_injects_gitlab_token() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let glab = GitLab::with_runner(&rec).with_token("glpat-conv");
+        glab.mr_list(Path::new("/repo")).await.expect("mr_list");
+        let call = rec.only_call();
+        let token = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("GITLAB_TOKEN"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(token, Some("glpat-conv"));
     }
 
     // Hermetic: auth_status reflects the exit code without erroring. ANY non-zero

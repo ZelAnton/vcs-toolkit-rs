@@ -36,6 +36,9 @@
 //! - **[`Git`]** — the real client. [`Git::new`] uses the job-backed runner;
 //!   [`Git::with_runner`] injects a fake one for tests. It is generic over the
 //!   [`ProcessRunner`] seam, defaulting to the production runner.
+//!   [`with_credentials`](Git::with_credentials) attaches a [`CredentialProvider`]
+//!   to authenticate HTTPS remote ops (fetch/push/clone/ls-remote) with a token
+//!   kept out of `argv` — opt-in, off by default (ambient helpers / SSH agent).
 //! - **[`GitAt`]** — a cwd-bound view ([`Git::at`]) whose methods drop the
 //!   leading `dir`, so `git.at(dir).status()` reads as `git.status(dir)` — handy
 //!   when one client drives one checkout.
@@ -129,7 +132,7 @@ pub use vcs_cli_support::{
     Secret, StaticCredential, is_lock_contention, is_merge_conflict, is_nothing_to_commit,
     is_transient_fetch_error, provider_fn,
 };
-use vcs_cli_support::{RetryingClient, git_credential_helper};
+use vcs_cli_support::{ManagedClient, git_credential_helper};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "git";
@@ -830,17 +833,17 @@ pub trait GitApi: Send + Sync {
 /// The real Git client. Generic over the [`ProcessRunner`] so tests can inject a
 /// fake process executor; [`Git::new`] uses the real job-backed runner.
 ///
-/// Wraps a [`RetryingClient`]: enable lock-contention retry with
+/// Wraps a [`ManagedClient`]: enable lock-contention retry with
 /// [`with_retry`](Git::with_retry) (opt-in; off by default).
 pub struct Git<R: ProcessRunner = processkit::JobRunner> {
-    core: RetryingClient<R>,
+    core: ManagedClient<R>,
 }
 
 impl Git<processkit::JobRunner> {
     /// Create a client driving the real job-backed runner.
     pub fn new() -> Self {
         Self {
-            core: RetryingClient::new(BINARY),
+            core: ManagedClient::new(BINARY),
         }
     }
 }
@@ -855,7 +858,7 @@ impl<R: ProcessRunner> Git<R> {
     /// Create a client driving `runner` — inject a fake in tests.
     pub fn with_runner(runner: R) -> Self {
         Self {
-            core: RetryingClient::with_runner(BINARY, runner),
+            core: ManagedClient::with_runner(BINARY, runner),
         }
     }
 
@@ -908,6 +911,25 @@ impl<R: ProcessRunner> Git<R> {
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.core = self.core.with_credentials(provider);
         self
+    }
+
+    /// Convenience for the common case: authenticate HTTPS remotes with a single
+    /// static `token` (a personal-access token; the default username
+    /// `x-access-token` is used). Shorthand for
+    /// `with_credentials(Arc::new(StaticCredential::token(token)))`. For a specific
+    /// username, build a [`Credential::userpass`] and use
+    /// [`with_credentials`](Git::with_credentials).
+    #[must_use]
+    pub fn with_token(self, token: impl Into<Secret>) -> Self {
+        self.with_credentials(Arc::new(StaticCredential::token(token)))
+    }
+
+    /// Convenience: read the HTTPS token from environment variable `var` at request
+    /// time; if `var` is unset/empty, fall back to ambient auth. Shorthand for
+    /// `with_credentials(Arc::new(EnvToken::new(var)))`.
+    #[must_use]
+    pub fn with_env_token(self, var: impl Into<String>) -> Self {
+        self.with_credentials(Arc::new(EnvToken::new(var)))
     }
 
     /// Resolve HTTPS credentials for a remote op into the leading `-c` config args
@@ -2887,6 +2909,77 @@ mod tests {
         assert!(tail.iter().any(|a| a == "https://example.com/r.git"));
         assert!(
             !args.iter().any(|a| a.contains("s3cr3t")),
+            "secret not in argv"
+        );
+    }
+
+    // A `Credential::userpass` username threads through to the helper's env on a
+    // remote op (here `fetch`) — the non-default-username path, end-to-end.
+    #[tokio::test]
+    async fn with_credentials_userpass_threads_username_through_env() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_credentials(Arc::new(StaticCredential::new(
+            Credential::userpass("alice", "s3cr3t"),
+        )));
+        git.fetch(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        let user = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("VCS_TOOLKIT_GIT_USERNAME"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(user, Some("alice"), "userpass username reaches the env");
+        assert_eq!(call.args_str()[0], "-c", "helper `-c` leads fetch too");
+        assert!(call.args_str().contains(&"fetch".to_string()));
+    }
+
+    // No-provider is byte-identical for the read/clone arg-construction paths too,
+    // not only `push` (fetch uses `command_in`+extend; clone uses `command`+chain).
+    #[tokio::test]
+    async fn default_client_no_helper_on_fetch_and_clone() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Git::with_runner(&rec).fetch(Path::new("/r")).await.unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["fetch", "--quiet"],
+            "fetch unchanged without a provider"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Git::with_runner(&rec)
+            .clone_repo(
+                "https://example.com/r.git",
+                Path::new("/dest"),
+                CloneSpec::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str()[0],
+            "clone",
+            "clone leads with the subcommand (no `-c`) without a provider"
+        );
+    }
+
+    // The `with_token` convenience drives the same HTTPS credential.helper path as
+    // `with_credentials` (secret in env, helper `-c` leads, not in argv).
+    #[tokio::test]
+    async fn with_token_convenience_authenticates_https_remote() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_token("ghp_conv");
+        git.fetch(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        assert_eq!(call.args_str()[0], "-c", "helper `-c` leads");
+        let pw = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("VCS_TOOLKIT_GIT_PASSWORD"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(pw, Some("ghp_conv"), "secret carried in env");
+        assert!(
+            !call.args_str().iter().any(|a| a.contains("ghp_conv")),
             "secret not in argv"
         );
     }

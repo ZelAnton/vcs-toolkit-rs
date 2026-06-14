@@ -12,12 +12,13 @@ crates; tag releases as `vcs-github-v<version>`.
 ### Added
 - **Per-operation credentials (opt-in).** `GitHub::with_credentials(provider)`
   accepts a `CredentialProvider` (re-exported from `vcs-cli-support`, along with
-  `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`). The resolved
-  token is injected as `GH_TOKEN` on every `gh` invocation — never in `argv` —
-  overriding the ambient login. Default is no provider → ambient `gh` auth,
-  unchanged. (Internally the client now wraps `vcs-cli-support`'s `RetryingClient`
-  instead of the `cli_client!` macro; the public constructor/builder surface is
-  unchanged.)
+  `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`), plus the
+  convenience `GitHub::with_token(token)` / `with_env_token(var)` for the common
+  cases. The resolved token is injected as `GH_TOKEN` on every `gh` invocation —
+  never in `argv` — overriding the ambient login. Default is no provider → ambient
+  `gh` auth, unchanged. (Internally the client now wraps `vcs-cli-support`'s
+  `ManagedClient` instead of the `cli_client!` macro; the public constructor/builder
+  surface is unchanged.)
 - `CheckBucket` enum (`Pass`/`Fail`/`Pending`/`Skipping`/`Cancel`/`Unknown`) with
   `is_failing`/`is_pending`/`is_passing` helpers — the typed form of gh's check
   categorisation, `#[non_exhaustive]` with an `Unknown` catch-all so a future gh

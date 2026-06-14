@@ -99,7 +99,10 @@ pub struct Credential {
 
 impl Credential {
     /// A bare token/secret with no username (the forge case, and git HTTPS where
-    /// any username is accepted — a default is supplied at use).
+    /// any username is accepted). For git HTTPS a default username
+    /// (`x-access-token`, which GitHub/GitLab personal-access tokens accept) is
+    /// supplied automatically; use [`userpass`](Credential::userpass) if your host
+    /// needs a specific one. Forge token-env injection ignores the username.
     #[must_use]
     pub fn token(secret: impl Into<Secret>) -> Self {
         Self {
@@ -109,7 +112,9 @@ impl Credential {
     }
 
     /// A username paired with a secret (git HTTPS user/password, where the
-    /// password is typically a personal-access token).
+    /// password is typically a personal-access token). The username is used only
+    /// for **git HTTPS**; forge token-env injection (`GH_TOKEN`/`GITLAB_TOKEN`)
+    /// uses only the secret and ignores the username.
     #[must_use]
     pub fn userpass(username: impl Into<String>, secret: impl Into<Secret>) -> Self {
         Self {
@@ -133,7 +138,7 @@ impl Credential {
 
 /// Which backend/tool is asking for a credential — lets a provider return
 /// different secrets per service. `#[non_exhaustive]`: new backends may be added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum CredentialService {
     /// A `git` remote operation (fetch/push/clone over HTTPS).
@@ -301,7 +306,11 @@ const GIT_PASSWORD_VAR: &str = "VCS_TOOLKIT_GIT_PASSWORD";
 
 /// The pieces needed to authenticate a `git` HTTPS operation with a [`Credential`]
 /// **without putting the secret in `argv`**. See [`git_credential_helper`].
+///
+/// `#[non_exhaustive]`: only [`git_credential_helper`] constructs it, so new fields
+/// can be added without breaking callers (who read the fields, never build it).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct GitCredentialHelper {
     /// `-c key=value` global options to place **before** the git subcommand. They
     /// reference the secret only by environment-variable *name*, never by value.
@@ -396,6 +405,29 @@ mod tests {
         );
         let gl = CredentialRequest::new(CredentialService::GitLab);
         assert!(p.credential(&gl).await.unwrap().is_none());
+    }
+
+    // EnvToken's present-variable path: a set variable yields the token (the most
+    // common "use $CI_TOKEN" provider); the username pairs through `with_username`.
+    #[tokio::test]
+    async fn env_token_reads_a_present_variable() {
+        let req = CredentialRequest::new(CredentialService::Git);
+        // A unique name so no other (parallel) test reads or writes it.
+        let var = "VCS_TOOLKIT_TEST_ENV_TOKEN_PRESENT_4f2a";
+        // SAFETY: edition-2024 requires `unsafe` for env mutation; the name is
+        // unique to this test, so there is no concurrent reader of it.
+        unsafe { std::env::set_var(var, "tok-from-env") };
+        let provider = EnvToken::new(var).with_username("alice");
+        let cred = provider
+            .credential(&req)
+            .await
+            .unwrap()
+            .expect("present variable yields a credential");
+        assert_eq!(cred.secret().expose(), "tok-from-env");
+        assert_eq!(cred.username(), Some("alice"));
+        // Once removed, it falls back to None (ambient).
+        unsafe { std::env::remove_var(var) };
+        assert!(provider.credential(&req).await.unwrap().is_none());
     }
 
     #[test]

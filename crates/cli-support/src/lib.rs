@@ -27,15 +27,15 @@
 //!   internals. They inspect captured [`Error::Exit`] output against fixed marker
 //!   lists (and treat a [`processkit`] [`Error::Timeout`] as transient); any
 //!   unfamiliar `#[non_exhaustive]` variant falls through to "no".
-//! - **[`RetryPolicy`] / [`retry_async`] / [`RetryingClient`]** — an opt-in retry
+//! - **[`RetryPolicy`] / [`retry_async`] / [`ManagedClient`]** — an opt-in retry
 //!   strategy (attempts + exponential, jittered backoff) for **lock-contention**
-//!   failures. `RetryingClient` wraps a [`processkit`] `CliClient` and applies the
+//!   failures. `ManagedClient` wraps a [`processkit`] `CliClient` and applies the
 //!   policy to every command, so the `vcs-git`/`vcs-jj` clients gain retry via
 //!   `with_retry(...)` without changing a call site. Lock-acquisition failures are
 //!   pre-execution, so retrying is safe even for mutating commands.
 //! - **[`CredentialProvider`] / [`Credential`] / [`Secret`]** — an opt-in seam for
 //!   supplying a secret *per operation* (a CI token, a vault lookup) instead of
-//!   relying on ambient CLI auth. `RetryingClient` injects the resolved token into
+//!   relying on ambient CLI auth. `ManagedClient` injects the resolved token into
 //!   each command (the forge `GH_TOKEN`/`GITLAB_TOKEN` env); git uses
 //!   [`git_credential_helper`] to keep the secret out of `argv`. Default is no
 //!   provider → ambient auth, unchanged. See the [`credentials`](mod@credentials)
@@ -202,7 +202,7 @@ pub fn is_lock_contention(err: &Error) -> bool {
 }
 
 /// A bounded retry strategy: how many attempts, the (exponential) backoff between
-/// them, and whether to add full jitter. Used by [`RetryingClient`] to retry
+/// them, and whether to add full jitter. Used by [`ManagedClient`] to retry
 /// [`is_lock_contention`] failures. The [`Default`] is [`none`](RetryPolicy::none)
 /// (no retry) — retry is **opt-in**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,22 +346,22 @@ where
 ///
 /// 1. **Lock-contention retry** ([`is_lock_contention`]) per a [`RetryPolicy`] —
 ///    off by default ([`RetryPolicy::none`]); enable with
-///    [`with_retry`](RetryingClient::with_retry). Safe even for mutating commands,
+///    [`with_retry`](ManagedClient::with_retry). Safe even for mutating commands,
 ///    since lock contention is a clean pre-execution failure.
 /// 2. **Credential injection** from an opt-in [`CredentialProvider`] — off by
 ///    default (no provider); attach one with
-///    [`with_credentials`](RetryingClient::with_credentials). When a forge
+///    [`with_credentials`](ManagedClient::with_credentials). When a forge
 ///    *token-env* binding is configured
-///    ([`with_token_env`](RetryingClient::with_token_env)), every command run
+///    ([`with_token_env`](ManagedClient::with_token_env)), every command run
 ///    through this client gets the resolved token in that environment variable
 ///    (e.g. `GH_TOKEN`). Backends that inject the secret differently (git's
 ///    `credential.helper`) instead call
-///    [`resolve_credential`](RetryingClient::resolve_credential) at the command
+///    [`resolve_credential`](ManagedClient::resolve_credential) at the command
 ///    site. Resolution happens once per call, before the retry loop.
 ///
 /// Both default to inert, so a client with neither configured behaves exactly
 /// like a bare `CliClient`.
-pub struct RetryingClient<R: ProcessRunner = JobRunner> {
+pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     inner: CliClient<R>,
     retry: RetryPolicy,
     credentials: Option<Arc<dyn CredentialProvider>>,
@@ -370,9 +370,9 @@ pub struct RetryingClient<R: ProcessRunner = JobRunner> {
     token_env: Option<(CredentialService, &'static str)>,
 }
 
-impl<R: ProcessRunner> fmt::Debug for RetryingClient<R> {
+impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RetryingClient")
+        f.debug_struct("ManagedClient")
             .field("inner", &self.inner)
             .field("retry", &self.retry)
             // Never render the provider itself (it may close over a secret); just
@@ -383,9 +383,9 @@ impl<R: ProcessRunner> fmt::Debug for RetryingClient<R> {
     }
 }
 
-impl RetryingClient<JobRunner> {
+impl ManagedClient<JobRunner> {
     /// A retrying client driving `program` on the real job-backed runner (no retry
-    /// until [`with_retry`](RetryingClient::with_retry)).
+    /// until [`with_retry`](ManagedClient::with_retry)).
     pub fn new(program: impl AsRef<OsStr>) -> Self {
         Self {
             inner: CliClient::new(program),
@@ -396,7 +396,7 @@ impl RetryingClient<JobRunner> {
     }
 }
 
-impl<R: ProcessRunner> RetryingClient<R> {
+impl<R: ProcessRunner> ManagedClient<R> {
     /// A retrying client driving `program` on `runner` — inject a fake in tests.
     pub fn with_runner(program: impl AsRef<OsStr>, runner: R) -> Self {
         Self {
@@ -420,8 +420,15 @@ impl<R: ProcessRunner> RetryingClient<R> {
 
     /// Attach a [`CredentialProvider`] (opt-in; default is none → ambient auth).
     /// The provider is consulted per operation: automatically when a
-    /// [`with_token_env`](RetryingClient::with_token_env) binding is set, or
-    /// on demand via [`resolve_credential`](RetryingClient::resolve_credential).
+    /// [`with_token_env`](ManagedClient::with_token_env) binding is set, or
+    /// on demand via [`resolve_credential`](ManagedClient::resolve_credential).
+    ///
+    /// **Precedence:** a resolved token is injected *after* any
+    /// [`default_env`](ManagedClient::default_env), so the provider wins over a
+    /// static default and over the ambient CLI login. **Cancellation:** a
+    /// [`default_cancel_on`](ManagedClient::default_cancel_on) token bounds the
+    /// spawned *process*, not provider resolution — if your provider does slow I/O
+    /// (a vault lookup), bound it yourself.
     #[must_use]
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.credentials = Some(provider);
@@ -462,7 +469,7 @@ impl<R: ProcessRunner> RetryingClient<R> {
     }
 
     /// Materialize `call` into a [`Command`], injecting the forge token env if a
-    /// [`with_token_env`](RetryingClient::with_token_env) binding and a provider
+    /// [`with_token_env`](ManagedClient::with_token_env) binding and a provider
     /// are both configured. The single place the auto-injection happens, shared by
     /// every retrying verb.
     async fn prepare(&self, call: impl IntoCommand<R>) -> Result<Command> {
@@ -917,7 +924,7 @@ mod tests {
     // provider's credential. (No process is spawned, so the real runner is fine.)
     #[tokio::test]
     async fn retrying_client_resolves_credential_opt_in() {
-        let client = RetryingClient::new("git");
+        let client = ManagedClient::new("git");
         assert!(!client.has_credentials());
         assert!(
             client
