@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Credential provisioning (opt-in).** A new `credentials` module: the
+  `CredentialProvider` async trait (dyn-compatible, matching processkit's
+  `ProcessRunner` pattern) plus the `Credential`/`Secret` types (`Secret` redacts
+  itself in `Debug`/`Display`) and built-in adapters (`StaticCredential`,
+  `EnvToken`, `provider_fn`). `RetryingClient` gained `with_credentials` +
+  `with_token_env` + `resolve_credential`: when a token-env binding is set it
+  injects the resolved token into every command's environment (the forge
+  `GH_TOKEN`/`GITLAB_TOKEN` path); `git_credential_helper` builds a git
+  `credential.helper` invocation that keeps the secret out of `argv`. Default is
+  no provider → ambient CLI auth, unchanged. Adds an `async-trait` dependency.
+  `RetryingClient` also gained an `exit_code` verb (used by the forge clients).
 - **Lock-contention retry.** `is_lock_contention(&Error)` classifies a *pre-execution*
   lock-acquisition failure (git `index.lock`/ref lock/`packed-refs.lock`, jj's
   working-copy lock) — the one error class safe to retry on a mutation, since the

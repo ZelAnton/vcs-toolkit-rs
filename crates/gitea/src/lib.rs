@@ -278,6 +278,14 @@ processkit::cli_client!(
     /// The real Gitea client. Generic over the [`ProcessRunner`] so tests can
     /// inject a fake process executor; `Gitea::new()` uses the real job-backed
     /// runner.
+    ///
+    /// **Authentication is ambient.** Unlike `vcs-github`/`vcs-gitlab` (which
+    /// accept a per-operation token provider via `with_credentials`), `tea` has no
+    /// non-interactive per-invocation token mechanism — it authenticates only from
+    /// the logins stored by `tea login add`. So this client offers no credential
+    /// injection; configure `tea`'s logins out of band. (The shared
+    /// `CredentialService::Gitea` is reserved for if/when `tea` gains env-token
+    /// support.)
     pub struct Gitea => BINARY
 );
 

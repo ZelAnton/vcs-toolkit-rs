@@ -10,6 +10,14 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Per-operation credentials (opt-in).** `GitLab::with_credentials(provider)`
+  accepts a `CredentialProvider` (re-exported from `vcs-cli-support`, along with
+  `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`). The resolved
+  token is injected as `GITLAB_TOKEN` on every `glab` invocation — never in `argv`
+  — overriding the ambient login. Default is no provider → ambient `glab` auth,
+  unchanged. (Internally the client now wraps `vcs-cli-support`'s `RetryingClient`
+  instead of the `cli_client!` macro; the public constructor/builder surface is
+  unchanged.)
 - `GitLabApi::api(endpoint)` — the `glab api` escape hatch for any unmodelled
   REST/GraphQL endpoint (mirrors `GitHubApi::api`), with the same flag-injection
   guard on `endpoint`.

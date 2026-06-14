@@ -109,8 +109,16 @@
 //! from `docs/`. See the [`guide`] module.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use processkit::ProcessRunner;
+// The shared managed client (lock-retry + credential injection) and the
+// credential seam — re-exported so a consumer can supply a token provider.
+use vcs_cli_support::RetryingClient;
+pub use vcs_cli_support::{
+    Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
+    Secret, StaticCredential, provider_fn,
+};
 // Re-export the processkit types in this crate's public API (also brings
 // `Error`/`Result`/`ProcessResult` into scope here).
 pub use processkit::{Error, ProcessResult, Result};
@@ -457,12 +465,78 @@ pub trait GitHubApi: Send + Sync {
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 }
 
-processkit::cli_client!(
-    /// The real GitHub client. Generic over the [`ProcessRunner`] so tests can
-    /// inject a fake process executor; `GitHub::new()` uses the real job-backed
-    /// runner.
-    pub struct GitHub => BINARY
-);
+/// The real GitHub client. Generic over the [`ProcessRunner`] so tests can inject
+/// a fake process executor; [`GitHub::new`] uses the real job-backed runner.
+///
+/// Wraps a [`RetryingClient`]. By default it authenticates through `gh`'s own
+/// ambient login; attach a [`CredentialProvider`] with
+/// [`with_credentials`](GitHub::with_credentials) to supply a token per operation
+/// — it is injected as `GH_TOKEN` on every `gh` invocation.
+pub struct GitHub<R: ProcessRunner = processkit::JobRunner> {
+    core: RetryingClient<R>,
+}
+
+impl GitHub<processkit::JobRunner> {
+    /// Create a client driving the real job-backed runner.
+    pub fn new() -> Self {
+        Self {
+            core: RetryingClient::new(BINARY).with_token_env(CredentialService::GitHub, "GH_TOKEN"),
+        }
+    }
+}
+
+impl Default for GitHub<processkit::JobRunner> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: ProcessRunner> GitHub<R> {
+    /// Create a client driving `runner` — inject a fake in tests.
+    pub fn with_runner(runner: R) -> Self {
+        Self {
+            core: RetryingClient::with_runner(BINARY, runner)
+                .with_token_env(CredentialService::GitHub, "GH_TOKEN"),
+        }
+    }
+
+    /// Apply a default timeout to every command this client builds.
+    pub fn default_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.core = self.core.default_timeout(timeout);
+        self
+    }
+
+    /// Set an environment variable on every command this client builds.
+    pub fn default_env(
+        mut self,
+        key: impl AsRef<std::ffi::OsStr>,
+        value: impl AsRef<std::ffi::OsStr>,
+    ) -> Self {
+        self.core = self.core.default_env(key, value);
+        self
+    }
+
+    /// Remove an inherited environment variable on every command this client builds.
+    pub fn default_env_remove(mut self, key: impl AsRef<std::ffi::OsStr>) -> Self {
+        self.core = self.core.default_env_remove(key);
+        self
+    }
+
+    /// Cancel every command this client builds when `token` fires.
+    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
+        self.core = self.core.default_cancel_on(token);
+        self
+    }
+
+    /// Supply credentials per operation via a [`CredentialProvider`] — opt-in, off
+    /// by default (ambient `gh` auth). The resolved token is injected as `GH_TOKEN`
+    /// on every `gh` invocation, overriding the ambient login for this client.
+    #[must_use]
+    pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
+        self.core = self.core.with_credentials(provider);
+        self
+    }
+}
 
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GitHubApi for GitHub<R> {
@@ -1276,6 +1350,64 @@ mod tests {
             calls[1].args_str(),
             ["issue", "create", "--title", "T", "--body", "B"]
         );
+    }
+
+    #[tokio::test]
+    async fn with_credentials_injects_gh_token_and_default_does_not() {
+        // With a provider: the token is set as GH_TOKEN on the command — and never
+        // appears in argv (so it can't leak through `ps`).
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec)
+            .with_credentials(Arc::new(StaticCredential::token("tok-123")));
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        let token = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("GH_TOKEN"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(
+            token,
+            Some("tok-123"),
+            "provider token injected as GH_TOKEN"
+        );
+        assert!(
+            !call.args_str().iter().any(|a| a.contains("tok-123")),
+            "secret must never appear in argv"
+        );
+
+        // Without a provider: no GH_TOKEN injected — ambient `gh` auth is unchanged.
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        assert!(
+            !rec.only_call()
+                .envs
+                .iter()
+                .any(|(k, _)| k.to_str() == Some("GH_TOKEN")),
+            "no provider → no token env (ambient gh auth)"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_token_overrides_ambient_default_env() {
+        // A provider token is applied after any `default_env("GH_TOKEN", …)`, so it
+        // wins — "I supplied a provider, use it" beats an ambient env default.
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec)
+            .default_env("GH_TOKEN", "ambient-token")
+            .with_credentials(Arc::new(StaticCredential::token("provider-token")));
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        let winner = call
+            .envs
+            .iter()
+            .rev()
+            .find(|(k, _)| k.to_str() == Some("GH_TOKEN"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(winner, Some("provider-token"), "provider token wins");
     }
 
     #[tokio::test]

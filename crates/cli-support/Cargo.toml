@@ -16,6 +16,9 @@ categories = ["development-tools","command-line-utilities"]
 # launcher the wrappers share — and `RetryingClient`, the `CliClient` the wrappers
 # hold. This is why this plumbing lives here and not in the std-only `vcs-diff`.
 processkit.workspace = true
+# Dyn-compatible async trait for `CredentialProvider` — matches processkit's own
+# `ProcessRunner` pattern, so `Arc<dyn CredentialProvider>` works on our MSRV.
+async-trait = "0.1"
 # The async backoff sleep in `retry_async` (the `RetryingClient` retry loop). Only
 # the time driver is needed; the wrappers already run on tokio.
 tokio = { version = "1", features = ["time"] }
