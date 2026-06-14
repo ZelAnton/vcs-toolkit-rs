@@ -140,6 +140,10 @@ fn map_release(r: Release) -> ForgeRelease {
         url: r.url,
         // An empty `published_at` (an unpublished draft) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
+        // `tea` has no release body/notes column.
+        body: None,
+        draft: r.draft,
+        prerelease: r.prerelease,
     }
 }
 

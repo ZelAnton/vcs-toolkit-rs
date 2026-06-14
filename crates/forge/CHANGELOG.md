@@ -9,6 +9,20 @@ crates; tag releases as `vcs-forge-v<version>`.
 
 ## [Unreleased]
 
+### Added
+- **Capability introspection** — `Forge::supports(ForgeOp) -> bool` and
+  `Forge::capabilities() -> ForgeCapabilities` report which varying operations a
+  backend supports (Gitea lacks `repo_view`/`pr_mark_ready`/`pr_checks`/
+  `release_view`), so a consumer can hide an unavailable action instead of
+  calling it and handling `Unsupported`. New types `ForgeOp` (+ `ForgeOp::ALL`)
+  and `ForgeCapabilities`.
+- `ForgeRelease` now carries `body: Option<String>` (release notes; GitHub &
+  GitLab, `None` on Gitea), `draft: bool`, and `prerelease: bool` (GitHub & Gitea;
+  always `false` on GitLab, which has no such concept). Additive on the
+  `#[non_exhaustive]` DTO.
+- `ForgeIssue::body`/`url` are now populated by GitHub's `issue_list` too (its
+  lean field list was widened), not just `issue_view`.
+
 ### Changed
 - The re-exported `vcs_github::CheckRun::bucket` is now the typed `CheckBucket`
   enum (was `String`) — breaking for code reaching through `vcs_forge::vcs_github`.

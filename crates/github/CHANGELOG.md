@@ -16,6 +16,8 @@ crates; tag releases as `vcs-github-v<version>`.
   bucket never breaks the parse.
 
 ### Changed
+- `issue_list` now fetches `body` and `url` too (widened `--json` field list), so
+  the listed `Issue`s carry them instead of leaving them empty until `issue_view`.
 - **`CheckRun::bucket` is now `CheckBucket` (breaking)**, replacing the
   stringly-typed `String` — exhaustive matching instead of comparing string slices.
 - Bumped `processkit` to **0.10.1** (from 0.9.1), a major breaking release ahead

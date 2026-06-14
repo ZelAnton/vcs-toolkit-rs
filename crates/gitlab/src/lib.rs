@@ -41,7 +41,8 @@
 //!   real client for a double. Project-scoped methods take the working directory
 //!   as the first argument and return typed results ([`Project`],
 //!   [`MergeRequest`], [`Issue`], [`Release`], [`CiStatus`]) or a structured
-//!   [`Error`]. Unmodelled `glab` commands go through [`run`](GitLabApi::run).
+//!   [`Error`]. Unmodelled `glab` commands go through [`run`](GitLabApi::run); any
+//!   REST/GraphQL endpoint through [`api`](GitLabApi::api) (`glab api <endpoint>`).
 //! - **[`GitLab`]** — the real client. [`GitLab::new`] uses the job-backed runner;
 //!   [`GitLab::with_runner`] injects a fake one for tests. It is generic over the
 //!   [`ProcessRunner`] seam, defaulting to the production runner.
@@ -214,6 +215,13 @@ pub trait GitLabApi: Send + Sync {
     /// Like [`GitLabApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
+    /// Make an authenticated GitLab API request through glab (`glab api
+    /// <endpoint>`), returning the raw response body — the escape hatch for any
+    /// REST/GraphQL endpoint this crate doesn't model (mirrors
+    /// [`GitHubApi::api`](../vcs_github/trait.GitHubApi.html#tymethod.api)). The
+    /// `endpoint` is guarded against being parsed as a flag (empty or leading `-`
+    /// is refused before spawning); pass query/body flags via [`run`](GitLabApi::run).
+    async fn api(&self, endpoint: &str) -> Result<String>;
     /// Installed GitLab CLI version (`glab --version`).
     async fn version(&self) -> Result<String>;
     /// Whether the user is authenticated (`glab auth status` exits zero). Reflects
@@ -292,6 +300,11 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
         self.core.output(self.core.command(args)).await
+    }
+
+    async fn api(&self, endpoint: &str) -> Result<String> {
+        reject_flag_like("endpoint", endpoint)?;
+        self.core.run(self.core.command(["api", endpoint])).await
     }
 
     async fn version(&self) -> Result<String> {
@@ -552,6 +565,7 @@ gitlab_at_forwarders! {
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
+        fn api(endpoint: &str) -> Result<String>;
         fn version() -> Result<String>;
         fn auth_status() -> Result<bool>;
     }
@@ -614,6 +628,18 @@ mod tests {
             ScriptedRunner::new().on(["glab", "api", "/version"], Reply::ok("ok\n")),
         );
         assert_eq!(glab.run_args(&["api", "/version"]).await.unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn api_builds_endpoint_and_guards_flags() {
+        let rec = RecordingRunner::replying(Reply::ok("{}\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.api("/projects/1").await.expect("api");
+        assert_eq!(rec.only_call().args_str(), ["api", "/projects/1"]);
+        // A flag-like endpoint is refused before spawning.
+        let glab = GitLab::with_runner(ScriptedRunner::new());
+        assert!(glab.api("-X").await.is_err());
+        assert!(glab.api("").await.is_err());
     }
 
     // Hermetic: real mr_list() arg-building + JSON deserialization against canned

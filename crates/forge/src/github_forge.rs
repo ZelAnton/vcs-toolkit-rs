@@ -190,6 +190,9 @@ fn map_release(r: Release) -> ForgeRelease {
         url: r.url,
         // gh reports an empty `publishedAt` for a draft — surface that as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
+        body: Some(r.body).filter(|s| !s.is_empty()),
+        draft: r.is_draft,
+        prerelease: r.is_prerelease,
     }
 }
 

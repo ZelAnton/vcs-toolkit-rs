@@ -98,15 +98,19 @@ Gitea report `false` (their lean JSON doesn't carry the flag).
 [`ForgeIssue`] generalises the three issue shapes: `number` (GitLab's `iid`),
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",
 everything else reads as `Open`, so an unmodelled state is treated as live),
-`body`, `url`. `body`/`url` are **best-effort**: GitHub's lean `issue_list`
-doesn't fetch them (empty there); `issue_view` fills them on every forge.
+`body`, `url` — both populated by `issue_list` and `issue_view` on every forge.
 
 [`ForgeRelease`] is `tag` / `title` / `url` / `published_at: Option<String>`
-(`None` for an unpublished draft or when the backend doesn't report one). The
-`url` is **best-effort**: empty from GitHub's lean `release_list` (filled by
+(`None` for an unpublished draft or when the backend doesn't report one) /
+`body: Option<String>` / `draft: bool` / `prerelease: bool`. The `url` is
+**best-effort**: empty from GitHub's lean `release_list` (filled by
 `release_view`), and **always empty on Gitea** — `tea releases list` exposes no
 release-page URL at all (only a tar/zip download URL, deliberately not surfaced),
-and `tea` has no `release_view`.
+and `tea` has no `release_view`. `body` (release notes) is **best-effort**: `None`
+from GitHub's lean `release_list` (only `release_view` fills it) and always `None`
+on Gitea (`tea` has no body column); GitLab carries it on both. `draft` /
+`prerelease` are reported by GitHub and Gitea, but GitLab has no such concept so
+both are always `false` there.
 
 ## Capability matrix
 
@@ -126,6 +130,8 @@ The CLIs differ in coverage. Gitea's `tea` lacks four operations, which return
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |
 | `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | 100 |
 
+Handle a gap **reactively** — call and classify the error:
+
 ```rust,ignore
 # use vcs_forge::{Forge, ForgeApi, Error};
 # async fn demo(forge: &Forge) {
@@ -134,6 +140,20 @@ match forge.pr_checks(7).await {
     Err(e) if e.is_unsupported() => println!("this forge has no checks command"),
     Err(e) => eprintln!("{e}"),
 }
+# }
+```
+
+…or **proactively** — ask up front (no spawn) with [`Forge::supports`] /
+[`Forge::capabilities`], e.g. to hide an unavailable button:
+
+```rust,ignore
+# use vcs_forge::{Forge, ForgeOp};
+# fn demo(forge: &Forge) {
+if forge.supports(ForgeOp::PrChecks) {
+    // render the "CI checks" button
+}
+let caps = forge.capabilities();          // the whole matrix at once
+if caps.release_view { /* show a release detail link */ }
 # }
 ```
 

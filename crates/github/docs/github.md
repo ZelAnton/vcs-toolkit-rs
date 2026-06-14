@@ -244,9 +244,9 @@ async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
 async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
 ```
 
-`issue_list` fetches only `number,title,state` — `body` and `url` come back
-empty (see [`Issue`](#issue)). `issue_view` additionally fills `body`/`url`.
-`issue_create` returns the new issue's **URL**.
+`issue_list` fetches `number,title,state,body,url`, so the listed issues carry
+`body`/`url` too (see [`Issue`](#issue)); `issue_view` returns the same fields for
+a single issue. `issue_create` returns the new issue's **URL**.
 
 ```rust,ignore
 # use vcs_github::{GitHub, GitHubApi};
@@ -254,7 +254,7 @@ use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
 let gh = GitHub::new();
 let url = gh.issue_create(repo, "Flaky test", "`pr_checks` hangs on …").await?;
-let full = gh.issue_view(repo, 3).await?; // body + url populated
+let full = gh.issue_view(repo, 3).await?; // a single issue, body + url populated
 # let _ = (url, full);
 # Ok(()) }
 ```
@@ -334,10 +334,9 @@ From `pr_list` / `pr_list_for_branch` / `pr_view`. Fields:
 
 ### `Issue`
 
-From `issue_list` (only `number`, `title`, `state`) and `issue_view` (adds
+From `issue_list` and `issue_view` (both fetch `number`, `title`, `state`,
 `body`, `url`). Fields: `number: u64`, `title: String`, `state: String`,
-`body: String` — **empty from `issue_list`**, `url: String` — **empty from
-`issue_list`**.
+`body: String`, `url: String`.
 
 ### `WorkflowRun`
 

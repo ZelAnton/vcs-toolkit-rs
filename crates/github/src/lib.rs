@@ -130,7 +130,7 @@ pub const BINARY: &str = "gh";
 
 const PR_FIELDS: &str = "number,title,state,headRefName,baseRefName,url";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
-const ISSUE_LIST_FIELDS: &str = "number,title,state";
+const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url";
 const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url";
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";

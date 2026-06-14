@@ -82,6 +82,55 @@ fn host_of(url: &str) -> Option<&str> {
         .filter(|h| !h.is_empty())
 }
 
+/// A facade operation whose availability varies by backend — i.e. one that can
+/// return [`Unsupported`](crate::Error::Unsupported). Pass it to
+/// [`Forge::supports`](crate::Forge::supports) to branch *before* calling, so a
+/// consumer (an agent, a TUI) hides an unavailable button instead of issuing the
+/// call and handling the error. Every other facade operation is supported on all
+/// three forges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ForgeOp {
+    /// [`repo_view`](crate::Forge::repo_view) — current repo/project metadata.
+    RepoView,
+    /// [`pr_mark_ready`](crate::Forge::pr_mark_ready) — flip a draft PR to ready.
+    PrMarkReady,
+    /// [`pr_checks`](crate::Forge::pr_checks) — coarse CI status for a PR.
+    PrChecks,
+    /// [`release_view`](crate::Forge::release_view) — a single release by tag.
+    ReleaseView,
+}
+
+impl ForgeOp {
+    /// Every capability-varying operation — iterate it to build a full support
+    /// matrix (e.g. to render an availability list).
+    pub const ALL: &'static [ForgeOp] = &[
+        ForgeOp::RepoView,
+        ForgeOp::PrMarkReady,
+        ForgeOp::PrChecks,
+        ForgeOp::ReleaseView,
+    ];
+}
+
+/// A snapshot of which capability-varying operations a [`Forge`](crate::Forge)
+/// backend supports — the struct form of calling
+/// [`Forge::supports`](crate::Forge::supports) for each [`ForgeOp`], handy for a
+/// one-shot capability check or serialising the matrix to a UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ForgeCapabilities {
+    /// Whether [`repo_view`](crate::Forge::repo_view) is supported.
+    pub repo_view: bool,
+    /// Whether [`pr_mark_ready`](crate::Forge::pr_mark_ready) is supported.
+    pub pr_mark_ready: bool,
+    /// Whether [`pr_checks`](crate::Forge::pr_checks) is supported.
+    pub pr_checks: bool,
+    /// Whether [`release_view`](crate::Forge::release_view) is supported.
+    pub release_view: bool,
+}
+
 /// A pull request (GitHub) / merge request (GitLab) / pull request (Gitea),
 /// unified across the three forges.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,12 +205,12 @@ pub struct ForgeIssue {
     pub title: String,
     /// Normalised state (see [`ForgeIssueState`]).
     pub state: ForgeIssueState,
-    /// Issue body (markdown). **Best-effort:** GitHub's lean `issue_list`
-    /// doesn't fetch it (empty there); [`issue_view`](crate::ForgeApi::issue_view)
-    /// fills it on every forge.
+    /// Issue body (markdown). Populated by both
+    /// [`issue_list`](crate::Forge::issue_list) and
+    /// [`issue_view`](crate::Forge::issue_view) on every forge.
     pub body: String,
-    /// Web URL. **Best-effort:** empty from GitHub's lean `issue_list`;
-    /// [`issue_view`](crate::ForgeApi::issue_view) fills it on every forge.
+    /// Web URL. Populated by both [`issue_list`](crate::Forge::issue_list) and
+    /// [`issue_view`](crate::Forge::issue_view) on every forge.
     pub url: String,
 }
 
@@ -198,6 +247,16 @@ pub struct ForgeRelease {
     /// Publication timestamp (ISO 8601); `None` for an unpublished draft or
     /// when the backend doesn't report one.
     pub published_at: Option<String>,
+    /// Release notes (markdown). `None` when the backend doesn't carry them —
+    /// always on Gitea (`tea` has no release body), and on GitHub's lean
+    /// `release_list` (only [`release_view`](crate::Forge::release_view) fills it).
+    pub body: Option<String>,
+    /// Whether this is an unpublished draft. **Best-effort:** GitHub and Gitea
+    /// report it; GitLab has no draft concept, so it is always `false` there.
+    pub draft: bool,
+    /// Whether this is a pre-release. **Best-effort:** GitHub and Gitea report it;
+    /// GitLab has no pre-release concept, so it is always `false` there.
+    pub prerelease: bool,
 }
 
 /// The coarse CI status for a PR/MR, bucketed into the four states a caller acts
@@ -447,10 +506,15 @@ mod serde_tests {
             title: "One".into(),
             url: "u".into(),
             published_at: None,
+            body: Some("notes".into()),
+            draft: false,
+            prerelease: true,
         };
         let v = serde_json::to_value(&release).unwrap();
         assert_eq!(v["tag"], "v1");
         assert!(v["published_at"].is_null(), "draft date must be null");
+        assert_eq!(v["body"], "notes");
+        assert_eq!(v["prerelease"], true);
 
         let spec = PrCreate::new("T", "B").source("feat");
         let v = serde_json::to_value(&spec).unwrap();

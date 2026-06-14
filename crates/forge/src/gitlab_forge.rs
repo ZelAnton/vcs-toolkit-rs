@@ -173,6 +173,10 @@ fn map_release(r: Release) -> ForgeRelease {
         url: r.url,
         // An empty `released_at` (unpublished/upcoming release) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
+        body: Some(r.description).filter(|s| !s.is_empty()),
+        // GitLab has no draft/pre-release concept on a release.
+        draft: false,
+        prerelease: false,
     }
 }
 

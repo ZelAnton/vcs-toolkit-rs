@@ -56,8 +56,9 @@
 //!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
 //!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
-//!   `OPEN` / `opened` / `open` all read as one state. Some fields are
-//!   best-effort: `draft`, and the `body`/`url` not present on lean list output.
+//!   `OPEN` / `opened` / `open` all read as one state. A few fields are
+//!   best-effort: a PR's `draft`, and a release's `body`/`url` absent from lean
+//!   `release_list` output (see each DTO's field docs).
 //! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
@@ -74,6 +75,11 @@
 //!   [`pr_checks`](Forge::pr_checks), and [`release_view`](Forge::release_view)
 //!   return [`Error::Unsupported`] **without spawning**. Classify it with
 //!   [`Error::is_unsupported`].
+//! - **Capability introspection** — to branch *before* calling rather than
+//!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
+//!   varying operation is available, and [`Forge::capabilities`] returns the whole
+//!   matrix as a [`ForgeCapabilities`] — so an agent or TUI can hide an
+//!   unavailable action up front. ([`ForgeOp::ALL`] enumerates the varying ops.)
 //!
 //! The wrappers are re-exported (`vcs_forge::vcs_github` / `vcs_gitlab` /
 //! `vcs_gitea`) so anything beyond the portable intersection — a forge-specific op,
@@ -125,8 +131,8 @@ mod github_forge;
 mod gitlab_forge;
 
 pub use dto::{
-    CiStatus, ForgeIssue, ForgeIssueState, ForgeKind, ForgePr, ForgePrState, ForgeRelease,
-    ForgeRepo, MergeStrategy, PrCreate,
+    CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
+    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrCreate,
 };
 pub use error::{Error, Result};
 
@@ -225,6 +231,35 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(_) => ForgeKind::GitHub,
             Backend::GitLab(_) => ForgeKind::GitLab,
             Backend::Gitea(_) => ForgeKind::Gitea,
+        }
+    }
+
+    /// Whether this handle's backend supports `op`. The capability-varying
+    /// operations ([`ForgeOp`]) are all present on GitHub and GitLab; Gitea
+    /// (`tea`) supports **none** of them — it has no current-repo view, draft
+    /// toggle, PR-checks command, or single-release view. Every other facade
+    /// operation works on all three. Branch on this to hide an unavailable
+    /// operation up front instead of calling it and handling
+    /// [`Unsupported`](Error::Unsupported).
+    pub fn supports(&self, op: ForgeOp) -> bool {
+        match (self.kind(), op) {
+            // The four operations `tea` can't do; GitHub/GitLab do everything.
+            (
+                ForgeKind::Gitea,
+                ForgeOp::RepoView | ForgeOp::PrMarkReady | ForgeOp::PrChecks | ForgeOp::ReleaseView,
+            ) => false,
+            _ => true,
+        }
+    }
+
+    /// A snapshot of which capability-varying operations this backend supports —
+    /// the struct form of [`supports`](Forge::supports) across every [`ForgeOp`].
+    pub fn capabilities(&self) -> ForgeCapabilities {
+        ForgeCapabilities {
+            repo_view: self.supports(ForgeOp::RepoView),
+            pr_mark_ready: self.supports(ForgeOp::PrMarkReady),
+            pr_checks: self.supports(ForgeOp::PrChecks),
+            release_view: self.supports(ForgeOp::ReleaseView),
         }
     }
 
@@ -574,15 +609,52 @@ mod tests {
         assert!(rec.calls().is_empty(), "unsupported ops must not spawn");
     }
 
+    // `supports`/`capabilities` must agree exactly with the runtime `Unsupported`
+    // behaviour above: Gitea reports `false` for the four varying ops, GitHub and
+    // GitLab report `true` for all of them — a pure, no-spawn capability check.
+    #[test]
+    fn capability_matrix_matches_unsupported_ops() {
+        let gitea = Forge::for_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
+        for &op in ForgeOp::ALL {
+            assert!(!gitea.supports(op), "gitea should not support {op:?}");
+        }
+        let caps = gitea.capabilities();
+        assert_eq!(
+            caps,
+            ForgeCapabilities {
+                repo_view: false,
+                pr_mark_ready: false,
+                pr_checks: false,
+                release_view: false,
+            }
+        );
+        for forge in [
+            Forge::for_github("/repo", GitHub::with_runner(ScriptedRunner::new())),
+            Forge::for_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
+        ] {
+            for &op in ForgeOp::ALL {
+                assert!(
+                    forge.supports(op),
+                    "{:?} should support {op:?}",
+                    forge.kind()
+                );
+            }
+        }
+    }
+
     // Each backend's issue states map onto the unified ForgeIssueState — note
     // the three different spellings of "open": "OPEN" (gh), "opened" (glab),
     // "open" (tea) — all must read as Open, and "closed" (any case) as Closed.
     #[tokio::test]
     async fn issue_list_maps_states_per_backend() {
-        let json = r#"[{"number":3,"title":"A","state":"OPEN"},{"number":4,"title":"B","state":"CLOSED"}]"#;
+        // gh's `issue_list` now fetches body+url too (widened field list), so they
+        // arrive on the listed issues, not just via `issue_view`.
+        let json = r#"[{"number":3,"title":"A","state":"OPEN","body":"desc","url":"https://gh/i/3"},{"number":4,"title":"B","state":"CLOSED"}]"#;
         let forge = github(ScriptedRunner::new().on(["gh", "issue", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].state, ForgeIssueState::Open);
+        assert_eq!(issues[0].body, "desc");
+        assert_eq!(issues[0].url, "https://gh/i/3");
         assert_eq!(issues[1].state, ForgeIssueState::Closed);
 
         let json = r#"[{"iid":12,"title":"X","state":"opened","description":"d","web_url":"u"}]"#;
@@ -604,7 +676,9 @@ mod tests {
     // surfaces as None, a present one as Some.
     #[tokio::test]
     async fn release_list_maps_published_at_per_backend() {
-        let json = r#"[{"tagName":"v1","name":"One","publishedAt":"2026-01-01T00:00:00Z"},{"tagName":"v2-draft","name":"","publishedAt":"","isDraft":true}]"#;
+        // gh `release list` fetches isDraft/isPrerelease but NOT body — body only
+        // comes from `release_view` (RELEASE_LIST_FIELDS omits it), so it's None here.
+        let json = r#"[{"tagName":"v1","name":"One","publishedAt":"2026-01-01T00:00:00Z","isPrerelease":true},{"tagName":"v2-draft","name":"","publishedAt":"","isDraft":true}]"#;
         let forge = github(ScriptedRunner::new().on(["gh", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
@@ -612,23 +686,31 @@ mod tests {
             rels[0].published_at.as_deref(),
             Some("2026-01-01T00:00:00Z")
         );
+        assert_eq!(rels[0].body, None, "gh release_list does not fetch body");
+        assert!(rels[0].prerelease && !rels[0].draft);
         assert_eq!(rels[1].published_at, None);
+        assert!(rels[1].draft && !rels[1].prerelease);
 
-        let json = r#"[{"tag_name":"v1","name":"One","released_at":"2026-01-01T00:00:00Z","_links":{"self":"u"}}]"#;
+        let json = r#"[{"tag_name":"v1","name":"One","released_at":"2026-01-01T00:00:00Z","description":"gl notes","_links":{"self":"u"}}]"#;
         let forge = gitlab(ScriptedRunner::new().on(["glab", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].url, "u");
         assert!(rels[0].published_at.is_some());
+        assert_eq!(rels[0].body.as_deref(), Some("gl notes"));
+        // GitLab has no draft/pre-release concept.
+        assert!(!rels[0].draft && !rels[0].prerelease);
 
         // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
         // `published _at`), no release-page URL column.
-        let json = r#"[{"tag-_name":"v1","title":"One","status":"released","published _at":"2026-01-01T00:00:00Z"}]"#;
+        let json = r#"[{"tag-_name":"v1","title":"One","status":"prerelease","published _at":"2026-01-01T00:00:00Z"}]"#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(rels[0].title, "One");
         assert_eq!(rels[0].url, ""); // tea exposes no release-page URL
         assert!(rels[0].published_at.is_some());
+        assert_eq!(rels[0].body, None, "tea has no release body");
+        assert!(rels[0].prerelease, "tea status 'prerelease' → prerelease");
     }
 
     // The unified MergeStrategy maps to each CLI's own flag.

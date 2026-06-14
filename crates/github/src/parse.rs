@@ -39,10 +39,10 @@ pub struct Issue {
     pub title: String,
     /// State, e.g. `"OPEN"`, `"CLOSED"`.
     pub state: String,
-    /// Issue body (markdown); empty from `issue_list`, which doesn't fetch it.
+    /// Issue body (markdown). Fetched by both `issue_list` and `issue_view`.
     #[serde(default)]
     pub body: String,
-    /// Web URL; empty from `issue_list`, which doesn't fetch it.
+    /// Web URL. Fetched by both `issue_list` and `issue_view`.
     #[serde(default)]
     pub url: String,
 }

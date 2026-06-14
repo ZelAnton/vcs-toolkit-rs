@@ -105,6 +105,9 @@ pub struct Release {
     /// absent (e.g. an upcoming/unpublished release).
     #[serde(rename = "released_at", default)]
     pub published_at: String,
+    /// Release notes (GitLab's `description`, markdown); empty when absent.
+    #[serde(default)]
+    pub description: String,
 }
 
 /// Deserialize a `Release`'s `url` from GitLab's `_links.self`. The links object
@@ -273,6 +276,7 @@ mod tests {
         let json = r#"{
             "tag_name": "v1.0", "name": "Release 1.0",
             "released_at": "2026-01-02T03:04:05.000Z",
+            "description": "the notes",
             "_links": {"self": "https://gl/-/releases/v1.0"}
         }"#;
         let rel: Release = from_json(json).expect("parse release");
@@ -283,6 +287,7 @@ mod tests {
                 name: "Release 1.0".into(),
                 url: "https://gl/-/releases/v1.0".into(),
                 published_at: "2026-01-02T03:04:05.000Z".into(),
+                description: "the notes".into(),
             }
         );
     }

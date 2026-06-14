@@ -10,7 +10,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `GitLabApi::api(endpoint)` — the `glab api` escape hatch for any unmodelled
+  REST/GraphQL endpoint (mirrors `GitHubApi::api`), with the same flag-injection
+  guard on `endpoint`.
+- `Release::description` — release notes (GitLab's `description`), surfaced by the
+  `vcs-forge` facade as `ForgeRelease::body`.
 
 ### Changed
 - Bumped `processkit` to **0.10.1** (from 0.9.1), a major breaking release ahead
