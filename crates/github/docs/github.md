@@ -351,9 +351,10 @@ gh reports an **empty string until the run completes** (not `null`),
 ### `CheckRun`
 
 From `pr_checks`. Fields: `name: String`, `state: String` (`"SUCCESS"`,
-`"FAILURE"`, `"IN_PROGRESS"`, …), `bucket: String` — gh's categorisation of
-`state` and the field to branch on: one of `"pass"`, `"fail"`, `"pending"`,
-`"skipping"`, `"cancel"`; `workflow: String` (empty for non-Actions checks),
+`"FAILURE"`, `"IN_PROGRESS"`, …), `bucket: CheckBucket` — gh's categorisation of
+`state` and the field to branch on: the typed enum `Pass`/`Fail`/`Pending`/
+`Skipping`/`Cancel` (+ an `Unknown` catch-all for forward compatibility), with
+`is_failing()`/`is_pending()`/`is_passing()` helpers; `workflow: String` (empty for non-Actions checks),
 `link: String`, `started_at: String` — **empty until the check starts**,
 `completed_at: String` — **empty until it completes**.
 

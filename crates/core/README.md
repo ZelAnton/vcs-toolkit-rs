@@ -38,9 +38,14 @@ println!("backend: {}", repo.kind().as_str());
 
 `current_branch`, `trunk`, `changed_files`, `diff_stat`, `commit_paths`,
 `fetch`, `push`, `list_worktrees`, `create_worktree`, `remove_worktree` — each
-returning plain result types (`FileChange`, `DiffStat`, `WorktreeInfo`, …) that
-don't mention git or jj.
+returning plain result types (`FileChange`, `DiffStat`, `WorktreeInfo`,
+`RepoSnapshot` with its bundled `tracking`, …) that don't mention git or jj.
 Re-anchor a handle to a sibling directory with `repo.at(other_dir)`.
+
+The error type wraps `processkit::Error` (re-exported as `vcs_core::processkit`, so
+you can match it without a direct dependency) and carries intent classifiers —
+`is_merge_conflict` / `is_nothing_to_commit` / `is_transient_fetch_error` /
+`is_transient` / `is_not_found`.
 
 ## Testing
 

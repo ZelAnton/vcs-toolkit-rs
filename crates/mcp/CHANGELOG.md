@@ -9,10 +9,13 @@ crates; tag releases as `vcs-mcp-v<version>`.
 
 ## [Unreleased]
 
-### Added
--
-
 ### Changed
+- **Tool JSON output reflects the updated `vcs-core`/`vcs-forge` DTOs (breaking for
+  wire consumers).** `repo_snapshot` now nests upstream tracking under one
+  `tracking` object (`{branch, ahead, behind}` or `null`) instead of three flat
+  `upstream`/`ahead`/`behind` fields; release results carry `body`/`draft`/
+  `prerelease`; issue results carry `body`/`url`; PR check `bucket` is the typed
+  `CheckBucket` value.
 - Bumped `processkit` to **0.10.1**. Test doubles moved to `processkit::testing`;
   cancellation is now core (no feature flag).
 

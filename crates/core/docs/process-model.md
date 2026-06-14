@@ -57,9 +57,17 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
   (`CONFLICT (content): …`, `nothing to commit, working tree clean`). Raised by
   the `ensure_success` path; a bare non-zero exit is otherwise *not* treated as
   an error (see `run_raw` below).
-- **`Timeout { program, timeout }`** — exceeded its deadline and was killed.
-- **`Spawn { program, source }`** — the child could not be started (binary not
-  found, permission denied) — *and* the variant the [injection
+- **`Timeout { program, timeout, stdout, stderr }`** — exceeded its deadline and
+  was killed; carries whatever partial output was captured before the deadline
+  (processkit 0.10), so the reason a hung step stalled is available here.
+- **`Signalled { program, signal, stdout, stderr }`** — killed by a signal
+  (external SIGTERM/SIGKILL), carrying the signal number and partial output
+  (processkit 0.9.2/0.10). Terminal — the toolkit never auto-retries it.
+- **`NotFound { program, searched }`** — the binary isn't installed / isn't on
+  `PATH` (processkit 0.10; `is_not_found()` is true only for this). A setup error,
+  surfaced by `vcs_core::Error::is_not_found`.
+- **`Spawn { program, source }`** — the child could not be started for another
+  reason (e.g. permission denied) — *and* the variant the [injection
   guards](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) raise for a flag-shaped
   positional argument, before any spawn.
 - **`Parse { program, message }`** — the process succeeded but its output didn't
@@ -75,8 +83,9 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
   reason the catch-all arm is mandatory. The toolkit's error classifiers treat
   every unfamiliar variant as "no" (not a conflict, not transient).
 
-> There is **no** dedicated signal variant: a child killed by a signal surfaces
-> through the exit path / containment, not a separate enum arm.
+> A child killed by a signal surfaces as the dedicated **`Signalled`** variant
+> (processkit 0.9.2+), carrying the signal number and any partial output — not
+> folded into the exit path.
 
 ```rust,ignore
 use processkit::Error;

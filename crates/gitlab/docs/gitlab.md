@@ -129,8 +129,9 @@ surfaced as `number` for cross-forge consistency with `vcs-github`), `title`,
 
 `Release` carries `tag_name` (the `<tag>` `release_view` takes), `name` (the
 release title, may default to the tag), `url` (pulled off GitLab's nested
-`_links.self` — releases have no top-level `web_url`), and `published_at` (GitLab's
-`released_at`, ISO 8601, empty for an unpublished release).
+`_links.self` — releases have no top-level `web_url`), `published_at` (GitLab's
+`released_at`, ISO 8601, empty for an unpublished release), and `description`
+(release notes/markdown, empty when absent).
 
 ```rust,ignore
 # use std::path::Path;
@@ -151,6 +152,8 @@ for rel in glab.release_list(repo).await? {
 `run(args)` / `run_raw(args)` (and the inherent `run_args(&[&str])` /
 `run_raw_args`) drive any unmodelled `glab` command; `run` returns trimmed stdout
 and errors on a non-zero exit, `run_raw` hands back the captured `ProcessResult`.
+`api(endpoint)` is the `glab api <endpoint>` shortcut for any REST/GraphQL endpoint
+(mirrors `vcs-github`'s `api`), with the `endpoint` guarded against flag injection.
 
 ## See also
 

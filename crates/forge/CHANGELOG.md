@@ -10,6 +10,9 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Re-export of `processkit` itself (`vcs_forge::processkit`) so a `vcs-forge`-only
+  consumer can match the wrapped `Error::Forge(processkit::Error::…)` without a
+  direct `processkit` dependency (mirrors `vcs_core::processkit`).
 - **Capability introspection** — `Forge::supports(ForgeOp) -> bool` and
   `Forge::capabilities() -> ForgeCapabilities` report which varying operations a
   backend supports (Gitea lacks `repo_view`/`pr_mark_ready`/`pr_checks`/

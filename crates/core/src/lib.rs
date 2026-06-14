@@ -957,6 +957,26 @@ mod tests {
         assert_eq!(s.operation, OperationState::Clear);
     }
 
+    // git with NO upstream configured: porcelain v2 omits the `# branch.upstream`
+    // and `# branch.ab` lines, so `tracking` is None (the all-or-nothing invariant —
+    // git is the only backend that can produce either) — mirrors the jj None case.
+    #[tokio::test]
+    async fn git_snapshot_without_upstream_has_no_tracking() {
+        let v2 = concat!("# branch.oid abc123\0", "# branch.head main\0");
+        let gitdir = TempDir::new("snap-git-noup");
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        assert_eq!(s.branch.as_deref(), Some("main"));
+        assert!(s.tracking.is_none(), "no upstream → no tracking");
+    }
+
     // jj: one template row + a status count; a conflicted @ maps to Conflict; no
     // git-style upstream/ahead/behind.
     #[tokio::test]

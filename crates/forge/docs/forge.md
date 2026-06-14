@@ -169,7 +169,7 @@ one constructor away — without adding a dependency.
 | You need… | Use |
 |---|---|
 | The common lifecycle, portably (list/view/create/merge/close PRs, issues, releases) | the `Forge` facade |
-| An op the facade marks `Unsupported` on *your* forge (e.g. a Gitea release by tag) | there's nothing to call — the CLI can't do it; go through the forge's REST API (`gh api` via `vcs_github::GitHubApi::api`, or your own HTTP) |
+| An op the facade marks `Unsupported` on *your* forge (e.g. a Gitea release by tag) | there's nothing to call — the CLI can't do it; go through the forge's REST API (`gh api` via `vcs_github::GitHubApi::api`, `glab api` via `vcs_gitlab::GitLabApi::api`, or your own HTTP) |
 | A forge-specific op (GitHub workflow runs, review submission, draft toggle, gist…) | the wrapper client directly: `GitHub::new().run_list(dir)…` |
 | More than 100 list results, custom JSON fields, exotic flags | the wrapper's raw `run(dir, args)` |
 | A field the unified DTO drops (e.g. a release's draft/prerelease flags) | the wrapper method — its DTO keeps the per-CLI fields |

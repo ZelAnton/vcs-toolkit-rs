@@ -21,11 +21,34 @@ links.
 
 ## Active roadmap (do now)
 
-The R1–R10 wave (2026-06-09 / 2026-06-10) and the **processkit 0.10.1 migration**
-(2026-06-14) are **shipped** — summaries below. With them cleared, the active list is
-empty; the next committed items get promoted from [`ideas/next-*`](ideas/) (forge
-`capabilities()`, `examples/`, MCP HTTP transport) when work resumes. Settled-against
-items live in [`decisions/`](decisions/).
+The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 migration**, and the
+**pre-1.0 interface wave (Tier 1–4)** (all 2026-06-14) are **shipped** — summaries below.
+With them cleared, the active list is empty; the next committed items get promoted from
+[`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred forge fields) when work
+resumes. Settled-against items live in [`decisions/`](decisions/).
+
+### ✅ Shipped — pre-1.0 interface wave, Tier 1–4 (2026-06-14)
+
+A while-we-can-still-break-it pass to firm up the public API before 1.0 (no external users
+yet). Each tier was implemented, adversarially reviewed (≥2 rounds), gated, and pushed
+independently.
+
+- **Tier 1 — API shape (breaking).** `RepoSnapshot`'s three coupled `Option`s
+  (`upstream`/`ahead`/`behind`) collapsed into one `tracking: Option<UpstreamTracking>`
+  (the all-or-nothing invariant is now unrepresentable); github `CheckRun::bucket` is the
+  typed `CheckBucket` enum (was `String`); git `log`/`log_range` unified into one
+  `log(dir, revspec, max)` mirroring `JjApi::log`; git `StatusEntry::orig_path` → `old_path`
+  (matches jj).
+- **Tier 2 — forge surface (additive).** `Forge::supports(ForgeOp)` /
+  `capabilities() -> ForgeCapabilities` capability introspection; `ForgeRelease` gained
+  `body`/`draft`/`prerelease` and `ForgeIssue` body/url are now populated by `issue_list`;
+  `GitLabApi::api(endpoint)` (the `glab api` escape hatch). Labels/assignees deferred to
+  [`ideas/next-forge-fields.md`](ideas/next-forge-fields.md) (non-breaking, additive later).
+- **Tier 3 — error ergonomics (additive).** `vcs-core` re-exports `processkit`
+  (`vcs_core::processkit`) so downstream can match the wrapped error without a direct dep;
+  new `Error::is_transient()` / `Error::is_not_found()` classifiers complete the `is_*` family.
+- **Tier 4 — internal.** Adopted processkit 0.10's direct-arg-list verbs, dropping the
+  `self.core.run(self.core.command(args))` double-mention at 30 no-`dir` call sites.
 
 ### ✅ Shipped — processkit 0.10.1 migration (2026-06-14)
 

@@ -172,7 +172,8 @@ branch, upstream, ahead/behind, HEAD, dirtiness, change count, and operation
 state in **one or two** spawns rather than a call per field
 ([`RepoSnapshot`](#reposnapshot)). git issues one `status --porcelain=v2 --branch`
 plus the cheap in-progress probe; jj issues one `log -r @` template plus a change
-count only when dirty. Note the asymmetry: `upstream`/`ahead`/`behind` are always
+count only when dirty. Note the asymmetry: `tracking` (the upstream ref plus
+ahead/behind, bundled into one [`UpstreamTracking`](#reposnapshot)) is always
 `None` on jj (no git-style upstream tracking).
 
 > **Backend nuance — untracked files.** `diff_stat` counts the git working tree
@@ -386,7 +387,7 @@ All facade DTOs are `#[non_exhaustive]` — construct via the facade, match with
 #[non_exhaustive]
 pub struct FileChange {
     pub path: String,             // the path (the *new* path for a rename)
-    pub old_path: Option<String>, // original path for a rename; jj never supplies it
+    pub old_path: Option<String>, // original path for a rename (both backends); None for non-renames
     pub kind: ChangeKind,
 }
 ```
@@ -436,13 +437,18 @@ The batched state from [`snapshot`](#status--files). `#[non_exhaustive]`.
 pub struct RepoSnapshot {
     pub head: Option<String>,      // working-copy commit's FULL oid (both backends); None on an unborn git repo; truncate for display
     pub branch: Option<String>,    // current branch (git) / bookmark (jj); None when detached/unset
-    pub upstream: Option<String>,  // upstream tracking branch; None when unset, ALWAYS None on jj
-    pub ahead: Option<usize>,      // commits ahead of upstream; None with no upstream (always on jj)
-    pub behind: Option<usize>,     // commits behind upstream; None with no upstream (always on jj)
+    pub tracking: Option<UpstreamTracking>, // upstream ref + ahead/behind, bundled; Some only with an upstream, ALWAYS None on jj
     pub dirty: bool,               // any uncommitted change (tracked or untracked)
     pub change_count: usize,       // number of changed paths
     pub conflicted: bool,          // an unresolved conflict is present
     pub operation: OperationState, // in-progress operation / conflict state
+}
+
+#[non_exhaustive]
+pub struct UpstreamTracking {  // RepoSnapshot::tracking; Some only when an upstream is set
+    pub branch: String,        // the upstream ref, e.g. "origin/main"
+    pub ahead: usize,          // commits ahead of the upstream
+    pub behind: usize,         // commits behind the upstream
 }
 ```
 
@@ -465,8 +471,12 @@ copy-on-write strategy on top can reuse this type rather than inventing its own.
 The facade error wraps `processkit::Error` and adds detection failures:
 `NotARepository(PathBuf)`, `WorktreeNotFound(PathBuf)`, `Io(io::Error)`,
 `Vcs(processkit::Error)`. Classifiers let a caller branch without matching on
-internals: `is_merge_conflict()`, `is_nothing_to_commit()`, `is_transient_fetch_error()`
-(named to match the wrapper classifiers — one name per concept workspace-wide).
+internals: `is_merge_conflict()`, `is_nothing_to_commit()`,
+`is_transient_fetch_error()`, `is_transient()` (a transient io/spawn hiccup — narrower
+than the fetch classifier), and `is_not_found()` (the `git`/`jj` binary isn't
+installed) — named to match the wrapper classifiers, one name per concept
+workspace-wide. `processkit` is re-exported (`vcs_core::processkit`), so you can
+match `Vcs(vcs_core::processkit::Error::…)` without a direct `processkit` dependency.
 `Result<T>` is `std::result::Result<T, Error>`. See
 [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/).
 

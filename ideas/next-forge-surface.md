@@ -1,14 +1,18 @@
 # next: forge facade surface
 
-> **Status:** open idea (next). From the 2026-06-09 development sweep. The `vcs-forge`
-> facade dispatches a lean PR/MR + issues + releases surface across GitHub/GitLab/Gitea,
-> returning `Error::Unsupported` where a backend (chiefly `tea`) can't. These are the
-> two surface refinements just below the roadmap cut.
+> **Status: ✅ largely delivered (2026-06-14, Tier-2 forge wave).** Candidate **A**
+> (capability introspection) shipped in full; candidate **B** (field parity) shipped
+> for releases + issue body/url, with the people/metadata fields split out to
+> [`next-forge-fields.md`](next-forge-fields.md). Kept here as the design record.
+> From the 2026-06-09 development sweep. The `vcs-forge` facade dispatches a lean
+> PR/MR + issues + releases surface across GitHub/GitLab/Gitea, returning
+> `Error::Unsupported` where a backend (chiefly `tea`) can't.
 
 ## Candidates
 
-### A. Forge capability introspection — `Forge::capabilities()` / `supports(op)`
-*Cost: low–moderate · Value: now-ish*
+### A. Forge capability introspection — `Forge::capabilities()` / `supports(op)` ✅ SHIPPED
+*Cost: low–moderate · Value: now-ish · Delivered 2026-06-14: `Forge::supports(ForgeOp)`,
+`Forge::capabilities() -> ForgeCapabilities`, `ForgeOp`/`ForgeOp::ALL`.*
 
 Today a capability gap surfaces only as a runtime `Error::Unsupported` **on the call**
 (`tea` lacks `repo_view`, `pr_checks`, `pr_mark_ready`, `release_view`). An agent / MCP
@@ -22,8 +26,11 @@ simple enum-driven `supports(op) -> bool` (const per backend) is enough; a *dyna
 probe* is rejected (see `decisions/wont-do-2026-06.md` W15). Below the roadmap cut only
 because `Error::Unsupported` already behaves correctly — this is ergonomics, not a gap.
 
-### B. Per-forge issue/release field-parity audit
-*Cost: moderate (investigation-first) · Value: moderate*
+### B. Per-forge issue/release field-parity audit ✅ PARTIALLY SHIPPED
+*Cost: moderate (investigation-first) · Value: moderate · Delivered 2026-06-14:
+`ForgeRelease` gained `body`/`draft`/`prerelease`; `ForgeIssue` body/url now populated
+by `issue_list` too. The people/metadata fields (labels/assignees/author/timestamps)
+were deferred — see [`next-forge-fields.md`](next-forge-fields.md).*
 
 Wave A (§7.2) unified issues + releases into shared DTOs (`ForgeIssue`/`ForgeRelease`)
 with `Unsupported` where `tea` can't. Audit whether `glab`/`tea` issue/release **fields**
