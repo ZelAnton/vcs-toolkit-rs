@@ -20,12 +20,19 @@
 //!   binary name so the surfaced [`Error::Spawn`] names the right `program`.
 //! - **[`FETCH_ATTEMPTS`] / [`FETCH_BACKOFF`]** — the shared transient-retry policy
 //!   for `fetch` (one try plus two retries, fixed backoff between them).
-//! - **[`is_merge_conflict`] / [`is_nothing_to_commit`] / [`is_transient_fetch_error`]**
-//!   — classify a returned [`Error`] so callers branch on *intent* ("conflict,
-//!   resolve it"; "nothing to commit, no-op"; "transient, retry") instead of
-//!   matching on error internals. They inspect captured [`Error::Exit`] output
-//!   against fixed marker lists (and treat a [`processkit`] [`Error::Timeout`] as
-//!   transient); any unfamiliar `#[non_exhaustive]` variant falls through to "no".
+//! - **[`is_merge_conflict`] / [`is_nothing_to_commit`] / [`is_transient_fetch_error`]
+//!   / [`is_lock_contention`]** — classify a returned [`Error`] so callers branch on
+//!   *intent* ("conflict, resolve it"; "nothing to commit, no-op"; "transient,
+//!   retry"; "another process holds the lock, retry") instead of matching on error
+//!   internals. They inspect captured [`Error::Exit`] output against fixed marker
+//!   lists (and treat a [`processkit`] [`Error::Timeout`] as transient); any
+//!   unfamiliar `#[non_exhaustive]` variant falls through to "no".
+//! - **[`RetryPolicy`] / [`retry_async`] / [`RetryingClient`]** — an opt-in retry
+//!   strategy (attempts + exponential, jittered backoff) for **lock-contention**
+//!   failures. `RetryingClient` wraps a [`processkit`] `CliClient` and applies the
+//!   policy to every command, so the `vcs-git`/`vcs-jj` clients gain retry via
+//!   `with_retry(...)` without changing a call site. Lock-acquisition failures are
+//!   pre-execution, so retrying is safe even for mutating commands.
 //!
 //! # Recipes
 //!
@@ -48,9 +55,14 @@
 //! # Ok(()) }
 //! ```
 
+use std::ffi::OsStr;
+use std::future::Future;
+use std::path::Path;
 use std::time::Duration;
 
-use processkit::{Error, Result};
+use processkit::{
+    CliClient, Command, Error, IntoCommand, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 
 /// Injection guard for bare positional argv slots: a caller-supplied value with a
 /// leading `-` would be parsed by the CLI as a *flag* (verified: `git checkout
@@ -144,6 +156,327 @@ pub fn is_transient_fetch_error(err: &Error) -> bool {
     matches!(err, Error::Timeout { .. })
         || err.is_transient()
         || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
+}
+
+/// Lower-case substrings marking a **lock-contention** failure — another process
+/// held a repository lock, so the command **never started** (clean, pre-execution).
+/// These are the only failures safe to retry blindly on a *mutating* operation: the
+/// repository was never touched, so a retry can't double-apply. Network markers
+/// ([`TRANSIENT_FETCH_MARKERS`]) and conflict/exit failures are deliberately absent.
+const LOCK_CONTENTION_MARKERS: &[&str] = &[
+    "lock': file exists", // git: index.lock / <ref>.lock / packed-refs.lock
+    "another git process seems to be running", // git's lock hint
+    "cannot lock ref",    // git ref update
+    "could not lock ref", // git ref update (variant)
+    "failed to lock",     // jj lock acquisition (working copy / op heads)
+];
+// `"failed to lock"` is deliberately broad: in *both* tools a lock file is taken
+// before the write it guards (write-to-`.lock`-then-rename), so every "failed to
+// lock …" is pre-execution by construction — safe to retry on a mutation, and the
+// breadth catches jj's lock variants without a per-message allow-list.
+
+/// Whether `err` is a **lock-contention** failure — another process held a
+/// repository lock (git's `index.lock` / a ref lock / `packed-refs.lock`, or jj's
+/// working-copy lock), so the command couldn't even start. Such a failure is
+/// *pre-execution* and therefore the one class of error safe to retry even on a
+/// **mutating** operation (the repo was never modified). Conflict, "nothing to
+/// commit", a real non-zero exit, a timeout, a signal, or a missing binary are all
+/// **not** lock contention and must not be retried this way.
+pub fn is_lock_contention(err: &Error) -> bool {
+    exit_output_matches(err, LOCK_CONTENTION_MARKERS)
+}
+
+/// A bounded retry strategy: how many attempts, the (exponential) backoff between
+/// them, and whether to add full jitter. Used by [`RetryingClient`] to retry
+/// [`is_lock_contention`] failures. The [`Default`] is [`none`](RetryPolicy::none)
+/// (no retry) — retry is **opt-in**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RetryPolicy {
+    /// Total attempts including the first; `1` means no retry.
+    pub attempts: u32,
+    /// Delay before the first retry; doubles each subsequent retry (capped by
+    /// [`max_backoff`](RetryPolicy::max_backoff)). `ZERO` means retry immediately.
+    pub base_backoff: Duration,
+    /// Upper bound on the (pre-jitter) backoff delay. `ZERO` means uncapped.
+    pub max_backoff: Duration,
+    /// Apply **full jitter** — the actual delay is uniform in `[0, computed]` — to
+    /// avoid a thundering herd when many workers retry against one repository.
+    pub jitter: bool,
+}
+
+impl RetryPolicy {
+    /// No retry: a single attempt. The default.
+    pub const fn none() -> Self {
+        Self {
+            attempts: 1,
+            base_backoff: Duration::ZERO,
+            max_backoff: Duration::ZERO,
+            jitter: false,
+        }
+    }
+
+    /// A sensible default for repository lock contention: a handful of attempts
+    /// with short, jittered, exponential backoff (25 ms → 500 ms).
+    pub const fn lock_contention() -> Self {
+        Self {
+            attempts: 5,
+            base_backoff: Duration::from_millis(25),
+            max_backoff: Duration::from_millis(500),
+            jitter: true,
+        }
+    }
+
+    /// Set the total number of attempts (clamped to at least 1).
+    pub fn attempts(mut self, attempts: u32) -> Self {
+        self.attempts = attempts.max(1);
+        self
+    }
+
+    /// Set the base backoff (the delay before the first retry).
+    pub fn base_backoff(mut self, backoff: Duration) -> Self {
+        self.base_backoff = backoff;
+        self
+    }
+
+    /// Cap the (pre-jitter) backoff delay; `ZERO` leaves it uncapped.
+    pub fn max_backoff(mut self, max: Duration) -> Self {
+        self.max_backoff = max;
+        self
+    }
+
+    /// Toggle full jitter on the backoff delay.
+    pub fn with_jitter(mut self, jitter: bool) -> Self {
+        self.jitter = jitter;
+        self
+    }
+}
+
+impl Default for RetryPolicy {
+    /// No retry — retry is opt-in.
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+/// The (possibly jittered) backoff before the `retry_index`-th retry (0 = first).
+fn backoff_for(policy: &RetryPolicy, retry_index: u32) -> Duration {
+    if policy.base_backoff.is_zero() {
+        return Duration::ZERO;
+    }
+    let base = policy.base_backoff.as_nanos();
+    let scaled = base.saturating_mul(1u128 << retry_index.min(20));
+    let capped = if policy.max_backoff.is_zero() {
+        scaled
+    } else {
+        scaled.min(policy.max_backoff.as_nanos())
+    };
+    let delay = Duration::from_nanos(capped.min(u64::MAX as u128) as u64);
+    if policy.jitter {
+        full_jitter(delay)
+    } else {
+        delay
+    }
+}
+
+/// Full jitter: a uniform delay in `[0, max]`. Dependency-free randomness via the
+/// OS-seeded [`RandomState`](std::collections::hash_map::RandomState) — good enough
+/// to de-correlate retries, not cryptographic.
+fn full_jitter(max: Duration) -> Duration {
+    use std::hash::{BuildHasher, Hasher};
+    let nanos = max.as_nanos();
+    if nanos == 0 {
+        return Duration::ZERO;
+    }
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(nanos as u64);
+    let r = hasher.finish() as u128;
+    Duration::from_nanos((r % (nanos + 1)).min(u64::MAX as u128) as u64)
+}
+
+/// Run `op`, retrying its result while `should_retry` says so and `policy` has
+/// attempts left, sleeping the (jittered, exponential) backoff between tries. The
+/// op is re-invoked from scratch each attempt, so it must be idempotent for the
+/// errors `should_retry` selects (lock-contention failures are — the command never
+/// ran). Returns the first `Ok`, or the last `Err`.
+pub async fn retry_async<T, Fut>(
+    policy: &RetryPolicy,
+    should_retry: impl Fn(&Error) -> bool,
+    mut op: impl FnMut() -> Fut,
+) -> Result<T>
+where
+    Fut: Future<Output = Result<T>>,
+{
+    let attempts = policy.attempts.max(1);
+    for attempt in 1..=attempts {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                if attempt == attempts || !should_retry(&err) {
+                    return Err(err);
+                }
+                let delay = backoff_for(policy, attempt - 1);
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+    unreachable!("the loop returns on the final attempt")
+}
+
+/// A [`CliClient`] that transparently retries **lock-contention** failures
+/// ([`is_lock_contention`]) per a [`RetryPolicy`]. The CLI wrappers (`vcs-git`,
+/// `vcs-jj`) hold one of these instead of a bare `CliClient`, so every command they
+/// run gains opt-in lock-retry without changing a single call site. The output
+/// verbs ([`run`](RetryingClient::run) / [`run_unit`](RetryingClient::run_unit) /
+/// [`output`](RetryingClient::output)) retry; [`parse`](RetryingClient::parse)
+/// (which consumes a `FnOnce`) passes straight through, as do the command builders.
+///
+/// Retry is **off by default** ([`RetryPolicy::none`]); enable it with
+/// [`with_retry`](RetryingClient::with_retry). Because lock contention is a clean
+/// pre-execution failure, retrying is safe even for mutating commands.
+#[derive(Debug)]
+pub struct RetryingClient<R: ProcessRunner = JobRunner> {
+    inner: CliClient<R>,
+    retry: RetryPolicy,
+}
+
+impl RetryingClient<JobRunner> {
+    /// A retrying client driving `program` on the real job-backed runner (no retry
+    /// until [`with_retry`](RetryingClient::with_retry)).
+    pub fn new(program: impl AsRef<OsStr>) -> Self {
+        Self {
+            inner: CliClient::new(program),
+            retry: RetryPolicy::none(),
+        }
+    }
+}
+
+impl<R: ProcessRunner> RetryingClient<R> {
+    /// A retrying client driving `program` on `runner` — inject a fake in tests.
+    pub fn with_runner(program: impl AsRef<OsStr>, runner: R) -> Self {
+        Self {
+            inner: CliClient::with_runner(program, runner),
+            retry: RetryPolicy::none(),
+        }
+    }
+
+    /// Set the lock-contention retry policy (opt-in; default is no retry).
+    pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
+        self.retry = policy;
+        self
+    }
+
+    /// The active retry policy.
+    pub fn retry_policy(&self) -> RetryPolicy {
+        self.retry
+    }
+
+    /// Apply a default timeout to every command this client builds.
+    pub fn default_timeout(mut self, timeout: Duration) -> Self {
+        self.inner = self.inner.default_timeout(timeout);
+        self
+    }
+
+    /// Set an environment variable on every command this client builds.
+    pub fn default_env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
+        self.inner = self.inner.default_env(key, value);
+        self
+    }
+
+    /// Remove an inherited environment variable on every command this client builds.
+    pub fn default_env_remove(mut self, key: impl AsRef<OsStr>) -> Self {
+        self.inner = self.inner.default_env_remove(key);
+        self
+    }
+
+    /// Cancel every command this client builds when `token` fires.
+    pub fn default_cancel_on(mut self, token: processkit::CancellationToken) -> Self {
+        self.inner = self.inner.default_cancel_on(token);
+        self
+    }
+
+    /// Build a [`Command`] for this client's program (passthrough).
+    pub fn command<I, S>(&self, args: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.inner.command(args)
+    }
+
+    /// Build a [`Command`] bound to `dir` (passthrough).
+    pub fn command_in<I, S>(&self, dir: &Path, args: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.inner.command_in(dir, args)
+    }
+
+    /// The underlying process runner (passthrough — e.g. for `output_all`).
+    pub fn runner(&self) -> &R {
+        self.inner.runner()
+    }
+
+    /// Like [`CliClient::run`], retrying lock contention.
+    pub async fn run(&self, call: impl IntoCommand<R>) -> Result<String> {
+        let cmd = call.into_command(&self.inner);
+        retry_async(&self.retry, is_lock_contention, || {
+            self.inner.run(cmd.clone())
+        })
+        .await
+    }
+
+    /// Like [`CliClient::run_unit`], retrying lock contention.
+    pub async fn run_unit(&self, call: impl IntoCommand<R>) -> Result<()> {
+        let cmd = call.into_command(&self.inner);
+        retry_async(&self.retry, is_lock_contention, || {
+            self.inner.run_unit(cmd.clone())
+        })
+        .await
+    }
+
+    /// Like [`CliClient::output`], retrying lock contention. Note: `output`
+    /// returns `Ok` on a non-zero exit (it captures the result), so a lock failure
+    /// surfaces as an `Ok` here and is **not** retried — route mutations that need
+    /// lock-retry through [`run`](Self::run)/[`run_unit`](Self::run_unit) instead.
+    pub async fn output(&self, call: impl IntoCommand<R>) -> Result<ProcessResult<String>> {
+        let cmd = call.into_command(&self.inner);
+        retry_async(&self.retry, is_lock_contention, || {
+            self.inner.output(cmd.clone())
+        })
+        .await
+    }
+
+    /// Like [`CliClient::probe`] (zero-or-nonzero exit → `bool`), retrying lock contention.
+    pub async fn probe(&self, call: impl IntoCommand<R>) -> Result<bool> {
+        let cmd = call.into_command(&self.inner);
+        retry_async(&self.retry, is_lock_contention, || {
+            self.inner.probe(cmd.clone())
+        })
+        .await
+    }
+
+    /// Like [`CliClient::parse`] (passthrough — the `FnOnce` parser can't be re-run,
+    /// and parsing is a read, where lock contention is not a concern).
+    pub async fn parse<T>(
+        &self,
+        call: impl IntoCommand<R>,
+        parser: impl FnOnce(&str) -> T,
+    ) -> Result<T> {
+        self.inner.parse(call, parser).await
+    }
+
+    /// Like [`CliClient::try_parse`] (passthrough — `FnOnce` parser, and a read).
+    pub async fn try_parse<T>(
+        &self,
+        call: impl IntoCommand<R>,
+        parser: impl FnOnce(&str) -> Result<T>,
+    ) -> Result<T> {
+        self.inner.try_parse(call, parser).await
+    }
 }
 
 #[cfg(test)]
@@ -324,5 +657,141 @@ mod tests {
         assert!(!is_transient_fetch_error(&signalled));
         assert!(!is_merge_conflict(&signalled));
         assert!(!is_nothing_to_commit(&signalled));
+    }
+
+    fn exit(program: &str, code: i32, stderr: &str) -> Error {
+        Error::Exit {
+            program: program.into(),
+            code,
+            stdout: String::new(),
+            stderr: stderr.into(),
+        }
+    }
+
+    // `is_lock_contention` recognises the *pre-execution* lock-acquisition failures
+    // (git index/ref locks, jj's working-copy lock) and ONLY those — never a real
+    // failure, a conflict, or a timeout, which must not be retried on a mutation.
+    #[test]
+    fn classifies_lock_contention() {
+        let lock_failures = [
+            exit(
+                "git",
+                128,
+                "fatal: Unable to create '/r/.git/index.lock': File exists.",
+            ),
+            exit(
+                "git",
+                128,
+                "Another git process seems to be running in this repository",
+            ),
+            exit(
+                "git",
+                1,
+                "error: cannot lock ref 'refs/heads/x': reference already exists",
+            ),
+            exit(
+                "git",
+                128,
+                "Unable to create '/r/.git/packed-refs.lock': File exists.",
+            ),
+            exit("jj", 1, "Error: Failed to lock the working copy"),
+        ];
+        for e in &lock_failures {
+            assert!(is_lock_contention(e), "should be lock contention: {e:?}");
+            // A lock failure is NOT a transient *fetch* error — different class.
+            assert!(!is_transient_fetch_error(e), "not a fetch error: {e:?}");
+        }
+        let not_locks = [
+            exit("git", 1, "CONFLICT (content): Merge conflict in a.rs"),
+            exit("git", 1, "error: pathspec 'x' did not match any file(s)"),
+            exit("git", 128, "fatal: not a git repository"),
+            Error::Timeout {
+                program: "git".into(),
+                timeout: Duration::from_secs(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        ];
+        for e in &not_locks {
+            assert!(
+                !is_lock_contention(e),
+                "should NOT be lock contention: {e:?}"
+            );
+        }
+    }
+
+    // Backoff is exponential off the base, capped at `max_backoff`, and zero when
+    // there's no base (immediate retry).
+    #[test]
+    fn backoff_is_exponential_capped_and_zero_without_base() {
+        let p = RetryPolicy::none()
+            .attempts(6)
+            .base_backoff(Duration::from_millis(10))
+            .max_backoff(Duration::from_millis(80));
+        assert_eq!(backoff_for(&p, 0), Duration::from_millis(10));
+        assert_eq!(backoff_for(&p, 1), Duration::from_millis(20));
+        assert_eq!(backoff_for(&p, 2), Duration::from_millis(40));
+        assert_eq!(backoff_for(&p, 3), Duration::from_millis(80));
+        assert_eq!(
+            backoff_for(&p, 4),
+            Duration::from_millis(80),
+            "capped at max"
+        );
+        assert_eq!(
+            backoff_for(&RetryPolicy::none(), 3),
+            Duration::ZERO,
+            "no base → no wait"
+        );
+    }
+
+    // The executor: retries while the predicate matches and attempts remain, returns
+    // the first Ok, doesn't retry a non-matching error, and exhausts to the last Err.
+    #[tokio::test]
+    async fn retry_async_retries_then_succeeds_and_respects_the_predicate() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        // Zero backoff → no sleep, deterministic & fast.
+        let policy = RetryPolicy::none().attempts(4);
+        let lock = || {
+            exit(
+                "git",
+                128,
+                "Unable to create '/r/.git/index.lock': File exists.",
+            )
+        };
+
+        // Fails twice with a lock error, then succeeds — retried to success.
+        let calls = AtomicU32::new(0);
+        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let lock = lock();
+            async move { if n < 2 { Err(lock) } else { Ok(n) } }
+        })
+        .await;
+        assert_eq!(out.unwrap(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "1 try + 2 retries");
+
+        // A non-lock error is returned immediately (not retried).
+        let calls = AtomicU32::new(0);
+        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(exit("git", 1, "real, deterministic failure")) }
+        })
+        .await;
+        assert!(out.is_err());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "non-retryable → single attempt"
+        );
+
+        // Persistent lock contention exhausts the attempt budget.
+        let calls = AtomicU32::new(0);
+        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(exit("git", 128, "index.lock': File exists")) }
+        })
+        .await;
+        assert!(out.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 4, "all attempts used");
     }
 }

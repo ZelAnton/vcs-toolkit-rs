@@ -160,9 +160,10 @@ pub use parse::{AnnotationLine, Bookmark, BookmarkRef, Change, ChangedPath, Oper
 pub use vcs_diff::{
     ChangeKind, DiffLine, DiffStat, FileDiff, Hunk, Version as JjVersion, parse_diff,
 };
-// The transient-fetch classifier lives in the shared plumbing crate — re-exported
-// so `vcs_jj::is_transient_fetch_error` still resolves.
-pub use vcs_cli_support::is_transient_fetch_error;
+// The error classifiers live in the shared plumbing crate — re-exported so
+// `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
+use vcs_cli_support::RetryingClient;
+pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_error};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "jj";
@@ -620,11 +621,77 @@ pub trait JjApi: Send + Sync {
     async fn workspace_forget(&self, dir: &Path, name: &str) -> Result<()>;
 }
 
-processkit::cli_client!(
-    /// The real jj client. Generic over the [`ProcessRunner`] so tests can inject
-    /// a fake process executor; `Jj::new()` uses the real job-backed runner.
-    pub struct Jj => BINARY
-);
+/// The real jj client. Generic over the [`ProcessRunner`] so tests can inject a
+/// fake process executor; [`Jj::new`] uses the real job-backed runner.
+///
+/// Wraps a [`RetryingClient`]: enable lock-contention retry with
+/// [`with_retry`](Jj::with_retry) (opt-in; off by default).
+pub struct Jj<R: ProcessRunner = processkit::JobRunner> {
+    core: RetryingClient<R>,
+}
+
+impl Jj<processkit::JobRunner> {
+    /// Create a client driving the real job-backed runner.
+    pub fn new() -> Self {
+        Self {
+            core: RetryingClient::new(BINARY),
+        }
+    }
+}
+
+impl Default for Jj<processkit::JobRunner> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: ProcessRunner> Jj<R> {
+    /// Create a client driving `runner` — inject a fake in tests.
+    pub fn with_runner(runner: R) -> Self {
+        Self {
+            core: RetryingClient::with_runner(BINARY, runner),
+        }
+    }
+
+    /// Apply a default timeout to every command this client builds.
+    pub fn default_timeout(mut self, timeout: Duration) -> Self {
+        self.core = self.core.default_timeout(timeout);
+        self
+    }
+
+    /// Set an environment variable on every command this client builds.
+    pub fn default_env(
+        mut self,
+        key: impl AsRef<std::ffi::OsStr>,
+        value: impl AsRef<std::ffi::OsStr>,
+    ) -> Self {
+        self.core = self.core.default_env(key, value);
+        self
+    }
+
+    /// Remove an inherited environment variable on every command this client builds.
+    pub fn default_env_remove(mut self, key: impl AsRef<std::ffi::OsStr>) -> Self {
+        self.core = self.core.default_env_remove(key);
+        self
+    }
+
+    /// Cancel every command this client builds when `token` fires.
+    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
+        self.core = self.core.default_cancel_on(token);
+        self
+    }
+
+    /// Retry **lock-contention** failures (another process holds jj's working-copy
+    /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
+    /// a lock-acquisition failure is pre-execution (jj never ran). See [`RetryPolicy`]
+    /// and [`is_lock_contention`]. Note jj's
+    /// operation log already auto-resolves most concurrency, so hard lock failures
+    /// are rarer than with git.
+    pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
+        self.core = self.core.with_retry(policy);
+        self
+    }
+}
 
 impl<R: ProcessRunner> Jj<R> {
     /// A repo-scoped `jj` command with `--color never` forced on. jj honours
@@ -2143,6 +2210,37 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         assert!(jj.git_fetch(Path::new(".")).await.is_err());
         assert_eq!(rec.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // Opt-in lock-contention retry mirrors `vcs-git`: a mutation that fails on jj's
+    // working-copy lock is retried and succeeds; off by default. (Zero backoff → no
+    // sleep in the test.)
+    #[tokio::test]
+    async fn with_retry_retries_lock_contention_on_a_mutation() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["jj", "abandon"],
+            [
+                Reply::fail(1, "Error: Failed to lock the working copy"),
+                Reply::ok(""),
+            ],
+        ));
+        let jj = Jj::with_runner(&rec).with_retry(RetryPolicy::none().attempts(3));
+        jj.abandon(Path::new("."), "@-")
+            .await
+            .expect("retried past the lock");
+        assert_eq!(rec.calls().len(), 2, "one retry after the lock failure");
+
+        // Off by default.
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["jj", "abandon"],
+            [
+                Reply::fail(1, "Error: Failed to lock the working copy"),
+                Reply::ok(""),
+            ],
+        ));
+        let jj = Jj::with_runner(&rec);
+        assert!(jj.abandon(Path::new("."), "@-").await.is_err());
+        assert_eq!(rec.calls().len(), 1, "no retry without with_retry");
     }
 
     // `git_fetch_from` names the remote and shares `git_fetch`'s transient retry.

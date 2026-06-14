@@ -35,8 +35,9 @@ mock = ["dep:mockall", "processkit/mock"]
 tracing = ["processkit/tracing"]
 
 [dev-dependencies]
-# `#[tokio::test]` for the async unit/integration tests.
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# `#[tokio::test]` for the async unit/integration tests. The `time` driver lets a
+# retry test use a non-zero backoff without panicking (the current tests use zero).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 # Throwaway git/jj repos for the ignored integration tests. Path-only: dev-deps
 # are stripped on publish, so this adds no release coupling.
 vcs-testkit = { path = "../testkit" }

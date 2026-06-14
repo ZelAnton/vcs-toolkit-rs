@@ -10,7 +10,12 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Jj::with_retry(RetryPolicy)` — opt-in retry of jj **working-copy lock**
+  contention, with exponential, jittered backoff. Off by default; safe even for
+  mutating commands (a lock-acquisition failure is pre-execution). Re-exports
+  `RetryPolicy`. (jj's operation log already auto-resolves most concurrency, so
+  hard lock failures are rarer than with git.) Internally `Jj` now wraps a
+  `RetryingClient` — no change to existing methods.
 
 ### Changed
 - Bumped `processkit` to **0.10.1** (from 0.9.1), a major breaking release ahead

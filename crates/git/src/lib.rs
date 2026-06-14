@@ -123,7 +123,11 @@ pub use vcs_diff::{
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_git::is_merge_conflict`, … still resolve.
-pub use vcs_cli_support::{is_merge_conflict, is_nothing_to_commit, is_transient_fetch_error};
+use vcs_cli_support::RetryingClient;
+pub use vcs_cli_support::{
+    RetryPolicy, is_lock_contention, is_merge_conflict, is_nothing_to_commit,
+    is_transient_fetch_error,
+};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "git";
@@ -821,11 +825,76 @@ pub trait GitApi: Send + Sync {
     async fn rebase_skip(&self, dir: &Path) -> Result<()>;
 }
 
-processkit::cli_client!(
-    /// The real Git client. Generic over the [`ProcessRunner`] so tests can inject
-    /// a fake process executor; `Git::new()` uses the real job-backed runner.
-    pub struct Git => BINARY
-);
+/// The real Git client. Generic over the [`ProcessRunner`] so tests can inject a
+/// fake process executor; [`Git::new`] uses the real job-backed runner.
+///
+/// Wraps a [`RetryingClient`]: enable lock-contention retry with
+/// [`with_retry`](Git::with_retry) (opt-in; off by default).
+pub struct Git<R: ProcessRunner = processkit::JobRunner> {
+    core: RetryingClient<R>,
+}
+
+impl Git<processkit::JobRunner> {
+    /// Create a client driving the real job-backed runner.
+    pub fn new() -> Self {
+        Self {
+            core: RetryingClient::new(BINARY),
+        }
+    }
+}
+
+impl Default for Git<processkit::JobRunner> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: ProcessRunner> Git<R> {
+    /// Create a client driving `runner` — inject a fake in tests.
+    pub fn with_runner(runner: R) -> Self {
+        Self {
+            core: RetryingClient::with_runner(BINARY, runner),
+        }
+    }
+
+    /// Apply a default timeout to every command this client builds.
+    pub fn default_timeout(mut self, timeout: Duration) -> Self {
+        self.core = self.core.default_timeout(timeout);
+        self
+    }
+
+    /// Set an environment variable on every command this client builds.
+    pub fn default_env(
+        mut self,
+        key: impl AsRef<std::ffi::OsStr>,
+        value: impl AsRef<std::ffi::OsStr>,
+    ) -> Self {
+        self.core = self.core.default_env(key, value);
+        self
+    }
+
+    /// Remove an inherited environment variable on every command this client builds.
+    pub fn default_env_remove(mut self, key: impl AsRef<std::ffi::OsStr>) -> Self {
+        self.core = self.core.default_env_remove(key);
+        self
+    }
+
+    /// Cancel every command this client builds when `token` fires.
+    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
+        self.core = self.core.default_cancel_on(token);
+        self
+    }
+
+    /// Retry **lock-contention** failures (another process holds the repo's
+    /// `index.lock`, a ref lock, or `packed-refs.lock`) per `policy` — opt-in, off
+    /// by default. Safe even for mutating commands: a lock-acquisition failure is
+    /// pre-execution (git never ran), so a retry can't double-apply. See
+    /// [`RetryPolicy`] and [`is_lock_contention`].
+    pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
+        self.core = self.core.with_retry(policy);
+        self
+    }
+}
 
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GitApi for Git<R> {
@@ -2730,6 +2799,63 @@ mod tests {
         let git = Git::with_runner(&rec);
         assert!(git.fetch(Path::new("/r")).await.is_err());
         assert_eq!(rec.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // Opt-in lock-contention retry: a mutation that fails because another process
+    // holds `index.lock` is retried and succeeds — the command never ran, so the
+    // retry is safe. `RetryPolicy::none().attempts(3)` keeps the backoff at zero so
+    // the test never sleeps.
+    #[tokio::test]
+    async fn with_retry_retries_lock_contention_on_a_mutation() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["git", "commit"],
+            [
+                Reply::fail(
+                    128,
+                    "fatal: Unable to create '/r/.git/index.lock': File exists.",
+                ),
+                Reply::ok(""),
+            ],
+        ));
+        let git = Git::with_runner(&rec).with_retry(RetryPolicy::none().attempts(3));
+        git.commit(Path::new("/r"), "msg")
+            .await
+            .expect("retried past the lock");
+        assert_eq!(rec.calls().len(), 2, "one retry after the lock failure");
+    }
+
+    // Retry is off by default — the same lock failure propagates without `with_retry`.
+    #[tokio::test]
+    async fn default_client_does_not_retry_lock_contention() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["git", "commit"],
+            [
+                Reply::fail(
+                    128,
+                    "fatal: Unable to create '/r/.git/index.lock': File exists.",
+                ),
+                Reply::ok(""),
+            ],
+        ));
+        let git = Git::with_runner(&rec);
+        assert!(git.commit(Path::new("/r"), "msg").await.is_err());
+        assert_eq!(rec.calls().len(), 1, "no retry without with_retry");
+    }
+
+    // Even with retry on, a real (non-lock) failure is returned immediately — only
+    // lock contention is retried, so a genuine error is never silently repeated.
+    #[tokio::test]
+    async fn with_retry_does_not_retry_a_real_failure() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["git", "commit"],
+            [
+                Reply::fail(1, "error: pathspec 'x' did not match"),
+                Reply::ok(""),
+            ],
+        ));
+        let git = Git::with_runner(&rec).with_retry(RetryPolicy::none().attempts(3));
+        assert!(git.commit(Path::new("/r"), "msg").await.is_err());
+        assert_eq!(rec.calls().len(), 1, "a non-lock failure is not retried");
     }
 
     // A non-transient failure fails fast — no retry.

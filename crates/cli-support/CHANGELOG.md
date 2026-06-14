@@ -10,6 +10,14 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Lock-contention retry.** `is_lock_contention(&Error)` classifies a *pre-execution*
+  lock-acquisition failure (git `index.lock`/ref lock/`packed-refs.lock`, jj's
+  working-copy lock) — the one error class safe to retry on a mutation, since the
+  command never ran. `RetryPolicy` (attempts + exponential backoff + full jitter)
+  and the `retry_async` executor express the strategy; `RetryingClient` is a
+  `CliClient` wrapper that applies it to every command (the `vcs-git`/`vcs-jj`
+  clients now hold one). Retry is opt-in (default `RetryPolicy::none()`). Adds a
+  `tokio` (time) dependency for the backoff sleep.
 - `signalled_is_terminal_not_transient` test — pins that an `Error::Signalled`
   (signal-killed process) is terminal, not a transient fetch error (so it is
   never auto-retried), even when its captured stderr contains an otherwise-transient

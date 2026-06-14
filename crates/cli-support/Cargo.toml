@@ -1,7 +1,7 @@
 [package]
 name = "vcs-cli-support"
 version = "0.1.0"
-description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, a fetch-retry policy, and processkit error classifiers."
+description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, retry policies (fetch + lock contention) with a retrying client, and processkit error classifiers."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,9 +13,16 @@ categories = ["development-tools","command-line-utilities"]
 
 [dependencies]
 # The structured error these helpers guard against / classify, and the program
-# launcher the wrappers share. This is the one dependency — it's why this
-# plumbing lives here and not in the std-only `vcs-diff`.
+# launcher the wrappers share — and `RetryingClient`, the `CliClient` the wrappers
+# hold. This is why this plumbing lives here and not in the std-only `vcs-diff`.
 processkit.workspace = true
+# The async backoff sleep in `retry_async` (the `RetryingClient` retry loop). Only
+# the time driver is needed; the wrappers already run on tokio.
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+# `#[tokio::test]` for the async `retry_async` / `RetryingClient` tests.
+tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature and pass `--cfg docsrs` so any feature-gated

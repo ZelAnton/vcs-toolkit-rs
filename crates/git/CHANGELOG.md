@@ -9,6 +9,14 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+### Added
+- `Git::with_retry(RetryPolicy)` — opt-in retry of **lock-contention** failures
+  (another process holds `index.lock`, a ref lock, or `packed-refs.lock`), with
+  exponential, jittered backoff. Off by default; safe even for mutating commands
+  because a lock-acquisition failure is pre-execution. Re-exports `RetryPolicy`.
+  (Internally `Git` now wraps a `RetryingClient` instead of a bare `CliClient` —
+  no change to existing methods.)
+
 ### Changed
 - **`GitApi::log` unified (breaking).** `log(dir, max)` + `log_range(dir, range, max)`
   collapse into one `log(dir, revspec, max)` — pass `"HEAD"` for the current branch
