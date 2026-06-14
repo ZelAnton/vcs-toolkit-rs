@@ -459,13 +459,19 @@ impl<R: ProcessRunner> ManagedClient<R> {
         service: CredentialService,
         host: Option<&str>,
     ) -> Result<Option<Credential>> {
-        match &self.credentials {
-            Some(provider) => {
-                let request = CredentialRequest { service, host };
-                provider.credential(&request).await
-            }
-            None => Ok(None),
-        }
+        let Some(provider) = &self.credentials else {
+            return Ok(None);
+        };
+        let request = CredentialRequest { service, host };
+        // An empty secret is not a usable credential — injecting an empty
+        // `GH_TOKEN`/`GITLAB_TOKEN` (or a `password=` line) would *override* the
+        // ambient login with nothing rather than defer to it. Treat it as `None`
+        // (ambient), keeping the "no usable credential ⇒ ambient auth" contract
+        // consistent regardless of which adapter produced it.
+        Ok(provider
+            .credential(&request)
+            .await?
+            .filter(|cred| !cred.secret().expose().is_empty()))
     }
 
     /// Materialize `call` into a [`Command`], injecting the forge token env if a
@@ -943,5 +949,25 @@ mod tests {
             .unwrap()
             .expect("provider yields a credential");
         assert_eq!(got.secret().expose(), "t0k");
+    }
+
+    // An empty secret is treated as `None` (ambient): injecting an empty token
+    // would override the ambient login with nothing instead of deferring to it.
+    #[tokio::test]
+    async fn resolve_credential_treats_empty_secret_as_ambient() {
+        let client =
+            ManagedClient::new("git").with_credentials(Arc::new(StaticCredential::token("")));
+        // Service-agnostic: both the forge (token-env) and git (helper) paths route
+        // through this chokepoint, so an empty secret is ambient for either.
+        for service in [CredentialService::GitHub, CredentialService::Git] {
+            assert!(
+                client
+                    .resolve_credential(service, None)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "empty secret → ambient (None) for {service:?}"
+            );
+        }
     }
 }

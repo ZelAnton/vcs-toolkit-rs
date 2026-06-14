@@ -195,6 +195,10 @@ impl<'a> CredentialRequest<'a> {
 pub trait CredentialProvider: Send + Sync {
     /// Resolve the credential for `request`, or `Ok(None)` to defer to ambient
     /// auth. An `Err` aborts the operation (e.g. the vault was unreachable).
+    ///
+    /// A returned credential whose secret is **empty** is treated as `None`
+    /// (ambient) by the clients — an empty token can't authenticate, and injecting
+    /// one would override the ambient login with nothing rather than defer to it.
     async fn credential(&self, request: &CredentialRequest<'_>) -> Result<Option<Credential>>;
 }
 
@@ -337,6 +341,10 @@ pub struct GitCredentialHelper {
 /// credential — so the default path is unchanged. The helper answers only git's
 /// `get` action (never `store`/`erase`), so the secret is never written to a
 /// credential cache or config; it lives only in the child's environment.
+///
+/// The username/secret must not contain a newline: git's credential protocol is
+/// line-based, so an embedded `\n` is read as the end of the value (git truncates
+/// there). Real tokens and usernames never contain one.
 #[must_use]
 pub fn git_credential_helper(cred: &Credential) -> GitCredentialHelper {
     let username = cred.username().unwrap_or(DEFAULT_GIT_USERNAME).to_string();
