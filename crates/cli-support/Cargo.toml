@@ -1,15 +1,15 @@
 [package]
 name = "vcs-cli-support"
 version = "0.1.0"
-description = "Shared CLI-wrapper plumbing for vcs-toolkit-rs: the argv injection guard, fetch-retry policy, and processkit::Error classifiers."
+description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, a fetch-retry policy, and processkit error classifiers."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["cli","subprocess","vcs","retry","error"]
-categories = ["development-tools"]
+keywords = ["cli","subprocess","retry","error","vcs"]
+categories = ["development-tools","command-line-utilities"]
 
 [dependencies]
 # The structured error these helpers guard against / classify, and the program

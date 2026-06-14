@@ -1,5 +1,7 @@
 # vcs-testkit
 
+[![crates.io](https://img.shields.io/crates/v/vcs-testkit.svg)](https://crates.io/crates/vcs-testkit) [![docs.rs](https://img.shields.io/docsrs/vcs-testkit)](https://docs.rs/vcs-testkit) [![downloads](https://img.shields.io/crates/d/vcs-testkit.svg)](https://crates.io/crates/vcs-testkit)
+
 Test fixtures for git/jj automation: throwaway repositories for integration
 tests.
 

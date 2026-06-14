@@ -1,15 +1,15 @@
 [package]
 name = "vcs-gitlab"
 version = "0.1.0"
-description = "Automate the GitLab CLI (glab) from Rust through process execution."
+description = "Automate GitLab from Rust: a typed, async wrapper for the GitLab CLI (glab) — merge requests, issues, releases, and pipelines."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["gitlab","glab","merge-request","cli","forge"]
-categories = ["command-line-utilities","api-bindings"]
+keywords = ["gitlab","glab","merge-request","cli","async"]
+categories = ["command-line-utilities","api-bindings","asynchronous"]
 
 [dependencies]
 # Runs `glab` inside an OS job (Windows Job Object / Linux cgroup) so the process

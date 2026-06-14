@@ -1,15 +1,15 @@
 [package]
 name = "vcs-gitea"
 version = "0.1.0"
-description = "Automate the Gitea CLI (tea) from Rust through process execution."
+description = "Automate Gitea and Forgejo from Rust: a typed, async wrapper for the tea CLI — pull requests, issues, and releases."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["gitea","forgejo","tea","cli","forge"]
-categories = ["command-line-utilities","api-bindings"]
+keywords = ["gitea","forgejo","tea","cli","async"]
+categories = ["command-line-utilities","api-bindings","asynchronous"]
 
 [dependencies]
 # Runs `tea` inside an OS job (Windows Job Object / Linux cgroup) so the process

@@ -1,5 +1,7 @@
 # vcs-github — automate GitHub from Rust
 
+[![crates.io](https://img.shields.io/crates/v/vcs-github.svg)](https://crates.io/crates/vcs-github) [![docs.rs](https://img.shields.io/docsrs/vcs-github)](https://docs.rs/vcs-github) [![downloads](https://img.shields.io/crates/d/vcs-github.svg)](https://crates.io/crates/vcs-github)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** check auth, view the repo, run the full pull-request lifecycle

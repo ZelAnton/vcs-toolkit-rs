@@ -1,15 +1,15 @@
 [package]
 name = "vcs-jj"
 version = "0.5.0"
-description = "Automate the Jujutsu (jj) CLI from Rust through process execution."
+description = "Automate Jujutsu (jj) from Rust: a typed, async wrapper that drives the real jj CLI with its exact behavior."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["jujutsu","jj","vcs","cli","automation"]
-categories = ["command-line-utilities","api-bindings"]
+keywords = ["jujutsu","jj","cli","automation","async"]
+categories = ["command-line-utilities","api-bindings","asynchronous","development-tools"]
 
 [dependencies]
 # Runs `jj` inside an OS job (Windows Job Object / Linux cgroup) so the process

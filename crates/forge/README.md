@@ -1,5 +1,7 @@
 # vcs-forge — one forge API for GitHub, GitLab and Gitea
 
+[![crates.io](https://img.shields.io/crates/v/vcs-forge.svg)](https://crates.io/crates/vcs-forge) [![docs.rs](https://img.shields.io/docsrs/vcs-forge)](https://docs.rs/vcs-forge) [![downloads](https://img.shields.io/crates/d/vcs-forge.svg)](https://crates.io/crates/vcs-forge)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** hold one `Forge` handle and automate all three forges through one

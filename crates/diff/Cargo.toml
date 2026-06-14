@@ -1,15 +1,15 @@
 [package]
 name = "vcs-diff"
 version = "0.1.0"
-description = "Shared git-format unified-diff model + parser and a version type for the vcs-toolkit-rs wrappers."
+description = "Parse and model Git-format unified diffs in pure Rust (no git binary required) — the diff types shared across the vcs-toolkit-rs wrappers."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["git","diff","parser","vcs","unified-diff"]
-categories = ["development-tools"]
+keywords = ["git","diff","parser","unified-diff","vcs"]
+categories = ["parser-implementations","development-tools"]
 
 # Deliberately dependency-free (std only) by default: the diff types and parser
 # are pure data + pure functions, so this foundational crate stays light and

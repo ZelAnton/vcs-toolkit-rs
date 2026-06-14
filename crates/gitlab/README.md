@@ -1,5 +1,7 @@
 # vcs-gitlab — automate GitLab from Rust
 
+[![crates.io](https://img.shields.io/crates/v/vcs-gitlab.svg)](https://crates.io/crates/vcs-gitlab) [![docs.rs](https://img.shields.io/docsrs/vcs-gitlab)](https://docs.rs/vcs-gitlab) [![downloads](https://img.shields.io/crates/d/vcs-gitlab.svg)](https://crates.io/crates/vcs-gitlab)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** check auth, view the project, run the lean merge-request

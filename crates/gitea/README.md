@@ -1,5 +1,7 @@
 # vcs-gitea — automate Gitea (and Forgejo) from Rust
 
+[![crates.io](https://img.shields.io/crates/v/vcs-gitea.svg)](https://crates.io/crates/vcs-gitea) [![docs.rs](https://img.shields.io/docsrs/vcs-gitea)](https://docs.rs/vcs-gitea) [![downloads](https://img.shields.io/crates/d/vcs-gitea.svg)](https://crates.io/crates/vcs-gitea)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** check auth, run the lean pull-request lifecycle (list/view/

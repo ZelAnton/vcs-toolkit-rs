@@ -1,5 +1,7 @@
 # vcs-core — one repository API for git and jj
 
+[![crates.io](https://img.shields.io/crates/v/vcs-core.svg)](https://crates.io/crates/vcs-core) [![docs.rs](https://img.shields.io/docsrs/vcs-core)](https://docs.rs/vcs-core) [![downloads](https://img.shields.io/crates/d/vcs-core.svg)](https://crates.io/crates/vcs-core)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** hold one `Repo` handle that auto-detects whether a directory is

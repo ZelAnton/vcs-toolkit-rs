@@ -1,15 +1,15 @@
 [package]
 name = "vcs-core"
 version = "0.3.0"
-description = "Unified facade over vcs-git and vcs-jj: repo detection and a backend-agnostic VCS handle."
+description = "One async Rust API over Git and Jujutsu: repo auto-detection plus a unified, backend-agnostic VCS handle (status, branches, worktrees, snapshots)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["git","jujutsu","vcs","facade","async"]
-categories = ["command-line-utilities","api-bindings"]
+keywords = ["git","jujutsu","vcs","version-control","async"]
+categories = ["command-line-utilities","api-bindings","asynchronous","development-tools"]
 
 [dependencies]
 # Re-exported `Error`/`ProcessRunner`/`JobRunner` and the `ScriptedRunner` test

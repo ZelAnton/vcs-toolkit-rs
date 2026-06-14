@@ -1,15 +1,15 @@
 [package]
 name = "vcs-git"
 version = "0.5.0"
-description = "Automate the Git CLI from Rust through process execution."
+description = "Automate Git from Rust: a typed, async wrapper that drives the real git CLI with its exact behavior, config, and credentials."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["git","vcs","cli","automation","async"]
-categories = ["command-line-utilities","api-bindings"]
+keywords = ["git","cli","automation","async","subprocess"]
+categories = ["command-line-utilities","api-bindings","asynchronous","development-tools"]
 
 [dependencies]
 # Runs `git` inside an OS job (Windows Job Object / Linux cgroup) so the process

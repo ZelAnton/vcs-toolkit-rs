@@ -1,5 +1,7 @@
 # vcs-mcp
 
+[![crates.io](https://img.shields.io/crates/v/vcs-mcp.svg)](https://crates.io/crates/vcs-mcp) [![docs.rs](https://img.shields.io/docsrs/vcs-mcp)](https://docs.rs/vcs-mcp) [![downloads](https://img.shields.io/crates/d/vcs-mcp.svg)](https://crates.io/crates/vcs-mcp)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) **server** exposing
 **git/jj** repository operations — and their **GitHub/GitLab/Gitea** forge — as
 agent-callable **tools**. Part of the

@@ -1,5 +1,7 @@
 # vcs-jj — automate Jujutsu from Rust
 
+[![crates.io](https://img.shields.io/crates/v/vcs-jj.svg)](https://crates.io/crates/vcs-jj) [![docs.rs](https://img.shields.io/docsrs/vcs-jj)](https://docs.rs/vcs-jj) [![downloads](https://img.shields.io/crates/d/vcs-jj.svg)](https://crates.io/crates/vcs-jj)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** working-copy status & the change log, describe/new change,

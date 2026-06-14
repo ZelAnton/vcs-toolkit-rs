@@ -1,5 +1,7 @@
 # vcs-diff
 
+[![crates.io](https://img.shields.io/crates/v/vcs-diff.svg)](https://crates.io/crates/vcs-diff) [![docs.rs](https://img.shields.io/docsrs/vcs-diff)](https://docs.rs/vcs-diff) [![downloads](https://img.shields.io/crates/d/vcs-diff.svg)](https://crates.io/crates/vcs-diff)
+
 Shared **git-format unified-diff** model and parser for the
 [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 

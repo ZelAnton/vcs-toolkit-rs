@@ -1,7 +1,7 @@
 [package]
 name = "vcs-testkit"
 version = "0.1.0"
-description = "Test fixtures for git/jj automation: throwaway repos, sandboxes, and a seeded bare remote."
+description = "Test fixtures for Git and Jujutsu automation: throwaway repos, hermetic sandboxes, and a seeded bare remote."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["testing","fixtures","git","jujutsu","sandbox"]
-categories = ["development-tools::testing"]
+categories = ["development-tools::testing","development-tools"]
 
 # Deliberately dependency-free: the sandboxes shell out to the real `git`/`jj`
 # binaries through std::process (synchronous — test setup needs no runtime) and

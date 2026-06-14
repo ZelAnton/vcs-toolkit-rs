@@ -1,5 +1,7 @@
 # vcs-watch
 
+[![crates.io](https://img.shields.io/crates/v/vcs-watch.svg)](https://crates.io/crates/vcs-watch) [![docs.rs](https://img.shields.io/docsrs/vcs-watch)](https://docs.rs/vcs-watch) [![downloads](https://img.shields.io/crates/d/vcs-watch.svg)](https://crates.io/crates/vcs-watch)
+
 Filesystem-watch a **git or jj** repository and stream **typed state-change
 events**. Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs)
 workspace.

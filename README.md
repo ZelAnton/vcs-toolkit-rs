@@ -4,11 +4,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 2024](https://img.shields.io/badge/rust-2024%20edition-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
-**Automate git, Jujutsu, and the GitHub / GitLab / Gitea forges from Rust.**
-vcs-toolkit runs the command-line tools you already have — `git`, `jj`, `gh`,
-`glab`, `tea` — and hands you their output as typed Rust values. There's no
-reimplemented git here: you get the real tools' exact behavior, config, and
-credentials, wrapped in a clean async API.
+**Automate Git, Jujutsu, and the GitHub / GitLab / Gitea forges from Rust.**
+vcs-toolkit drives the command-line tools you already have — `git`, `jj`, `gh`,
+`glab`, `tea` — and hands you their output as typed Rust values. No `libgit2`, no
+FFI, no reimplemented Git: you get the real tools' exact behavior, config, and
+credentials, behind a clean **async** API. There's even a [Model Context
+Protocol](https://modelcontextprotocol.io) (MCP) server, so an AI agent can drive
+your repositories safely.
 
 ![Cover](https://raw.githubusercontent.com/ZelAnton/vcs-toolkit-rs/main/cover.png)
 
@@ -74,6 +76,27 @@ Pick the crate that matches your task — each links to its guide:
   code, and stderr — not a stringly-typed blob.
 - **Async with deadlines.** Every call is a future; an optional per-client or
   per-call timeout kills the job (and the whole tree) when it elapses.
+
+## When to reach for it (and when not)
+
+vcs-toolkit **shells out to the installed CLIs**, so you get the user's *exact*
+`git`/`jj`/`gh` behavior, config, and credentials — plus **Jujutsu and the forges,
+which the in-process git libraries don't cover at all**. The trade is a process
+spawn per command. For high-throughput object-database work (blame over a huge
+history, walking millions of commits), reach for an in-process library instead.
+
+| | **vcs-toolkit** | [`gitoxide`](https://crates.io/crates/gix) | [`git2`](https://crates.io/crates/git2) (`libgit2`) | [`octocrab`](https://crates.io/crates/octocrab) |
+|---|---|---|---|---|
+| Model | subprocess to the CLIs | in-process, pure Rust | in-process, C bindings | in-process HTTP client |
+| Honors user config / credentials / hooks | **yes — it *is* their binary** | no | no | token only |
+| Covers **Jujutsu (`jj`)** | **yes** | no | no | no |
+| Covers **GitHub / GitLab / Gitea** | **yes — one API** | no | no | GitHub only |
+| Per-operation cost | a process spawn | none — in-process | none — in-process | one HTTP call |
+| Fidelity to the tool | exact CLI behavior | reimplementation | reimplementation | REST/GraphQL |
+
+They compose: use an in-process library on the **hot path** (bulk object reads),
+and vcs-toolkit for **workflow automation** and **anything `jj` or a forge
+touches**. Full breakdown: the [positioning guide](crates/core/docs/positioning.md).
 
 ## Crates
 

@@ -1,7 +1,7 @@
 [package]
 name = "vcs-forge"
 version = "0.1.0"
-description = "A backend-agnostic facade over the GitHub/GitLab/Gitea CLI wrappers (gh/glab/tea)."
+description = "One async Rust API over GitHub, GitLab, and Gitea: unified pull/merge requests, issues, and releases across the gh, glab, and tea CLIs."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["forge","github","gitlab","gitea","pull-request"]
-categories = ["command-line-utilities","api-bindings"]
+categories = ["command-line-utilities","api-bindings","asynchronous"]
 
 [dependencies]
 # The `ProcessRunner` seam (so a fake runner can drive the wrapped clients in

@@ -1,5 +1,7 @@
 # vcs-git — automate Git from Rust
 
+[![crates.io](https://img.shields.io/crates/v/vcs-git.svg)](https://crates.io/crates/vcs-git) [![docs.rs](https://img.shields.io/docsrs/vcs-git)](https://docs.rs/vcs-git) [![downloads](https://img.shields.io/crates/d/vcs-git.svg)](https://crates.io/crates/vcs-git)
+
 Part of the [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
 **What you can do:** status & branches, stage/commit/checkout, diff & log,

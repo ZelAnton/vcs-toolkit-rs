@@ -1,5 +1,7 @@
 # vcs-cli-support
 
+[![crates.io](https://img.shields.io/crates/v/vcs-cli-support.svg)](https://crates.io/crates/vcs-cli-support) [![docs.rs](https://img.shields.io/docsrs/vcs-cli-support)](https://docs.rs/vcs-cli-support) [![downloads](https://img.shields.io/crates/d/vcs-cli-support.svg)](https://crates.io/crates/vcs-cli-support)
+
 Shared plumbing for the CLI-wrapper crates in
 [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) — the bits
 `vcs-git` / `vcs-jj` / `vcs-github` all need that touch
