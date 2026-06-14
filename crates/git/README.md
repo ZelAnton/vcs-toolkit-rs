@@ -115,15 +115,15 @@ git.worktree_remove(repo, Path::new("/tmp/feature"), false).await?;
 
 Consumers depend on the `GitApi` trait and substitute a fake in tests — enable
 the `mock` feature for a `mockall`-generated `MockGitApi`, or inject a fake
-process runner with `Git::with_runner(processkit::ScriptedRunner::new()…)`:
+process runner with `Git::with_runner(processkit::testing::ScriptedRunner::new()…)`:
 
 ```rust
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 # async fn demo() {
-    let git = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::ok("feature\n")));
+    let git = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("feature\n")));
     assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), "feature");
 # }
 ```

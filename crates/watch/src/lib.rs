@@ -789,7 +789,8 @@ mod tests {
 mod pipeline_tests {
     use super::tests::Scratch;
     use super::*;
-    use processkit::{ProcessRunner, Reply, ScriptedRunner};
+    use processkit::ProcessRunner;
+    use processkit::testing::{Reply, ScriptedRunner};
     use vcs_core::Repo;
     use vcs_core::vcs_git::Git;
 
@@ -804,9 +805,9 @@ mod pipeline_tests {
     /// `branch --no-column`.
     fn scripted(gitdir: &Path, head: &str) -> ScriptedRunner {
         ScriptedRunner::new()
-            .on(["status"], Reply::ok(v2(head)))
-            .on(["rev-parse"], Reply::ok(format!("{}\n", gitdir.display())))
-            .on(["branch"], Reply::ok("* main\n"))
+            .on(["git", "status"], Reply::ok(v2(head)))
+            .on(["git", "rev-parse"], Reply::ok(format!("{}\n", gitdir.display())))
+            .on(["git", "branch"], Reply::ok("* main\n"))
     }
 
     fn scripted_repo(gitdir: &Path, head: &str) -> Box<dyn VcsRepo> {

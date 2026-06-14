@@ -111,9 +111,9 @@ the real client would build; for that, use the runner seam.
 `Git::with_runner(…)` (and `Jj::`/`GitHub::with_runner`) takes a
 `processkit::ProcessRunner` and feeds its canned output through the **real**
 argument-building and parsing — so a test exercises the actual command wiring
-without spawning anything. `ScriptedRunner::new().on([substrings], reply)`
-matches a call when the argv contains those substrings, and replies with a
-`Reply`.
+without spawning anything. `ScriptedRunner::new().on([program, args…], reply)`
+matches a call when the argv contains that prefix — which now **leads with the
+program name** (e.g. `["git", "status"]`) — and replies with a `Reply`.
 
 `Reply` constructors seen in this repo:
 
@@ -127,14 +127,14 @@ matches a call when the argv contains those substrings, and replies with a
 ### git
 
 ```rust,ignore
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 # async fn demo() {
     // Real status() command-building + porcelain parsing against canned `-z` output.
     let git = Git::with_runner(
-        ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0?? b.rs\0")),
+        ScriptedRunner::new().on(["git", "status"], Reply::ok(" M a.rs\0?? b.rs\0")),
     );
     let entries = git.status(Path::new(".")).await.unwrap();
     assert_eq!(entries[0].code, " M");
@@ -145,14 +145,14 @@ use vcs_git::{Git, GitApi};
 ### jj
 
 ```rust,ignore
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_jj::{Jj, JjApi};
 
 # async fn demo() {
     // The tab-separated log template parses into a `Change`.
     let jj = Jj::with_runner(
-        ScriptedRunner::new().on(["log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello\n")),
+        ScriptedRunner::new().on(["jj", "log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello\n")),
     );
     assert_eq!(
         jj.current_change(Path::new(".")).await.unwrap().description,
@@ -164,14 +164,14 @@ use vcs_jj::{Jj, JjApi};
 ### github
 
 ```rust,ignore
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_github::{GitHub, GitHubApi};
 
 # async fn demo() {
     let json = r#"[{"number":7,"title":"Add X","state":"OPEN"}]"#;
     let gh = GitHub::with_runner(
-        ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)),
+        ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)),
     );
     assert_eq!(gh.pr_list(Path::new(".")).await.unwrap()[0].number, 7);
 # }
@@ -188,7 +188,7 @@ invocations) or `rec.only_call()` when exactly one is expected; each invocation
 exposes `args_str()`, `cwd`, and `envs`.
 
 ```rust,ignore
-use processkit::{RecordingRunner, Reply};
+use processkit::testing::{RecordingRunner, Reply};
 use std::path::Path;
 use vcs_github::{GitHub, GitHubApi, PrCreate};
 
@@ -210,7 +210,7 @@ The same applies to env and cwd. A git example asserting a flag's effect, the
 exact ref, and an injected environment variable:
 
 ```rust,ignore
-use processkit::{RecordingRunner, Reply};
+use processkit::testing::{RecordingRunner, Reply};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
 
@@ -235,9 +235,9 @@ explicit client with `Repo::from_git("/repo", "/repo", Git::with_runner(runner))
 / `Repo::from_jj(…)` to test the facade's dispatch hermetically, exactly as the
 underlying crates do.
 
-### Cancellation, hermetically (the `cancellation` feature)
+### Cancellation, hermetically
 
-With the `cancellation` feature, `Reply::pending()` parks a matched call until the
+`Reply::pending()` (always available) parks a matched call until the
 command's token fires (a per-command `cancel_on` or a client `default_cancel_on`),
 then resolves `Err(Error::Cancelled)`. That tests the cancellation *behaviour* — the
 call really parks, then really unwinds — with no real binary. Run it on a paused
@@ -245,13 +245,14 @@ clock (`#[tokio::test(start_paused = true)]`): a long `time::timeout` elapses
 instantly while the call is parked, proving it doesn't resolve early.
 
 ```rust,ignore
-use processkit::{CancellationToken, Reply, ScriptedRunner};
+use processkit::CancellationToken;
+use processkit::testing::{Reply, ScriptedRunner};
 use vcs_github::{GitHub, GitHubApi};
 
 #[tokio::test(start_paused = true)]
 async fn run_watch_cancels() {
     let token = CancellationToken::new();
-    let gh = GitHub::with_runner(ScriptedRunner::new().on(["run", "watch"], Reply::pending()))
+    let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "run", "watch"], Reply::pending()))
         .default_cancel_on(token.clone());
     let call = gh.run_watch(std::path::Path::new("."), 42);
     tokio::pin!(call);
@@ -277,15 +278,15 @@ calls that need a realistic reply (a branch name, a JSON blob, a non-zero exit);
 everything else falls through to the fallback.
 
 ```rust,ignore
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 # async fn demo() {
     let git = Git::with_runner(
         ScriptedRunner::new()
-            .fallback(Reply::ok(""))                       // answers everything…
-            .on(["rev-parse"], Reply::ok("feature\n")),    // …except the calls that matter
+            .fallback(Reply::ok(""))                          // answers everything…
+            .on(["git", "rev-parse"], Reply::ok("feature\n")), // …except the calls that matter
     );
     // The whole sequence runs; only the branch query gets a meaningful answer.
     assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), "feature");

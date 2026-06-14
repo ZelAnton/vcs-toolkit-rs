@@ -10,10 +10,22 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `signalled_is_terminal_not_transient` test — pins that an `Error::Signalled`
+  (signal-killed process) is terminal, not a transient fetch error (so it is
+  never auto-retried), even when its captured stderr contains an otherwise-transient
+  marker.
 
 ### Changed
--
+- Bumped `processkit` to **0.10.1** (from 0.9.1). The classifiers' input `Error`
+  gained partial output on the `Timeout`/`Signalled` variants and new first-class
+  variants (`Signalled`/`NotFound`/`CassetteMiss`); the `#[non_exhaustive]`
+  fall-through keeps every classifier returning "no" for unfamiliar variants.
+
+### Removed
+- The **`cancellation`** feature — cancellation is now core in processkit 0.10, so
+  `Error::Cancelled` is always constructible (the
+  `cancelled_is_not_transient_or_otherwise_classified` test is now unconditional).
+  Breaking for anyone who enabled `vcs-cli-support/cancellation`.
 
 ### Fixed
 -

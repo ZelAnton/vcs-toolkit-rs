@@ -86,16 +86,16 @@ use std::time::Duration;
 
 Consumers depend on the `GitHubApi` trait and substitute a fake in tests — enable
 the `mock` feature for a `mockall`-generated `MockGitHubApi`, or inject a fake
-process runner with `GitHub::with_runner(processkit::ScriptedRunner::new()…)`:
+process runner with `GitHub::with_runner(processkit::testing::ScriptedRunner::new()…)`:
 
 ```rust
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_github::{GitHub, GitHubApi};
 
 # async fn demo() {
     let json = r#"[{"number":7,"title":"Add X","state":"OPEN"}]"#;
-    let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
+    let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
     assert_eq!(gh.pr_list(Path::new(".")).await.unwrap()[0].number, 7);
 # }
 ```

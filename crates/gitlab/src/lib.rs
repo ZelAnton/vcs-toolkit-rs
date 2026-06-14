@@ -92,7 +92,7 @@
 //!
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
 //! `MockGitLabApi` (stub whole methods), or inject a
-//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`GitLab::with_runner`] to
+//! [`ScriptedRunner`](processkit::testing::ScriptedRunner) with [`GitLab::with_runner`] to
 //! exercise the *real* argv-building and JSON parsing against canned output. The
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
@@ -108,10 +108,9 @@ use processkit::ProcessRunner;
 // Re-export the processkit types in this crate's public API (also brings
 // `Error`/`Result`/`ProcessResult` into scope here).
 pub use processkit::{Error, ProcessResult, Result};
-// Re-exported under the `cancellation` feature so a consumer can name the token
-// for `default_cancel_on` without taking a direct `processkit` dependency.
-#[cfg(feature = "cancellation")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
+// Re-exported so a consumer can name the token for `default_cancel_on` without
+// taking a direct `processkit` dependency. (Cancellation is core in processkit
+// 0.10 — always available, no feature.)
 pub use processkit::CancellationToken;
 
 mod parse;
@@ -576,7 +575,7 @@ gitlab_at_forwarders! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_glab() {
@@ -606,13 +605,13 @@ mod tests {
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
-        assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
+        assert_eq!(calls[1].cwd.as_deref(), Some(dir));
     }
 
     #[tokio::test]
     async fn run_args_forwards_str_slices() {
         let glab =
-            GitLab::with_runner(ScriptedRunner::new().on(["api", "/version"], Reply::ok("ok\n")));
+            GitLab::with_runner(ScriptedRunner::new().on(["glab", "api", "/version"], Reply::ok("ok\n")));
         assert_eq!(glab.run_args(&["api", "/version"]).await.unwrap(), "ok");
     }
 
@@ -621,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn mr_list_parses_scripted_json() {
         let json = r#"[{"iid":7,"title":"Add X","state":"opened","source_branch":"feat/x","target_branch":"main","web_url":"u","draft":false}]"#;
-        let glab = GitLab::with_runner(ScriptedRunner::new().on(["mr", "list"], Reply::ok(json)));
+        let glab = GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
         let mrs = glab.mr_list(Path::new(".")).await.expect("mr_list");
         assert_eq!(mrs.len(), 1);
         assert_eq!(mrs[0].iid, 7);
@@ -646,21 +645,21 @@ mod tests {
     // exit — not just the documented 1 — must read as `false`, never an error.
     #[tokio::test]
     async fn auth_status_reads_exit_code() {
-        let yes = GitLab::with_runner(ScriptedRunner::new().on(["auth"], Reply::ok("")));
+        let yes = GitLab::with_runner(ScriptedRunner::new().on(["glab", "auth"], Reply::ok("")));
         assert!(yes.auth_status().await.unwrap());
         let no = GitLab::with_runner(
-            ScriptedRunner::new().on(["auth"], Reply::fail(1, "not logged in")),
+            ScriptedRunner::new().on(["glab", "auth"], Reply::fail(1, "not logged in")),
         );
         assert!(!no.auth_status().await.unwrap());
         // An unexpected exit code (e.g. 2) is still just "not authenticated".
-        let weird = GitLab::with_runner(ScriptedRunner::new().on(["auth"], Reply::fail(2, "boom")));
+        let weird = GitLab::with_runner(ScriptedRunner::new().on(["glab", "auth"], Reply::fail(2, "boom")));
         assert!(!weird.auth_status().await.unwrap());
     }
 
     // A timed-out auth check must error, not silently report "not authenticated".
     #[tokio::test]
     async fn auth_status_errors_on_timeout() {
-        let glab = GitLab::with_runner(ScriptedRunner::new().on(["auth"], Reply::timeout()));
+        let glab = GitLab::with_runner(ScriptedRunner::new().on(["glab", "auth"], Reply::timeout()));
         assert!(matches!(
             glab.auth_status().await.unwrap_err(),
             Error::Timeout { .. }
@@ -779,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn mr_checks_buckets_pipeline_status() {
         let json = r#"{"iid":4,"head_pipeline":{"status":"failed"}}"#;
-        let glab = GitLab::with_runner(ScriptedRunner::new().on(["mr", "view"], Reply::ok(json)));
+        let glab = GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "view"], Reply::ok(json)));
         assert_eq!(
             glab.mr_checks(Path::new("."), 4).await.unwrap(),
             CiStatus::Failing
@@ -903,7 +902,7 @@ mod tests {
     #[tokio::test]
     async fn repo_view_parses_project() {
         let json = r#"{"name":"cli","path_with_namespace":"gitlab-org/cli","default_branch":"main","web_url":"u","visibility":"public"}"#;
-        let glab = GitLab::with_runner(ScriptedRunner::new().on(["repo", "view"], Reply::ok(json)));
+        let glab = GitLab::with_runner(ScriptedRunner::new().on(["glab", "repo", "view"], Reply::ok(json)));
         let p = glab.repo_view(Path::new(".")).await.expect("repo_view");
         assert_eq!(p.path_with_namespace, "gitlab-org/cli");
         assert_eq!(p.default_branch, "main");

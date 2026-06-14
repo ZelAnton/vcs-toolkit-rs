@@ -35,7 +35,7 @@ knobs and one test seam:
 ```rust,ignore
 # use vcs_github::GitHub;
 use std::time::Duration;
-use processkit::ScriptedRunner;
+use processkit::testing::ScriptedRunner;
 
 // Cap every spawned `gh` — a slow/hung command becomes `Error::Timeout`.
 let gh = GitHub::new().default_timeout(Duration::from_secs(30));

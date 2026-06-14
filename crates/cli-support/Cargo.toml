@@ -17,17 +17,11 @@ categories = ["development-tools"]
 # plumbing lives here and not in the std-only `vcs-diff`.
 processkit.workspace = true
 
-[features]
-# Pull in processkit's `cancellation` feature so `Error::Cancelled` is reachable.
-# The classifiers only match `Exit`/`Timeout`, so any other variant (incl.
-# `Cancelled`) already falls through to "no"; the feature only lets the test
-# construct the variant to pin that as a first-class assertion.
-cancellation = ["processkit/cancellation"]
-
 [package.metadata.docs.rs]
-# Build docs.rs with every feature so the optional surfaces (mock / tracing /
-# cancellation / serde / stream) are documented (defaults alone hide them), and pass
-# `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
+# Build docs.rs with every feature and pass `--cfg docsrs` so any feature-gated
+# item renders an "Available on feature `x`" badge. (This crate has no features of
+# its own — cancellation is now core in processkit 0.10 — but the metadata stays
+# uniform with the rest of the workspace.)
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 

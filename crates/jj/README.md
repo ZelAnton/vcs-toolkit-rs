@@ -110,16 +110,16 @@ let jj = Jj::new().default_timeout(Duration::from_secs(10));
 
 Consumers depend on the `JjApi` trait and substitute a fake in tests — enable
 the `mock` feature for a `mockall`-generated `MockJjApi`, or inject a fake
-process runner with `Jj::with_runner(processkit::ScriptedRunner::new()…)`:
+process runner with `Jj::with_runner(processkit::testing::ScriptedRunner::new()…)`:
 
 ```rust
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_jj::{Jj, JjApi};
 
 # async fn demo() {
     let jj = Jj::with_runner(
-        ScriptedRunner::new().on(["log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello\n")),
+        ScriptedRunner::new().on(["jj", "log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello\n")),
     );
     assert_eq!(
         jj.current_change(Path::new(".")).await.unwrap().description,

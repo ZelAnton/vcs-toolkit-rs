@@ -13,7 +13,18 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Changed
--
+- Bumped `processkit` to **0.10.1** (from 0.9.1), a major breaking release ahead
+  of processkit's 1.0 freeze. Breaking for downstream via the re-exported
+  `processkit::Error`: `Error::Timeout`/`Signalled` now carry partial
+  `stdout`/`stderr`, `Error::Signalled`/`NotFound`/`CassetteMiss` are first-class
+  variants, the blanket `From<io::Error>` is gone, and `Invocation::cwd` is now
+  `Option<PathBuf>`.
+
+### Removed
+- The **`cancellation`** feature — cancellation is always available now
+  (processkit 0.10 made it core), so the `cli_client!`-generated
+  `default_cancel_on(token)` and the re-exported `CancellationToken` no longer sit
+  behind a feature. Downstream that enabled `vcs-jj/cancellation` should drop it.
 
 ### Fixed
 -

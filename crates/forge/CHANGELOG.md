@@ -13,7 +13,15 @@ crates; tag releases as `vcs-forge-v<version>`.
 -
 
 ### Changed
--
+- Bumped `processkit` to **0.10.1** (via the wrappers). Re-exported
+  `processkit::Error` changed (partial `stdout`/`stderr` on `Timeout`/`Signalled`;
+  new `Signalled`/`NotFound`/`CassetteMiss` variants; `Invocation::cwd: Option<PathBuf>`)
+  — breaking for downstream.
+
+### Removed
+- The **`cancellation`** feature (which forwarded to
+  `vcs-github`/`vcs-gitlab`/`vcs-gitea`) — cancellation is now core in
+  processkit 0.10, so `default_cancel_on` is always available without a feature.
 
 ### Fixed
 -

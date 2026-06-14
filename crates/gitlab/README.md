@@ -62,16 +62,16 @@ use vcs_gitlab::{GitLab, GitLabApi, MrCreate};
 
 Consumers depend on the `GitLabApi` trait and substitute a fake in tests — enable
 the `mock` feature for a `mockall`-generated `MockGitLabApi`, or inject a fake
-process runner with `GitLab::with_runner(processkit::ScriptedRunner::new()…)`:
+process runner with `GitLab::with_runner(processkit::testing::ScriptedRunner::new()…)`:
 
 ```rust
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_gitlab::{GitLab, GitLabApi};
 
 # async fn demo() {
     let json = r#"[{"iid":7,"title":"Add X","state":"opened"}]"#;
-    let glab = GitLab::with_runner(ScriptedRunner::new().on(["mr", "list"], Reply::ok(json)));
+    let glab = GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
     assert_eq!(glab.mr_list(Path::new(".")).await.unwrap()[0].iid, 7);
 # }
 ```

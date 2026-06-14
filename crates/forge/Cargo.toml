@@ -32,10 +32,6 @@ serde = { version = "1", features = ["derive"], optional = true }
 tracing = ["vcs-github/tracing", "vcs-gitlab/tracing", "vcs-gitea/tracing"]
 # Add `#[derive(Serialize)]` to the unified DTOs (`ForgePr`, `ForgeRepo`, …).
 serde = ["dep:serde"]
-# Forward to each wrapper's `cancellation`, so a consumer can build a cancellable
-# `GitHub`/`GitLab`/`Gitea` (via `default_cancel_on`) and pass it to
-# `Forge::for_github`/… — cancelling a long `run_watch`/fetch. Off by default.
-cancellation = ["vcs-github/cancellation", "vcs-gitlab/cancellation", "vcs-gitea/cancellation"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.
@@ -48,7 +44,7 @@ proptest = "1"
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
-# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# serde / stream) are documented (defaults alone hide them), and pass
 # `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

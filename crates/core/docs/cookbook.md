@@ -107,14 +107,13 @@ unified DTOs (it picks the binary; `gh`-specific bits like `run_watch` stay on
 ## Cancel a long-running watch / fetch
 
 `run_watch` blocks for the whole CI run; a `fetch`/`clone`/`push` over a dead
-network can hang for its full timeout. With the **`cancellation`** feature (off by
-default — enable `vcs-github/cancellation`, or `vcs-core`/`vcs-forge/cancellation`
-for the facades) a client built with `default_cancel_on(token)` carries that token
+network can hang for its full timeout. Cancellation is always available (no
+feature flag): a client built with `default_cancel_on(token)` carries that token
 into *every* command it runs, so one `token.cancel()` kills all of its in-flight
 calls — no new API, no per-call plumbing.
 
 ```rust,ignore
-// `CancellationToken` (under the `cancellation` feature) and `Error` are both
+// `CancellationToken` and `Error` are both
 // re-exported by each wrapper, so a consumer needn't depend on `processkit` directly.
 use vcs_github::{CancellationToken, Error, GitHub, GitHubApi};
 
@@ -294,7 +293,7 @@ canned process output through the real argv-building and parsing with a
 ```rust,ignore
 # use std::path::Path;
 use vcs_git::{Git, GitApi};
-use processkit::{RecordingRunner, Reply, ScriptedRunner};
+use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
 // 1. Code against the trait — the mock implements it too.
 async fn on_main(git: &dyn GitApi) -> bool {
@@ -303,7 +302,7 @@ async fn on_main(git: &dyn GitApi) -> bool {
 
 # async fn demo() -> Result<(), processkit::Error> {
 // 2. Feed canned output through the real command wiring (no binary, no repo).
-let git = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::ok("main\n")));
+let git = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")));
 assert!(on_main(&git).await);
 
 // 3. Record to assert the exact argv that was built.

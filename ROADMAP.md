@@ -21,10 +21,33 @@ links.
 
 ## Active roadmap (do now)
 
-The R1–R10 wave (2026-06-09 / 2026-06-10 sweeps) is **shipped** — summary below. With it
-cleared, the active list is empty; the next committed items get promoted from
-[`ideas/next-*`](ideas/) (forge `capabilities()`, `examples/`, MCP HTTP transport) when work
-resumes. Settled-against items live in [`decisions/`](decisions/).
+The R1–R10 wave (2026-06-09 / 2026-06-10) and the **processkit 0.10.1 migration**
+(2026-06-14) are **shipped** — summaries below. With them cleared, the active list is
+empty; the next committed items get promoted from [`ideas/next-*`](ideas/) (forge
+`capabilities()`, `examples/`, MCP HTTP transport) when work resumes. Settled-against
+items live in [`decisions/`](decisions/).
+
+### ✅ Shipped — processkit 0.10.1 migration (2026-06-14)
+
+Jumped the workspace from processkit 0.9.1 straight to **0.10.1** (cumulative over the
+real 0.9.2 + 0.10.0 tags — a major breaking release ahead of processkit's 1.0 freeze).
+Three mechanical sweeps plus targeted error-handling work, full gate green:
+
+- **Cancellation is now core.** processkit 0.10 removed its `cancellation` feature, so we
+  deleted the forwarding `cancellation` feature from all 8 vcs-* crates that had it and
+  ungated 12 `#[cfg(feature = "cancellation")]` sites — `default_cancel_on` /
+  `CancellationToken` / `Reply::pending()` are unconditional now (see §6.13).
+- **Test doubles moved to `processkit::testing`.** Import sweep across every crate's `src/`,
+  doctests, READMEs, and the `docs/*.md` guides.
+- **Program-aware cassettes.** `ScriptedRunner::on(...)` now leads its prefix with the
+  program name; ~206 `.on([...])` rules rewritten to `.on(["git"/"jj"/"gh"/"tea"/"glab", …])`
+  by helper context. A miss is now `Error::CassetteMiss` (not a not-found `Spawn`).
+- **Error reform adopted.** `Error::Timeout`/`Signalled` now carry partial `stdout`/`stderr`
+  (better fetch/kill diagnostics); `Invocation::cwd` is `Option<PathBuf>` (assertions
+  updated); added a `signalled_is_terminal_not_transient` classifier test in
+  `vcs-cli-support`. Re-exported `Error` changes are breaking for downstream — captured in
+  each crate's CHANGELOG. Consumers (`vcs-flow-rs`, `agent-workspace`) jump to 0.10.1 only
+  after the vcs-* release.
 
 ### ✅ Shipped — the R1–R10 wave (2026-06-10)
 
@@ -328,22 +351,24 @@ additive follow-ups, not a blocking wave.
 
 ### Upstream-gated (specs delivered to ProcessKit-rs)
 
-- **6.13 ✅ Cancellable operations — adopted (processkit 0.8).** The
-  client-cancellation spec landed in processkit 0.8: a **client-level**
-  `CliClient::default_cancel_on(token)` re-emitted on the `cli_client!` wrappers
-  (so `Git`/`Jj`/`GitHub`/… gain `default_cancel_on` when the `cancellation`
-  feature is on), plus `Reply::pending()` so the path is hermetically testable.
-  Adoption needed **zero new vcs-* API** exactly as predicted: an off-by-default
-  `cancellation` feature on each wrapper (forwarded by `vcs-core`/`vcs-forge`)
-  turns the builder on; a consumer builds a cancellable client and passes it
-  through the existing `Repo::from_git`/`Forge::for_github` constructors, then a
-  controller calls `token.cancel()` to kill every in-flight call (`Error::Cancelled`,
-  treated as terminal by the fetch-retry). Shipped with it: hermetic paused-clock
-  cancellation tests (`run_watch` in vcs-github, retried `fetch` in vcs-git, via
-  `Reply::pending()`), an explicit `Cancelled → not transient` classifier test, a
-  cookbook recipe, and the testing-guide pattern. (Per-command `Command::cancel_on`
-  in the object-safe `*Api` traits stays rejected — the client-level default is the
-  ergonomic, mock-friendly seam.)
+- **6.13 ✅ Cancellable operations — adopted, then promoted to core (processkit
+  0.8 → 0.10).** The client-cancellation spec landed in processkit 0.8 as an
+  opt-in feature; **processkit 0.10 made cancellation core** (the `cancellation`
+  feature was removed upstream), so we dropped the forwarding `cancellation`
+  feature from every vcs-* crate and ungated its `#[cfg]`s. A **client-level**
+  `CliClient::default_cancel_on(token)` is re-emitted on the `cli_client!`
+  wrappers (so `Git`/`Jj`/`GitHub`/… always expose `default_cancel_on`), plus
+  `Reply::pending()` for hermetic tests — all now unconditional, no feature flag.
+  Adoption needed **zero new vcs-* API** exactly as predicted: a consumer builds a
+  cancellable client and passes it through the existing `Repo::from_git`/
+  `Forge::for_github` constructors, then a controller calls `token.cancel()` to
+  kill every in-flight call (`Error::Cancelled`, treated as terminal by the
+  fetch-retry). Shipped with it: hermetic paused-clock cancellation tests
+  (`run_watch` in vcs-github, retried `fetch` in vcs-git, via `Reply::pending()`),
+  an explicit `Cancelled → not transient` classifier test, a cookbook recipe, and
+  the testing-guide pattern. (Per-command `Command::cancel_on` in the object-safe
+  `*Api` traits stays rejected — the client-level default is the ergonomic,
+  mock-friendly seam.)
 
 - **6.14 Other processkit 0.8 features — evaluated, shelved (no consumer).** The
   0.8 bump also offered streaming hardening (R1–R3: handler-panic isolation,
@@ -357,9 +382,10 @@ additive follow-ups, not a blocking wave.
   *was* adopted (see `vcs-jj`'s `workspace_roots`). Revisit the rest only when a
   consumer appears.
 
-  - **`vcs-mcp` cancellation — deferred (request-lifecycle plumbing, not a feature
-    flag).** The server deliberately has no `cancellation` feature: every client it
-    builds already carries a `default_timeout` (configurable, surfaces as
+  - **`vcs-mcp` cancellation — deferred (request-lifecycle plumbing, not a token
+    passthrough).** Cancellation is core as of processkit 0.10, so every client the
+    server builds *could* take a `default_cancel_on` token — but that isn't the gap.
+    Every client it builds already carries a `default_timeout` (configurable, surfaces as
     `Error::Timeout`), and it exposes no `run_watch` tool — so the unbounded-by-nature
     operation cancellation targets isn't reachable through mcp. The genuine gap is
     cancel-on-peer-disconnect / cancel-on-shutdown, which needs the server to own a

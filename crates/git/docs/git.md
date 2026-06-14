@@ -30,7 +30,7 @@ let git = Git::new().default_timeout(Duration::from_secs(30)); // every cmd → 
 
 - `Git::new()` — the production client over the real job-backed runner.
 - `Git::with_runner(runner)` — inject a fake `ProcessRunner` (e.g.
-  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+  `processkit::testing::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 - `default_timeout(Duration)` — builder; arms a per-command timeout.
 
 `new`, `with_runner`, and `default_timeout` all come from the

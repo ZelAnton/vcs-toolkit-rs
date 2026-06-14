@@ -38,10 +38,6 @@ tracing = ["vcs-git/tracing", "vcs-jj/tracing"]
 # Add `#[derive(Serialize)]` to the facade DTOs (`RepoSnapshot`, `FileChange`, …);
 # also enables it on the re-exported `vcs-diff` types (`ChangeKind`/`DiffStat`).
 serde = ["dep:serde", "vcs-diff/serde"]
-# Forward to the backends' `cancellation`, so a `vcs-core`-only consumer can build
-# a cancellable `Git`/`Jj` (via `default_cancel_on`) and pass it to
-# `Repo::from_git`/`from_jj`. Off by default.
-cancellation = ["vcs-git/cancellation", "vcs-jj/cancellation"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.
@@ -54,7 +50,7 @@ vcs-testkit = { path = "../testkit" }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
-# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# serde / stream) are documented (defaults alone hide them), and pass
 # `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

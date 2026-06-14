@@ -326,19 +326,19 @@ let git = Git::new(); // real, job-backed git
   `MockGitApi` for stubbing whole methods (`expect_current_branch().returning(…)`).
   A consumer enables it only under `[dev-dependencies]`, so `mockall` never lands
   in a release build.
-- **Inject a runner** — `Git::with_runner(processkit::ScriptedRunner::new()…)`
+- **Inject a runner** — `Git::with_runner(processkit::testing::ScriptedRunner::new()…)`
   feeds canned binary output through the *real* argument-building and parsing, so
   a test exercises the actual command wiring without spawning anything. Wrap it in
-  a `processkit::RecordingRunner` to assert the exact command that was built — full
+  a `processkit::testing::RecordingRunner` to assert the exact command that was built — full
   args, cwd, env, and even that a flag is *absent*:
 
   ```rust
-  use processkit::{Reply, ScriptedRunner};
+  use processkit::testing::{Reply, ScriptedRunner};
   use std::path::Path;
   use vcs_git::{Git, GitApi};
 
   # async fn demo() {
-      let git = Git::with_runner(ScriptedRunner::new().on(["status"], Reply::ok(" M src/lib.rs\0")));
+      let git = Git::with_runner(ScriptedRunner::new().on(["git", "status"], Reply::ok(" M src/lib.rs\0")));
       let entries = git.status(Path::new(".")).await.unwrap();
       assert_eq!(entries[0].code, " M");
   # }

@@ -713,7 +713,7 @@ impl ServerHandler for VcsMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{Reply, ScriptedRunner};
+    use processkit::testing::{Reply, ScriptedRunner};
     use vcs_core::vcs_git::Git;
 
     /// A git-backed server over a scripted runner — no real binary, no forge.
@@ -732,7 +732,7 @@ mod tests {
     #[tokio::test]
     async fn read_tool_returns_dto_json() {
         let server = git_server(
-            ScriptedRunner::new().on(["rev-parse"], Reply::ok("main\n")),
+            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")),
             WriteGate::None,
         );
         let out = server.repo_current_branch().await.expect("tool ok");
@@ -743,7 +743,7 @@ mod tests {
     #[tokio::test]
     async fn read_tool_works_in_readonly_mode() {
         let server = git_server(
-            ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0")),
+            ScriptedRunner::new().on(["git", "status"], Reply::ok(" M a.rs\0")),
             WriteGate::None,
         );
         let out = server.repo_status().await.expect("status ok");
@@ -773,7 +773,7 @@ mod tests {
     #[tokio::test]
     async fn mutation_reaches_runner_with_allow_write() {
         let server = git_server(
-            ScriptedRunner::new().on(["checkout"], Reply::ok("")),
+            ScriptedRunner::new().on(["git", "checkout"], Reply::ok("")),
             WriteGate::All,
         );
         let out = server
@@ -800,7 +800,7 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
 
         let server = git_server(
-            ScriptedRunner::new().on(["push"], Reply::ok("")),
+            ScriptedRunner::new().on(["git", "push"], Reply::ok("")),
             WriteGate::All,
         );
         let out = server
@@ -823,8 +823,8 @@ mod tests {
         );
         let server = git_server(
             ScriptedRunner::new()
-                .on(["checkout"], Reply::ok(""))
-                .on(["rev-parse"], Reply::ok("main\n")),
+                .on(["git", "checkout"], Reply::ok(""))
+                .on(["git", "rev-parse"], Reply::ok("main\n")),
             gate,
         );
 
@@ -882,7 +882,7 @@ mod tests {
     async fn forge_issue_tools_route_and_gate() {
         let json = r#"[{"number":3,"title":"Bug","state":"OPEN"}]"#;
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["issue", "list"], Reply::ok(json)),
+            ScriptedRunner::new().on(["gh", "issue", "list"], Reply::ok(json)),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -966,7 +966,7 @@ mod tests {
         use rmcp::model::CallToolRequestParams;
 
         let server = git_server(
-            ScriptedRunner::new().on(["rev-parse"], Reply::ok("main\n")),
+            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")),
             WriteGate::None,
         );
         let (server_t, client_t) = tokio::io::duplex(4096);

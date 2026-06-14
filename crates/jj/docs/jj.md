@@ -30,7 +30,7 @@ let jj = Jj::new().default_timeout(Duration::from_secs(10)); // every cmd → Er
 
 - `Jj::new()` — the production client over the real job-backed runner.
 - `Jj::with_runner(runner)` — inject a fake `ProcessRunner` (e.g.
-  `processkit::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
+  `processkit::testing::ScriptedRunner`) for hermetic tests; see [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 - `default_timeout(Duration)` — builder; arms a per-command timeout.
 
 All three come from the `processkit::cli_client!` macro that defines `Jj`.

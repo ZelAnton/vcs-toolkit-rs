@@ -28,7 +28,7 @@ A minimal snippet or steps. The smaller, the faster it gets fixed.
 - OS + version: <!-- Windows / Linux (distro) / macOS / BSD -->
 - Rust version (`rustc --version`):
 - Underlying CLI + version, if relevant: <!-- `git --version` / `jj --version` / `gh` / `glab` / `tea` -->
-- Relevant feature flags: <!-- mock, tracing, cancellation, serde, stream, … -->
+- Relevant feature flags: <!-- mock, tracing, serde, stream, … -->
 
 **Additional context**
 Logs (the `tracing` feature, if enabled — but **never paste secrets / tokens / argv / env**),

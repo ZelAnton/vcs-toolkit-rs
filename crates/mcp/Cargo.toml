@@ -48,7 +48,7 @@ vcs-testkit = { path = "../testkit" }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
-# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# serde / stream) are documented (defaults alone hide them), and pass
 # `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

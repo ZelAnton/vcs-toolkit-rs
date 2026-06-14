@@ -133,11 +133,14 @@ pub fn is_nothing_to_commit(err: &Error) -> bool {
 /// Whether a failed `fetch`/`fetch_remote_branch`/`remote_branch_exists` looks
 /// transient (DNS, timeout, dropped connection) and is worth retrying.
 pub fn is_transient_fetch_error(err: &Error) -> bool {
-    // A processkit-level timeout (a `.timeout()`-bounded run that expired) carries
-    // no captured output but is inherently transient; treat it as retryable too. So
-    // is an io-level transient from the spawn itself (interrupted / would-block /
-    // busy), which processkit classifies via `Error::is_transient()` (it covers
-    // `Spawn`/`Io`, not `Exit`, so it composes cleanly with the marker scan below).
+    // A processkit-level timeout (a `.timeout()`-bounded run that expired) is
+    // inherently transient; treat it as retryable too, regardless of any partial
+    // output it captured before the deadline (as of processkit 0.10 a `Timeout`
+    // carries the partial `stdout`/`stderr`, but the retry decision doesn't depend
+    // on it). So is an io-level transient from the spawn itself (interrupted /
+    // would-block / busy), which processkit classifies via `Error::is_transient()`
+    // (it covers `Spawn`/`Io`, not `Exit`, so it composes cleanly with the marker
+    // scan below).
     matches!(err, Error::Timeout { .. })
         || err.is_transient()
         || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
@@ -205,10 +208,14 @@ mod tests {
         assert!(is_transient_fetch_error(&dns));
         assert!(!is_transient_fetch_error(&nothing));
 
-        // A processkit timeout (no captured output) is transient too.
+        // A processkit timeout is transient too. (As of processkit 0.10 a `Timeout`
+        // carries whatever partial `stdout`/`stderr` was captured before the
+        // deadline; we still treat it as unconditionally retryable regardless.)
         let timeout = Error::Timeout {
             program: "git".into(),
             timeout: Duration::from_secs(10),
+            stdout: String::new(),
+            stderr: String::new(),
         };
         assert!(is_transient_fetch_error(&timeout));
     }
@@ -260,10 +267,10 @@ mod tests {
         assert!(is_transient_fetch_error(&transient));
     }
 
-    // processkit 0.7's `Error` is `#[non_exhaustive]` and grows variants over
-    // time (`NotReady`/`Unsupported` now; `Cancelled`/`ResourceLimit` behind
-    // features). Unfamiliar variants must fall through every classifier to
-    // "no" — a cancelled or unsupported run is neither a conflict, nor a clean
+    // processkit's `Error` is `#[non_exhaustive]` and grows variants over time
+    // (`NotReady`/`Unsupported`/`CassetteMiss`/`NotFound`/`Signalled`/`Cancelled`/
+    // `ResourceLimit`). Unfamiliar variants must fall through every classifier to
+    // "no" — a not-ready or unsupported run is neither a conflict, nor a clean
     // tree, nor worth a fetch retry.
     #[test]
     fn unfamiliar_error_variants_are_not_classified() {
@@ -281,13 +288,12 @@ mod tests {
         }
     }
 
-    // processkit 0.8's `cancellation` feature makes `Error::Cancelled` reachable
-    // (a client-level `default_cancel_on` killing an in-flight run). It must fall
-    // through every classifier to "no" — a cancelled fetch was *deliberately*
-    // stopped, so replaying it would fight the cancellation. (Behaviour already
-    // held via the `#[non_exhaustive]` fall-through above; this pins it as a
-    // first-class assertion now that the variant can be constructed.)
-    #[cfg(feature = "cancellation")]
+    // `Error::Cancelled` (a client-level `default_cancel_on` killing an in-flight
+    // run; always available since cancellation became core in processkit 0.10) must
+    // fall through every classifier to "no" — a cancelled fetch was *deliberately*
+    // stopped, so replaying it would fight the cancellation. (Behaviour already held
+    // via the `#[non_exhaustive]` fall-through above; this pins it as a first-class
+    // assertion.)
     #[test]
     fn cancelled_is_not_transient_or_otherwise_classified() {
         let cancelled = Error::Cancelled {
@@ -296,5 +302,27 @@ mod tests {
         assert!(!is_transient_fetch_error(&cancelled));
         assert!(!is_merge_conflict(&cancelled));
         assert!(!is_nothing_to_commit(&cancelled));
+    }
+
+    // `Error::Signalled` (a process killed by a signal — e.g. an external SIGTERM/
+    // SIGKILL, surfaced first-class since processkit 0.9.2 and carrying partial
+    // `stdout`/`stderr` since 0.10) is *terminal*, not transient: a deliberate kill
+    // should not be auto-retried, and a signal death is neither a merge conflict nor
+    // a clean tree. processkit's own `is_transient()` agrees (false for `Signalled`),
+    // so it falls through every classifier to "no" — pinned here, including the case
+    // where the captured stderr happens to contain an otherwise-transient marker (a
+    // killed fetch is still not ours to silently replay).
+    #[test]
+    fn signalled_is_terminal_not_transient() {
+        let signalled = Error::Signalled {
+            program: "git".into(),
+            signal: Some(15),
+            stdout: String::new(),
+            stderr: "fatal: unable to access: Could not resolve host: x".into(),
+        };
+        assert!(!signalled.is_transient());
+        assert!(!is_transient_fetch_error(&signalled));
+        assert!(!is_merge_conflict(&signalled));
+        assert!(!is_nothing_to_commit(&signalled));
     }
 }

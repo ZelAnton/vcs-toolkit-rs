@@ -71,7 +71,7 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
   in processkit 0.7 (readiness probes; platform-unsupported operations). The
   wrappers never raise them today, but they can reach you when you drive
   processkit directly. More variants exist behind processkit features
-  (`Cancelled` under `cancellation`, `ResourceLimit` under `limits`) — one more
+  (`ResourceLimit` under `limits`; `Cancelled` is always available) — one more
   reason the catch-all arm is mandatory. The toolkit's error classifiers treat
   every unfamiliar variant as "no" (not a conflict, not transient).
 
@@ -116,7 +116,8 @@ Four seams, no extra configuration:
 `rec.calls()` — the full argv, cwd, and env of every invocation, after the fact.
 
 ```rust,ignore
-use processkit::{JobRunner, RecordingRunner};
+use processkit::JobRunner;
+use processkit::testing::RecordingRunner;
 use vcs_git::{Git, GitApi};
 
 # async fn demo(repo: &std::path::Path) -> Result<(), processkit::Error> {
@@ -153,12 +154,12 @@ nothing and answers everything, so a whole flow can be exercised without touchin
 a repository; add `.on(…)` rules for the calls that need realistic replies.
 
 ```rust,ignore
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use vcs_git::Git;
 
 # fn demo() {
 let runner = ScriptedRunner::new()
-    .on(["status"], Reply::ok(" M src/lib.rs\0")) // realistic where it matters
+    .on(["git", "status"], Reply::ok(" M src/lib.rs\0")) // realistic where it matters
     .fallback(Reply::ok(""));                     // everything else: answer, run nothing
 let git = Git::with_runner(runner);
 let _ = git;

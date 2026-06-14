@@ -118,7 +118,7 @@
 //!
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
 //! `MockJjApi` (stub whole methods), or inject a
-//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`Jj::with_runner`] to
+//! [`ScriptedRunner`](processkit::testing::ScriptedRunner) with [`Jj::with_runner`] to
 //! exercise the *real* argv-building and parsing against canned output. The
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
@@ -147,10 +147,8 @@ use processkit::ProcessRunner;
 // Re-export the processkit types in this crate's public API (also brings
 // `Error`/`Result`/`ProcessResult` into scope here).
 pub use processkit::{Error, ProcessResult, Result};
-// Re-exported under the `cancellation` feature so a consumer can name the token
-// for `default_cancel_on` without taking a direct `processkit` dependency.
-#[cfg(feature = "cancellation")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
+// Re-exported so a consumer can name the token for `default_cancel_on` without
+// taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;
 
 pub mod conflict;
@@ -1649,7 +1647,7 @@ pub mod blocking {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_jj() {
@@ -1686,13 +1684,13 @@ mod tests {
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[4].args_str(), calls[5].args_str());
         assert_eq!(calls[6].args_str(), calls[7].args_str());
-        assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
+        assert_eq!(calls[1].cwd.as_deref(), Some(dir));
     }
 
     #[tokio::test]
     async fn workspace_list_parses_template_rows() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
-            ["workspace", "list"],
+            ["jj", "workspace", "list"],
             Reply::ok("default\te2aa3420\tmain\nws1\t12345678\t\n"),
         ));
         let got = jj.workspace_list(Path::new(".")).await.expect("list");
@@ -1711,15 +1709,15 @@ mod tests {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(
-                    ["workspace", "root", "--name", "default"],
+                    ["jj", "workspace", "root", "--name", "default"],
                     Reply::ok("/repo\n"),
                 )
                 .on(
-                    ["workspace", "root", "--name", "ws1"],
+                    ["jj", "workspace", "root", "--name", "ws1"],
                     Reply::ok("/repo/ws1\n"),
                 )
                 .on(
-                    ["workspace", "root", "--name", "gone"],
+                    ["jj", "workspace", "root", "--name", "gone"],
                     Reply::fail(1, "Error: No such workspace"),
                 ),
         );
@@ -1925,7 +1923,7 @@ mod tests {
     #[tokio::test]
     async fn bookmarks_all_parses_local_and_remote() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
-            ["bookmark", "list"],
+            ["jj", "bookmark", "list"],
             Reply::ok("main\t\t0\tabc123\nmain\torigin\t1\tabc123\n"),
         ));
         let refs = jj.bookmarks_all(Path::new(".")).await.unwrap();
@@ -1963,7 +1961,7 @@ mod tests {
     #[tokio::test]
     async fn status_parses_diff_summary() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
-            ["diff", "-r", "@", "--summary"],
+            ["jj", "diff", "-r", "@", "--summary"],
             Reply::ok("M a.rs\nA b.rs\n"),
         ));
         let entries = jj.status(Path::new(".")).await.expect("status");
@@ -1975,7 +1973,7 @@ mod tests {
     #[tokio::test]
     async fn status_text_is_raw_jj_status() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["status"], Reply::ok("Working copy changes:\n")),
+            ScriptedRunner::new().on(["jj", "status"], Reply::ok("Working copy changes:\n")),
         );
         assert!(
             jj.status_text(Path::new("."))
@@ -1987,7 +1985,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_args_forwards_str_slices() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["root"], Reply::ok("/r\n")));
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "root"], Reply::ok("/r\n")));
         assert_eq!(jj.run_args(&["root"]).await.unwrap(), "/r");
     }
 
@@ -2028,15 +2026,15 @@ mod tests {
 
     #[tokio::test]
     async fn is_conflicted_reads_template_flag() {
-        let yes = Jj::with_runner(ScriptedRunner::new().on(["log"], Reply::ok("1\n")));
+        let yes = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("1\n")));
         assert!(yes.is_conflicted(Path::new("."), "@").await.unwrap());
-        let no = Jj::with_runner(ScriptedRunner::new().on(["log"], Reply::ok("0\n")));
+        let no = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("0\n")));
         assert!(!no.is_conflicted(Path::new("."), "@").await.unwrap());
     }
 
     #[tokio::test]
     async fn commit_count_counts_template_lines() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["log"], Reply::ok("a\nb\nc\n")));
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("a\nb\nc\n")));
         assert_eq!(jj.commit_count(Path::new("."), "::@").await.unwrap(), 3);
     }
 
@@ -2058,7 +2056,7 @@ mod tests {
     async fn resolve_list_distinguishes_no_conflicts_from_errors() {
         // The benign "no conflicts" non-zero exit → empty list.
         let none = Jj::with_runner(ScriptedRunner::new().on(
-            ["resolve"],
+            ["jj", "resolve"],
             Reply::fail(2, "Error: No conflicts found at this revision"),
         ));
         assert!(
@@ -2069,13 +2067,13 @@ mod tests {
         );
         // A real failure (e.g. bad revset) must surface, not read as "no conflicts".
         let bad = Jj::with_runner(ScriptedRunner::new().on(
-            ["resolve"],
+            ["jj", "resolve"],
             Reply::fail(1, "Error: Revision `bogus` doesn't exist"),
         ));
         assert!(bad.resolve_list(Path::new("."), "bogus").await.is_err());
         // Success with conflicts → parsed paths.
         let some = Jj::with_runner(
-            ScriptedRunner::new().on(["resolve"], Reply::ok("a.rs    2-sided conflict\n")),
+            ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
         );
         assert_eq!(
             some.resolve_list(Path::new("."), "@").await.unwrap(),
@@ -2085,7 +2083,7 @@ mod tests {
 
     #[tokio::test]
     async fn current_bookmark_takes_first_or_none() {
-        let some = Jj::with_runner(ScriptedRunner::new().on(["log"], Reply::ok("main\n")));
+        let some = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\n")));
         assert_eq!(
             some.current_bookmark(Path::new("."))
                 .await
@@ -2093,7 +2091,7 @@ mod tests {
                 .as_deref(),
             Some("main")
         );
-        let none = Jj::with_runner(ScriptedRunner::new().on(["log"], Reply::ok("\n")));
+        let none = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\n")));
         assert!(
             none.current_bookmark(Path::new("."))
                 .await
@@ -2106,7 +2104,7 @@ mod tests {
     #[tokio::test]
     async fn current_change_parses_scripted_output() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello jj\n")),
+            ScriptedRunner::new().on(["jj", "log"], Reply::ok("kztuxlro\t38e00654\tfalse\thello jj\n")),
         );
         let change = jj
             .current_change(Path::new("."))
@@ -2123,7 +2121,7 @@ mod tests {
     #[tokio::test]
     async fn git_push_appends_bookmark_flag() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["git", "push", "-b", "feature"], Reply::ok("")),
+            ScriptedRunner::new().on(["jj", "git", "push", "-b", "feature"], Reply::ok("")),
         );
         jj.git_push(Path::new("."), Some("feature".to_string()))
             .await
@@ -2133,7 +2131,7 @@ mod tests {
     // Without a bookmark, the run is a bare `git push`.
     #[tokio::test]
     async fn git_push_without_bookmark_is_bare() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["git", "push"], Reply::ok("")));
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "git", "push"], Reply::ok("")));
         jj.git_push(Path::new("."), None).await.expect("bare push");
     }
 
@@ -2171,9 +2169,9 @@ mod tests {
     async fn transaction_restores_op_head_on_error() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["op", "log"], Reply::ok("abc123\n"))
-                .on(["op", "restore"], Reply::ok(""))
-                .on(["describe"], Reply::fail(1, "boom")),
+                .on(["jj", "op", "log"], Reply::ok("abc123\n"))
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "describe"], Reply::fail(1, "boom")),
         );
         let jj = Jj::with_runner(&rec);
         let res = jj
@@ -2196,8 +2194,8 @@ mod tests {
     async fn transaction_keeps_changes_on_success() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["op", "log"], Reply::ok("abc123\n"))
-                .on(["describe"], Reply::ok("")),
+                .on(["jj", "op", "log"], Reply::ok("abc123\n"))
+                .on(["jj", "describe"], Reply::ok("")),
         );
         let jj = Jj::with_runner(&rec);
         jj.transaction(
@@ -2220,15 +2218,15 @@ mod tests {
         let dir = Path::new("/repo");
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["op", "log"], Reply::ok("op9\n"))
-                .on(["new"], Reply::ok("")),
+                .on(["jj", "op", "log"], Reply::ok("op9\n"))
+                .on(["jj", "new"], Reply::ok("")),
         );
         let jj = Jj::with_runner(&rec);
         jj.at(dir)
             .transaction(|tx| async move { tx.new_change("x").await })
             .await
             .expect("transaction");
-        assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir.as_os_str()));
+        assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir));
     }
 
     // The injection guard: a flag-shaped value in any exposed positional slot
@@ -2290,19 +2288,20 @@ mod tests {
     // gates precisely on the validated 0.38 floor.
     #[tokio::test]
     async fn capabilities_parse_and_gate_versions() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.38.0\n")));
+        let jj =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "--version"], Reply::ok("jj 0.38.0\n")));
         let caps = jj.capabilities().await.expect("capabilities");
         assert!(caps.is_supported());
         caps.ensure_supported().expect("supported");
 
         // A dev-build suffix parses; an older release fails the precise gate.
         let dev = Jj::with_runner(
-            ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.39.0-dev+abc123\n")),
+            ScriptedRunner::new().on(["jj", "--version"], Reply::ok("jj 0.39.0-dev+abc123\n")),
         );
         assert!(dev.capabilities().await.unwrap().is_supported());
 
         let old =
-            Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("jj 0.35.0\n")));
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "--version"], Reply::ok("jj 0.35.0\n")));
         let caps = old.capabilities().await.expect("capabilities");
         assert!(!caps.is_supported());
         let err = caps.ensure_supported().expect_err("unsupported");
@@ -2317,7 +2316,8 @@ mod tests {
             "names the found version: {message}"
         );
 
-        let garbage = Jj::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("nope")));
+        let garbage =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "--version"], Reply::ok("nope")));
         assert!(matches!(
             garbage.capabilities().await.unwrap_err(),
             Error::Parse { .. }
@@ -2416,7 +2416,7 @@ mod tests {
     #[tokio::test]
     async fn op_log_parses_template_rows() {
         let rec = RecordingRunner::new(ScriptedRunner::new().on(
-            ["op", "log"],
+            ["jj", "op", "log"],
             Reply::ok("abc\tu@h\t2026-06-05T10:00:00+0200\tnew empty commit\n"),
         ));
         let jj = Jj::with_runner(&rec);
@@ -2433,7 +2433,7 @@ mod tests {
     #[tokio::test]
     async fn evolog_uses_commit_context_template() {
         let rec = RecordingRunner::new(
-            ScriptedRunner::new().on(["evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
+            ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
         );
         let jj = Jj::with_runner(&rec);
         let rows = jj.evolog(Path::new("."), "@", 10).await.expect("evolog");
@@ -2456,10 +2456,10 @@ mod tests {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(
-                    ["file", "annotate"],
+                    ["jj", "file", "annotate"],
                     Reply::ok("kz\tline one\nkz\tline two"),
                 )
-                .on(["file", "show"], Reply::ok("content\n")),
+                .on(["jj", "file", "show"], Reply::ok("content\n")),
         );
         let jj = Jj::with_runner(&rec);
         let lines = jj
@@ -2571,7 +2571,7 @@ mod tests {
     #[tokio::test]
     async fn diff_parses_scripted_output() {
         let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
-        let jj = Jj::with_runner(ScriptedRunner::new().on(["diff"], Reply::ok(out)));
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(out)));
         let files = jj
             .diff(Path::new("."), DiffSpec::Rev("@-".into()))
             .await

@@ -458,7 +458,7 @@ mod tests {
     // propagates and the dir is gone.
     #[tokio::test]
     async fn create_worktree_rolls_back_when_bookmark_step_fails() {
-        use processkit::{Reply, ScriptedRunner};
+        use processkit::testing::{Reply, ScriptedRunner};
         use vcs_jj::Jj;
         use vcs_testkit::TempDir;
 
@@ -471,12 +471,12 @@ mod tests {
 
         let jj = Jj::with_runner(
             ScriptedRunner::new()
-                .on(["workspace", "add"], Reply::ok(""))
+                .on(["jj", "workspace", "add"], Reply::ok(""))
                 .on(
-                    ["bookmark", "create"],
+                    ["jj", "bookmark", "create"],
                     Reply::fail(1, "bookmark already exists\n"),
                 )
-                .on(["workspace", "forget"], Reply::ok("")),
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
         );
 
         let result = create_worktree(&jj, repo, &wt, "feature", "@").await;

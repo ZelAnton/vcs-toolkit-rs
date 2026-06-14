@@ -65,16 +65,16 @@ use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
 
 Consumers depend on the `GiteaApi` trait and substitute a fake in tests — enable
 the `mock` feature for a `mockall`-generated `MockGiteaApi`, or inject a fake
-process runner with `Gitea::with_runner(processkit::ScriptedRunner::new()…)`:
+process runner with `Gitea::with_runner(processkit::testing::ScriptedRunner::new()…)`:
 
 ```rust
-use processkit::{Reply, ScriptedRunner};
+use processkit::testing::{Reply, ScriptedRunner};
 use std::path::Path;
 use vcs_gitea::{Gitea, GiteaApi};
 
 # async fn demo() {
     let json = r#"[{"number":7,"title":"Add X","state":"open"}]"#;
-    let tea = Gitea::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
+    let tea = Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
     assert_eq!(tea.pr_list(Path::new(".")).await.unwrap()[0].number, 7);
 # }
 ```

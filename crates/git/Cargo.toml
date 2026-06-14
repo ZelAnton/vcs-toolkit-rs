@@ -33,12 +33,6 @@ mockall = { version = "0.13", optional = true }
 mock = ["dep:mockall", "processkit/mock"]
 # Emit a `tracing` event per command run (forwards to processkit's `tracing`).
 tracing = ["processkit/tracing"]
-# Off by default. Pulls in processkit's `cancellation` feature, which makes the
-# `cli_client!` macro emit `Git::default_cancel_on(token)` — a consumer can build
-# a cancellable client (every command it runs dies when the token fires) and pass
-# it through `Repo::from_git`. No new vcs-* API; `CancellationToken` is re-exported
-# from `processkit`.
-cancellation = ["processkit/cancellation"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests; `time` + `test-util`
@@ -53,7 +47,7 @@ proptest = "1"
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
-# cancellation / serde / stream) are documented (defaults alone hide them), and pass
+# serde / stream) are documented (defaults alone hide them), and pass
 # `--cfg docsrs` so feature-gated items render an "Available on feature `x`" badge.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

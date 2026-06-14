@@ -47,20 +47,20 @@ authors = ["Anton Zhelezniakou"]
 # External job-backed process launcher (Windows Job Object / Linux cgroup v2, so a
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
-# test seams the wrappers build on. Was the internal `vcs-process` crate; now the
-# published `processkit`. The 0.8 floor brought the `CliClient` verb rename
-# (`text`→`run`, `capture`→`output`, `unit`→`run_unit`, `code`→`exit_code`;
-# `ProcessResult::code()` unchanged), the `cancellation` feature
-# (`CliClient::default_cancel_on` + `Reply::pending()`), and the feature-free
-# `output_all` bounded fan-out (`vcs-jj`'s `workspace_roots`). The 0.9.1 floor adds
-# the fix for our HIGH classification bug — **`Error::Exit` now carries the FULL
-# `stdout`/`stderr`** (no 4 KiB truncation; the one-line `Display` stays bounded), so
-# the error classifiers see the whole stream again — plus additive `ok_codes`,
-# `timeout_grace`, `duration()`, `command_line()`, and `Error::is_transient()`. Its one
-# breaking item (five option-structs — `RestartPolicy`/`OverflowMode`/
-# `OutputBufferPolicy`/`ResourceLimits`/`ProcessGroupOptions` — became
-# `#[non_exhaustive]`) does not touch us: none are constructed here.
-processkit = "0.9.1"
+# test seams the wrappers build on (under `processkit::testing` as of 0.10). Was the
+# internal `vcs-process` crate; now the published `processkit`. The 0.10.1 floor is a
+# major breaking release (cumulative over 0.9.2 + 0.10.0) ahead of the 1.0 freeze.
+# What touches us: (1) **cancellation is now core** — the `cancellation` feature was
+# removed, so `default_cancel_on`/`CancellationToken`/`Reply::pending` are always
+# available (we dropped our forwarding `cancellation` features and ungated their
+# `#[cfg]`s); (2) **test doubles moved to `processkit::testing`** (import-path sweep);
+# (3) **`ScriptedRunner::on` is program-aware** — the cassette prefix now leads with
+# the program name (`.on(["git", "status"], …)`), a miss is `Error::CassetteMiss`;
+# (4) **`Error::Timeout`/`Signalled` now carry partial `stdout`/`stderr`** and
+# `diagnostic()` covers both (better fetch/kill diagnostics); `Error::Signalled`/
+# `NotFound` are first-class, the blanket `From<io::Error>` is gone (we never relied
+# on it). Retains the 0.9.1 full-`Error::Exit`-stream fix our classifiers depend on.
+processkit = "0.10.1"
 
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.

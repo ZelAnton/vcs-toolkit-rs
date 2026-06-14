@@ -90,7 +90,7 @@
 //!
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
 //! `MockGitHubApi` (stub whole methods), or inject a
-//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`GitHub::with_runner`]
+//! [`ScriptedRunner`](processkit::testing::ScriptedRunner) with [`GitHub::with_runner`]
 //! to exercise the *real* argv-building and parsing against canned output — no
 //! `gh` binary or network needed, so it runs on CI. The cross-cutting testing
 //! patterns live in
@@ -114,10 +114,9 @@ use processkit::ProcessRunner;
 // Re-export the processkit types in this crate's public API (also brings
 // `Error`/`Result`/`ProcessResult` into scope here).
 pub use processkit::{Error, ProcessResult, Result};
-// Re-exported under the `cancellation` feature so a consumer can name the token
-// for `default_cancel_on` without taking a direct `processkit` dependency.
-#[cfg(feature = "cancellation")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
+// Re-exported so a consumer can name the token for `default_cancel_on` without
+// taking a direct `processkit` dependency. (Cancellation is core in processkit
+// 0.10 — always available, no feature.)
 pub use processkit::CancellationToken;
 
 mod parse;
@@ -887,7 +886,7 @@ github_at_forwarders! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_gh() {
@@ -918,12 +917,12 @@ mod tests {
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
-        assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
+        assert_eq!(calls[1].cwd.as_deref(), Some(dir));
     }
 
     #[tokio::test]
     async fn run_args_forwards_str_slices() {
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["api", "user"], Reply::ok("ok\n")));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "api", "user"], Reply::ok("ok\n")));
         assert_eq!(gh.run_args(&["api", "user"]).await.unwrap(), "ok");
     }
 
@@ -932,7 +931,7 @@ mod tests {
     #[tokio::test]
     async fn pr_list_parses_scripted_json() {
         let json = r#"[{"number":7,"title":"Add X","state":"OPEN","headRefName":"feat/x","baseRefName":"main","url":"u"}]"#;
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
         let prs = gh.pr_list(Path::new(".")).await.expect("pr_list");
         assert_eq!(prs.len(), 1);
         assert_eq!(prs[0].number, 7);
@@ -944,14 +943,14 @@ mod tests {
     // (an unusual exit code must not be mistaken for a hard failure).
     #[tokio::test]
     async fn auth_status_reads_exit_code() {
-        let yes = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Reply::ok("")));
+        let yes = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::ok("")));
         assert!(yes.auth_status().await.unwrap());
         let no = GitHub::with_runner(
-            ScriptedRunner::new().on(["auth"], Reply::fail(1, "not logged in")),
+            ScriptedRunner::new().on(["gh", "auth"], Reply::fail(1, "not logged in")),
         );
         assert!(!no.auth_status().await.unwrap());
         // An unexpected exit code (e.g. 2) is still just "not authenticated".
-        let weird = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Reply::fail(2, "boom")));
+        let weird = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::fail(2, "boom")));
         assert!(!weird.auth_status().await.unwrap());
     }
 
@@ -960,7 +959,7 @@ mod tests {
     // Relies on processkit surfacing a timed-out run as `Error::Timeout`.
     #[tokio::test]
     async fn auth_status_errors_on_timeout() {
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["auth"], Reply::timeout()));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::timeout()));
         assert!(matches!(
             gh.auth_status().await.unwrap_err(),
             Error::Timeout { .. }
@@ -973,7 +972,7 @@ mod tests {
     async fn pr_create_appends_base_and_returns_url() {
         let gh = GitHub::with_runner(ScriptedRunner::new().on(
             [
-                "pr", "create", "--title", "T", "--body", "B", "--base", "main",
+                "gh", "pr", "create", "--title", "T", "--body", "B", "--base", "main",
             ],
             Reply::ok("https://gh/pr/1\n"),
         ));
@@ -988,7 +987,7 @@ mod tests {
     // `--base` — so a PR can target an arbitrary source→target pair.
     #[tokio::test]
     async fn pr_create_appends_head_and_base() {
-        use processkit::RecordingRunner;
+        use processkit::testing::RecordingRunner;
         let rec = RecordingRunner::replying(Reply::ok("https://gh/pr/9\n"));
         let gh = GitHub::with_runner(&rec);
         gh.pr_create(
@@ -1009,7 +1008,7 @@ mod tests {
     // url available on each result).
     #[tokio::test]
     async fn pr_list_for_branch_filters_and_parses() {
-        use processkit::RecordingRunner;
+        use processkit::testing::RecordingRunner;
         let json = r#"[{"number":9,"title":"Merge feat","state":"OPEN","headRefName":"feat/x","baseRefName":"main","url":"https://gh/pr/9"}]"#;
         let rec = RecordingRunner::replying(Reply::ok(json));
         let gh = GitHub::with_runner(&rec);
@@ -1074,8 +1073,7 @@ mod tests {
     // can assert flag *absence* and the cwd — which prefix matching can't.
     #[tokio::test]
     async fn pr_create_omits_base_when_none() {
-        use processkit::RecordingRunner;
-        use std::ffi::OsStr;
+        use processkit::testing::RecordingRunner;
         let rec = RecordingRunner::replying(Reply::ok("https://gh/pr/2\n"));
         let gh = GitHub::with_runner(&rec);
         let url = gh
@@ -1085,7 +1083,7 @@ mod tests {
         assert_eq!(url, "https://gh/pr/2");
 
         let call = rec.only_call();
-        assert_eq!(call.cwd.as_deref(), Some(OsStr::new("/repo")));
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
         assert_eq!(
             call.args_str(),
             ["pr", "create", "--title", "T", "--body", "B"]
@@ -1154,7 +1152,7 @@ mod tests {
             Reply::fail(8, "checks pending").with_stdout(json),
             Reply::fail(1, "some checks failed").with_stdout(json),
         ] {
-            let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "checks"], reply));
+            let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "checks"], reply));
             let checks = gh.pr_checks(Path::new("."), 7).await.expect("pr_checks");
             assert_eq!(checks.len(), 1);
             assert_eq!(checks[0].bucket, "pass");
@@ -1163,7 +1161,7 @@ mod tests {
         // A PR with no checks at all: gh exits 1 with NO JSON and a
         // "no checks reported" message — an empty list, not an error.
         let gh = GitHub::with_runner(ScriptedRunner::new().on(
-            ["pr", "checks"],
+            ["gh", "pr", "checks"],
             Reply::fail(1, "no checks reported on the 'feat/x' branch"),
         ));
         assert!(
@@ -1174,7 +1172,7 @@ mod tests {
         );
         // …while a bare exit 1 for a different reason stays an error.
         let gh = GitHub::with_runner(ScriptedRunner::new().on(
-            ["pr", "checks"],
+            ["gh", "pr", "checks"],
             Reply::fail(1, "no pull requests found for branch 'feat/x'"),
         ));
         assert!(matches!(
@@ -1184,14 +1182,14 @@ mod tests {
 
         // Exit 4 (auth required) is a real failure, not an outcome.
         let gh = GitHub::with_runner(
-            ScriptedRunner::new().on(["pr", "checks"], Reply::fail(4, "auth required")),
+            ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::fail(4, "auth required")),
         );
         assert!(matches!(
             gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
             Error::Exit { .. }
         ));
 
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["pr", "checks"], Reply::timeout()));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::timeout()));
         assert!(matches!(
             gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
             Error::Timeout { .. }
@@ -1283,7 +1281,7 @@ mod tests {
     async fn pr_feedback_requests_reviews_and_comments() {
         let json = r#"{"reviews":[{"author":{"login":"a"},"state":"APPROVED",
             "body":"","submittedAt":""}],"comments":[]}"#;
-        let rec = RecordingRunner::new(ScriptedRunner::new().on(["pr", "view"], Reply::ok(json)));
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(["gh", "pr", "view"], Reply::ok(json)));
         let gh = GitHub::with_runner(&rec);
         let feedback = gh.pr_feedback(Path::new("."), 7).await.expect("feedback");
         assert_eq!(feedback.reviews[0].author, "a");
@@ -1326,8 +1324,8 @@ mod tests {
             "headBranch":"main","event":"push","url":"u","createdAt":"c"}"#;
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["run", "watch"], Reply::ok("✓ run completed"))
-                .on(["run", "view"], Reply::ok(json)),
+                .on(["gh", "run", "watch"], Reply::ok("✓ run completed"))
+                .on(["gh", "run", "view"], Reply::ok(json)),
         );
         let gh = GitHub::with_runner(&rec);
         let run = gh.run_watch(Path::new("."), 42).await.expect("run_watch");
@@ -1347,7 +1345,7 @@ mod tests {
     #[tokio::test]
     async fn run_watch_surfaces_timeout_and_watch_errors() {
         let rec =
-            RecordingRunner::new(ScriptedRunner::new().on(["run", "watch"], Reply::timeout()));
+            RecordingRunner::new(ScriptedRunner::new().on(["gh", "run", "watch"], Reply::timeout()));
         let gh = GitHub::with_runner(&rec);
         assert!(matches!(
             gh.run_watch(Path::new("."), 42).await.unwrap_err(),
@@ -1356,7 +1354,7 @@ mod tests {
         assert_eq!(rec.calls().len(), 1, "no view after a timed-out watch");
 
         let gh = GitHub::with_runner(
-            ScriptedRunner::new().on(["run", "watch"], Reply::fail(1, "no such run")),
+            ScriptedRunner::new().on(["gh", "run", "watch"], Reply::fail(1, "no such run")),
         );
         assert!(matches!(
             gh.run_watch(Path::new("."), 42).await.unwrap_err(),
@@ -1371,12 +1369,11 @@ mod tests {
     // (zero new vcs-* API). Hermetic via `Reply::pending()` (parks until the
     // command's token fires) on a paused clock: the 1 h `timeout` elapses
     // instantly while the call is parked, proving it does not resolve early.
-    #[cfg(feature = "cancellation")]
     #[tokio::test(start_paused = true)]
     async fn run_watch_cancels_via_client_default_token() {
         use processkit::CancellationToken;
         let token = CancellationToken::new();
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["run", "watch"], Reply::pending()))
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "run", "watch"], Reply::pending()))
             .default_cancel_on(token.clone());
         let call = gh.run_watch(Path::new("."), 42);
         tokio::pin!(call);
@@ -1398,7 +1395,7 @@ mod tests {
         let json = r#"{"tagName":"v1","name":"","body":"notes","url":"u",
             "publishedAt":"p","isDraft":false,"isPrerelease":false}"#;
         let rec =
-            RecordingRunner::new(ScriptedRunner::new().on(["release", "view"], Reply::ok(json)));
+            RecordingRunner::new(ScriptedRunner::new().on(["gh", "release", "view"], Reply::ok(json)));
         let gh = GitHub::with_runner(&rec);
         let release = gh
             .release_view(Path::new("."), "v1")
@@ -1417,7 +1414,7 @@ mod tests {
     #[tokio::test]
     async fn repo_view_parses_scripted_json() {
         let json = r#"{"name":"r","owner":{"login":"o"},"description":"d","url":"u","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#;
-        let gh = GitHub::with_runner(ScriptedRunner::new().on(["repo", "view"], Reply::ok(json)));
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "repo", "view"], Reply::ok(json)));
         let repo = gh.repo_view(Path::new(".")).await.expect("repo_view");
         assert_eq!(repo.owner, "o");
         assert_eq!(repo.default_branch, "main");

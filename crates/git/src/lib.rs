@@ -80,7 +80,7 @@
 //!
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
 //! `MockGitApi` (stub whole methods), or inject a
-//! [`ScriptedRunner`](processkit::ScriptedRunner) with [`Git::with_runner`] to
+//! [`ScriptedRunner`](processkit::testing::ScriptedRunner) with [`Git::with_runner`] to
 //! exercise the *real* argv-building and parsing against canned output. The
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
@@ -108,10 +108,8 @@ use processkit::ProcessRunner;
 // consumers needn't depend on processkit directly. (`Error`/`Result`/`ProcessResult`
 // are in scope here too via this `pub use`.)
 pub use processkit::{Error, ProcessResult, Result};
-// Re-exported under the `cancellation` feature so a consumer can name the token
-// for `default_cancel_on` without taking a direct `processkit` dependency.
-#[cfg(feature = "cancellation")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
+// Re-exported so a consumer can name the token for `default_cancel_on` without
+// taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;
 
 pub mod conflict;
@@ -2063,7 +2061,7 @@ pub mod blocking {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_git() {
@@ -2117,8 +2115,8 @@ mod tests {
         assert_eq!(calls[4].args_str(), calls[5].args_str());
         assert_eq!(calls[6].args_str(), calls[7].args_str());
         // The bound calls also carried the bound dir as their working directory.
-        assert_eq!(calls[1].cwd.as_deref(), Some(dir.as_os_str()));
-        assert_eq!(calls[3].cwd.as_deref(), Some(dir.as_os_str()));
+        assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+        assert_eq!(calls[3].cwd.as_deref(), Some(dir));
     }
 
     // Hermetic: the real status() command-building + porcelain parsing run
@@ -2127,7 +2125,7 @@ mod tests {
     async fn status_parses_scripted_output() {
         // `-z` output: NUL-delimited records, raw paths.
         let git =
-            Git::with_runner(ScriptedRunner::new().on(["status"], Reply::ok(" M a.rs\0?? b.rs\0")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "status"], Reply::ok(" M a.rs\0?? b.rs\0")));
         let entries = git.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].code, " M");
@@ -2213,7 +2211,7 @@ mod tests {
     #[tokio::test]
     async fn nonzero_exit_is_structured_error() {
         let git = Git::with_runner(
-            ScriptedRunner::new().on(["status"], Reply::fail(128, "not a git repository")),
+            ScriptedRunner::new().on(["git", "status"], Reply::fail(128, "not a git repository")),
         );
         match git.status(Path::new(".")).await.unwrap_err() {
             Error::Exit { code, stderr, .. } => {
@@ -2228,15 +2226,15 @@ mod tests {
     // anything else is a real failure surfaced as Error::Exit.
     #[tokio::test]
     async fn diff_is_empty_maps_exit_codes() {
-        let clean = Git::with_runner(ScriptedRunner::new().on(["diff", "--quiet"], Reply::ok("")));
+        let clean = Git::with_runner(ScriptedRunner::new().on(["git", "diff", "--quiet"], Reply::ok("")));
         assert!(clean.diff_is_empty(Path::new(".")).await.unwrap());
 
         let dirty =
-            Git::with_runner(ScriptedRunner::new().on(["diff", "--quiet"], Reply::fail(1, "")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "diff", "--quiet"], Reply::fail(1, "")));
         assert!(!dirty.diff_is_empty(Path::new(".")).await.unwrap());
 
         let broken = Git::with_runner(
-            ScriptedRunner::new().on(["diff", "--quiet"], Reply::fail(128, "fatal: not a repo")),
+            ScriptedRunner::new().on(["git", "diff", "--quiet"], Reply::fail(128, "fatal: not a repo")),
         );
         assert!(matches!(
             broken.diff_is_empty(Path::new(".")).await.unwrap_err(),
@@ -2248,7 +2246,7 @@ mod tests {
     // as an option. No fallback rule: the run only matches if `add --` was built.
     #[tokio::test]
     async fn add_inserts_pathspec_separator() {
-        let git = Git::with_runner(ScriptedRunner::new().on(["add", "--"], Reply::ok("")));
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "add", "--"], Reply::ok("")));
         git.add(Path::new("."), &[PathBuf::from("f.rs")])
             .await
             .expect("add should build `add -- <paths>`");
@@ -2257,7 +2255,7 @@ mod tests {
     #[tokio::test]
     async fn worktree_list_parses_porcelain() {
         let git = Git::with_runner(ScriptedRunner::new().on(
-            ["worktree", "list"],
+            ["git", "worktree", "list"],
             Reply::ok("worktree /repo\nHEAD abc\nbranch refs/heads/main\n"),
         ));
         let wts = git.worktree_list(Path::new(".")).await.expect("list");
@@ -2350,12 +2348,12 @@ mod tests {
     // unborn (true), anything else is a structured error.
     #[tokio::test]
     async fn is_unborn_maps_exit_codes() {
-        let born = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::ok("abc\n")));
+        let born = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("abc\n")));
         assert!(!born.is_unborn(Path::new(".")).await.unwrap());
-        let unborn = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::fail(1, "")));
+        let unborn = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(1, "")));
         assert!(unborn.is_unborn(Path::new(".")).await.unwrap());
         let broken =
-            Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::fail(128, "boom")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(128, "boom")));
         assert!(matches!(
             broken.is_unborn(Path::new(".")).await.unwrap_err(),
             Error::Exit { code: 128, .. }
@@ -2426,8 +2424,8 @@ mod tests {
     async fn diff_text_working_tree_uses_empty_tree_when_unborn() {
         let git = Git::with_runner(
             ScriptedRunner::new()
-                .on(["rev-parse"], Reply::fail(1, "")) // unborn: HEAD doesn't resolve
-                .on(["diff", EMPTY_TREE], Reply::ok("EMPTY")),
+                .on(["git", "rev-parse"], Reply::fail(1, "")) // unborn: HEAD doesn't resolve
+                .on(["git", "diff", EMPTY_TREE], Reply::ok("EMPTY")),
         );
         let out = git
             .diff_text(Path::new("."), DiffSpec::WorkingTree)
@@ -2441,7 +2439,7 @@ mod tests {
     #[tokio::test]
     async fn diff_parses_scripted_output() {
         let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
-        let git = Git::with_runner(ScriptedRunner::new().on(["diff"], Reply::ok(out)));
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(out)));
         let files = git
             .diff(Path::new("."), DiffSpec::Rev("HEAD~1".into()))
             .await
@@ -2453,9 +2451,9 @@ mod tests {
 
     #[tokio::test]
     async fn branch_exists_maps_exit_codes() {
-        let yes = Git::with_runner(ScriptedRunner::new().on(["show-ref"], Reply::ok("")));
+        let yes = Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::ok("")));
         assert!(yes.branch_exists(Path::new("."), "main").await.unwrap());
-        let no = Git::with_runner(ScriptedRunner::new().on(["show-ref"], Reply::fail(1, "")));
+        let no = Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::fail(1, "")));
         assert!(!no.branch_exists(Path::new("."), "nope").await.unwrap());
     }
 
@@ -2464,7 +2462,7 @@ mod tests {
     #[tokio::test]
     async fn remote_head_branch_strips_prefix_and_keeps_slashes() {
         let simple = Git::with_runner(
-            ScriptedRunner::new().on(["symbolic-ref"], Reply::ok("refs/remotes/origin/main\n")),
+            ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("refs/remotes/origin/main\n")),
         );
         assert_eq!(
             simple
@@ -2476,7 +2474,7 @@ mod tests {
         );
 
         let slashed = Git::with_runner(ScriptedRunner::new().on(
-            ["symbolic-ref"],
+            ["git", "symbolic-ref"],
             Reply::ok("refs/remotes/origin/release/v2\n"),
         ));
         assert_eq!(
@@ -2489,7 +2487,7 @@ mod tests {
         );
 
         let unset =
-            Git::with_runner(ScriptedRunner::new().on(["symbolic-ref"], Reply::fail(1, "")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::fail(1, "")));
         assert!(
             unset
                 .remote_head_branch(Path::new("."))
@@ -2518,7 +2516,7 @@ mod tests {
         // Exact-ref query — a bare `main` would tail-match `bar/main`.
         assert_eq!(call.args_str(), ["ls-remote", "origin", "refs/heads/main"]);
 
-        let empty = Git::with_runner(ScriptedRunner::new().on(["ls-remote"], Reply::ok("")));
+        let empty = Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::ok("")));
         assert!(
             !empty
                 .remote_branch_exists(Path::new("."), "x")
@@ -2530,7 +2528,7 @@ mod tests {
     #[tokio::test]
     async fn diff_stat_parses_counts() {
         let git = Git::with_runner(ScriptedRunner::new().on(
-            ["diff", "--shortstat"],
+            ["git", "diff", "--shortstat"],
             Reply::ok(" 2 files changed, 5 insertions(+), 1 deletion(-)\n"),
         ));
         let stat = git.diff_stat(Path::new("."), "main..HEAD").await.unwrap();
@@ -2543,7 +2541,7 @@ mod tests {
     #[tokio::test]
     async fn status_text_returns_raw_porcelain() {
         let git = Git::with_runner(ScriptedRunner::new().on(
-            ["status", "--porcelain=v1"],
+            ["git", "status", "--porcelain=v1"],
             Reply::ok(" M a.rs\n?? b.rs\n"),
         ));
         let text = git.status_text(Path::new(".")).await.expect("status_text");
@@ -2552,7 +2550,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_args_forwards_str_slices() {
-        let git = Git::with_runner(ScriptedRunner::new().on(["status", "-s"], Reply::ok("ok\n")));
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "status", "-s"], Reply::ok("ok\n")));
         assert_eq!(git.run_args(&["status", "-s"]).await.unwrap(), "ok");
     }
 
@@ -2650,12 +2648,12 @@ mod tests {
     #[tokio::test]
     async fn upstream_maps_unset_to_none() {
         let set =
-            Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::ok("origin/main\n")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("origin/main\n")));
         assert_eq!(
             set.upstream(Path::new(".")).await.unwrap().as_deref(),
             Some("origin/main")
         );
-        let unset = Git::with_runner(ScriptedRunner::new().on(["rev-parse"], Reply::fail(128, "")));
+        let unset = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(128, "")));
         assert!(unset.upstream(Path::new(".")).await.unwrap().is_none());
     }
 
@@ -2675,7 +2673,7 @@ mod tests {
     #[tokio::test]
     async fn remote_branches_parses_ls_remote() {
         let git = Git::with_runner(ScriptedRunner::new().on(
-            ["ls-remote"],
+            ["git", "ls-remote"],
             Reply::ok("aaa\trefs/heads/main\nbbb\trefs/heads/feat/x\n"),
         ));
         let branches = git.remote_branches(Path::new("."), "origin").await.unwrap();
@@ -2697,7 +2695,7 @@ mod tests {
     #[tokio::test]
     async fn is_merged_strips_branch_markers() {
         let git = Git::with_runner(ScriptedRunner::new().on(
-            ["branch", "--merged"],
+            ["git", "branch", "--merged"],
             Reply::ok("  main\n* feature\n+ wt-branch\n"),
         ));
         for name in ["main", "feature", "wt-branch"] {
@@ -2755,12 +2753,11 @@ mod tests {
     // cancellation is **terminal** (not transient), the fetch-retry does NOT
     // replay it (one spawn, not FETCH_ATTEMPTS). Hermetic via `Reply::pending()`
     // on a paused clock.
-    #[cfg(feature = "cancellation")]
     #[tokio::test(start_paused = true)]
     async fn fetch_cancels_and_does_not_retry() {
         use processkit::CancellationToken;
         let token = CancellationToken::new();
-        let rec = RecordingRunner::new(ScriptedRunner::new().on(["fetch"], Reply::pending()));
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(["git", "fetch"], Reply::pending()));
         let git = Git::with_runner(&rec).default_cancel_on(token.clone());
         let call = git.fetch(Path::new("/r"));
         tokio::pin!(call);
@@ -2924,7 +2921,7 @@ mod tests {
     #[tokio::test]
     async fn capabilities_parse_and_gate_versions() {
         let gh = Git::with_runner(
-            ScriptedRunner::new().on(["--version"], Reply::ok("git version 2.54.0.windows.1\n")),
+            ScriptedRunner::new().on(["git", "--version"], Reply::ok("git version 2.54.0.windows.1\n")),
         );
         let caps = gh.capabilities().await.expect("capabilities");
         assert_eq!(caps.version.to_string(), "2.54.0");
@@ -2934,7 +2931,7 @@ mod tests {
         // Two-part versions parse (patch defaults to 0); an ancient major fails
         // the gate with a clear message.
         let old = Git::with_runner(
-            ScriptedRunner::new().on(["--version"], Reply::ok("git version 1.9\n")),
+            ScriptedRunner::new().on(["git", "--version"], Reply::ok("git version 1.9\n")),
         );
         let caps = old.capabilities().await.expect("capabilities");
         assert_eq!(
@@ -2959,7 +2956,7 @@ mod tests {
 
         // Garbage output is a parse error, not a silent zero version.
         let garbage =
-            Git::with_runner(ScriptedRunner::new().on(["--version"], Reply::ok("not a version")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "--version"], Reply::ok("not a version")));
         assert!(matches!(
             garbage.capabilities().await.unwrap_err(),
             Error::Parse { .. }
@@ -3024,7 +3021,7 @@ mod tests {
     #[tokio::test]
     async fn tag_list_splits_lines() {
         let git =
-            Git::with_runner(ScriptedRunner::new().on(["tag", "--list"], Reply::ok("v1\nv2.0\n")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "tag", "--list"], Reply::ok("v1\nv2.0\n")));
         assert_eq!(git.tag_list(Path::new(".")).await.unwrap(), ["v1", "v2.0"]);
     }
 
@@ -3102,20 +3099,20 @@ mod tests {
     #[tokio::test]
     async fn config_get_maps_exit_codes() {
         let set =
-            Git::with_runner(ScriptedRunner::new().on(["config", "--get"], Reply::ok("Alice\n")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "config", "--get"], Reply::ok("Alice\n")));
         assert_eq!(
             set.config_get(Path::new("."), "user.name").await.unwrap(),
             Some("Alice".to_string())
         );
         let unset =
-            Git::with_runner(ScriptedRunner::new().on(["config", "--get"], Reply::fail(1, "")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "config", "--get"], Reply::fail(1, "")));
         assert_eq!(
             unset.config_get(Path::new("."), "user.name").await.unwrap(),
             None
         );
         // A multi-valued key (exit 2) or worse is a real error.
         let multi = Git::with_runner(
-            ScriptedRunner::new().on(["config", "--get"], Reply::fail(2, "multiple values")),
+            ScriptedRunner::new().on(["git", "config", "--get"], Reply::fail(2, "multiple values")),
         );
         assert!(
             multi
@@ -3195,10 +3192,10 @@ mod tests {
     async fn switch_with_stash_round_trips_dirty_tree() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["status"], Reply::ok(" M a.rs\0"))
-                .on(["stash", "push"], Reply::ok(""))
-                .on(["checkout"], Reply::ok(""))
-                .on(["stash", "pop"], Reply::ok("")),
+                .on(["git", "status"], Reply::ok(" M a.rs\0"))
+                .on(["git", "stash", "push"], Reply::ok(""))
+                .on(["git", "checkout"], Reply::ok(""))
+                .on(["git", "stash", "pop"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
         git.switch_with_stash(Path::new("/r"), "feature")
@@ -3220,8 +3217,8 @@ mod tests {
     async fn switch_with_stash_skips_stash_on_clean_tree() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["status"], Reply::ok(""))
-                .on(["checkout"], Reply::ok("")),
+                .on(["git", "status"], Reply::ok(""))
+                .on(["git", "checkout"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
         git.switch_with_stash(Path::new("/r"), "feature")
@@ -3238,10 +3235,10 @@ mod tests {
     async fn switch_with_stash_restores_on_checkout_failure() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["status"], Reply::ok(" M a.rs\0"))
-                .on(["stash", "push"], Reply::ok(""))
-                .on(["checkout"], Reply::fail(1, "error: pathspec 'nope'"))
-                .on(["stash", "pop"], Reply::ok("")),
+                .on(["git", "status"], Reply::ok(" M a.rs\0"))
+                .on(["git", "stash", "push"], Reply::ok(""))
+                .on(["git", "checkout"], Reply::fail(1, "error: pathspec 'nope'"))
+                .on(["git", "stash", "pop"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
         let err = git

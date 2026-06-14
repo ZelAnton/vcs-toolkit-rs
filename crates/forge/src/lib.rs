@@ -136,11 +136,9 @@ pub use error::{Error, Result};
 pub use vcs_gitea;
 pub use vcs_github;
 pub use vcs_gitlab;
-// Re-exported under the `cancellation` feature so a `vcs-forge`-only consumer can
-// name the token for a `default_cancel_on` client (built via `GitHub`/… then passed
-// to `Forge::for_github`/…) without a direct `processkit` dependency.
-#[cfg(feature = "cancellation")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cancellation")))]
+// Re-exported so a `vcs-forge`-only consumer can name the token for a
+// `default_cancel_on` client (built via `GitHub`/… then passed to
+// `Forge::for_github`/…) without a direct `processkit` dependency.
 pub use processkit::CancellationToken;
 
 /// The per-CLI client behind a [`Forge`]. Shared via `Arc` so [`Forge::at`] can
@@ -483,7 +481,7 @@ facade_trait! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     fn github(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
         Forge::for_github("/repo", GitHub::with_runner(runner))
@@ -506,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn github_pr_list_maps_to_unified() {
         let json = r#"[{"number":7,"title":"X","state":"MERGED","headRefName":"feat","baseRefName":"main","url":"u"}]"#;
-        let forge = github(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].number, 7);
         assert_eq!(prs[0].state, ForgePrState::Merged);
@@ -517,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn gitlab_repo_view_maps_public_visibility() {
         let json = r#"{"name":"cli","path_with_namespace":"gitlab-org/cli","default_branch":"main","web_url":"u","visibility":"public"}"#;
-        let forge = gitlab(ScriptedRunner::new().on(["repo", "view"], Reply::ok(json)));
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "repo", "view"], Reply::ok(json)));
         let repo = forge.repo_view().await.unwrap();
         assert_eq!(repo.owner, "gitlab-org");
         assert_eq!(repo.name, "cli");
@@ -530,7 +528,7 @@ mod tests {
     async fn gitlab_repo_view_absent_visibility_is_not_private() {
         let json =
             r#"{"name":"cli","path_with_namespace":"o/cli","default_branch":"main","web_url":"u"}"#;
-        let forge = gitlab(ScriptedRunner::new().on(["repo", "view"], Reply::ok(json)));
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "repo", "view"], Reply::ok(json)));
         let repo = forge.repo_view().await.unwrap();
         assert!(!repo.private, "absent visibility must not be private");
     }
@@ -539,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn gitlab_pr_list_maps_iid_and_state() {
         let json = r#"[{"iid":12,"title":"X","state":"opened","source_branch":"feat","target_branch":"main","web_url":"u","draft":true}]"#;
-        let forge = gitlab(ScriptedRunner::new().on(["mr", "list"], Reply::ok(json)));
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].number, 12);
         assert_eq!(prs[0].state, ForgePrState::Open);
@@ -553,7 +551,7 @@ mod tests {
         // into the `state` column.
         let json =
             r#"[{"index":"9","title":"Nine","state":"merged","head":"f","base":"main","url":"u"}]"#;
-        let forge = gitea(ScriptedRunner::new().on(["pr", "list"], Reply::ok(json)));
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
         let pr = forge.pr_view(9).await.unwrap();
         assert_eq!(pr.state, ForgePrState::Merged);
         assert_eq!(pr.target_branch, "main");
@@ -582,13 +580,13 @@ mod tests {
     #[tokio::test]
     async fn issue_list_maps_states_per_backend() {
         let json = r#"[{"number":3,"title":"A","state":"OPEN"},{"number":4,"title":"B","state":"CLOSED"}]"#;
-        let forge = github(ScriptedRunner::new().on(["issue", "list"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "issue", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].state, ForgeIssueState::Open);
         assert_eq!(issues[1].state, ForgeIssueState::Closed);
 
         let json = r#"[{"iid":12,"title":"X","state":"opened","description":"d","web_url":"u"}]"#;
-        let forge = gitlab(ScriptedRunner::new().on(["issue", "list"], Reply::ok(json)));
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "issue", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].number, 12);
         assert_eq!(issues[0].state, ForgeIssueState::Open);
@@ -596,7 +594,7 @@ mod tests {
 
         // tea's table shape: all-string values, `index` column.
         let json = r#"[{"index":"9","title":"Y","state":"open","body":"b","url":"u"}]"#;
-        let forge = gitea(ScriptedRunner::new().on(["issues", "list"], Reply::ok(json)));
+        let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].number, 9);
         assert_eq!(issues[0].state, ForgeIssueState::Open);
@@ -607,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn release_list_maps_published_at_per_backend() {
         let json = r#"[{"tagName":"v1","name":"One","publishedAt":"2026-01-01T00:00:00Z"},{"tagName":"v2-draft","name":"","publishedAt":"","isDraft":true}]"#;
-        let forge = github(ScriptedRunner::new().on(["release", "list"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(
@@ -617,7 +615,7 @@ mod tests {
         assert_eq!(rels[1].published_at, None);
 
         let json = r#"[{"tag_name":"v1","name":"One","released_at":"2026-01-01T00:00:00Z","_links":{"self":"u"}}]"#;
-        let forge = gitlab(ScriptedRunner::new().on(["release", "list"], Reply::ok(json)));
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].url, "u");
         assert!(rels[0].published_at.is_some());
@@ -625,7 +623,7 @@ mod tests {
         // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
         // `published _at`), no release-page URL column.
         let json = r#"[{"tag-_name":"v1","title":"One","status":"released","published _at":"2026-01-01T00:00:00Z"}]"#;
-        let forge = gitea(ScriptedRunner::new().on(["releases", "list"], Reply::ok(json)));
+        let forge = gitea(ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(rels[0].title, "One");
@@ -675,23 +673,23 @@ mod tests {
     #[tokio::test]
     async fn github_pr_checks_aggregates_buckets() {
         let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"fail"}]"#;
-        let forge = github(ScriptedRunner::new().on(["pr", "checks"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Failing);
 
         let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"pending"}]"#;
-        let forge = github(ScriptedRunner::new().on(["pr", "checks"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Pending);
 
         // A cancelled check is a failure (short-circuits like `fail`).
         let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"cancel"}]"#;
-        let forge = github(ScriptedRunner::new().on(["pr", "checks"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Failing);
 
         // All-skipped (no pass/fail/pending) and an empty list both read as None.
         let json = r#"[{"name":"a","bucket":"skipping"}]"#;
-        let forge = github(ScriptedRunner::new().on(["pr", "checks"], Reply::ok(json)));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::None);
-        let forge = github(ScriptedRunner::new().on(["pr", "checks"], Reply::ok("[]")));
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok("[]")));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::None);
     }
 
@@ -711,8 +709,8 @@ mod tests {
         let json = r#"[{"iid":1,"title":"X","state":"opened","source_branch":"f","target_branch":"main","web_url":"u"}]"#;
         let forge = gitlab(
             ScriptedRunner::new()
-                .on(["mr", "list"], Reply::ok(json))
-                .on(["issue", "create"], Reply::ok("https://gl/i/9\n")),
+                .on(["glab", "mr", "list"], Reply::ok(json))
+                .on(["glab", "issue", "create"], Reply::ok("https://gl/i/9\n")),
         );
         let dynamic: &dyn ForgeApi = &forge;
         assert_eq!(dynamic.kind(), ForgeKind::GitLab);
