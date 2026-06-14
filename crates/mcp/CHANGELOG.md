@@ -22,6 +22,47 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ### Fixed
 -
 
+## [0.2.0] - 2026-06-12
+
+### Added
+- **Read tool** `forge_info` (always available, `readOnlyHint`): the forge
+  identity + flat capability map. Returns
+  `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge,
+  issueCreate, authed } }` where `kind` is `"github"` / `"gitlab"` /
+  `"gitea"` and the per-op flags are the intersection of "the CLI ships
+  the command" and "the CLI is authenticated" (a single `auth status` /
+  `login list` probe is spawned; the rest is a static table). Errors with
+  `invalid_params` ("no forge is configured for this repository …") when
+  no forge is bound to the server, matching the other `forge_*` tools.
+- **Mutating tools** (gated, `destructiveHint`):
+  - `forge_pr_comment({ number, body })` — post a markdown comment to an
+    existing PR/MR; returns the CLI output (the comment URL on success).
+  - `forge_pr_edit({ number, title?, body? })` — edit a PR/MR's title
+    and/or body. At least one of `title` or `body` must be set; both
+    absent is rejected up front as `invalid_params` (the facade's
+    `Error::InvalidInput` mapped to an MCP `invalid_params` error). An
+    empty string is a real value (clears the field) — it passes the
+    belt-and-braces argv guard at the MCP seam and the wrapper's
+    flag-VALUE-position pass-through.
+- **Param structs**: `PrCommentParams`, `PrEditParams` (each
+  `Deserialize` + `JsonSchema` — their schema is the tool's advertised
+  input schema). `PrEditParams` is `Option`-typed on `title`/`body` so
+  the JSON form can omit either (or both) without serde complaining.
+- **Error mapping**: `vcs_forge::Error::InvalidInput` (a new variant on
+  the facade's error, used by the both-`None` rejection on `pr_edit`) is
+  mapped to MCP `invalid_params` alongside the existing
+  `Error::Unsupported` mapping — both are client-fixable errors.
+- **Pre-spawn argv guard** in the MCP layer (`guard_argv_field`): mirrors
+  the wrappers' `reject_flag_like` for the `body` / `title` fields of
+  the two new mutating tools. A leading-`-` is refused up front; an
+  empty string is allowed (it clears the field). The wrappers still run
+  their own guards — this is the second line of defence at the MCP seam.
+
+### Changed
+- Bumps `vcs-forge = "0.1" → "0.2"` (compatible, the path-dep is
+  unchanged). No new public API on the `VcsMcpServer` struct; the
+  new tools extend the `#[tool_router]` macro-generated tool set.
+
 ## [0.1.0] - 2026-06-08
 
 ### Added

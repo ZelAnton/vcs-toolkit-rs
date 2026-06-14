@@ -12,6 +12,26 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ### Added
 -
 
+## [0.1.1] - 2026-06-12
+
+### Added
+- `pr_comment(dir, number, body)` — add a comment to a pull request,
+  returning the command's output (`tea comment <index> <body>`). Gitea PRs
+  and issues share the `index` space and the same `tea comment` subcommand
+  hits both. The `body` is a bare positional, so it is argv-guarded with
+  `reject_flag_like` (a leading `-` or empty value is rejected before any
+  process spawns) — the first such guard in this crate.
+- `pr_edit(dir, number, PrEdit)` — edit a pull request's title and/or
+  description (`tea pr edit <index> [--title <title>] [--description <body>]`).
+  A new `PrEdit` builder (`new()`, `.title(..)`, `.body(..)`) carries the
+  optional fields; absent flags are not emitted. An empty string is treated
+  as a real value (tea clears the field on `--title ""` / `--description ""`),
+  not as `None`. The trait methods are **defaulted** to `Error::Unsupported`
+  so external implementers keep compiling when the crate bumps — only the
+  `Gitea` concrete impl and the regenerated `MockGiteaApi` override them.
+- `vcs-cli-support` added as a direct dependency (for `reject_flag_like`,
+  needed by `pr_comment`).
+
 ### Changed
 - Documented that **Gitea authentication is ambient**: unlike the new
   `vcs-github`/`vcs-gitlab` per-operation `with_credentials` token providers,

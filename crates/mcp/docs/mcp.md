@@ -91,6 +91,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
 | `forge_release_list` | — | Releases, newest first (up to 100), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
+| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge, issueCreate, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `authed` is the auth probe result; the other flags are the intersection of "the CLI ships the command" and "the CLI is authenticated". |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
 
@@ -103,6 +104,8 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_create_worktree` | `{ path, branch, base }` | Create a worktree/workspace at `path` on a new `branch` from `base`. |
 | `repo_remove_worktree` | `{ path, force? }` | Remove the worktree/workspace at `path` (`force` overrides local changes, git only). |
 | `forge_pr_create` | `{ title, body, source?, target? }` | Open a PR/MR (omit `source` for the current branch, `target` for the repo default); returns the CLI output (the URL on success). |
+| `forge_pr_comment` | `{ number, body }` | Post a markdown comment to an existing PR/MR; returns the CLI output (the comment URL on success). |
+| `forge_pr_edit` | `{ number, title?, body? }` | Edit a PR/MR's title and/or body. At least one of `title` or `body` must be set (both absent is rejected up front as `invalid_params`); an empty string is a real value (clears the field). |
 | `forge_pr_merge` | `{ number, strategy }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |

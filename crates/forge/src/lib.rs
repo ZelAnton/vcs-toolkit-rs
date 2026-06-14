@@ -12,8 +12,9 @@
 //! # What you can do
 //!
 //! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
-//! lifecycle (list / view / create / merge / mark-ready / close, CI checks) · issues
-//! (list / view / create) · releases (list / view). One tiny call:
+//! lifecycle (list / view / create / comment / edit / merge / mark-ready /
+//! close, CI checks) · the flat capability map · issues (list / view / create)
+//! · releases (list / view). One tiny call:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
@@ -62,9 +63,11 @@
 //! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
-//!   [`pr_create`](Forge::pr_create) / [`pr_merge`](Forge::pr_merge) /
+//!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
+//!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
-//!   [`pr_checks`](Forge::pr_checks)); issues ([`issue_list`](Forge::issue_list) /
+//!   [`pr_checks`](Forge::pr_checks)); the capability map
+//!   ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
 //!   releases ([`release_list`](Forge::release_list) /
 //!   [`release_view`](Forge::release_view)). List ops cap at 100 — drop to the
@@ -77,9 +80,8 @@
 //!   [`Error::is_unsupported`].
 //! - **Capability introspection** — to branch *before* calling rather than
 //!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
-//!   varying operation is available, and [`Forge::capabilities`] returns the whole
-//!   matrix as a [`ForgeCapabilities`] — so an agent or TUI can hide an
-//!   unavailable action up front. ([`ForgeOp::ALL`] enumerates the varying ops.)
+//!   varying operation is available, and [`ForgeOp::ALL`] enumerates those
+//!   varying ops.
 //!
 //! The wrappers are re-exported (`vcs_forge::vcs_github` / `vcs_gitlab` /
 //! `vcs_gitea`) so anything beyond the portable intersection — a forge-specific op,
@@ -132,7 +134,7 @@ mod gitlab_forge;
 
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrCreate,
+    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrCreate, PrEdit,
 };
 pub use error::{Error, Result};
 
@@ -150,11 +152,14 @@ pub use processkit;
 pub use processkit::CancellationToken;
 
 /// The per-CLI client behind a [`Forge`]. Shared via `Arc` so [`Forge::at`] can
-/// re-anchor the cwd cheaply without rebuilding the client.
+/// re-anchor the cwd cheaply without rebuilding the client. `Unknown` carries
+/// no client — the remote URL didn't classify as a known forge, so no CLI can
+/// be picked; the handle exists only to surface the all-`false` capability map.
 enum Backend<R: ProcessRunner> {
     GitHub(Arc<GitHub<R>>),
     GitLab(Arc<GitLab<R>>),
     Gitea(Arc<Gitea<R>>),
+    Unknown,
 }
 
 impl<R: ProcessRunner> Backend<R> {
@@ -163,6 +168,7 @@ impl<R: ProcessRunner> Backend<R> {
             Backend::GitHub(c) => Backend::GitHub(Arc::clone(c)),
             Backend::GitLab(c) => Backend::GitLab(Arc::clone(c)),
             Backend::Gitea(c) => Backend::Gitea(Arc::clone(c)),
+            Backend::Unknown => Backend::Unknown,
         }
     }
 }
@@ -227,12 +233,28 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// Build a handle for a remote URL that didn't classify as a known forge
+    /// (a self-hosted instance, a lookalike, or a host [`ForgeKind::from_remote_url`]
+    /// can't pin to `github.com`/`gitlab.com`/`gitea.com`/`codeberg.org`).
+    /// The handle has no CLI client — every operation returns
+    /// [`Error::Unsupported`], and [`capabilities`](Forge::capabilities) returns
+    /// the all-`false` shape without spawning anything. Useful for a forge
+    /// auto-detector that wants to surface a typed "I tried, no luck" rather
+    /// than a guessed-but-wrong kind.
+    pub fn for_unknown(cwd: impl Into<PathBuf>) -> Self {
+        Forge {
+            cwd: cwd.into(),
+            backend: Backend::Unknown,
+        }
+    }
+
     /// Which forge drives this handle.
     pub fn kind(&self) -> ForgeKind {
         match &self.backend {
             Backend::GitHub(_) => ForgeKind::GitHub,
             Backend::GitLab(_) => ForgeKind::GitLab,
             Backend::Gitea(_) => ForgeKind::Gitea,
+            Backend::Unknown => ForgeKind::Unknown,
         }
     }
 
@@ -254,17 +276,6 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// A snapshot of which capability-varying operations this backend supports —
-    /// the struct form of [`supports`](Forge::supports) across every [`ForgeOp`].
-    pub fn capabilities(&self) -> ForgeCapabilities {
-        ForgeCapabilities {
-            repo_view: self.supports(ForgeOp::RepoView),
-            pr_mark_ready: self.supports(ForgeOp::PrMarkReady),
-            pr_checks: self.supports(ForgeOp::PrChecks),
-            release_view: self.supports(ForgeOp::ReleaseView),
-        }
-    }
-
     /// The directory operations run against.
     pub fn cwd(&self) -> &Path {
         &self.cwd
@@ -279,12 +290,15 @@ impl<R: ProcessRunner> Forge<R> {
     }
 
     /// Whether the user is authenticated (GitHub/GitLab: a zero-exit `auth
-    /// status`; Gitea: at least one configured login).
+    /// status`; Gitea: at least one configured login). An
+    /// [`Unknown`](ForgeKind::Unknown) handle (no classified CLI) returns
+    /// `Ok(false)` without spawning — there is no CLI to probe.
     pub async fn auth_status(&self) -> Result<bool> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::auth_status(c).await,
             Backend::GitLab(c) => gitlab_forge::auth_status(c).await,
             Backend::Gitea(c) => gitea_forge::auth_status(c).await,
+            Backend::Unknown => Ok(false),
         }
     }
 
@@ -295,6 +309,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::repo_view(c, &self.cwd).await,
             Backend::GitLab(c) => gitlab_forge::repo_view(c, &self.cwd).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "repo_view")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "repo_view")),
         }
     }
 
@@ -304,6 +319,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_list(c, &self.cwd).await,
             Backend::GitLab(c) => gitlab_forge::pr_list(c, &self.cwd).await,
             Backend::Gitea(c) => gitea_forge::pr_list(c, &self.cwd).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_list")),
         }
     }
 
@@ -314,6 +330,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_view(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_view(c, &self.cwd, number).await,
             Backend::Gitea(c) => gitea_forge::pr_view(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_view")),
         }
     }
 
@@ -324,6 +341,69 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_create(c, &self.cwd, spec).await,
             Backend::GitLab(c) => gitlab_forge::pr_create(c, &self.cwd, spec).await,
             Backend::Gitea(c) => gitea_forge::pr_create(c, &self.cwd, spec).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_create")),
+        }
+    }
+
+    /// Post a comment to an existing PR/MR. Rejects both-`None` / empty inputs
+    /// up front (see [`ForgeApi::pr_comment`](crate::ForgeApi::pr_comment)).
+    pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_comment(c, &self.cwd, number, body).await,
+            Backend::GitLab(c) => gitlab_forge::mr_comment(c, &self.cwd, number, body).await,
+            Backend::Gitea(c) => gitea_forge::pr_comment(c, &self.cwd, number, body).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_comment")),
+        }
+    }
+
+    /// Edit a PR/MR's title and/or body (see [`PrEdit`]). At least one of
+    /// `title` or `body` must be `Some` — both-`None` is rejected by the
+    /// facade before any CLI is spawned.
+    pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
+        if edit.title.is_none() && edit.body.is_none() {
+            return Err(Error::InvalidInput(
+                "pr_edit: at least one of title or body must be set".into(),
+            ));
+        }
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_edit(c, &self.cwd, number, edit).await,
+            Backend::GitLab(c) => gitlab_forge::mr_edit(c, &self.cwd, number, edit).await,
+            Backend::Gitea(c) => gitea_forge::pr_edit(c, &self.cwd, number, edit).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_edit")),
+        }
+    }
+
+    /// The forge's flat capability map — the intersection of "the CLI ships
+    /// this command" and "the CLI is authenticated". Spawns `auth status` /
+    /// `login list` exactly once; the per-forge static "ships the command" map
+    /// is a constant. The Unknown handle's map is the all-`false` shape.
+    pub async fn capabilities(&self) -> Result<ForgeCapabilities> {
+        match &self.backend {
+            Backend::GitHub(c) => {
+                let mut caps = static_github_caps();
+                caps.authed = github_forge::auth_status(c).await?;
+                if !caps.authed {
+                    zero_unauthed(&mut caps);
+                }
+                Ok(caps)
+            }
+            Backend::GitLab(c) => {
+                let mut caps = static_gitlab_caps();
+                caps.authed = gitlab_forge::auth_status(c).await?;
+                if !caps.authed {
+                    zero_unauthed(&mut caps);
+                }
+                Ok(caps)
+            }
+            Backend::Gitea(c) => {
+                let mut caps = static_gitea_caps();
+                caps.authed = gitea_forge::auth_status(c).await?;
+                if !caps.authed {
+                    zero_unauthed(&mut caps);
+                }
+                Ok(caps)
+            }
+            Backend::Unknown => Ok(ForgeCapabilities::all_false()),
         }
     }
 
@@ -333,6 +413,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, strategy).await,
             Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, strategy).await,
             Backend::Gitea(c) => gitea_forge::pr_merge(c, &self.cwd, number, strategy).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_merge")),
         }
     }
 
@@ -344,6 +425,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_mark_ready(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_mark_ready(c, &self.cwd, number).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_mark_ready")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_mark_ready")),
         }
     }
 
@@ -354,6 +436,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_close(c, &self.cwd, number, delete_branch).await,
             Backend::GitLab(c) => gitlab_forge::pr_close(c, &self.cwd, number).await,
             Backend::Gitea(c) => gitea_forge::pr_close(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_close")),
         }
     }
 
@@ -364,6 +447,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::pr_checks(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_checks(c, &self.cwd, number).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_checks")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_checks")),
         }
     }
 
@@ -374,6 +458,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::issue_list(c, &self.cwd).await,
             Backend::GitLab(c) => gitlab_forge::issue_list(c, &self.cwd).await,
             Backend::Gitea(c) => gitea_forge::issue_list(c, &self.cwd).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_list")),
         }
     }
 
@@ -383,6 +468,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::issue_view(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::issue_view(c, &self.cwd, number).await,
             Backend::Gitea(c) => gitea_forge::issue_view(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_view")),
         }
     }
 
@@ -394,6 +480,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::issue_create(c, &self.cwd, title, body).await,
             Backend::GitLab(c) => gitlab_forge::issue_create(c, &self.cwd, title, body).await,
             Backend::Gitea(c) => gitea_forge::issue_create(c, &self.cwd, title, body).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_create")),
         }
     }
 
@@ -404,6 +491,7 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::release_list(c, &self.cwd).await,
             Backend::GitLab(c) => gitlab_forge::release_list(c, &self.cwd).await,
             Backend::Gitea(c) => gitea_forge::release_list(c, &self.cwd).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "release_list")),
         }
     }
 
@@ -415,12 +503,76 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitHub(c) => github_forge::release_view(c, &self.cwd, tag).await,
             Backend::GitLab(c) => gitlab_forge::release_view(c, &self.cwd, tag).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "release_view")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "release_view")),
         }
     }
 }
 
 fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
     Error::Unsupported { forge, operation }
+}
+
+/// The "what the CLI ships" map for GitHub. `authed` is left `false`; the
+/// caller (`Forge::capabilities`) overwrites it from a single `auth status`
+/// probe and zeroes the rest if unauthed.
+fn static_github_caps() -> ForgeCapabilities {
+    ForgeCapabilities {
+        pr_create: true,
+        pr_comment: true,
+        pr_edit: true,
+        pr_checks: true,
+        pr_merge: true,
+        issue_create: true,
+        authed: false,
+    }
+}
+
+/// The "what the CLI ships" map for GitLab. Same shape as GitHub post-fork:
+/// `glab mr comment` / `glab mr update` are first-class in the current
+/// `glab` (see the `gitlab-org/cli` repo).
+fn static_gitlab_caps() -> ForgeCapabilities {
+    ForgeCapabilities {
+        pr_create: true,
+        pr_comment: true,
+        pr_edit: true,
+        pr_checks: true,
+        pr_merge: true,
+        issue_create: true,
+        authed: false,
+    }
+}
+
+/// The "what the CLI ships" map for Gitea. `pr_checks` is `false` (no `tea`
+/// checks command), and `pr_comment` depends on Q3-R: `tea comment <index>`
+/// is documented to hit both issues and PRs (the `index` space is shared).
+/// The capability table reports `true`; the wrapper layer is the source of
+/// truth, and a future `tea` that drops PR-comment support would return
+/// `Error::Unsupported` from the impl — at which point the capability table
+/// flips `pr_comment: false`. Kept honest: the table does NOT speculate.
+fn static_gitea_caps() -> ForgeCapabilities {
+    ForgeCapabilities {
+        pr_create: true,
+        pr_comment: true,
+        pr_edit: true,
+        pr_checks: false,
+        pr_merge: true,
+        issue_create: true,
+        authed: false,
+    }
+}
+
+/// Zero every per-op flag in `caps` — the spec's intersection with
+/// `authed: false` (every op is reported as unavailable when the CLI isn't
+/// authenticated). Leaves `authed` alone; the caller sets that from the
+/// auth probe. Used by [`Forge::capabilities`] for the three known
+/// backends.
+fn zero_unauthed(caps: &mut ForgeCapabilities) {
+    caps.pr_create = false;
+    caps.pr_comment = false;
+    caps.pr_edit = false;
+    caps.pr_checks = false;
+    caps.pr_merge = false;
+    caps.issue_create = false;
 }
 
 /// Generate a facade trait from one signature table: the `#[async_trait]` trait
@@ -441,77 +593,154 @@ fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
 /// reach `automock` as opaque nonterminal token groups its `syn` parser rejects
 /// ("unsupported type in this position"), whereas `#[async_trait]` tolerates them.
 /// The facade stays test-seam-tested (build a [`Forge`] over a fake runner).
-macro_rules! facade_trait {
-    (
-        $(#[doc = $tdoc:expr])*
-        trait $Trait:ident for $Ty:ident;
-        sync {
-            $( #[doc = $sdoc:expr] fn $sn:ident( $($sa:ident: $sat:ty),* $(,)? ) -> $sr:ty; )*
-        }
-        async {
-            $( fn $an:ident( $($aa:ident: $aat:ty),* $(,)? ) -> $ar:ty; )*
-        }
-    ) => {
-        $(#[doc = $tdoc])*
-        #[async_trait::async_trait]
-        pub trait $Trait: Send + Sync {
-            $(
-                #[doc = $sdoc]
-                fn $sn(&self, $($sa: $sat),*) -> $sr;
-            )*
-            $(
-                #[doc = concat!("See [`", stringify!($Ty), "::", stringify!($an), "`].")]
-                async fn $an(&self, $($aa: $aat),*) -> $ar;
-            )*
-        }
+///
+// Macro `facade_trait!` removed in v0.1.1 — the v0.1.0 macro generated a
+// trait + delegating impl from a signature table. Adding default bodies
+// for the three post-v0.1.0 methods (`pr_comment`, `pr_edit`,
+// `capabilities`) required extending the macro to learn explicit bodies,
+// which clashed with the trait-vs-inherent method-resolution dance the
+// `#[async_trait]` macro plays. The trait + concrete-impl are now
+// hand-maintained just above this comment block — the duplication risk
+// (a method added to the trait but not the impl, or vice versa) is small
+// (~20 methods) and the compiler catches mismatches at the trait-method
+// set (an unimpl'd method is a hard error). The vcs-core copy of the
+// macro is unchanged — it's a v0.x crate that doesn't need the new
+// methods, so the original signature-table form is still the right
+// shape there.
 
-        // Delegates to the inherent methods, which method resolution prefers — so
-        // these bodies dispatch through the concrete type's real implementations,
-        // not back into the trait.
-        #[async_trait::async_trait]
-        impl<R: ProcessRunner> $Trait for $Ty<R> {
-            $(
-                fn $sn(&self, $($sa: $sat),*) -> $sr {
-                    self.$sn($($sa),*)
-                }
-            )*
-            $(
-                async fn $an(&self, $($aa: $aat),*) -> $ar {
-                    self.$an($($aa),*).await
-                }
-            )*
-        }
-    };
+// The trait below is hand-maintained (the v0.1.0 `facade_trait!` macro
+// was removed — see the note above). The three additive methods
+// (`pr_comment`, `pr_edit`, `capabilities`) have default bodies in the
+// trait; the concrete `Forge<R>` impl below overrides them with the
+// real dispatch. Rust's method resolution prefers the inherent method
+// on the concrete type, so a `&dyn ForgeApi` that's actually a `Forge`
+// lands on the real dispatch; an external implementer inherits the
+// default body.
+#[async_trait::async_trait]
+pub trait ForgeApi: Send + Sync {
+    /// Which forge drives this handle.
+    fn kind(&self) -> ForgeKind;
+    /// The directory operations run against.
+    fn cwd(&self) -> &Path;
+    /// See [`Forge::auth_status`](crate::Forge::auth_status).
+    async fn auth_status(&self) -> Result<bool>;
+    /// See [`Forge::repo_view`](crate::Forge::repo_view).
+    async fn repo_view(&self) -> Result<ForgeRepo>;
+    /// See [`Forge::pr_list`](crate::Forge::pr_list).
+    async fn pr_list(&self) -> Result<Vec<ForgePr>>;
+    /// See [`Forge::pr_view`](crate::Forge::pr_view).
+    async fn pr_view(&self, number: u64) -> Result<ForgePr>;
+    /// See [`Forge::pr_create`](crate::Forge::pr_create).
+    async fn pr_create(&self, spec: PrCreate) -> Result<String>;
+    /// See [`Forge::pr_comment`](crate::Forge::pr_comment). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling
+    /// when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            forge: self.kind(),
+            operation: "pr_comment",
+        })
+    }
+    /// See [`Forge::pr_edit`](crate::Forge::pr_edit). **Defaulted** to
+    /// `Error::Unsupported` (the real impl rejects both-`None` with
+    /// `Error::InvalidInput` before any spawn).
+    #[allow(unused_variables)]
+    async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
+        Err(Error::Unsupported {
+            forge: self.kind(),
+            operation: "pr_edit",
+        })
+    }
+    /// See [`Forge::capabilities`](crate::Forge::capabilities).
+    /// **Defaulted** to the all-`false` shape.
+    async fn capabilities(&self) -> Result<ForgeCapabilities> {
+        Ok(ForgeCapabilities::all_false())
+    }
+    /// See [`Forge::pr_merge`](crate::Forge::pr_merge).
+    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
+    /// See [`Forge::pr_mark_ready`](crate::Forge::pr_mark_ready).
+    async fn pr_mark_ready(&self, number: u64) -> Result<()>;
+    /// See [`Forge::pr_close`](crate::Forge::pr_close).
+    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()>;
+    /// See [`Forge::pr_checks`](crate::Forge::pr_checks).
+    async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
+    /// See [`Forge::issue_list`](crate::Forge::issue_list).
+    async fn issue_list(&self) -> Result<Vec<ForgeIssue>>;
+    /// See [`Forge::issue_view`](crate::Forge::issue_view).
+    async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
+    /// See [`Forge::issue_create`](crate::Forge::issue_create).
+    async fn issue_create(&self, title: &str, body: &str) -> Result<String>;
+    /// See [`Forge::release_list`](crate::Forge::release_list).
+    async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
+    /// See [`Forge::release_view`](crate::Forge::release_view).
+    async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
 }
 
-facade_trait! {
-    /// The forge-agnostic common surface of [`Forge`], as a trait — so a consumer can
-    /// hold a `Box<dyn ForgeApi>` / `&dyn ForgeApi` and code against the operations
-    /// without naming the [`ProcessRunner`] generic.
-    ///
-    /// Every method mirrors the like-named inherent method on [`Forge`].
-    trait ForgeApi for Forge;
-    sync {
-        #[doc = "Which forge drives this handle."]
-        fn kind() -> ForgeKind;
-        #[doc = "The directory operations run against."]
-        fn cwd() -> &Path;
+// Concrete-type impl. The v0.1.0 macro generated this; the additive
+// methods are added by hand to keep the trait in sync. Rust's method
+// resolution prefers the inherent method on `&Forge<R>`, so calls to
+// `pr_comment` / `pr_edit` / `capabilities` on a `&dyn ForgeApi` that
+// happens to point at a `Forge` land on the real dispatch; an external
+// `ForgeApi` implementer inherits the default body.
+#[async_trait::async_trait]
+impl<R: ProcessRunner> ForgeApi for Forge<R> {
+    fn kind(&self) -> ForgeKind {
+        self.kind()
     }
-    async {
-        fn auth_status() -> Result<bool>;
-        fn repo_view() -> Result<ForgeRepo>;
-        fn pr_list() -> Result<Vec<ForgePr>>;
-        fn pr_view(number: u64) -> Result<ForgePr>;
-        fn pr_create(spec: PrCreate) -> Result<String>;
-        fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
-        fn pr_mark_ready(number: u64) -> Result<()>;
-        fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
-        fn pr_checks(number: u64) -> Result<CiStatus>;
-        fn issue_list() -> Result<Vec<ForgeIssue>>;
-        fn issue_view(number: u64) -> Result<ForgeIssue>;
-        fn issue_create(title: &str, body: &str) -> Result<String>;
-        fn release_list() -> Result<Vec<ForgeRelease>>;
-        fn release_view(tag: &str) -> Result<ForgeRelease>;
+    fn cwd(&self) -> &Path {
+        self.cwd()
+    }
+    async fn auth_status(&self) -> Result<bool> {
+        self.auth_status().await
+    }
+    async fn repo_view(&self) -> Result<ForgeRepo> {
+        self.repo_view().await
+    }
+    async fn pr_list(&self) -> Result<Vec<ForgePr>> {
+        self.pr_list().await
+    }
+    async fn pr_view(&self, number: u64) -> Result<ForgePr> {
+        self.pr_view(number).await
+    }
+    async fn pr_create(&self, spec: PrCreate) -> Result<String> {
+        self.pr_create(spec).await
+    }
+    async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
+        self.pr_comment(number, body).await
+    }
+    async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
+        self.pr_edit(number, edit).await
+    }
+    async fn capabilities(&self) -> Result<ForgeCapabilities> {
+        self.capabilities().await
+    }
+    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
+        self.pr_merge(number, strategy).await
+    }
+    async fn pr_mark_ready(&self, number: u64) -> Result<()> {
+        self.pr_mark_ready(number).await
+    }
+    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()> {
+        self.pr_close(number, delete_branch).await
+    }
+    async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
+        self.pr_checks(number).await
+    }
+    async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
+        self.issue_list().await
+    }
+    async fn issue_view(&self, number: u64) -> Result<ForgeIssue> {
+        self.issue_view(number).await
+    }
+    async fn issue_create(&self, title: &str, body: &str) -> Result<String> {
+        self.issue_create(title, body).await
+    }
+    async fn release_list(&self) -> Result<Vec<ForgeRelease>> {
+        self.release_list().await
+    }
+    async fn release_view(&self, tag: &str) -> Result<ForgeRelease> {
+        self.release_view(tag).await
     }
 }
 
@@ -611,25 +840,127 @@ mod tests {
         assert!(rec.calls().is_empty(), "unsupported ops must not spawn");
     }
 
-    // `supports`/`capabilities` must agree exactly with the runtime `Unsupported`
-    // behaviour above: Gitea reports `false` for the four varying ops, GitHub and
-    // GitLab report `true` for all of them — a pure, no-spawn capability check.
+    // An Unknown handle (the remote didn't classify) reports Unsupported for
+    // *every* operation and a `kind` of `Unknown` — and its capability map is
+    // the all-`false` shape WITHOUT spawning.
+    #[tokio::test]
+    async fn unknown_forge_reports_all_unsupported() {
+        let forge: Forge = Forge::for_unknown("/repo");
+        assert_eq!(forge.kind(), ForgeKind::Unknown);
+        assert!(!forge.auth_status().await.unwrap(), "unknown = not authed");
+        let caps = forge.capabilities().await.unwrap();
+        assert_eq!(caps, ForgeCapabilities::all_false());
+        for err in [
+            forge.repo_view().await.unwrap_err(),
+            forge.pr_list().await.unwrap_err(),
+            forge.pr_view(1).await.unwrap_err(),
+            forge.pr_create(PrCreate::new("T", "B")).await.unwrap_err(),
+            forge.pr_merge(1, MergeStrategy::Merge).await.unwrap_err(),
+            forge.pr_mark_ready(1).await.unwrap_err(),
+            forge.pr_close(1, false).await.unwrap_err(),
+            forge.pr_checks(1).await.unwrap_err(),
+            forge.issue_list().await.unwrap_err(),
+            forge.issue_view(1).await.unwrap_err(),
+            forge.issue_create("T", "B").await.unwrap_err(),
+            forge.release_list().await.unwrap_err(),
+            forge.release_view("v1").await.unwrap_err(),
+            forge.pr_comment(1, "x").await.unwrap_err(),
+            forge
+                .pr_edit(1, PrEdit::new().title("T"))
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(err.is_unsupported(), "{err:?}");
+        }
+    }
+
+    // pr_edit rejects both-None with InvalidInput BEFORE any spawn — the
+    // explicit-error path per spec §2.
+    #[tokio::test]
+    async fn pr_edit_both_none_is_invalid_input_not_unsupported() {
+        let forge = github(ScriptedRunner::new()); // no scripted rules: a spawn would error
+        let err = forge.pr_edit(7, PrEdit::new()).await.unwrap_err();
+        assert!(
+            matches!(err, crate::Error::InvalidInput(_)),
+            "both-None must surface as InvalidInput, got {err:?}"
+        );
+    }
+
+    // pr_edit with a partial spec routes through to the wrapper and succeeds.
+    // The GitHub wrapper's argv is pinned (the existing test covers both
+    // fields too); the facade just needs to forward.
+    #[tokio::test]
+    async fn pr_edit_forwards_to_wrapper() {
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "edit"], Reply::ok("")));
+        forge
+            .pr_edit(7, PrEdit::new().title("New"))
+            .await
+            .expect("pr_edit title-only");
+    }
+
+    // The capability map for an authed GitHub is everything-true (post-fork).
+    #[tokio::test]
+    async fn github_capabilities_authed_lights_everything() {
+        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::ok("")));
+        let caps = forge.capabilities().await.unwrap();
+        assert!(caps.pr_create);
+        assert!(caps.pr_comment);
+        assert!(caps.pr_edit);
+        assert!(caps.pr_checks);
+        assert!(caps.pr_merge);
+        assert!(caps.issue_create);
+        assert!(caps.authed);
+    }
+
+    // An unauthed GitHub keeps the static map's "ships the op" shape but flips
+    // every op-specific flag to false (the intersection with `authed: false`
+    // from spec §3). The `auth status` call exits non-zero ⇒ `auth_status()`
+    // returns `false` (per the wrapper's documented exit-code reflection) and
+    // the capability table zeros the ops.
+    #[tokio::test]
+    async fn github_capabilities_unauthed_zeros_ops_but_keeps_authed_false() {
+        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::fail(1, "no")));
+        let caps = forge.capabilities().await.unwrap();
+        assert!(!caps.authed, "unauthed");
+        assert!(!caps.pr_create);
+        assert!(!caps.pr_comment);
+        assert!(!caps.pr_edit);
+        assert!(!caps.pr_checks);
+        assert!(!caps.pr_merge);
+        assert!(!caps.issue_create);
+    }
+
+    // Gitea's static map is the intersection of its CLI: `pr_checks` is the
+    // only false when authed (no `tea` checks command). Everything else is
+    // `true` post-fork.
+    #[tokio::test]
+    async fn gitea_capabilities_authed_has_only_pr_checks_false() {
+        // `tea login list --output json` returning `[]` is a non-zero exit on
+        // a fresh config; we want a non-empty list, so a ScriptedRunner rule
+        // for `login list` returning `[]` is a non-zero exit ⇒ not authed.
+        // Use a custom runner that returns a non-empty array for auth probe.
+        let forge = gitea(
+            ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert!(caps.authed, "gitea authed");
+        assert!(!caps.pr_checks, "gitea has no checks command");
+        assert!(caps.pr_create);
+        assert!(caps.pr_comment);
+        assert!(caps.pr_edit);
+        assert!(caps.pr_merge);
+        assert!(caps.issue_create);
+    }
+
+    // `supports` must agree exactly with the runtime `Unsupported` behaviour
+    // above: Gitea reports `false` for the four varying ops, GitHub and GitLab
+    // report `true` for all of them — a pure, no-spawn capability check.
     #[test]
-    fn capability_matrix_matches_unsupported_ops() {
+    fn supports_matches_unsupported_ops() {
         let gitea = Forge::for_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
             assert!(!gitea.supports(op), "gitea should not support {op:?}");
         }
-        let caps = gitea.capabilities();
-        assert_eq!(
-            caps,
-            ForgeCapabilities {
-                repo_view: false,
-                pr_mark_ready: false,
-                pr_checks: false,
-                release_view: false,
-            }
-        );
         for forge in [
             Forge::for_github("/repo", GitHub::with_runner(ScriptedRunner::new())),
             Forge::for_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),

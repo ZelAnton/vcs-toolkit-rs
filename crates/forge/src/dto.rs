@@ -13,15 +13,23 @@ pub enum ForgeKind {
     GitLab,
     /// Gitea / Forgejo (the `tea` CLI).
     Gitea,
+    /// The remote URL doesn't classify as a known forge (self-hosted, lookalike,
+    /// or no remote). The [`Forge::capabilities`](crate::Forge::capabilities) of
+    /// an unknown-forge handle is the all-`false` shape — the honest answer when
+    /// no CLI can be picked. **Distinct from a forge that the CLI is just not
+    /// authenticated against**: `authed: false` reports that; `kind: Unknown`
+    /// reports that *no* CLI is reachable.
+    Unknown,
 }
 
 impl ForgeKind {
-    /// The forge's short name (`"github"` / `"gitlab"` / `"gitea"`).
+    /// The forge's short name (`"github"` / `"gitlab"` / `"gitea"` / `"unknown"`).
     pub fn as_str(self) -> &'static str {
         match self {
             ForgeKind::GitHub => "github",
             ForgeKind::GitLab => "gitlab",
             ForgeKind::Gitea => "gitea",
+            ForgeKind::Unknown => "unknown",
         }
     }
 
@@ -111,24 +119,6 @@ impl ForgeOp {
         ForgeOp::PrChecks,
         ForgeOp::ReleaseView,
     ];
-}
-
-/// A snapshot of which capability-varying operations a [`Forge`](crate::Forge)
-/// backend supports — the struct form of calling
-/// [`Forge::supports`](crate::Forge::supports) for each [`ForgeOp`], handy for a
-/// one-shot capability check or serialising the matrix to a UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub struct ForgeCapabilities {
-    /// Whether [`repo_view`](crate::Forge::repo_view) is supported.
-    pub repo_view: bool,
-    /// Whether [`pr_mark_ready`](crate::Forge::pr_mark_ready) is supported.
-    pub pr_mark_ready: bool,
-    /// Whether [`pr_checks`](crate::Forge::pr_checks) is supported.
-    pub pr_checks: bool,
-    /// Whether [`release_view`](crate::Forge::release_view) is supported.
-    pub release_view: bool,
 }
 
 /// A pull request (GitHub) / merge request (GitLab) / pull request (Gitea),
@@ -336,6 +326,105 @@ pub enum MergeStrategy {
     Rebase,
 }
 
+/// Options for [`pr_edit`](crate::ForgeApi::pr_edit) — the unified
+/// edit-a-PR/MR spec, mapped to each CLI's own flags
+/// (gh `--title`/`--body`, glab `--title`/`--description`, tea
+/// `--title`/`--description`).
+///
+/// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
+/// setters rather than a struct literal. At least one of `title` or `body` must
+/// be `Some`; both `None` is rejected by the facade before spawning (an explicit
+/// error, not a silent no-op). An empty string is a real value (clears the
+/// field) — not a `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PrEdit {
+    /// The new title (`--title`); `None` leaves the title alone.
+    pub title: Option<String>,
+    /// The new body / description (`--body` / `--description`); `None` leaves
+    /// the body alone.
+    pub body: Option<String>,
+}
+
+impl PrEdit {
+    /// An edit that leaves both fields alone (the facade rejects both-`None`
+    /// before reaching the wrapper). Start with this and add what you want to
+    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body).
+    pub fn new() -> Self {
+        Self {
+            title: None,
+            body: None,
+        }
+    }
+
+    /// Set the new title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the new body / description.
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
+impl Default for PrEdit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The flat capability map for a configured forge — what its CLI is honest
+/// about doing, intersected with whether the CLI is authenticated. Returned by
+/// [`Forge::capabilities`](crate::Forge::capabilities); the
+/// [`forge_info`](crate::ForgeApi::capabilities) MCP tool surfaces it as JSON.
+///
+/// Each `bool` is `true` iff the operation is available on this forge's CLI **and**
+/// the CLI reports an authenticated session. The split between "the CLI ships
+/// the command" and "the user is logged in" is preserved by the `authed` field
+/// itself; a consumer that needs only one of the two can read it directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ForgeCapabilities {
+    /// The CLI can open a PR/MR.
+    pub pr_create: bool,
+    /// The CLI can post a comment to an existing PR/MR.
+    pub pr_comment: bool,
+    /// The CLI can edit a PR/MR's title and/or body.
+    pub pr_edit: bool,
+    /// The CLI can report a PR/MR's CI status (passing / failing / pending /
+    /// none).
+    pub pr_checks: bool,
+    /// The CLI can merge a PR/MR.
+    pub pr_merge: bool,
+    /// The CLI can open an issue.
+    pub issue_create: bool,
+    /// The CLI reports an authenticated session. The other six flags are all
+    /// `false` when this is `false`; the spec's per-op table is the
+    /// intersection.
+    pub authed: bool,
+}
+
+impl ForgeCapabilities {
+    /// The all-`false` shape, for the [`Unknown`](ForgeKind::Unknown) case and
+    /// as the trait's defaulted answer for any external implementer.
+    pub fn all_false() -> Self {
+        Self {
+            pr_create: false,
+            pr_comment: false,
+            pr_edit: false,
+            pr_checks: false,
+            pr_merge: false,
+            issue_create: false,
+            authed: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +472,26 @@ mod tests {
         assert_eq!(ForgeKind::GitHub.as_str(), "github");
         assert_eq!(ForgeKind::GitLab.as_str(), "gitlab");
         assert_eq!(ForgeKind::Gitea.as_str(), "gitea");
+        assert_eq!(ForgeKind::Unknown.as_str(), "unknown");
+    }
+
+    #[test]
+    fn pr_edit_default_has_both_fields_none() {
+        let edit = PrEdit::new();
+        assert!(edit.title.is_none());
+        assert!(edit.body.is_none());
+    }
+
+    #[test]
+    fn forge_capabilities_all_false_is_uniform() {
+        let c = ForgeCapabilities::all_false();
+        assert!(!c.pr_create);
+        assert!(!c.pr_comment);
+        assert!(!c.pr_edit);
+        assert!(!c.pr_checks);
+        assert!(!c.pr_merge);
+        assert!(!c.issue_create);
+        assert!(!c.authed);
     }
 }
 

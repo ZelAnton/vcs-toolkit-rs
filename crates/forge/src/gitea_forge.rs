@@ -11,11 +11,13 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, MergeStrategy as GtMs, PrCreate as GtPrCreate, PullRequest, Release,
+    Gitea, GiteaApi, Issue, MergeStrategy as GtMs, PrCreate as GtPrCreate, PrEdit as GtPrEdit,
+    PullRequest, Release,
 };
 
 use crate::dto::{
     ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
+    PrEdit,
 };
 use crate::error::Result;
 
@@ -49,6 +51,32 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
         create = create.base(target);
     }
     Ok(tea.pr_create(dir, create).await?)
+}
+
+pub(crate) async fn pr_comment<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(tea.pr_comment(dir, number, body).await?)
+}
+
+pub(crate) async fn pr_edit<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+    edit: PrEdit,
+) -> Result<()> {
+    let mut t_edit = GtPrEdit::new();
+    if let Some(title) = edit.title {
+        t_edit = t_edit.title(title);
+    }
+    if let Some(body) = edit.body {
+        t_edit = t_edit.body(body);
+    }
+    tea.pr_edit(dir, number, t_edit).await?;
+    Ok(())
 }
 
 pub(crate) async fn pr_merge<R: ProcessRunner>(

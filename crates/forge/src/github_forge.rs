@@ -5,12 +5,13 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, PrCreate as GhPrCreate, PrMerge, PullRequest, Release, Repo,
+    CheckRun, GitHub, GitHubApi, Issue, PrCreate as GhPrCreate, PrEdit as GhPrEdit, PrMerge,
+    PullRequest, Release, Repo,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate,
+    MergeStrategy, PrCreate, PrEdit,
 };
 use crate::error::Result;
 
@@ -48,6 +49,34 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
         create = create.base(target);
     }
     Ok(gh.pr_create(dir, create).await?)
+}
+
+pub(crate) async fn pr_comment<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(gh.pr_comment(dir, number, body).await?)
+}
+
+pub(crate) async fn pr_edit<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    edit: PrEdit,
+) -> Result<()> {
+    // The unified spec is 1:1 with gh's per-field setter; the title/body
+    // rename to the unified spec is the only thing the facade does.
+    let mut gh_edit = GhPrEdit::new();
+    if let Some(title) = edit.title {
+        gh_edit = gh_edit.title(title);
+    }
+    if let Some(body) = edit.body {
+        gh_edit = gh_edit.body(body);
+    }
+    gh.pr_edit(dir, number, gh_edit).await?;
+    Ok(())
 }
 
 pub(crate) async fn pr_merge<R: ProcessRunner>(

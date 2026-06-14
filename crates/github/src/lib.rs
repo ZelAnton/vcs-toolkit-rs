@@ -45,7 +45,7 @@
 //!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
 //!   [`pr_merge`](GitHubApi::pr_merge), [`pr_ready`](GitHubApi::pr_ready),
 //!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
-//!   [`pr_comment`](GitHubApi::pr_comment), [`pr_checks`](GitHubApi::pr_checks),
+//!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
 //!   [`pr_feedback`](GitHubApi::pr_feedback), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
@@ -53,7 +53,8 @@
 //!   [`release_view`](GitHubApi::release_view), …); plus the escape hatches
 //!   [`run`](GitHubApi::run) / [`api`](GitHubApi::api) for anything unmodelled.
 //! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
-//!   with optional `head`/`base`), [`PrMerge`] (strategy [`MergeStrategy`],
+//!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
+//!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
 //!   `--auto`, `--delete-branch`), and [`ReviewAction`] (whose private fields make
 //!   an empty-body request-changes unrepresentable) — each `#[non_exhaustive]`,
 //!   built with a constructor and chained setters, named after the flags they emit.
@@ -276,6 +277,53 @@ impl PrCreate {
     }
 }
 
+/// Options for [`GitHubApi::pr_edit`] (`gh pr edit`).
+///
+/// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
+/// [`title`](PrEdit::title) / [`body`](PrEdit::body) setters rather than a
+/// struct literal. At least one of `title` or `body` must be `Some`; both
+/// `None` is rejected by the facade before spawning (an explicit error, not a
+/// silent no-op). An empty string is a real value — gh clears the field on
+/// `--title ""` / `--body ""` — not a `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrEdit {
+    /// The new title (`--title`); `None` leaves the title alone.
+    pub title: Option<String>,
+    /// The new body (`--body`); `None` leaves the body alone.
+    pub body: Option<String>,
+}
+
+impl PrEdit {
+    /// An edit that leaves both fields alone (the facade rejects both-`None`
+    /// before reaching the wrapper). Start with this and add what you want to
+    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body).
+    pub fn new() -> Self {
+        Self {
+            title: None,
+            body: None,
+        }
+    }
+
+    /// Set the new title (`--title`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the new body (`--body`).
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
+impl Default for PrEdit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Which kind of review [`GitHubApi::pr_review`] submits — match on
 /// [`ReviewAction::kind`] to read it back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -418,6 +466,19 @@ pub trait GitHubApi: Send + Sync {
     /// Add a conversation comment, returning its URL
     /// (`gh pr comment <n> --body <body>`).
     async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String>;
+    /// Edit a pull request's title and/or body
+    /// (`gh pr edit <n> [--title <title>] [--body <body>]`). At least one of
+    /// `title` or `body` must be `Some` — the facade rejects both-`None`
+    /// before reaching the wrapper, so the default implementation is
+    /// unreachable in normal use. **Defaulted** to `Error::Unsupported` so
+    /// external implementers of the trait keep compiling when the crate
+    /// bumps.
+    #[allow(unused_variables)]
+    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_edit".into(),
+        })
+    }
     /// The PR's submitted reviews and conversation comments
     /// (`gh pr view <n> --json reviews,comments`).
     async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback>;
@@ -743,6 +804,25 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
+    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
+        // `--title` and `--body` are flag-VALUE positions: gh consumes the
+        // next token verbatim, so the leading-`-` check is not needed here.
+        // The facade rejects both-`None` before reaching this; an empty string
+        // is intentional (clears the field). We still skip absent fields so
+        // the argv doesn't carry a stray `--title` with no value.
+        let n = number.to_string();
+        let mut args = vec!["pr", "edit", n.as_str()];
+        if let Some(title) = edit.title.as_deref() {
+            args.push("--title");
+            args.push(title);
+        }
+        if let Some(body) = edit.body.as_deref() {
+            args.push("--body");
+            args.push(body);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
     async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback> {
         let n = number.to_string();
         self.core
@@ -943,6 +1023,7 @@ github_at_forwarders! {
         fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
         fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
+        fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn pr_feedback(number: u64) -> Result<PrFeedback>;
         fn run_list(limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
         fn run_view(id: u64) -> Result<WorkflowRun>;
@@ -1349,6 +1430,56 @@ mod tests {
         assert_eq!(
             calls[1].args_str(),
             ["issue", "create", "--title", "T", "--body", "B"]
+        );
+    }
+
+    // pr_edit emits only the flags the caller set. The flag-VALUE slots
+    // (`--title <t>`, `--body <b>`) are passed verbatim — no argv-guard needed
+    // since gh consumes the next token as a value, not as a flag.
+    #[tokio::test]
+    async fn pr_edit_emits_only_provided_fields() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+
+        gh.pr_edit(Path::new("/r"), 7, PrEdit::new().title("New title"))
+            .await
+            .expect("title-only edit");
+        gh.pr_edit(Path::new("/r"), 7, PrEdit::new().body("New body"))
+            .await
+            .expect("body-only edit");
+        gh.pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
+            .await
+            .expect("both-fields edit");
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["pr", "edit", "7", "--title", "New title"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["pr", "edit", "7", "--body", "New body"]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            ["pr", "edit", "7", "--title", "T", "--body", "B"]
+        );
+    }
+
+    // An empty string is a real value (clears the field) — it must reach the
+    // CLI as `--title ""`, not be silently dropped. The argv is asserted
+    // byte-for-byte so a future "treat empty as None" regression would
+    // surface here.
+    #[tokio::test]
+    async fn pr_edit_some_empty_string_clears_field() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_edit(Path::new("/r"), 7, PrEdit::new().title(""))
+            .await
+            .expect("empty title");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "edit", "7", "--title", ""]
         );
     }
 
