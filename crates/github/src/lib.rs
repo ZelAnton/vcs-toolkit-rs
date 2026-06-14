@@ -467,15 +467,15 @@ processkit::cli_client!(
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     async fn version(&self) -> Result<String> {
-        self.core.run(self.core.command(["--version"])).await
+        self.core.run(["--version"]).await
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -484,11 +484,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // non-zero one (a spawn failure or timeout still errors), so ANY non-zero
         // exit — not just the documented 1 — maps to "not authenticated" rather
         // than surfacing as an error. `probe` would reject an unusual exit code.
-        Ok(self
-            .core
-            .exit_code(self.core.command(["auth", "status"]))
-            .await?
-            == 0)
+        Ok(self.core.exit_code(["auth", "status"]).await? == 0)
     }
 
     async fn repo_view(&self, dir: &Path) -> Result<Repo> {
@@ -585,7 +581,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
 
     async fn api(&self, endpoint: &str) -> Result<String> {
         reject_flag_like("endpoint", endpoint)?;
-        self.core.run(self.core.command(["api", endpoint])).await
+        self.core.run(["api", endpoint]).await
     }
 
     async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()> {
@@ -791,13 +787,13 @@ impl<R: ProcessRunner> GitHub<R> {
     /// trait), so it can take `&[&str]`; forwards to the same path as
     /// [`GitHubApi::run`].
     pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     /// Like [`run_args`](GitHub::run_args) but never errors on a non-zero exit
     /// (mirrors [`GitHubApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking

@@ -830,15 +830,15 @@ processkit::cli_client!(
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GitApi for Git<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     async fn version(&self) -> Result<String> {
-        self.core.run(self.core.command(["--version"])).await
+        self.core.run(["--version"]).await
     }
 
     async fn capabilities(&self) -> Result<GitCapabilities> {
@@ -1753,13 +1753,13 @@ impl<R: ProcessRunner> Git<R> {
     /// trait), so it can take `&[&str]`; forwards to the same path as
     /// [`GitApi::run`].
     pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     /// Like [`run_args`](Git::run_args) but never errors on a non-zero exit
     /// (mirrors [`GitApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     /// Bind this client to `dir`, returning a [`GitAt`] handle whose methods omit

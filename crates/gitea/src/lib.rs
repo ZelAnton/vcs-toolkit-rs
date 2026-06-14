@@ -284,15 +284,15 @@ processkit::cli_client!(
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     async fn version(&self) -> Result<String> {
-        self.core.run(self.core.command(["--version"])).await
+        self.core.run(["--version"]).await
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -303,7 +303,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         // as an error; a spawn failure or timeout still errors via `ensure_success`.
         let res = self
             .core
-            .output(self.core.command(["login", "list", "--output", "json"]))
+            .output(["login", "list", "--output", "json"])
             .await?;
         if res.code() != Some(0) {
             // A timeout / signal-kill (no exit code) is a genuine failure;
@@ -474,13 +474,13 @@ impl<R: ProcessRunner> Gitea<R> {
     /// trait), so it can take `&[&str]`; forwards to the same path as
     /// [`GiteaApi::run`].
     pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command(args)).await
+        self.core.run(args).await
     }
 
     /// Like [`run_args`](Gitea::run_args) but never errors on a non-zero exit
     /// (mirrors [`GiteaApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(self.core.command(args)).await
+        self.core.output(args).await
     }
 
     /// Bind a working directory, so the repo-scoped methods omit that argument:
