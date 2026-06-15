@@ -30,8 +30,8 @@ use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 // Production code depends on the interface, not the concrete client:
-async fn current(git: &dyn GitApi) -> Result<String, processkit::Error> {
-    git.current_branch(Path::new(".")).await
+async fn current(git: &dyn GitApi) -> Result<Option<String>, processkit::Error> {
+    git.current_branch(Path::new(".")).await // None on a detached HEAD
 }
 
 let git = Git::new();   // real, job-backed git — passes as `&dyn GitApi`
@@ -91,11 +91,11 @@ use vcs_git::{GitApi, MockGitApi};
 #[tokio::test]
 async fn consumer_mocks_the_interface() {
     async fn on_branch(git: &dyn GitApi, want: &str) -> bool {
-        git.current_branch(Path::new(".")).await.unwrap() == want
+        git.current_branch(Path::new(".")).await.unwrap().as_deref() == Some(want)
     }
     let mut mock = MockGitApi::new();
     mock.expect_current_branch()
-        .returning(|_| Ok("main".to_string()));
+        .returning(|_| Ok(Some("main".to_string())));
     assert!(on_branch(&mock, "main").await);
 }
 ```
@@ -285,11 +285,11 @@ use vcs_git::{Git, GitApi};
 # async fn demo() {
     let git = Git::with_runner(
         ScriptedRunner::new()
-            .fallback(Reply::ok(""))                          // answers everything…
-            .on(["git", "rev-parse"], Reply::ok("feature\n")), // …except the calls that matter
+            .fallback(Reply::ok(""))                              // answers everything…
+            .on(["git", "symbolic-ref"], Reply::ok("feature\n")), // …except the calls that matter
     );
     // The whole sequence runs; only the branch query gets a meaningful answer.
-    assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), "feature");
+    assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), Some("feature".to_string()));
     git.add(Path::new("."), &[]).await.unwrap();           // satisfied by the fallback
     git.commit(Path::new("."), "snapshot").await.unwrap(); // satisfied by the fallback
 # }

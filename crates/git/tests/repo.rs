@@ -73,6 +73,27 @@ async fn init_status_add_commit_log_cycle() {
     );
 }
 
+// A freshly `init`'d repo (no commits) is on an **unborn** branch. `current_branch`
+// must return that branch name, not error — the old `rev-parse --abbrev-ref HEAD`
+// exited 128 here; `symbolic-ref --quiet --short HEAD` returns it cleanly.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn current_branch_on_unborn_repo_returns_the_branch() {
+    let tmp = TempDir::new("unborn");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    let branch = git
+        .current_branch(dir)
+        .await
+        .expect("current_branch must not error on an unborn repo");
+    // git's default initial branch is "main" or "master" depending on config;
+    // either way it must be a non-empty Some, never None or an error.
+    let branch = branch.expect("an unborn repo is still on a (named) branch");
+    assert!(!branch.is_empty(), "unborn branch name should be non-empty");
+}
+
 #[tokio::test]
 #[ignore = "requires the git binary"]
 async fn diff_is_empty_tracks_worktree_changes() {

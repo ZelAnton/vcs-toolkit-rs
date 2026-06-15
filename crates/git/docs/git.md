@@ -221,7 +221,7 @@ async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>
 async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool>;
 async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
-async fn current_branch(&self, dir: &Path) -> Result<String>;
+async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 ```
 
 - **`branches`** — local branches (`git branch`), current one flagged.
@@ -232,8 +232,9 @@ async fn current_branch(&self, dir: &Path) -> Result<String>;
 - **`is_merged`** — whether `branch` is fully merged into `target` (`branch --merged
   <target>`).
 - **`set_upstream`** — `branch --set-upstream-to=<upstream> <branch>`.
-- **`current_branch`** — `rev-parse --abbrev-ref HEAD` (e.g. `"main"`; `"HEAD"` when
-  detached).
+- **`current_branch`** — `symbolic-ref --quiet --short HEAD` → `Some("main")` for a
+  normal **or unborn** branch, `None` on a detached HEAD. (Mirrors jj's `Option`
+  bookmark shape.)
 
 ```rust,ignore
 # use std::path::Path;

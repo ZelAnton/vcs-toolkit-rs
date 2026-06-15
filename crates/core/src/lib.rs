@@ -1113,13 +1113,16 @@ mod tests {
 
     #[tokio::test]
     async fn current_branch_maps_detached_head_to_none() {
-        let named = git_repo(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")));
+        // git's `current_branch` now runs `symbolic-ref --quiet --short HEAD`:
+        // exit 0 → the branch name, exit 1 → detached HEAD → None.
+        let named =
+            git_repo(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("main\n")));
         assert_eq!(
             named.current_branch().await.unwrap().as_deref(),
             Some("main")
         );
         let detached =
-            git_repo(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("HEAD\n")));
+            git_repo(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::fail(1, "")));
         assert!(detached.current_branch().await.unwrap().is_none());
     }
 
@@ -1744,7 +1747,7 @@ mod tests {
     async fn vcs_repo_trait_object_dispatches() {
         let repo = git_repo(
             ScriptedRunner::new()
-                .on(["git", "rev-parse"], Reply::ok("main\n"))
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
                 .on(["git", "show-ref"], Reply::ok("")),
         );
         let dynamic: &dyn VcsRepo = &repo;

@@ -39,7 +39,11 @@ crates; tag releases as `vcs-git-v<version>`.
   `None` on a detached HEAD instead of the literal string `"HEAD"`. Mirrors
   `JjApi::current_bookmark`'s `Option` shape, so cross-backend code treats "no named
   branch/bookmark" identically (and the `vcs-core` facade forwards it directly
-  instead of remapping `"HEAD"` → `None`).
+  instead of remapping `"HEAD"` → `None`). Now backed by
+  `git symbolic-ref --quiet --short HEAD` (exit 0 → branch, exit 1 → detached →
+  `None`), which **also returns the branch name on an unborn repo** — a fresh
+  `init`/`clone` before the first commit, where the previous
+  `rev-parse --abbrev-ref HEAD` instead errored with exit 128.
 - **`harden()` also scrubs the env-based command hooks** — `GIT_SSH_COMMAND`/
   `GIT_SSH`, `GIT_ASKPASS`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, and
   `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR` — closing a second arbitrary-code-execution

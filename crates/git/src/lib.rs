@@ -612,8 +612,9 @@ pub trait GitApi: Send + Sync {
     /// (`git diff --name-only --diff-filter=U -z`). Empty when there are none.
     async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
     /// Current branch name, or `None` on a **detached HEAD**
-    /// (`git rev-parse --abbrev-ref HEAD`, whose literal `"HEAD"` output for a
-    /// detached head maps to `None`). Mirrors
+    /// (`git symbolic-ref --quiet --short HEAD`). Returns the branch name for a
+    /// normal branch **and for an unborn branch** (a fresh `init`/`clone` before the
+    /// first commit); `None` only when HEAD is detached. Mirrors
     /// [`JjApi::current_bookmark`](../vcs_jj/trait.JjApi.html#tymethod.current_bookmark)'s
     /// `Option` shape, so cross-backend code treats "no named branch/bookmark" the
     /// same way on both wrappers.
@@ -1049,16 +1050,29 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn current_branch(&self, dir: &Path) -> Result<Option<String>> {
-        let branch = self
+        // `symbolic-ref --quiet --short HEAD` is the one command that answers all
+        // three head states correctly in a single spawn: it prints the branch name
+        // (exit 0) for a normal **and an unborn** branch (a fresh `init`/`clone`
+        // before the first commit — where `rev-parse --abbrev-ref HEAD` instead
+        // *errors* with exit 128), and `--quiet` makes a detached HEAD a silent
+        // exit 1 (HEAD isn't a symbolic ref) rather than a `fatal:`. So map exit
+        // 0 → `Some(branch)`, exit 1 → `None` (detached), and anything else (e.g.
+        // not a repository, exit 128) stays a real error.
+        let res = self
             .core
-            .run(
+            .output(
                 self.core
-                    .command_in(dir, ["rev-parse", "--abbrev-ref", "HEAD"]),
+                    .command_in(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
             )
             .await?;
-        // `--abbrev-ref HEAD` prints the literal "HEAD" on a detached head; surface
-        // that as "no named branch" (`None`), mirroring jj's `Option` bookmark.
-        Ok((branch != "HEAD").then_some(branch))
+        match res.code() {
+            Some(0) => Ok(Some(res.stdout().trim().to_string())),
+            Some(1) => Ok(None), // detached HEAD: no named branch
+            _ => {
+                res.ensure_success()?;
+                Ok(None) // unreachable: a non-zero exit always errors above
+            }
+        }
     }
 
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>> {
@@ -2558,20 +2572,41 @@ mod tests {
         );
     }
 
-    // current_branch maps `--abbrev-ref HEAD`'s literal "HEAD" (detached) to None,
-    // and a real branch name to Some — mirroring jj's Option bookmark.
+    // current_branch reads `symbolic-ref --quiet --short HEAD`: exit 0 → the branch
+    // name (a normal *or* unborn branch), exit 1 → None (detached HEAD), and any
+    // other non-zero (e.g. not a repository) stays a real error.
     #[tokio::test]
-    async fn current_branch_maps_detached_head_to_none() {
-        let on_branch = Git::with_runner(
-            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("feature/x\n")),
-        );
+    async fn current_branch_reads_symbolic_ref_with_exit_mapping() {
+        // A normal branch (exit 0) — and the argv is pinned.
+        let rec = RecordingRunner::replying(Reply::ok("feature/x\n"));
+        let on_branch = Git::with_runner(&rec);
         assert_eq!(
             on_branch.current_branch(Path::new(".")).await.unwrap(),
             Some("feature/x".to_string())
         );
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["symbolic-ref", "--quiet", "--short", "HEAD"]
+        );
+        // An unborn branch also exits 0 with the branch name (the bug this fixes:
+        // the old `rev-parse --abbrev-ref HEAD` errored with exit 128 here).
+        let unborn = Git::with_runner(
+            ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("main\n")),
+        );
+        assert_eq!(
+            unborn.current_branch(Path::new(".")).await.unwrap(),
+            Some("main".to_string())
+        );
+        // A detached HEAD exits 1 silently → None.
         let detached =
-            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("HEAD\n")));
+            Git::with_runner(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::fail(1, "")));
         assert_eq!(detached.current_branch(Path::new(".")).await.unwrap(), None);
+        // Any other non-zero (not a repository, exit 128) is a real error.
+        let not_repo = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "symbolic-ref"],
+            Reply::fail(128, "fatal: not a git repository"),
+        ));
+        assert!(not_repo.current_branch(Path::new(".")).await.is_err());
     }
 
     // Partial amend commit must build `commit --amend -m <msg> --only -- <paths>`.

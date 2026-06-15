@@ -36,7 +36,7 @@ use vcs_git::{Git, GitApi};
 let git = Git::new();
 let repo = Path::new(".");
 
-let branch = git.current_branch(repo).await?; // String, e.g. "main"
+let branch = git.current_branch(repo).await?; // Option<String>, e.g. Some("main")
 let status = git.status(repo).await?; // Vec<StatusEntry>
 let log = git.log(repo, "HEAD", 10).await?; // Vec<Commit>, newest first
 ```
@@ -131,8 +131,8 @@ use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 # async fn demo() {
-    let git = Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("feature\n")));
-    assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), "feature");
+    let git = Git::with_runner(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("feature\n")));
+    assert_eq!(git.current_branch(Path::new(".")).await.unwrap(), Some("feature".to_string()));
 # }
 ```
 

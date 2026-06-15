@@ -876,7 +876,7 @@ mod tests {
     #[tokio::test]
     async fn read_tool_returns_dto_json() {
         let server = git_server(
-            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")),
+            ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("main\n")),
             WriteGate::None,
         );
         let out = server.repo_current_branch().await.expect("tool ok");
@@ -968,7 +968,7 @@ mod tests {
         let server = git_server(
             ScriptedRunner::new()
                 .on(["git", "checkout"], Reply::ok(""))
-                .on(["git", "rev-parse"], Reply::ok("main\n")),
+                .on(["git", "symbolic-ref"], Reply::ok("main\n")),
             gate,
         );
 
@@ -1320,7 +1320,7 @@ mod tests {
         use rmcp::model::CallToolRequestParams;
 
         let server = git_server(
-            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("main\n")),
+            ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::ok("main\n")),
             WriteGate::None,
         );
         let (server_t, client_t) = tokio::io::duplex(4096);

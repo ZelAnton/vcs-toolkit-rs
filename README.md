@@ -188,7 +188,7 @@ async fn main() -> Result<(), Error> {
     let git = Git::new().default_timeout(Duration::from_secs(10));
     let repo = Path::new(".");
 
-    let branch = git.current_branch(repo).await?; // String
+    let branch = git.current_branch(repo).await?; // Option<String> (None if detached)
     let status = git.status(repo).await?; // Vec<StatusEntry>
     let log = git.log(repo, "HEAD", 5).await?; // Vec<Commit>, newest first
 
