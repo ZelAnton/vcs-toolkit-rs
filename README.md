@@ -341,8 +341,8 @@ use std::path::Path;
 use vcs_git::{Git, GitApi};
 
 // Production code depends on the interface, not the concrete client:
-async fn current(git: &dyn GitApi) -> Result<String, processkit::Error> {
-    git.current_branch(Path::new(".")).await
+async fn current(git: &dyn GitApi) -> Result<Option<String>, processkit::Error> {
+    git.current_branch(Path::new(".")).await // None on a detached HEAD
 }
 
 let git = Git::new(); // real, job-backed git
