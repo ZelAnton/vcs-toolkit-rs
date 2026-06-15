@@ -35,6 +35,11 @@ crates; tag releases as `vcs-git-v<version>`.
   parsed as a flag.
 - **`StatusEntry::orig_path` renamed to `old_path` (breaking)** — matches
   `vcs_jj::ChangedPath::old_path`, so the rename source reads the same on both wrappers.
+- **`GitApi::current_branch` now returns `Result<Option<String>>` (breaking)** —
+  `None` on a detached HEAD instead of the literal string `"HEAD"`. Mirrors
+  `JjApi::current_bookmark`'s `Option` shape, so cross-backend code treats "no named
+  branch/bookmark" identically (and the `vcs-core` facade forwards it directly
+  instead of remapping `"HEAD"` → `None`).
 - **`harden()` also scrubs the env-based command hooks** — `GIT_SSH_COMMAND`/
   `GIT_SSH`, `GIT_ASKPASS`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, and
   `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR` — closing a second arbitrary-code-execution

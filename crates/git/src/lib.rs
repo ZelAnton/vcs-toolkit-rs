@@ -22,7 +22,8 @@
 //! use vcs_git::{Git, GitApi};
 //! # async fn demo() -> Result<(), processkit::Error> {
 //! let git = Git::new();
-//! println!("{}", git.current_branch(Path::new(".")).await?); // e.g. "main"
+//! // `current_branch` is `Option` — `None` on a detached HEAD.
+//! println!("{:?}", git.current_branch(Path::new(".")).await?); // e.g. Some("main")
 //! # Ok(()) }
 //! ```
 //!
@@ -610,8 +611,13 @@ pub trait GitApi: Send + Sync {
     /// Paths with unresolved merge conflicts, repo-relative with `/` separators
     /// (`git diff --name-only --diff-filter=U -z`). Empty when there are none.
     async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
-    /// Current branch name (`git rev-parse --abbrev-ref HEAD`).
-    async fn current_branch(&self, dir: &Path) -> Result<String>;
+    /// Current branch name, or `None` on a **detached HEAD**
+    /// (`git rev-parse --abbrev-ref HEAD`, whose literal `"HEAD"` output for a
+    /// detached head maps to `None`). Mirrors
+    /// [`JjApi::current_bookmark`](../vcs_jj/trait.JjApi.html#tymethod.current_bookmark)'s
+    /// `Option` shape, so cross-backend code treats "no named branch/bookmark" the
+    /// same way on both wrappers.
+    async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
     /// Local branches, current one flagged (`git branch`).
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
     /// Up to `max` commits reachable from `revspec`, newest first
@@ -1042,13 +1048,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn current_branch(&self, dir: &Path) -> Result<String> {
-        self.core
+    async fn current_branch(&self, dir: &Path) -> Result<Option<String>> {
+        let branch = self
+            .core
             .run(
                 self.core
                     .command_in(dir, ["rev-parse", "--abbrev-ref", "HEAD"]),
             )
-            .await
+            .await?;
+        // `--abbrev-ref HEAD` prints the literal "HEAD" on a detached head; surface
+        // that as "no named branch" (`None`), mirroring jj's `Option` bookmark.
+        Ok((branch != "HEAD").then_some(branch))
     }
 
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>> {
@@ -2177,7 +2187,7 @@ git_at_forwarders! {
         fn status_tracked() -> Result<Vec<StatusEntry>>;
         fn branch_status() -> Result<BranchStatus>;
         fn conflicted_files() -> Result<Vec<String>>;
-        fn current_branch() -> Result<String>;
+        fn current_branch() -> Result<Option<String>>;
         fn branches() -> Result<Vec<Branch>>;
         fn log(revspec: &str, max: usize) -> Result<Vec<Commit>>;
         fn rev_parse(rev: &str) -> Result<String>;
@@ -2546,6 +2556,22 @@ mod tests {
             rec.only_call().args_str(),
             ["checkout", "--detach", "abc123"]
         );
+    }
+
+    // current_branch maps `--abbrev-ref HEAD`'s literal "HEAD" (detached) to None,
+    // and a real branch name to Some — mirroring jj's Option bookmark.
+    #[tokio::test]
+    async fn current_branch_maps_detached_head_to_none() {
+        let on_branch = Git::with_runner(
+            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("feature/x\n")),
+        );
+        assert_eq!(
+            on_branch.current_branch(Path::new(".")).await.unwrap(),
+            Some("feature/x".to_string())
+        );
+        let detached =
+            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("HEAD\n")));
+        assert_eq!(detached.current_branch(Path::new(".")).await.unwrap(), None);
     }
 
     // Partial amend commit must build `commit --amend -m <msg> --only -- <paths>`.
@@ -3808,11 +3834,11 @@ mod tests {
     #[tokio::test]
     async fn consumer_mocks_the_interface() {
         async fn on_branch(git: &dyn GitApi, want: &str) -> bool {
-            git.current_branch(Path::new(".")).await.unwrap() == want
+            git.current_branch(Path::new(".")).await.unwrap().as_deref() == Some(want)
         }
         let mut mock = MockGitApi::new();
         mock.expect_current_branch()
-            .returning(|_| Ok("main".to_string()));
+            .returning(|_| Ok(Some("main".to_string())));
         assert!(on_branch(&mock, "main").await);
     }
 }

@@ -301,9 +301,11 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab mr list --per-page 100 --output json`). Returns up to 100 (100 is
     /// the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
     async fn mr_list(&self, dir: &Path) -> Result<Vec<MergeRequest>>;
-    /// A single merge request by its project-scoped id
-    /// (`glab mr view <id> --output json`).
-    async fn mr_view(&self, dir: &Path, id: u64) -> Result<MergeRequest>;
+    /// A single merge request by its project-scoped number — GitLab's `iid`
+    /// (`glab mr view <number> --output json`). Named `number` for consistency
+    /// with the issue methods and the other forge wrappers (`vcs-github`/
+    /// `vcs-gitea`); the underlying value is GitLab's `iid`.
+    async fn mr_view(&self, dir: &Path, number: u64) -> Result<MergeRequest>;
     /// Open a merge request, returning the command's output (the MR URL on
     /// success) (`glab mr create`). The [`MrCreate`] spec carries the title,
     /// body, and the optional source (`None` = the current branch) and target
@@ -313,18 +315,18 @@ pub trait GitLabApi: Send + Sync {
     /// --auto-merge=false [--squash|--rebase]`) — `--auto-merge=false` overrides
     /// glab's default of enabling merge-when-pipeline-succeeds. See
     /// [`MergeStrategy`].
-    async fn mr_merge(&self, dir: &Path, id: u64, strategy: MergeStrategy) -> Result<()>;
+    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
     /// Mark a draft merge request as ready (`glab mr update <id> --ready`).
-    async fn mr_ready(&self, dir: &Path, id: u64) -> Result<()>;
+    async fn mr_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
-    async fn mr_close(&self, dir: &Path, id: u64) -> Result<()>;
+    async fn mr_close(&self, dir: &Path, number: u64) -> Result<()>;
     /// Add a comment to a merge request, returning the command's output
     /// (`glab mr note <id> -m <message>`). The note body rides in a
     /// flag-VALUE position, so no argv-guard is needed. **Defaulted** to
     /// `Error::Unsupported` so external implementers keep compiling when the
     /// crate bumps.
     #[allow(unused_variables)]
-    async fn mr_comment(&self, dir: &Path, id: u64, body: &str) -> Result<String> {
+    async fn mr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
         Err(Error::Unsupported {
             operation: "mr_comment".into(),
         })
@@ -335,14 +337,14 @@ pub trait GitLabApi: Send + Sync {
     /// both-`None` before reaching the wrapper. `--yes` skips glab's
     /// confirmation prompt. **Defaulted** to `Error::Unsupported`.
     #[allow(unused_variables)]
-    async fn mr_edit(&self, dir: &Path, id: u64, edit: MrEdit) -> Result<()> {
+    async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
         Err(Error::Unsupported {
             operation: "mr_edit".into(),
         })
     }
     /// The MR's pipeline status, bucketed (`glab mr view <id> --output json`,
     /// reading `head_pipeline.status`). [`CiStatus::None`] when no pipeline ran.
-    async fn mr_checks(&self, dir: &Path, id: u64) -> Result<CiStatus>;
+    async fn mr_checks(&self, dir: &Path, number: u64) -> Result<CiStatus>;
     /// Open issues for `dir`
     /// (`glab issue list --per-page 100 --output json`). Returns up to 100 (100
     /// is the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
@@ -508,8 +510,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
-    async fn mr_view(&self, dir: &Path, id: u64) -> Result<MergeRequest> {
-        let id = id.to_string();
+    async fn mr_view(&self, dir: &Path, number: u64) -> Result<MergeRequest> {
+        let id = number.to_string();
         self.core
             .try_parse(
                 self.core
@@ -542,8 +544,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_merge(&self, dir: &Path, id: u64, strategy: MergeStrategy) -> Result<()> {
-        let id = id.to_string();
+    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()> {
+        let id = number.to_string();
         // `--yes` skips the confirmation prompt. `--auto-merge=false` forces an
         // *immediate* merge: glab's `--auto-merge` defaults to `true`, which —
         // with a running pipeline — would enable merge-when-pipeline-succeeds
@@ -557,8 +559,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_ready(&self, dir: &Path, id: u64) -> Result<()> {
-        let id = id.to_string();
+    async fn mr_ready(&self, dir: &Path, number: u64) -> Result<()> {
+        let id = number.to_string();
         self.core
             .run_unit(
                 self.core
@@ -567,19 +569,19 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
-    async fn mr_close(&self, dir: &Path, id: u64) -> Result<()> {
-        let id = id.to_string();
+    async fn mr_close(&self, dir: &Path, number: u64) -> Result<()> {
+        let id = number.to_string();
         self.core
             .run_unit(self.core.command_in(dir, ["mr", "close", id.as_str()]))
             .await
     }
 
-    async fn mr_comment(&self, dir: &Path, id: u64, body: &str) -> Result<String> {
+    async fn mr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
         // `-m` is a flag-VALUE position; glab consumes the next token verbatim.
         // No `--yes` here: `mr note` is non-destructive in spirit (adds a
         // comment, doesn't change the MR's state) and doesn't trigger the
         // submission prompt `mr create` does.
-        let id = id.to_string();
+        let id = number.to_string();
         self.core
             .run(
                 self.core
@@ -588,11 +590,11 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
-    async fn mr_edit(&self, dir: &Path, id: u64, edit: MrEdit) -> Result<()> {
+    async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
         // `--title` and `--description` are flag-VALUE positions: no argv-guard
         // needed. `--yes` skips the confirmation prompt `mr update` would
         // otherwise show when neither --fill nor --ready is passed.
-        let id = id.to_string();
+        let id = number.to_string();
         let mut args = vec!["mr", "update", id.as_str()];
         if let Some(title) = edit.title.as_deref() {
             args.push("--title");
@@ -606,8 +608,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_checks(&self, dir: &Path, id: u64) -> Result<CiStatus> {
-        let id = id.to_string();
+    async fn mr_checks(&self, dir: &Path, number: u64) -> Result<CiStatus> {
+        let id = number.to_string();
         self.core
             .try_parse(
                 self.core
@@ -764,14 +766,14 @@ gitlab_at_forwarders! {
     dir {
         fn repo_view() -> Result<Project>;
         fn mr_list() -> Result<Vec<MergeRequest>>;
-        fn mr_view(id: u64) -> Result<MergeRequest>;
+        fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
-        fn mr_merge(id: u64, strategy: MergeStrategy) -> Result<()>;
-        fn mr_ready(id: u64) -> Result<()>;
-        fn mr_close(id: u64) -> Result<()>;
-        fn mr_comment(id: u64, body: &str) -> Result<String>;
-        fn mr_edit(id: u64, edit: MrEdit) -> Result<()>;
-        fn mr_checks(id: u64) -> Result<CiStatus>;
+        fn mr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn mr_ready(number: u64) -> Result<()>;
+        fn mr_close(number: u64) -> Result<()>;
+        fn mr_comment(number: u64, body: &str) -> Result<String>;
+        fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
+        fn mr_checks(number: u64) -> Result<CiStatus>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;

@@ -16,10 +16,9 @@ pub(crate) async fn current_branch<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
 ) -> Result<Option<String>> {
-    // `current_branch` returns the literal "HEAD" when detached; surface that as
-    // "no named branch" (`None`) so it mirrors jj's `Option` bookmark.
-    let branch = git.current_branch(dir).await?;
-    Ok((branch != "HEAD").then_some(branch))
+    // `GitApi::current_branch` already maps a detached HEAD to `None`, mirroring
+    // jj's `Option` bookmark — forward it directly.
+    Ok(git.current_branch(dir).await?)
 }
 
 pub(crate) async fn trunk<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<Option<String>> {

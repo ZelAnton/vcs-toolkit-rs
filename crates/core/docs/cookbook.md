@@ -297,7 +297,8 @@ use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
 // 1. Code against the trait — the mock implements it too.
 async fn on_main(git: &dyn GitApi) -> bool {
-    git.current_branch(Path::new(".")).await.unwrap() == "main"
+    // `current_branch` is `Option` — `None` on a detached HEAD.
+    git.current_branch(Path::new(".")).await.unwrap().as_deref() == Some("main")
 }
 
 # async fn demo() -> Result<(), processkit::Error> {

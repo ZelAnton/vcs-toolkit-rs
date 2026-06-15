@@ -25,11 +25,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   guard on `endpoint`.
 - `Release::description` — release notes (GitLab's `description`), surfaced by the
   `vcs-forge` facade as `ForgeRelease::body`.
-- `mr_comment(dir, id, body)` — add a comment to a merge request, returning
-  the command's output (`glab mr note <id> -m <body>`). `-m` is a flag-VALUE
+- `mr_comment(dir, number, body)` — add a comment to a merge request, returning
+  the command's output (`glab mr note <number> -m <body>`). `-m` is a flag-VALUE
   position so no argv-guard is needed.
-- `mr_edit(dir, id, MrEdit)` — edit a merge request's title and/or description
-  (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
+- `mr_edit(dir, number, MrEdit)` — edit a merge request's title and/or description
+  (`glab mr update <number> [--title <title>] [--description <body>] --yes`).
   `--yes` skips the confirmation prompt. A new `MrEdit` builder (`new()`,
   `.title(..)`, `.body(..)`) carries the optional fields; absent flags are
   not emitted. An empty string is treated as a real value (glab clears the
@@ -39,6 +39,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   the regenerated `MockGitLabApi` override them.
 
 ### Changed
+- **The `mr_*` methods' id parameter is renamed `id` → `number` (breaking).**
+  `mr_view`/`mr_merge`/`mr_ready`/`mr_close`/`mr_comment`/`mr_edit`/`mr_checks` now
+  take `number: u64`, matching this crate's own `issue_*` methods and the other
+  forge wrappers (`vcs-github`/`vcs-gitea`) and facade — the value is still GitLab's
+  project-scoped `iid`. Call sites pass it positionally, so most are unaffected.
 - Bumped `processkit` to **0.11.0** (from 0.9.1), a major breaking release ahead
   of processkit's 1.0 freeze. Breaking for downstream via the re-exported
   `processkit::Error`: `Error::Timeout`/`Signalled` now carry partial
