@@ -25,10 +25,6 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   guard on `endpoint`.
 - `Release::description` — release notes (GitLab's `description`), surfaced by the
   `vcs-forge` facade as `ForgeRelease::body`.
-
-## [0.1.1] - 2026-06-12
-
-### Added
 - `mr_comment(dir, id, body)` — add a comment to a merge request, returning
   the command's output (`glab mr note <id> -m <body>`). `-m` is a flag-VALUE
   position so no argv-guard is needed.

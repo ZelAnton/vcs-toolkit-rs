@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "vcs-forge"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "processkit",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "vcs-gitea"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "mockall 0.13.1",
@@ -1226,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "vcs-github"
-version = "0.5.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "mockall 0.13.1",
@@ -1239,7 +1239,7 @@ dependencies = [
 
 [[package]]
 name = "vcs-gitlab"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "mockall 0.13.1",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "vcs-mcp"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "processkit",
  "rmcp",

@@ -391,13 +391,10 @@ fn forge_err(e: vcs_forge::Error) -> ErrorData {
 fn guard_argv_field(what: &str, value: &str) -> Result<(), ErrorData> {
     if value.starts_with('-') {
         return Err(ErrorData::invalid_params(
-            format!(
-                "{what} {value:?} would be parsed as a flag — refusing to pass it"
-            ),
+            format!("{what} {value:?} would be parsed as a flag — refusing to pass it"),
             None,
         ));
     }
-    let _ = what;
     Ok(())
 }
 
@@ -753,7 +750,7 @@ impl VcsMcpServer {
         // Pre-spawn argv guard — the facade's wrapper already runs `body`
         // through `reject_flag_like` (GitHub/GitLab) or guards the bare
         // positional itself (Gitea), but the MCP layer adds a second line of
-        // defence: a body that starts with `--` would be parsed by the CLI as
+        // defence: a body that starts with `-` would be parsed by the CLI as
         // a flag. `Some("")` is a real value (clears the field) and is *not*
         // rejected by the leading-`-` check, so we pass it through.
         guard_argv_field("body", &p.body)?;
@@ -799,12 +796,13 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge, issueCreate, authed } }` for the configured forge.",
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }` for the configured forge. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
-        let kind = self.forge()?.kind();
-        let capabilities = self.forge()?.capabilities().await.map_err(forge_err)?;
+        let forge = self.forge()?;
+        let kind = forge.kind();
+        let capabilities = forge.capabilities().await.map_err(forge_err)?;
         ok_json(&serde_json::json!({
             "kind": kind.as_str(),
             "capabilities": capabilities,
@@ -1069,10 +1067,7 @@ mod tests {
             }))
             .await
             .expect_err("gated");
-        assert!(
-            format!("{err:?}").contains("allow-write"),
-            "{err:?}"
-        );
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
     }
 
     #[tokio::test]
@@ -1104,7 +1099,7 @@ mod tests {
     #[tokio::test]
     async fn forge_pr_comment_rejects_flag_like_body() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["pr", "comment"], Reply::ok("")),
+            ScriptedRunner::new().on(["gh", "pr", "comment"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1162,7 +1157,7 @@ mod tests {
     #[tokio::test]
     async fn forge_pr_edit_some_empty_string_passes_through() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["pr", "edit"], Reply::ok("")),
+            ScriptedRunner::new().on(["gh", "pr", "edit"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1208,7 +1203,7 @@ mod tests {
     #[tokio::test]
     async fn forge_info_with_authed_github_reports_all_true() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["auth", "status"], Reply::ok("")),
+            ScriptedRunner::new().on(["gh", "auth", "status"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1228,8 +1223,7 @@ mod tests {
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.clone())
             .expect("text content");
-        let value: serde_json::Value =
-            serde_json::from_str(&text).expect("valid JSON");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(value["kind"], "github");
         assert_eq!(value["capabilities"]["authed"], true);
         assert_eq!(value["capabilities"]["pr_create"], true);

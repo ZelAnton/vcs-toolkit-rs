@@ -345,8 +345,8 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Post a comment to an existing PR/MR. Rejects both-`None` / empty inputs
-    /// up front (see [`ForgeApi::pr_comment`](crate::ForgeApi::pr_comment)).
+    /// Post a comment to an existing PR/MR. The body is guarded against flag-like
+    /// / empty values up front (see [`ForgeApi::pr_comment`]).
     pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_comment(c, &self.cwd, number, body).await,
@@ -935,10 +935,9 @@ mod tests {
     // `true` post-fork.
     #[tokio::test]
     async fn gitea_capabilities_authed_has_only_pr_checks_false() {
-        // `tea login list --output json` returning `[]` is a non-zero exit on
-        // a fresh config; we want a non-empty list, so a ScriptedRunner rule
-        // for `login list` returning `[]` is a non-zero exit ⇒ not authed.
-        // Use a custom runner that returns a non-empty array for auth probe.
+        // Gitea's auth probe parses `tea login list --output json` on a zero
+        // exit and reports authed = (the array is non-empty). Script a non-empty
+        // array so the probe reports authed; `[]` would read as not-authed.
         let forge = gitea(
             ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
         );

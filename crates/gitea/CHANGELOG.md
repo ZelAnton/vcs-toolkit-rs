@@ -10,11 +10,6 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
-
-## [0.1.1] - 2026-06-12
-
-### Added
 - `pr_comment(dir, number, body)` — add a comment to a pull request,
   returning the command's output (`tea comment <index> <body>`). Gitea PRs
   and issues share the `index` space and the same `tea comment` subcommand

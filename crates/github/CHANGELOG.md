@@ -23,10 +23,6 @@ crates; tag releases as `vcs-github-v<version>`.
   `is_failing`/`is_pending`/`is_passing` helpers — the typed form of gh's check
   categorisation, `#[non_exhaustive]` with an `Unknown` catch-all so a future gh
   bucket never breaks the parse.
-
-## [0.5.1] - 2026-06-12
-
-### Added
 - `pr_edit(dir, number, PrEdit)` — edit a pull request's title and/or body
   (`gh pr edit <n> [--title <title>] [--body <body>]`). A new `PrEdit` builder
   (`new()`, `.title(..)`, `.body(..)`) carries the optional fields; absent

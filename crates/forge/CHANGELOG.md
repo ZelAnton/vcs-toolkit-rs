@@ -13,53 +13,44 @@ crates; tag releases as `vcs-forge-v<version>`.
 - Re-export of `processkit` itself (`vcs_forge::processkit`) so a `vcs-forge`-only
   consumer can match the wrapped `Error::Forge(processkit::Error::…)` without a
   direct `processkit` dependency (mirrors `vcs_core::processkit`).
-- **Capability introspection** — `Forge::supports(ForgeOp) -> bool` and
-  `Forge::capabilities() -> ForgeCapabilities` report which varying operations a
-  backend supports (Gitea lacks `repo_view`/`pr_mark_ready`/`pr_checks`/
-  `release_view`), so a consumer can hide an unavailable action instead of
-  calling it and handling `Unsupported`. New types `ForgeOp` (+ `ForgeOp::ALL`)
-  and `ForgeCapabilities`.
+- **Capability introspection** — `Forge::supports(ForgeOp) -> bool` reports which
+  *varying* operations a backend ships (`ForgeOp`: `RepoView`/`PrMarkReady`/
+  `PrChecks`/`ReleaseView` — the ops Gitea lacks), so a consumer can hide an
+  unavailable action instead of calling it and handling `Unsupported`. New types
+  `ForgeOp` (+ `ForgeOp::ALL`).
+- **`Forge::capabilities() -> Result<ForgeCapabilities>`** and the
+  `ForgeCapabilities` flat map surfaced by the `forge_info` MCP tool — carries
+  `pr_create`/`pr_comment`/`pr_edit`/`pr_checks`/`pr_merge`/`issue_create`/`authed`,
+  each the intersection of "the CLI ships the command" and the live auth probe
+  (spawned at most once). `ForgeCapabilities::all_false()` is the all-`false`
+  shape. (Serialized snake_case under the `serde` feature.)
 - `ForgeRelease` now carries `body: Option<String>` (release notes; GitHub &
   GitLab, `None` on Gitea), `draft: bool`, and `prerelease: bool` (GitHub & Gitea;
   always `false` on GitLab, which has no such concept). Additive on the
   `#[non_exhaustive]` DTO.
 - `ForgeIssue::body`/`url` are now populated by GitHub's `issue_list` too (its
   lean field list was widened), not just `issue_view`.
-
-## [0.1.1] - 2026-06-12
-
-### Added
-- `PrEdit` — the unified edit-a-PR/MR spec (optional `title` and/or `body`),
-  built with `PrEdit::new()` and chained `.title(..)` / `.body(..)` setters.
-  Mirrors `PrCreate`'s shape.
-- `ForgeCapabilities` — the flat capability map surfaced by the new
-  `Forge::capabilities` / `forge_info` MCP tool. Carries `pr_create`,
-  `pr_comment`, `pr_edit`, `pr_checks`, `pr_merge`, `issue_create`, and
-  `authed`; the latter intersects with the static "what the CLI ships" map.
-  `ForgeCapabilities::all_false()` is the all-`false` shape used for the
-  `Unknown` forge.
-- `ForgeKind::Unknown` variant — additive on a `#[non_exhaustive]` enum;
-  the new `Forge::for_unknown(cwd)` ctor returns a handle whose
-  `capabilities()` is the all-`false` shape without spawning, and whose
-  every operation returns `Error::Unsupported`. Useful for an auto-detector
-  that wants to surface "tried, no luck" rather than guess a forge kind.
-- `Forge::pr_comment(number, body)` — post a comment to an existing PR/MR.
-  Routes to `vcs-github::GitHub::pr_comment`, `vcs-gitlab::GitLab::mr_comment`,
-  and `vcs-gitea::Gitea::pr_comment`; `Unknown` returns `Unsupported`.
-- `Forge::pr_edit(number, PrEdit)` — edit a PR/MR's title and/or body.
-  Rejects both-`None` with `Error::InvalidInput` BEFORE any spawn
-  (spec §2: explicit-error path); routes to the three per-forge wrappers.
-- `Forge::capabilities()` — the flat capability map. Spawns `auth status`
-  / `login list` exactly once; the per-forge static "ships the command" map
-  is a constant. `Unknown` returns the all-`false` shape without spawning.
-- `Error::InvalidInput(String)` — new variant for the facade's refused-input
-  cases (currently just `pr_edit` both-`None`); surfaces as a client-fixable
-  error from the MCP layer.
-- `ForgeApiExt` trait extension — the three new methods (`pr_comment`,
-  `pr_edit`, `capabilities`) live on a separate trait auto-implemented for
-  any `T: ForgeApi`, with default bodies that return `Error::Unsupported`
-  / the all-`false` capability map. External implementers of `ForgeApi`
-  keep compiling when the crate bumps.
+- `PrEdit` — the unified edit-a-PR/MR spec (optional `title` and/or `body`), built
+  with `PrEdit::new()` and chained `.title(..)` / `.body(..)` setters. Mirrors
+  `PrCreate`'s shape.
+- `Forge::pr_comment(number, body)` — post a comment to an existing PR/MR (routes
+  to `vcs-github`'s `pr_comment` / `vcs-gitlab`'s `mr_comment` / `vcs-gitea`'s
+  `pr_comment`; `Unknown` returns `Unsupported`).
+- `Forge::pr_edit(number, PrEdit)` — edit a PR/MR's title and/or body. Rejects
+  both-`None` with `Error::InvalidInput` *before* any spawn; routes to the three
+  per-forge wrappers.
+- `ForgeKind::Unknown` + `Forge::for_unknown(cwd)` — additive on the
+  `#[non_exhaustive]` enum; a handle whose `capabilities()` is the all-`false`
+  shape (no spawn) and whose every operation returns `Error::Unsupported`. Useful
+  for an auto-detector that wants to surface "tried, no luck".
+- `Error::InvalidInput(String)` — new `#[non_exhaustive]` variant for the facade's
+  refused-input cases (currently `pr_edit` both-`None`); surfaces as a
+  client-fixable error from the MCP layer.
+- The new methods (`pr_comment`/`pr_edit`/`capabilities`) are added as **defaulted**
+  methods directly on `ForgeApi` (default bodies return `Unsupported` / the
+  all-`false` map), so external `ForgeApi` implementers keep compiling and the
+  methods are callable through `&dyn ForgeApi`; the concrete `Forge` overrides all
+  three with the real dispatch.
 
 ### Changed
 - The re-exported `vcs_github::CheckRun::bucket` is now the typed `CheckBucket`

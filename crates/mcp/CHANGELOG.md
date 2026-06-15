@@ -9,26 +9,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
 
 ## [Unreleased]
 
-### Changed
-- **Tool JSON output reflects the updated `vcs-core`/`vcs-forge` DTOs (breaking for
-  wire consumers).** `repo_snapshot` now nests upstream tracking under one
-  `tracking` object (`{branch, ahead, behind}` or `null`) instead of three flat
-  `upstream`/`ahead`/`behind` fields; release results carry `body`/`draft`/
-  `prerelease`; issue results carry `body`/`url`; PR check `bucket` is the typed
-  `CheckBucket` value.
-- Bumped `processkit` to **0.11.0**. Test doubles moved to `processkit::testing`;
-  cancellation is now core (no feature flag).
-
-### Fixed
--
-
-## [0.2.0] - 2026-06-12
-
 ### Added
 - **Read tool** `forge_info` (always available, `readOnlyHint`): the forge
   identity + flat capability map. Returns
-  `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge,
-  issueCreate, authed } }` where `kind` is `"github"` / `"gitlab"` /
+  `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge,
+  issue_create, authed } }` where `kind` is `"github"` / `"gitlab"` /
   `"gitea"` and the per-op flags are the intersection of "the CLI ships
   the command" and "the CLI is authenticated" (a single `auth status` /
   `login list` probe is spawned; the rest is a static table). Errors with
@@ -59,9 +44,17 @@ crates; tag releases as `vcs-mcp-v<version>`.
   their own guards — this is the second line of defence at the MCP seam.
 
 ### Changed
-- Bumps `vcs-forge = "0.1" → "0.2"` (compatible, the path-dep is
-  unchanged). No new public API on the `VcsMcpServer` struct; the
-  new tools extend the `#[tool_router]` macro-generated tool set.
+- **Tool JSON output reflects the updated `vcs-core`/`vcs-forge` DTOs (breaking for
+  wire consumers).** `repo_snapshot` now nests upstream tracking under one
+  `tracking` object (`{branch, ahead, behind}` or `null`) instead of three flat
+  `upstream`/`ahead`/`behind` fields; release results carry `body`/`draft`/
+  `prerelease`; issue results carry `body`/`url`; PR check `bucket` is the typed
+  `CheckBucket` value.
+- Bumped `processkit` to **0.11.0**. Test doubles moved to `processkit::testing`;
+  cancellation is now core (no feature flag).
+
+### Fixed
+-
 
 ## [0.1.0] - 2026-06-08
 

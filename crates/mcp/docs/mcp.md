@@ -91,7 +91,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
 | `forge_release_list` | — | Releases, newest first (up to 100), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
-| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { prCreate, prComment, prEdit, prChecks, prMerge, issueCreate, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `authed` is the auth probe result; the other flags are the intersection of "the CLI ships the command" and "the CLI is authenticated". |
+| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `authed` is the auth probe result; the other flags are the intersection of "the CLI ships the command" and "the CLI is authenticated". |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
 

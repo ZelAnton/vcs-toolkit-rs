@@ -386,6 +386,12 @@ impl Default for PrEdit {
 /// the CLI reports an authenticated session. The split between "the CLI ships
 /// the command" and "the user is logged in" is preserved by the `authed` field
 /// itself; a consumer that needs only one of the two can read it directly.
+///
+/// This is the **auth-gated action menu** — a different surface from
+/// [`supports`](crate::Forge::supports)/[`ForgeOp`], which reports only the
+/// *static* set of capability-*varying* operations (the ones some backends lack,
+/// e.g. `repo_view`) without an auth probe. The two answer different questions and
+/// deliberately do not share a field set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -405,7 +411,12 @@ pub struct ForgeCapabilities {
     pub issue_create: bool,
     /// The CLI reports an authenticated session. The other six flags are all
     /// `false` when this is `false`; the spec's per-op table is the
-    /// intersection.
+    /// intersection. **Best-effort for GitLab:** `glab auth status` can exit `0`
+    /// while unauthenticated ([gitlab-org/cli#911]), so a `true` here means
+    /// "probably authed" for the GitLab backend; a real API call is the only sure
+    /// test. GitHub/Gitea probes are faithful.
+    ///
+    /// [gitlab-org/cli#911]: https://gitlab.com/gitlab-org/cli/-/issues/911
     pub authed: bool,
 }
 
