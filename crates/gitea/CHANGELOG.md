@@ -56,6 +56,9 @@ crates; tag releases as `vcs-gitea-v<version>`.
   key forms (`tag_name`/`tag-name`/`tagName`/`Tag-Name`, `published_at`/…) alongside
   tea's current quirky `toSnakeCase` keys (`tag-_name`, `published _at`), so a
   future `tea` that fixes its header casing doesn't silently break release parsing.
+- The typed single-issue view (`tea issues <n>`) tolerates a JSON `null`
+  `body`/`url` (an issue with no description) instead of failing the whole parse —
+  `#[serde(default)]` only covered an absent key, not a present `null`.
 
 ## [0.1.0] - 2026-06-08
 

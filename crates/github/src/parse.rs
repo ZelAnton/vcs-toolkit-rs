@@ -7,6 +7,19 @@ use serde::de::DeserializeOwned;
 
 use crate::BINARY;
 
+/// Deserialize a `String` field that `gh` may send as JSON `null` for an empty
+/// optional value (e.g. `headRefName`/`baseRefName` on a PR whose head branch was
+/// deleted): `null` → empty string, the same result as an absent key.
+/// `#[serde(default)]` alone only covers an **absent** key; a present `null` would
+/// otherwise fail the *whole* object parse with "invalid type: null, expected a
+/// string".
+fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// A pull request (`gh pr list/view --json number,title,state,headRefName,baseRefName,url`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
@@ -18,13 +31,13 @@ pub struct PullRequest {
     /// State, e.g. `"OPEN"`, `"MERGED"`, `"CLOSED"`.
     pub state: String,
     /// Source (head) branch name.
-    #[serde(rename = "headRefName", default)]
+    #[serde(rename = "headRefName", default, deserialize_with = "null_to_empty")]
     pub head_ref_name: String,
     /// Target (base) branch name.
-    #[serde(rename = "baseRefName", default)]
+    #[serde(rename = "baseRefName", default, deserialize_with = "null_to_empty")]
     pub base_ref_name: String,
     /// Web URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub url: String,
 }
 
@@ -40,10 +53,10 @@ pub struct Issue {
     /// State, e.g. `"OPEN"`, `"CLOSED"`.
     pub state: String,
     /// Issue body (markdown). Fetched by both `issue_list` and `issue_view`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub body: String,
     /// Web URL. Fetched by both `issue_list` and `issue_view`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub url: String,
 }
 
@@ -55,32 +68,32 @@ pub struct WorkflowRun {
     #[serde(rename = "databaseId")]
     pub database_id: u64,
     /// Workflow name as shown in the runs list.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub name: String,
     /// The run's display title (usually the commit subject).
-    #[serde(rename = "displayTitle", default)]
+    #[serde(rename = "displayTitle", default, deserialize_with = "null_to_empty")]
     pub display_title: String,
     /// Lifecycle status, e.g. `"queued"`, `"in_progress"`, `"completed"`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub status: String,
     /// Outcome, e.g. `"success"`, `"failure"`, `"cancelled"`, `"skipped"` —
     /// gh reports an **empty string** until the run completes (not `null`).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub conclusion: String,
     /// Name of the workflow that produced the run.
-    #[serde(rename = "workflowName", default)]
+    #[serde(rename = "workflowName", default, deserialize_with = "null_to_empty")]
     pub workflow_name: String,
     /// Branch the run was triggered for.
-    #[serde(rename = "headBranch", default)]
+    #[serde(rename = "headBranch", default, deserialize_with = "null_to_empty")]
     pub head_branch: String,
     /// Triggering event, e.g. `"push"`, `"workflow_dispatch"`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub event: String,
     /// Web URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub url: String,
     /// Creation timestamp (ISO 8601).
-    #[serde(rename = "createdAt", default)]
+    #[serde(rename = "createdAt", default, deserialize_with = "null_to_empty")]
     pub created_at: String,
 }
 
@@ -137,22 +150,22 @@ pub struct CheckRun {
     /// Check name.
     pub name: String,
     /// Raw state, e.g. `"SUCCESS"`, `"FAILURE"`, `"IN_PROGRESS"`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub state: String,
     /// gh's categorisation of `state` — the field to branch on. See [`CheckBucket`].
     #[serde(default)]
     pub bucket: CheckBucket,
     /// Workflow the check belongs to (empty for non-Actions checks).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub workflow: String,
     /// Web link to the check's details.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub link: String,
     /// Start timestamp (ISO 8601), empty until started.
-    #[serde(rename = "startedAt", default)]
+    #[serde(rename = "startedAt", default, deserialize_with = "null_to_empty")]
     pub started_at: String,
     /// Completion timestamp (ISO 8601), empty until completed.
-    #[serde(rename = "completedAt", default)]
+    #[serde(rename = "completedAt", default, deserialize_with = "null_to_empty")]
     pub completed_at: String,
 }
 
@@ -163,18 +176,18 @@ pub struct Release {
     /// The release's tag.
     #[serde(rename = "tagName")]
     pub tag_name: String,
-    /// Release title (may be empty).
-    #[serde(default)]
+    /// Release title (may be empty/null).
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub name: String,
     /// Release notes (markdown); empty from `release_list`, which doesn't
     /// fetch it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub body: String,
     /// Web URL; empty from `release_list`, which doesn't fetch it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub url: String,
-    /// Publication timestamp (ISO 8601); empty for a draft.
-    #[serde(rename = "publishedAt", default)]
+    /// Publication timestamp (ISO 8601); empty/null for a draft.
+    #[serde(rename = "publishedAt", default, deserialize_with = "null_to_empty")]
     pub published_at: String,
     /// `true` for an unpublished draft.
     #[serde(rename = "isDraft", default)]
@@ -390,6 +403,35 @@ mod tests {
         let json = r#"[{"number": 3, "title": "Docs", "state": "OPEN"}]"#;
         let issues: Vec<Issue> = from_json(json).expect("parse issues");
         assert_eq!(issues[0].number, 3);
+    }
+
+    // gh emits a *present* `null` (not an absent key) for some optional strings —
+    // notably `headRefName`/`baseRefName` on a PR whose head branch was deleted, and
+    // a null `body`. `#[serde(default)]` alone rejects a present null; `null_to_empty`
+    // must turn it into an empty string rather than failing the whole parse.
+    #[test]
+    fn null_optional_fields_parse_to_empty() {
+        let pr: PullRequest = from_json(
+            r#"{"number": 1, "title": "t", "state": "CLOSED",
+                "headRefName": null, "baseRefName": null, "url": null}"#,
+        )
+        .expect("PR with null head/base/url (deleted-branch PR)");
+        assert_eq!(pr.head_ref_name, "");
+        assert_eq!(pr.base_ref_name, "");
+        assert_eq!(pr.url, "");
+
+        let issue: Issue =
+            from_json(r#"{"number": 2, "title": "t", "state": "OPEN", "body": null, "url": null}"#)
+                .expect("issue with null body/url");
+        assert_eq!(issue.body, "");
+        assert_eq!(issue.url, "");
+
+        let release: Release = from_json(
+            r#"{"tagName": "v1", "name": null, "body": null, "url": null, "publishedAt": null}"#,
+        )
+        .expect("release with null name/body/url/publishedAt");
+        assert_eq!(release.name, "");
+        assert_eq!(release.body, "");
     }
 
     #[test]

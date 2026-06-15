@@ -42,7 +42,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   behind a feature. Downstream that enabled `vcs-jj/cancellation` should drop it.
 
 ### Fixed
--
+- `parse_diff_summary` no longer reports a self-rename: a malformed `R`/`C` path
+  with no `{old => new}` brace form (jj always renders renames with it) expanded to
+  `old == new` and set `old_path == path`; it now sets `old_path` to `None`, so
+  `old_path != path` stays a reliable "is this a real rename?" test for consumers.
 
 ## [0.5.0] - 2026-06-08
 

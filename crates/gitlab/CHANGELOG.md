@@ -53,7 +53,14 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   behind a feature. Downstream that enabled `vcs-gitlab/cancellation` should drop it.
 
 ### Fixed
--
+- **Tolerate a JSON `null` in optional string fields.** GitLab's REST API (which
+  `glab` emits verbatim) sends a *present* `null` — not an absent key — for an
+  empty optional value (an issue/MR with no `description`, a project with no
+  `default_branch`, a release with no `name`/`released_at`/`description`). The
+  `#[serde(default)]` attribute only covers an absent key, so a present `null`
+  previously failed the **entire** parse with "invalid type: null, expected a
+  string". These fields now deserialize a `null` to an empty string, so the most
+  common real responses parse.
 
 ## [0.1.0] - 2026-06-08
 

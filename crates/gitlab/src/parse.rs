@@ -22,13 +22,13 @@ pub struct MergeRequest {
     /// lower-case spelling — note it is `"opened"`, not `"open"`).
     pub state: String,
     /// Source (head) branch name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub source_branch: String,
     /// Target (base) branch name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub target_branch: String,
     /// Web URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub web_url: String,
     /// Whether the MR is a draft (GitLab's `draft`; the deprecated
     /// `work_in_progress` is not read).
@@ -43,13 +43,13 @@ pub struct Project {
     /// Project name (the last path segment's display name).
     pub name: String,
     /// Full namespace path, e.g. `"group/subgroup/repo"`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub path_with_namespace: String,
-    /// Default branch name (empty for an empty project).
-    #[serde(default)]
+    /// Default branch name (empty/null for an empty project).
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub default_branch: String,
     /// Web URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub web_url: String,
     /// Visibility, e.g. `"public"`, `"internal"`, `"private"`. `None` when glab
     /// omits the field — a consumer must treat an absent visibility as *unknown*,
@@ -78,10 +78,10 @@ pub struct Issue {
     pub state: String,
     /// Issue body (GitLab's `description`, markdown). `glab issue list` does
     /// include it, but it can be absent/null, so it is tolerant.
-    #[serde(rename = "description", default)]
+    #[serde(rename = "description", default, deserialize_with = "null_to_empty")]
     pub body: String,
     /// Web URL.
-    #[serde(rename = "web_url", default)]
+    #[serde(rename = "web_url", default, deserialize_with = "null_to_empty")]
     pub url: String,
 }
 
@@ -93,8 +93,8 @@ pub struct Release {
     /// The Git tag the release is attached to (the `<tag>`
     /// [`release_view`](crate::GitLabApi::release_view) takes).
     pub tag_name: String,
-    /// Release title (may be empty/absent — GitLab defaults it to the tag).
-    #[serde(default)]
+    /// Release title (may be empty/absent/null — GitLab defaults it to the tag).
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub name: String,
     /// Web URL of the release page. GitLab carries it as `_links.self` (there
     /// is no top-level `web_url` on a release), so it is pulled off that nested
@@ -102,12 +102,25 @@ pub struct Release {
     #[serde(rename = "_links", default, deserialize_with = "self_link")]
     pub url: String,
     /// Publication timestamp (GitLab's `released_at`, ISO 8601); empty when
-    /// absent (e.g. an upcoming/unpublished release).
-    #[serde(rename = "released_at", default)]
+    /// absent/null (e.g. an upcoming/unpublished release).
+    #[serde(rename = "released_at", default, deserialize_with = "null_to_empty")]
     pub published_at: String,
-    /// Release notes (GitLab's `description`, markdown); empty when absent.
-    #[serde(default)]
+    /// Release notes (GitLab's `description`, markdown); empty when absent/null.
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub description: String,
+}
+
+/// Deserialize a `String` field that GitLab may send as JSON `null` for an empty
+/// optional value (a *very* common shape — e.g. an issue/MR with no `description`,
+/// a project with no `default_branch`): `null` → empty string, the same result as
+/// an absent key. `#[serde(default)]` alone only covers an **absent** key; a
+/// present `null` would otherwise fail the *whole* object parse with "invalid
+/// type: null, expected a string".
+fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Deserialize a `Release`'s `url` from GitLab's `_links.self`. The links object
@@ -267,6 +280,43 @@ mod tests {
         let issue: Issue = from_json(json).expect("parse issue");
         assert_eq!(issue.body, "");
         assert_eq!(issue.url, "");
+    }
+
+    // GitLab's REST API sends a *present* `null` (not an absent key) for an empty
+    // optional field — an issue/MR with no `description`, a project with no
+    // `default_branch`. `#[serde(default)]` alone rejects a present null; the
+    // `null_to_empty` deserializer must turn it into an empty string instead of
+    // failing the whole parse. These are the single most common real shapes.
+    #[test]
+    fn null_optional_fields_parse_to_empty() {
+        let issue: Issue = from_json(
+            r#"{"iid": 9, "title": "t", "state": "closed", "description": null, "web_url": null}"#,
+        )
+        .expect("issue with null description/web_url");
+        assert_eq!(issue.body, "");
+        assert_eq!(issue.url, "");
+
+        let mr: MergeRequest = from_json(
+            r#"{"iid": 3, "title": "t", "state": "opened",
+                "source_branch": null, "target_branch": null, "web_url": null}"#,
+        )
+        .expect("mr with null branches/url");
+        assert_eq!(mr.source_branch, "");
+        assert_eq!(mr.target_branch, "");
+
+        let project: Project = from_json(
+            r#"{"name": "p", "path_with_namespace": null, "default_branch": null, "web_url": null}"#,
+        )
+        .expect("project with null default_branch");
+        assert_eq!(project.default_branch, "");
+
+        let release: Release = from_json(
+            r#"{"tag_name": "v1", "name": null, "released_at": null, "description": null}"#,
+        )
+        .expect("release with null name/date/description");
+        assert_eq!(release.name, "");
+        assert_eq!(release.published_at, "");
+        assert_eq!(release.description, "");
     }
 
     #[test]

@@ -336,7 +336,12 @@ pub(crate) fn parse_diff_summary(output: &str) -> Vec<ChangedPath> {
             }
             let (old_path, path) = if matches!(status, 'R' | 'C') {
                 let (old, new) = expand_rename(raw);
-                (Some(normalize(old)), normalize(new))
+                let (old, new) = (normalize(old), normalize(new));
+                // A non-brace `R`/`C` path (malformed — jj always renders renames
+                // with the `{old => new}` form) expands to `old == new`; don't
+                // report that as a self-rename, so `old_path != path` stays a
+                // reliable "is this a real rename?" test for consumers.
+                ((old != new).then_some(old), new)
             } else {
                 (None, normalize(raw.to_string()))
             };

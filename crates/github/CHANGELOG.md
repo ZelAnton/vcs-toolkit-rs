@@ -55,6 +55,13 @@ crates; tag releases as `vcs-github-v<version>`.
 - `pr_checks` detects gh's "no checks reported" (a PR with no checks → empty list)
   case-insensitively, so a capitalization tweak in gh's wording can't turn the
   no-checks case into a hard error.
+- **Tolerate a JSON `null` in optional string fields.** `gh` emits a *present*
+  `null` for some optional values — notably `headRefName`/`baseRefName` on a PR
+  whose head branch was deleted, plus null `body`/`url`/timestamps. `#[serde(default)]`
+  only covers an absent key, so a present `null` previously failed the whole parse
+  with "invalid type: null, expected a string". These fields (on `PullRequest`,
+  `Issue`, `WorkflowRun`, `CheckRun`, `Release`) now deserialize a `null` to an
+  empty string.
 
 ## [0.5.0] - 2026-06-08
 

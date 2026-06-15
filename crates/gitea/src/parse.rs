@@ -146,10 +146,23 @@ struct IssueDetailJson {
     title: String,
     #[serde(default)]
     state: String,
-    #[serde(default)]
+    // Gitea's API can carry a null `body` for an issue with no description; tolerate
+    // it (null → empty) so the typed-detail parse doesn't fail the whole view.
+    #[serde(default, deserialize_with = "null_to_empty")]
     body: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_empty")]
     url: String,
+}
+
+/// Deserialize a `String` field that may arrive as JSON `null` (Gitea's typed
+/// detail objects null an empty `body`/`url`): `null` → empty string, same as an
+/// absent key. `#[serde(default)]` alone only covers an absent key; a present
+/// `null` would otherwise fail the parse.
+fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl From<IssueDetailJson> for Issue {
@@ -414,6 +427,17 @@ mod tests {
         assert_eq!(issue.title, "One");
         assert_eq!(issue.state, "closed");
         assert_eq!(issue.url, "https://gitea/issues/7");
+    }
+
+    // An issue with no description: Gitea can send a *present* `null` body/url;
+    // `null_to_empty` must tolerate it rather than failing the whole detail parse.
+    #[test]
+    fn issue_detail_tolerates_null_body_and_url() {
+        let json = r#"{"index": 8, "title": "Empty", "state": "open", "body": null, "url": null}"#;
+        let issue = parse_issue(json).expect("parse issue with null body/url");
+        assert_eq!(issue.number, 8);
+        assert_eq!(issue.body, "");
+        assert_eq!(issue.url, "");
     }
 
     // `tea releases list --output json` is a fixed table: all-string values,
