@@ -19,7 +19,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
   from `tea login add` only), so `Gitea` offers no credential injection.
   `vcs-cli-support`'s `CredentialService::Gitea` is reserved for if/when `tea`
   gains env-token support.
-- Bumped `processkit` to **0.10.1** (from 0.9.1), a major breaking release ahead
+- Bumped `processkit` to **0.11.0** (from 0.9.1), a major breaking release ahead
   of processkit's 1.0 freeze. Breaking for downstream via the re-exported
   `processkit::Error`: `Error::Timeout`/`Signalled` now carry partial
   `stdout`/`stderr`, `Error::Signalled`/`NotFound`/`CassetteMiss` are first-class

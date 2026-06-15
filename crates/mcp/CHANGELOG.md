@@ -16,7 +16,7 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `upstream`/`ahead`/`behind` fields; release results carry `body`/`draft`/
   `prerelease`; issue results carry `body`/`url`; PR check `bucket` is the typed
   `CheckBucket` value.
-- Bumped `processkit` to **0.10.1**. Test doubles moved to `processkit::testing`;
+- Bumped `processkit` to **0.11.0**. Test doubles moved to `processkit::testing`;
   cancellation is now core (no feature flag).
 
 ### Fixed

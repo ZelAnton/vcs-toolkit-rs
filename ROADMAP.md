@@ -21,12 +21,24 @@ links.
 
 ## Active roadmap (do now)
 
-The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 migration**, the
-**pre-1.0 interface wave (Tier 1–4)**, the **lock-contention retry**, and the
-**credential-provider** feature (all 2026-06-14) are **shipped** — summaries below.
-With them cleared, the active list is empty; the next committed items get promoted from
-[`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred forge fields) when work
-resumes. Settled-against items live in [`decisions/`](decisions/).
+The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 → 0.11.0
+migration**, the **pre-1.0 interface wave (Tier 1–4)**, the **lock-contention
+retry**, and the **credential-provider** feature (all 2026-06-14) are **shipped** —
+summaries below. With them cleared, the active list is empty; the next committed items
+get promoted from [`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred
+forge fields) when work resumes. Settled-against items live in
+[`decisions/`](decisions/).
+
+### ✅ Shipped — processkit 0.11.0 bump (2026-06-15)
+
+A code-free follow-on to the 0.10.1 migration. processkit 0.11.0 makes the `stats`
+feature opt-in (we never used the metrics surface, so default builds are leaner),
+re-shapes `OutputEvent` to carry an `OutputLine` (we don't stream output events), and
+brings a cancel-precedence race fix plus a control-character-sanitizing one-line
+`Error` `Display` (0.10.2) — both free reliability/security wins for our hostile-
+`stderr` threat model. No source change; the two new APIs (`Command::checked`/
+`run_unit`, `OutputEvent::text`) don't fit the run→capture→parse model and are
+deliberately left unused. Full gate green.
 
 ### ✅ Shipped — credential provisioning (2026-06-14)
 

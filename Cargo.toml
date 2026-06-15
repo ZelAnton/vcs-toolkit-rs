@@ -48,19 +48,20 @@ authors = ["Anton Zhelezniakou"]
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
 # test seams the wrappers build on (under `processkit::testing` as of 0.10). Was the
-# internal `vcs-process` crate; now the published `processkit`. The 0.10.1 floor is a
-# major breaking release (cumulative over 0.9.2 + 0.10.0) ahead of the 1.0 freeze.
-# What touches us: (1) **cancellation is now core** — the `cancellation` feature was
-# removed, so `default_cancel_on`/`CancellationToken`/`Reply::pending` are always
-# available (we dropped our forwarding `cancellation` features and ungated their
-# `#[cfg]`s); (2) **test doubles moved to `processkit::testing`** (import-path sweep);
-# (3) **`ScriptedRunner::on` is program-aware** — the cassette prefix now leads with
-# the program name (`.on(["git", "status"], …)`), a miss is `Error::CassetteMiss`;
-# (4) **`Error::Timeout`/`Signalled` now carry partial `stdout`/`stderr`** and
-# `diagnostic()` covers both (better fetch/kill diagnostics); `Error::Signalled`/
-# `NotFound` are first-class, the blanket `From<io::Error>` is gone (we never relied
-# on it). Retains the 0.9.1 full-`Error::Exit`-stream fix our classifiers depend on.
-processkit = "0.10.1"
+# internal `vcs-process` crate; now the published `processkit`. The 0.11.0 floor is a
+# breaking release ahead of the 1.0 freeze. What touches us from the 0.10→0.11 jump:
+# (1) the **`stats` feature is now opt-in** (default is `["process-control"]` only) —
+# we never used the metrics surface (`ProcessGroup::stats`, `RunningProcess::cpu_time`/
+# `peak_memory_bytes`, `RunProfile`), so dropping it from the default set is a leaner
+# build with no code change; (2) **`OutputEvent` now carries an `OutputLine`** (not a
+# bare `String`) — we don't stream `output_events`, so nothing to migrate; (3) an
+# internal **cancel-precedence race fix** ("Issue 7": a self-reaped run can no longer
+# be misreported as `Cancelled`) and (4, from 0.10.2) the one-line `Error` `Display`
+# now sanitizes control chars to `U+FFFD` — both free reliability/security wins for
+# our hostile-`stderr` threat model, no API change. (Earlier 0.10.1 baseline: see git
+# history — cancellation is core, test doubles under `processkit::testing`,
+# program-aware `ScriptedRunner::on`, partial-output `Timeout`/`Signalled`.)
+processkit = "0.11.0"
 
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.

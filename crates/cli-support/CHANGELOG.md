@@ -35,10 +35,15 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   marker.
 
 ### Changed
-- Bumped `processkit` to **0.10.1** (from 0.9.1). The classifiers' input `Error`
+- Bumped `processkit` to **0.11.0** (from 0.9.1). The classifiers' input `Error`
   gained partial output on the `Timeout`/`Signalled` variants and new first-class
   variants (`Signalled`/`NotFound`/`CassetteMiss`); the `#[non_exhaustive]`
-  fall-through keeps every classifier returning "no" for unfamiliar variants.
+  fall-through keeps every classifier returning "no" for unfamiliar variants. The
+  0.10→0.11 step is light for us: processkit's **`stats` feature is now opt-in**
+  (we never used the metrics surface, so default builds are leaner with no code
+  change), `OutputEvent` now carries an `OutputLine` (we don't stream output
+  events), and a cancel-precedence race fix plus a control-character-sanitizing
+  one-line `Error` `Display` (0.10.2) come for free — no API change on our side.
 
 ### Removed
 - The **`cancellation`** feature — cancellation is now core in processkit 0.10, so

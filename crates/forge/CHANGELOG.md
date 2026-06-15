@@ -30,7 +30,7 @@ crates; tag releases as `vcs-forge-v<version>`.
 - The re-exported `vcs_github::CheckRun::bucket` is now the typed `CheckBucket`
   enum (was `String`) — breaking for code reaching through `vcs_forge::vcs_github`.
   The CI aggregate (`Forge::pr_checks` → `CiStatus`) is unchanged.
-- Bumped `processkit` to **0.10.1** (via the wrappers). Re-exported
+- Bumped `processkit` to **0.11.0** (via the wrappers). Re-exported
   `processkit::Error` changed (partial `stdout`/`stderr` on `Timeout`/`Signalled`;
   new `Signalled`/`NotFound`/`CassetteMiss` variants; `Invocation::cwd: Option<PathBuf>`)
   — breaking for downstream.

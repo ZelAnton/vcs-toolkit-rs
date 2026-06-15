@@ -13,7 +13,7 @@ crates; tag releases as `vcs-watch-v<version>`.
 -
 
 ### Changed
-- Bumped `processkit` to **0.10.1**. Test doubles moved to `processkit::testing`;
+- Bumped `processkit` to **0.11.0**. Test doubles moved to `processkit::testing`;
   cancellation is now core (no feature flag).
 
 ### Fixed
