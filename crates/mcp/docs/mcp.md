@@ -81,10 +81,9 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |
 | `repo_worktrees` | — | Attached worktrees (git) / workspaces (jj). |
-| `repo_try_merge` | `{ source }` | Whether merging `source` would conflict — a **probe** that's always rolled back (read-only, but it spawns a real trial merge). |
 | `forge_auth_status` | — | Whether the forge CLI reports an authenticated session. |
 | `forge_repo_view` | — | The repository/project on the forge (`Unsupported` on Gitea). |
-| `forge_pr_list` | — | Open pull/merge requests. |
+| `forge_pr_list` | — | Open pull/merge requests (up to 100). |
 | `forge_pr_view` | `{ number }` | A single PR/MR by number (GitLab uses the project-scoped `iid`). |
 | `forge_pr_checks` | `{ number }` | The PR/MR's coarse CI status (`Unsupported` on Gitea). |
 | `forge_issue_list` | — | Open issues (up to 100), as unified [`ForgeIssue`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
@@ -97,6 +96,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 
 | Tool | Params | Effect |
 |---|---|---|
+| `repo_try_merge` | `{ source }` | Probe whether merging `source` would conflict — a **probe** that's always rolled back, so it has no net effect. Gated because it spawns a *real* trial merge that materializes working-tree content, which on an untrusted repo can run repo-local `filter`/`textconv` drivers the hardened client doesn't sandbox. |
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
 | `repo_fetch` | — | Fetch from the default remote (`git fetch` / `jj git fetch`). |
@@ -108,6 +108,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_edit` | `{ number, title?, body? }` | Edit a PR/MR's title and/or body. At least one of `title` or `body` must be set (both absent is rejected up front as `invalid_params`); an empty string is a real value (clears the field). |
 | `forge_pr_merge` | `{ number, strategy }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
+| `forge_pr_mark_ready` | `{ number }` | Mark a draft PR/MR ready for review (`Unsupported` on Gitea). |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |
 
 A gated call outside the write gate returns a clear error naming the tool
@@ -137,15 +138,24 @@ The `vcs-mcp` binary applies, in order:
    callable; every mutation rejects up front. `--allow-write` flips all mutations
    on; `--allow-tools <name,…>` grants a **per-tool allowlist** (e.g. allow
    `repo_commit` and `repo_push` but not the worktree or forge mutations).
-2. **`destructiveHint` annotations.** Mutating tools are annotated so an MCP client
-   can surface a confirmation prompt; read tools carry `readOnlyHint`. (Note
-   `repo_try_merge` is `readOnlyHint` even though it spawns a real trial merge — it
-   always rolls back and leaves no trace.)
+2. **Tool annotations.** Mutating tools are annotated `destructiveHint` so an MCP
+   client can surface a confirmation prompt; the genuinely read-only tools carry
+   `readOnlyHint`. `repo_try_merge` is **write-gated** (not read-only): although it
+   always rolls back and leaves no net trace, it spawns a *real* trial merge that
+   materializes working-tree content, so it is treated like `repo_checkout` — see
+   the next point.
 3. **A hardened git client.** The binary opens the repo with `Git::hardened()`,
-   which disables repo hooks and `core.fsmonitor`, scrubs repo-redirecting `GIT_*`
+   which disables repo hooks and `core.fsmonitor`, pins a repo-local
+   `core.sshCommand` empty, scrubs repo-redirecting and command-hook `GIT_*`
    variables, and skips system config — so serving a repository you didn't create
    can't execute its hooks (even on a read tool like `repo_status`). jj has no
-   repo-local hooks, so its client needs no equivalent.
+   repo-local hooks, so its client needs no equivalent. **Residual:** `harden()`
+   does *not* sandbox repo-local `filter.*` (smudge/clean) or `diff.*.textconv`
+   drivers, which run when working-tree content is materialized (`repo_checkout`,
+   the worktree tools, `repo_try_merge`) or a diff is produced. Those
+   content-materializing tools are write-gated, so the default read-only mode does
+   not expose the smudge-filter path; a `textconv` driver can still run on a diff of
+   a **fully untrusted** repo, so sandbox the process (OS-level) for that case.
 4. **The wrappers' argv guards underneath.** Every argument flows through the
    `vcs-core`/`vcs-forge` facades, so the injection guards (`reject_flag_like`)
    apply — a tool parameter can't smuggle a leading-`-` flag into argv.

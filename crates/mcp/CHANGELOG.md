@@ -20,6 +20,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `invalid_params` ("no forge is configured for this repository …") when
   no forge is bound to the server, matching the other `forge_*` tools.
 - **Mutating tools** (gated, `destructiveHint`):
+  - `forge_pr_mark_ready({ number })` — mark a draft PR/MR ready for review
+    (`Unsupported` on Gitea). Closes a parity gap: the `Forge` facade has
+    `pr_mark_ready`, but no MCP tool surfaced it, so a draft→ready workflow wasn't
+    drivable over MCP.
   - `forge_pr_comment({ number, body })` — post a markdown comment to an
     existing PR/MR; returns the CLI output (the comment URL on success).
   - `forge_pr_edit({ number, title?, body? })` — edit a PR/MR's title
@@ -44,6 +48,16 @@ crates; tag releases as `vcs-mcp-v<version>`.
   their own guards — this is the second line of defence at the MCP seam.
 
 ### Changed
+- **`repo_try_merge` is now write-gated (breaking).** It was a read tool
+  (`readOnlyHint`), but it spawns a *real* trial merge that materializes working-tree
+  content — which on an untrusted repository can run repo-local `filter`/`textconv`
+  drivers the hardened client does not sandbox, the same code-execution class as
+  `repo_checkout` (already gated). It now requires `--allow-write` (or
+  `--allow-tools repo_try_merge`) and is in `WRITE_TOOLS`; its annotation is
+  corrected to non-destructive/idempotent (it still rolls back, leaving no net
+  trace). The default read-only mode therefore no longer exposes any working-tree-
+  materializing operation; the MCP docs note the residual `textconv`-on-diff vector
+  for fully untrusted repos.
 - **Tool JSON output reflects the updated `vcs-core`/`vcs-forge` DTOs (breaking for
   wire consumers).** `repo_snapshot` now nests upstream tracking under one
   `tracking` object (`{branch, ahead, behind}` or `null`) instead of three flat

@@ -42,6 +42,10 @@ crates; tag releases as `vcs-forge-v<version>`.
 - `Forge::pr_edit(number, PrEdit)` — edit a PR/MR's title and/or body. Rejects
   both-`None` with `Error::InvalidInput` *before* any spawn; routes to the three
   per-forge wrappers.
+- `Error::is_not_found()` (the forge CLI binary `gh`/`glab`/`tea` isn't installed)
+  and `Error::is_transient()` (a transient io/spawn hiccup) — completing the `is_*`
+  classifier family so it matches `vcs_core::Error`'s, letting a caller branch on
+  intent without reaching into the wrapped `processkit::Error`.
 - `ForgeKind::Unknown` + `Forge::for_unknown(cwd)` — additive on the
   `#[non_exhaustive]` enum; a handle whose `capabilities()` is the all-`false`
   shape (no spawn) and whose every operation returns `Error::Unsupported`. Useful

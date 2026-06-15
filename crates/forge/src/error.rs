@@ -36,6 +36,26 @@ impl Error {
         matches!(self, Error::Forge(e) if vcs_cli_support::is_transient_fetch_error(e))
     }
 
+    /// Whether the underlying error is a **transient io/spawn** failure
+    /// (interrupted / would-block / resource-busy) — delegates to
+    /// [`processkit::Error::is_transient`]. Narrower than
+    /// [`is_transient_fetch_error`](Error::is_transient_fetch_error) (which also
+    /// treats a timeout and the network markers as retryable). Mirrors
+    /// [`vcs_core::Error::is_transient`](https://docs.rs/vcs-core/latest/vcs_core/enum.Error.html#method.is_transient)
+    /// so the classifier family is the same on both facades.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Error::Forge(e) if e.is_transient())
+    }
+
+    /// Whether the underlying forge CLI binary (`gh`/`glab`/`tea`) **wasn't found** —
+    /// a setup problem (the tool isn't installed or isn't on `PATH`), not a usage or
+    /// network error. Delegates to [`processkit::Error::is_not_found`]; lets a caller
+    /// surface a "please install gh/glab/tea" hint. Mirrors
+    /// [`vcs_core::Error::is_not_found`](https://docs.rs/vcs-core/latest/vcs_core/enum.Error.html#method.is_not_found).
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::Forge(e) if e.is_not_found())
+    }
+
     /// Whether this is an [`Unsupported`](Error::Unsupported) operation (rather
     /// than a forge/network failure).
     pub fn is_unsupported(&self) -> bool {
@@ -72,3 +92,49 @@ impl From<processkit::Error> for Error {
 
 /// `Result` specialised to the facade [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_not_found_only_for_a_missing_cli_binary() {
+        let missing = Error::Forge(processkit::Error::NotFound {
+            program: "gh".into(),
+            searched: None,
+        });
+        assert!(missing.is_not_found());
+        // An ordinary non-zero exit (e.g. no such PR) is not a "binary not found".
+        let exit = Error::Forge(processkit::Error::Exit {
+            program: "gh".into(),
+            code: 1,
+            stdout: String::new(),
+            stderr: "no pull requests found".into(),
+        });
+        assert!(!exit.is_not_found());
+        // The facade's own variants are never "not found".
+        assert!(!Error::InvalidInput("x".into()).is_not_found());
+    }
+
+    #[test]
+    fn is_transient_only_for_an_io_transient() {
+        let interrupted = Error::Forge(processkit::Error::Spawn {
+            program: "glab".into(),
+            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
+        });
+        assert!(interrupted.is_transient());
+        // A missing binary is NOT transient (retrying won't install it).
+        let missing = Error::Forge(processkit::Error::Spawn {
+            program: "glab".into(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert!(!missing.is_transient());
+        assert!(
+            !Error::Unsupported {
+                forge: ForgeKind::Gitea,
+                operation: "pr_checks",
+            }
+            .is_transient()
+        );
+    }
+}

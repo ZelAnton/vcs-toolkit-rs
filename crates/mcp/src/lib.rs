@@ -34,12 +34,14 @@
 //!
 //! # Tools & the write gate
 //!
-//! Read tools are **always available**; mutating tools are **gated**. Every
-//! mutation is registered and annotated `destructiveHint`, but rejects the call
-//! — naming itself, before spawning anything — unless the [`WriteGate`] covers
-//! it. `--allow-write` enables every mutation; `--allow-tools
-//! repo_commit,forge_pr_create` enables only the named ones; read tools are
-//! unaffected either way. Tool names are the method names (e.g. `"repo_commit"`).
+//! Read tools are **always available**; mutating tools are **gated**. A gated tool
+//! rejects the call — naming itself, before spawning anything — unless the
+//! [`WriteGate`] covers it. Most are annotated `destructiveHint`; `repo_try_merge`
+//! is gated too (it spawns a real, content-materializing trial merge) but rolls
+//! back, so it's annotated non-destructive/idempotent. `--allow-write` enables
+//! every gated tool; `--allow-tools repo_commit,forge_pr_create` enables only the
+//! named ones; read tools are unaffected either way. Tool names are the method
+//! names (e.g. `"repo_commit"`).
 //! This is the crate's core safety property: a default server is read-only, and a
 //! client can surface a confirmation prompt off the `destructiveHint`.
 //!
@@ -261,6 +263,7 @@ impl From<MergeStrategyArg> for vcs_forge::MergeStrategy {
 /// real tool, so the intended write would stay disabled). `require_write`
 /// debug-asserts every gated tool is listed here, so the two can't drift.
 pub const WRITE_TOOLS: &[&str] = &[
+    "repo_try_merge",
     "repo_commit",
     "repo_checkout",
     "repo_fetch",
@@ -271,6 +274,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "forge_pr_create",
     "forge_pr_merge",
     "forge_pr_close",
+    "forge_pr_mark_ready",
     "forge_pr_comment",
     "forge_pr_edit",
 ];
@@ -498,14 +502,19 @@ impl VcsMcpServer {
         ok_json(&self.repo.list_worktrees().await.map_err(core_err)?)
     }
 
+    // NOTE: the absence of `read_only_hint = true` here is DELIBERATE — do not add
+    // it back. `try_merge` materializes a real (rolled-back) trial merge, so it is
+    // write-gated below; marking it read-only would re-expose it in the default
+    // read-only mode and reopen the untrusted-repo filter/textconv code-exec path.
     #[tool(
-        description = "Probe whether merging `source` into the current work would conflict, WITHOUT leaving a trace (the probe is always rolled back). Read-only, but it spawns a real trial merge.",
-        annotations(read_only_hint = true)
+        description = "Probe whether merging `source` into the current work would conflict, WITHOUT leaving a trace (the probe is always rolled back). It spawns a REAL trial merge that materializes working-tree content, so — like checkout — it is write-gated: on an untrusted repository that materialization can run repo-local `filter`/`textconv` drivers, which the hardened client does not sandbox. Enable it with `--allow-write` or `--allow-tools repo_try_merge`.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_try_merge(
         &self,
         Parameters(p): Parameters<TryMergeParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("repo_try_merge")?;
         ok_json(&self.repo.try_merge(&p.source).await.map_err(core_err)?)
     }
 
@@ -615,7 +624,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Open pull/merge requests on the configured forge.",
+        description = "Open pull/merge requests on the configured forge (up to 100).",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_pr_list(&self) -> Result<CallToolResult, ErrorData> {
@@ -766,6 +775,22 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Mark a draft pull/merge request as ready for review. Requires write access (--allow-write, or --allow-tools naming this tool). `Unsupported` on Gitea (`tea` has no ready command).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_mark_ready(
+        &self,
+        Parameters(p): Parameters<PrNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_mark_ready")?;
+        self.forge()?
+            .pr_mark_ready(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "ready": p.number }))
+    }
+
+    #[tool(
         description = "Post a comment to an existing pull/merge request, returning the CLI's output. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
@@ -907,6 +932,25 @@ mod tests {
             }))
             .await
             .expect_err("gated");
+        assert!(
+            format!("{err:?}").contains("allow-write"),
+            "error should mention --allow-write: {err:?}"
+        );
+    }
+
+    // `repo_try_merge` is write-gated: it spawns a real trial merge that
+    // materializes working-tree content (which on an untrusted repo can run
+    // repo-local filter/textconv drivers), so it must NOT be callable in the default
+    // read-only mode — unlike the genuinely read-only tools.
+    #[tokio::test]
+    async fn try_merge_is_write_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_try_merge(Parameters(TryMergeParams {
+                source: "feat".into(),
+            }))
+            .await
+            .expect_err("try_merge must be gated in read-only mode");
         assert!(
             format!("{err:?}").contains("allow-write"),
             "error should mention --allow-write: {err:?}"
@@ -1114,6 +1158,24 @@ mod tests {
                 title: Some("T".into()),
                 body: None,
             }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn forge_pr_mark_ready_is_gated() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let err = server
+            .forge_pr_mark_ready(Parameters(PrNumberParams { number: 7 }))
             .await
             .expect_err("gated");
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
