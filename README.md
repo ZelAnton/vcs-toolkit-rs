@@ -391,12 +391,14 @@ Two layers, both on by default or one call away:
   newtypes validate eagerly; method signatures stay `&str`.
 - **`Git::hardened()`.** Running `git` inside a repository you didn't create
   executes that repo's hooks and honours its config. The hardened profile
-  disables hooks and `core.fsmonitor`, scrubs repo-redirecting `GIT_*`
-  variables *and* the env-based command hooks that make git spawn an arbitrary
-  program (`GIT_SSH_COMMAND`/`GIT_ASKPASS`/`GIT_EXTERNAL_DIFF`/`GIT_PAGER`/…),
-  skips system config, and keeps prompts off — on every command the client
-  runs. jj needs no equivalent (no repo-local hooks); in a colocated repo,
-  harden the `Git` client you point at it.
+  disables hooks, `core.fsmonitor`, and a repo-local `core.sshCommand`, scrubs
+  repo-redirecting `GIT_*` variables *and* the env-based command hooks that make
+  git spawn an arbitrary program (`GIT_SSH_COMMAND`/`GIT_ASKPASS`/
+  `GIT_EXTERNAL_DIFF`/…), skips system config, and keeps prompts off — on every
+  command the client runs. (It is hardening, not a sandbox: repo-local
+  `filter`/`textconv` keys survive, so don't checkout/diff a *fully* untrusted
+  repo without an OS sandbox — see the security guide.) jj needs no equivalent
+  (no repo-local hooks); in a colocated repo, harden the `Git` client you point at it.
 
 A related opt-in is **supplying** a secret rather than guarding against one:
 `Git`/`GitHub`/`GitLab` accept a `CredentialProvider` via `with_credentials(...)`,

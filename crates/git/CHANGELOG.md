@@ -43,6 +43,14 @@ crates; tag releases as `vcs-git-v<version>`.
   unaffected (it injects a `credential.helper` / token env, not these variables); an
   operator who relies on an ambient `GIT_SSH_COMMAND`/`GIT_ASKPASS` for a hardened
   run should inject it per-call rather than inherit it.
+- **`harden()` also pins `core.sshCommand` empty** — the *config-key* twin of the
+  scrubbed `GIT_SSH_COMMAND` env var, so a poisoned **repo-local** `.git/config`
+  can't run an arbitrary program for the SSH transport (env-config overrides
+  repo-local config; empty falls back to the default `ssh`). The hardening docs now
+  also scope the guarantee honestly: repo-local `.gitattributes`-driven
+  `filter.*` smudge/clean and `diff.*.textconv` keys are *not* neutralized, so a
+  fully untrusted repo still needs an OS sandbox for checkout/diff — `harden()` is
+  hardening, not a sandbox.
 - Bumped `processkit` to **0.11.0** (from 0.9.1), a major breaking release ahead
   of processkit's 1.0 freeze. Breaking for downstream via the re-exported
   `processkit::Error`: `Error::Timeout`/`Signalled` now carry partial

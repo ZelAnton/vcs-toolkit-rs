@@ -808,6 +808,11 @@ pub trait GitApi: Send + Sync {
     /// distinguish). A multi-valued key errors; read those via `run`.
     async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>>;
     /// Set a config key in the repository's local config (`config <key> <value>`).
+    ///
+    /// **Trusted-input sink.** `key` is guarded against a flag-shape, but this
+    /// writes whatever key/value it's given — including code-execution keys like
+    /// `core.sshCommand` or `filter.<drv>.clean`. Never wire untrusted input into
+    /// it; a `harden()`ed client does *not* protect against config *you* write.
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
     /// Add a remote (`remote add <name> <url>`).
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
@@ -1954,7 +1959,13 @@ impl<R: ProcessRunner> Git<R> {
     /// - **Disables hooks** — `core.hooksPath=/dev/null` pinned via git's
     ///   env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, git ≥ 2.31;
     ///   verified to suppress hooks on Windows too) — and `core.fsmonitor`
-    ///   (a config-driven daemon launch).
+    ///   (a config-driven daemon launch). Env-config overrides even the
+    ///   *repo-local* `.git/config` for the keys it names, so these pins beat a
+    ///   poisoned `.git/config`.
+    /// - **Neutralizes `core.sshCommand`** (pinned empty) — the config-key twin of
+    ///   the scrubbed `GIT_SSH_COMMAND`, an arbitrary program git would run for the
+    ///   SSH transport. Empty is falsy to git, so the default `ssh` (ambient
+    ///   `~/.ssh/config`/agent) still works; only the repo's override is dropped.
     /// - **Removes inherited repo redirectors** so a poisoned parent
     ///   environment can't point commands at another repository: `GIT_DIR`,
     ///   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
@@ -1974,8 +1985,20 @@ impl<R: ProcessRunner> Git<R> {
     /// - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal
     ///   prompts off everywhere (`GIT_TERMINAL_PROMPT=0`).
     ///
-    /// What it does NOT do: sandbox the git binary itself, or stop the repo's
-    /// *content* from being malicious. In a **colocated jj repo**, git hooks
+    /// **Residual repo-local-config vectors (NOT neutralized).** `harden()` closes
+    /// the *hooks*, `fsmonitor`, `core.sshCommand`, and the env redirector/command-
+    /// hook paths — but a few **repo-local `.git/config` / `.gitattributes`** keys
+    /// still run an arbitrary program and are not pinned: `filter.<drv>.clean`/
+    /// `smudge` (run on any working-tree materialization — `checkout`, `stash pop`,
+    /// `worktree add`), and `diff.<drv>.textconv` / `diff.external` (run when a diff
+    /// is produced; [`diff_text`](GitApi::diff_text) defends itself with
+    /// `--no-ext-diff`, but other diff/blame reads do not). So for a **fully
+    /// untrusted** repo, do not materialize its working tree or run diffs through a
+    /// hardened client without an OS-level sandbox — `harden()` is hardening, not a
+    /// sandbox.
+    ///
+    /// What it does NOT do beyond that: sandbox the git binary itself, or stop the
+    /// repo's *content* from being malicious. In a **colocated jj repo**, git hooks
     /// only run when *git* commands run — harden the `Git` client; `Jj` needs
     /// no equivalent (jj has no repo-local hooks; see the vcs-jj docs).
     ///
@@ -2010,7 +2033,11 @@ impl<R: ProcessRunner> Git<R> {
         hardened
             .default_env("GIT_CONFIG_NOSYSTEM", "1")
             .default_env("GIT_TERMINAL_PROMPT", "0")
-            .default_env("GIT_CONFIG_COUNT", "2")
+            // Env-config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`) overrides even the
+            // *repo-local* `.git/config` for the keys it names — so these pins beat
+            // a poisoned `.git/config`, which `GIT_CONFIG_NOSYSTEM` (system) and the
+            // scrubbed `GIT_CONFIG_GLOBAL` (global) do not reach.
+            .default_env("GIT_CONFIG_COUNT", "3")
             .default_env("GIT_CONFIG_KEY_0", "core.hooksPath")
             // `/dev/null` as the hooks dir disables hooks on every platform,
             // Windows included: git looks for `<hooksPath>/<hook-name>`, and no
@@ -2021,6 +2048,13 @@ impl<R: ProcessRunner> Git<R> {
             .default_env("GIT_CONFIG_VALUE_0", "/dev/null")
             .default_env("GIT_CONFIG_KEY_1", "core.fsmonitor")
             .default_env("GIT_CONFIG_VALUE_1", "false")
+            // Neutralize a repo-local `core.sshCommand` (an arbitrary program git
+            // runs for the SSH transport on fetch/push/clone) — the config-key twin
+            // of the scrubbed `GIT_SSH_COMMAND` env var. An empty value is falsy to
+            // git, so it falls back to the default `ssh` (ambient `~/.ssh/config` /
+            // agent still work); only the repo's override is dropped.
+            .default_env("GIT_CONFIG_KEY_2", "core.sshCommand")
+            .default_env("GIT_CONFIG_VALUE_2", "")
     }
 
     /// Switch to `branch`, carrying uncommitted changes (tracked *and*
@@ -3321,8 +3355,13 @@ mod tests {
                     .any(|(key, val)| key.to_str() == Some(k) && val.is_none())
             };
             assert!(has("GIT_CONFIG_NOSYSTEM", "1"), "{:?}", call.args_str());
+            assert!(has("GIT_CONFIG_COUNT", "3"));
             assert!(has("GIT_CONFIG_KEY_0", "core.hooksPath"));
             assert!(has("GIT_CONFIG_VALUE_0", "/dev/null"));
+            assert!(has("GIT_CONFIG_KEY_1", "core.fsmonitor"));
+            // The repo-local core.sshCommand kill-switch (pinned empty).
+            assert!(has("GIT_CONFIG_KEY_2", "core.sshCommand"));
+            assert!(has("GIT_CONFIG_VALUE_2", ""));
             assert!(has("GIT_TERMINAL_PROMPT", "0"));
             assert!(removed("GIT_DIR"), "GIT_DIR scrubbed");
             assert!(removed("GIT_CONFIG_GLOBAL"), "global config scrubbed");

@@ -121,13 +121,20 @@ rejected later for flag-shape.
 
 Running `git` inside a repository you didn't create is **arbitrary code
 execution by default**: git fires that repo's hooks and honours its config on
-ordinary commands. The hardened profile neutralises that, applying the same
-settings to **every** command the client runs:
+ordinary commands. The hardened profile closes the **hooks**, **`fsmonitor`**,
+**`core.sshCommand`**, and **environment** code-execution paths, applying the same
+settings to **every** command the client runs (see the residual-vectors note at
+the end of this section for what it does *not* cover):
 
 - **Disables hooks** — `core.hooksPath=/dev/null`, pinned through git's
   env-based config (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`;
   verified to suppress hooks on Windows too) — and `core.fsmonitor=false` (a
-  config-driven daemon launch).
+  config-driven daemon launch). Env-config overrides even the *repo-local*
+  `.git/config` for the keys it names, so these pins beat a poisoned `.git/config`.
+- **Neutralizes `core.sshCommand`** — pinned empty (the config-key twin of the
+  scrubbed `GIT_SSH_COMMAND`), so a repo-local override can't run an arbitrary
+  program for the SSH transport. Empty is falsy to git, so the default `ssh`
+  (ambient `~/.ssh/config`/agent) still works.
 - **Scrubs repo-redirecting `GIT_*` variables** so a poisoned parent environment
   can't point a command at another repository: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
@@ -157,8 +164,24 @@ It is chainable, so it composes with a runner in tests
 (`Git::with_runner(rec).harden()`) and with a deadline
 (`Git::hardened().default_timeout(…)`).
 
-What it does **not** do: sandbox the git binary itself, or stop the repo's
-*content* from being malicious.
+**Residual repo-local-config vectors (NOT neutralized).** The profile pins the
+hooks, `fsmonitor`, and `core.sshCommand` keys and scrubs the env vectors, but a
+few **repo-local `.git/config` / `.gitattributes`** keys still run an arbitrary
+program and are *not* pinned (there is no git switch to ignore repo-local config
+wholesale, only a per-key override):
+
+- `filter.<drv>.clean` / `smudge` + `.gitattributes` — run on any working-tree
+  materialization (`checkout`, `stash pop`, `switch_with_stash`, `worktree add`).
+- `diff.<drv>.textconv` / `diff.external` — run when a diff is produced.
+  [`diff_text`](https://docs.rs/vcs-git/latest/vcs_git/trait.GitApi.html#tymethod.diff_text)
+  defends itself with `--no-ext-diff`, but other diff/blame reads do not.
+
+So for a **fully untrusted** repo, do not materialize its working tree or run diffs
+through a hardened client without an OS-level sandbox. `harden()` is hardening, not
+a sandbox.
+
+What it does **not** do beyond that: sandbox the git binary itself, or stop the
+repo's *content* from being malicious.
 
 **jj needs no equivalent.** jj has no repo-local hooks, and its config comes from
 the user/repo TOML files jj itself trusts — there is deliberately no

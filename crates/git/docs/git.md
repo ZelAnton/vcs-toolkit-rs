@@ -44,8 +44,13 @@ honours its config — arbitrary code execution by default. `Git::hardened()`
 command the client runs:
 
 - **Disables hooks** — `core.hooksPath` is pinned to `/dev/null` via git's
-  env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`) — and `core.fsmonitor`
-  is forced `false` (a config-driven daemon launch).
+  env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, which overrides even the
+  *repo-local* `.git/config`) — and `core.fsmonitor` is forced `false` (a
+  config-driven daemon launch).
+- **Neutralizes `core.sshCommand`** — pinned empty (the config-key twin of the
+  scrubbed `GIT_SSH_COMMAND`), so a repo-local override can't run an arbitrary
+  program for the SSH transport. The default `ssh` (ambient `~/.ssh/config`/agent)
+  still works.
 - **Scrubs inherited `GIT_*` redirectors** so a poisoned parent environment
   can't point commands at another repo: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
@@ -58,6 +63,15 @@ command the client runs:
   `credential.helper` / token env, not these variables).
 - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal prompts
   off everywhere (`GIT_TERMINAL_PROMPT=0`).
+
+**Residual repo-local-config vectors (not neutralized).** A few repo-local
+`.git/config` / `.gitattributes` keys still run an arbitrary program and are *not*
+pinned: `filter.<drv>.clean`/`smudge` (run on any working-tree materialization —
+checkout, `stash pop`, `worktree add`) and `diff.<drv>.textconv`/`diff.external`
+(run when a diff is produced; `diff_text` defends with `--no-ext-diff`, other diff/
+blame reads do not). For a **fully untrusted** repo, don't materialize its working
+tree or run diffs through a hardened client without an OS-level sandbox — `harden()`
+is hardening, not a sandbox.
 
 It does **not** sandbox the git binary or vet the repo's *content*. `harden()` is
 chainable on any runner — `Git::with_runner(rec).harden()` works in tests — but

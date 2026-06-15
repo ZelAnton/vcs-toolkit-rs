@@ -411,9 +411,15 @@ impl JjCapabilities {
 #[async_trait::async_trait]
 pub trait JjApi: Send + Sync {
     /// Run `jj <args>`, returning trimmed stdout (throws on a non-zero exit).
+    ///
+    /// **Unguarded escape hatch — you own its safety.** `args` is forwarded
+    /// verbatim, so never pass untrusted tokens here: jj's `--config`/
+    /// `--config-toml` and user-defined aliases can reach code execution. The
+    /// guarded typed methods are the safe path.
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`JjApi::run`] but never errors on a non-zero exit — returns the
-    /// captured [`ProcessResult`].
+    /// captured [`ProcessResult`]. Same unguarded-escape-hatch caveat as
+    /// [`run`](JjApi::run): never forward untrusted argv.
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed Jujutsu version (`jj --version`).
     async fn version(&self) -> Result<String>;
