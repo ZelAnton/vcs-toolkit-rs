@@ -896,6 +896,39 @@ mod tests {
         );
     }
 
+    // Full jitter (used by `RetryPolicy::lock_contention`): every sampled backoff
+    // stays within `[0, exponential cap]`, and successive samples de-correlate
+    // (more than one distinct value) so retries don't thunder together. Pins the
+    // jitter path, which the exponential test above deliberately turns off.
+    #[test]
+    fn jitter_stays_within_cap_and_decorrelates() {
+        let p = RetryPolicy::none()
+            .attempts(8)
+            .base_backoff(Duration::from_millis(10))
+            .max_backoff(Duration::from_millis(80))
+            .with_jitter(true);
+        // The cap at retry_index 3 is the full 80ms exponential value.
+        let cap = Duration::from_millis(80);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let d = backoff_for(&p, 3);
+            assert!(
+                d <= cap,
+                "jittered backoff {d:?} must stay within the cap {cap:?}"
+            );
+            seen.insert(d.as_nanos());
+        }
+        assert!(
+            seen.len() > 1,
+            "full jitter must produce a spread of delays, not a constant"
+        );
+        // A zero base still short-circuits to zero even with jitter on.
+        assert_eq!(
+            backoff_for(&RetryPolicy::none().with_jitter(true), 2),
+            Duration::ZERO
+        );
+    }
+
     // The executor: retries while the predicate matches and attempts remain, returns
     // the first Ok, doesn't retry a non-matching error, and exhausts to the last Err.
     #[tokio::test]
