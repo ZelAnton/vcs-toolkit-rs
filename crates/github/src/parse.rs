@@ -141,6 +141,15 @@ impl CheckBucket {
     pub fn is_passing(self) -> bool {
         matches!(self, CheckBucket::Pass)
     }
+
+    /// Whether this is the [`Unknown`](CheckBucket::Unknown) catch-all — a bucket a
+    /// future `gh` introduced (or a missing field) that this version doesn't model.
+    /// Distinct from [`Skipping`](CheckBucket::Skipping): a skip is a deliberate,
+    /// terminal no-op, whereas an unknown bucket is *unclassified* and should be
+    /// treated conservatively (as "not known to be done") by an aggregator.
+    pub fn is_unknown(self) -> bool {
+        matches!(self, CheckBucket::Unknown)
+    }
 }
 
 /// One check on a PR (`gh pr checks --json …`).

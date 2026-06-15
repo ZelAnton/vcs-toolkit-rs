@@ -236,10 +236,13 @@ fn map_repo(r: Repo) -> ForgeRepo {
 }
 
 /// Fold gh's per-check buckets into one coarse status: any fail/cancel ⇒
-/// Failing; else any pending ⇒ Pending; else any pass ⇒ Passing; else None.
+/// Failing; else any pending ⇒ Pending; else any pass ⇒ Passing; else — if there
+/// are only unmodeled (`Unknown`) checks — Pending (conservatively "not known to be
+/// done", matching the GitLab mapper); else None.
 fn aggregate(checks: &[CheckRun]) -> CiStatus {
     let mut any_pending = false;
     let mut any_pass = false;
+    let mut any_unknown = false;
     for c in checks {
         if c.bucket.is_failing() {
             return CiStatus::Failing;
@@ -247,15 +250,24 @@ fn aggregate(checks: &[CheckRun]) -> CiStatus {
             any_pending = true;
         } else if c.bucket.is_passing() {
             any_pass = true;
+        } else if c.bucket.is_unknown() {
+            any_unknown = true;
         }
-        // `Skipping`/`Unknown` don't move the needle.
+        // `Skipping` is a deliberate, terminal no-op — it doesn't move the needle.
     }
     if any_pending {
         CiStatus::Pending
     } else if any_pass {
+        // A modeled pass wins over an unmodeled bucket: the checks we understand
+        // passed, and an `Unknown` is specifically not a recognized failure.
         CiStatus::Passing
+    } else if any_unknown {
+        // Checks exist but are *all* an unmodeled bucket (a future `gh` value or a
+        // missing field) — report Pending ("not known to be done") rather than the
+        // misleading None ("no CI ran"), consistent with `gitlab_forge::map_ci`.
+        CiStatus::Pending
     } else {
-        CiStatus::None
+        CiStatus::None // no checks, or only deliberate skips
     }
 }
 

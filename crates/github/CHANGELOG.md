@@ -20,9 +20,11 @@ crates; tag releases as `vcs-github-v<version>`.
   `ManagedClient` instead of the `cli_client!` macro; the public constructor/builder
   surface is unchanged.)
 - `CheckBucket` enum (`Pass`/`Fail`/`Pending`/`Skipping`/`Cancel`/`Unknown`) with
-  `is_failing`/`is_pending`/`is_passing` helpers — the typed form of gh's check
-  categorisation, `#[non_exhaustive]` with an `Unknown` catch-all so a future gh
-  bucket never breaks the parse.
+  `is_failing`/`is_pending`/`is_passing`/`is_unknown` helpers — the typed form of
+  gh's check categorisation, `#[non_exhaustive]` with an `Unknown` catch-all so a
+  future gh bucket never breaks the parse. `is_unknown` distinguishes that catch-all
+  (an unmodeled/missing bucket) from a deliberate `Skipping`, so an aggregator can
+  treat it conservatively.
 - `pr_edit(dir, number, PrEdit)` — edit a pull request's title and/or body
   (`gh pr edit <n> [--title <title>] [--body <body>]`). A new `PrEdit` builder
   (`new()`, `.title(..)`, `.body(..)`) carries the optional fields; absent

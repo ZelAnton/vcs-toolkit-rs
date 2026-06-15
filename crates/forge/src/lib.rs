@@ -1129,6 +1129,19 @@ mod tests {
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::None);
         let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok("[]")));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::None);
+
+        // An unmodeled bucket (a future `gh` value → `CheckBucket::Unknown`) read
+        // ALONE is "not known to be done" → Pending (not the misleading None),
+        // matching the GitLab mapper's unknown→Pending behavior.
+        let json = r#"[{"name":"a","bucket":"frobnicate"}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
+        assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Pending);
+
+        // …but a modeled pass alongside an unmodeled bucket still reports Passing
+        // (the checks we understand passed; an Unknown is not a recognized failure).
+        let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"frobnicate"}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
+        assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Passing);
     }
 
     // `at` re-binds the cwd while sharing the backend.

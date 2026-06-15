@@ -70,7 +70,13 @@ crates; tag releases as `vcs-forge-v<version>`.
   processkit 0.10, so `default_cancel_on` is always available without a feature.
 
 ### Fixed
--
+- **`pr_checks` CI aggregation: a check set that is *all* unmodeled (`Unknown`)
+  buckets now reports `Pending`, not `None`.** A PR that genuinely has checks (in a
+  bucket a future `gh` introduces, or with a missing field) previously aggregated to
+  `CiStatus::None` ("no CI ran"); it now reports `Pending` ("not known to be done"),
+  matching how the GitLab mapper treats an unknown pipeline status — a cross-forge
+  consistency fix. A deliberate `Skipping` check still doesn't move the needle, and a
+  modeled pass alongside an unmodeled bucket still reports `Passing`.
 
 ## [0.1.0] - 2026-06-08
 
