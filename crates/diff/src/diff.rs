@@ -191,9 +191,14 @@ fn parse_section(section: &str) -> Option<FileDiff> {
     } else {
         None
     };
-    let path = rename_to
-        .or(new_path)
-        .or(minus_path)
+    // Resolve the path by priority (rename target → `+++ b/` → `--- a/` → the
+    // `diff --git` header), skipping any source that is present-but-empty so a
+    // malformed `+++ b/`-with-no-path falls through rather than yielding a FileDiff
+    // with an empty path. If every source is absent/empty, the section is dropped.
+    let path = [rename_to, new_path, minus_path]
+        .into_iter()
+        .flatten()
+        .find(|p| !p.is_empty())
         .or_else(|| header_b_path(section))?;
     Some(FileDiff {
         change: kind,
@@ -237,7 +242,10 @@ fn header_b_path(section: &str) -> Option<String> {
     let first = section.lines().next()?;
     let s = first.strip_prefix("diff --git ")?;
     let idx = s.find(" b/")?;
-    Some(s[idx + 1..].strip_prefix("b/").unwrap_or("").to_string())
+    let path = s[idx + 1..].strip_prefix("b/").unwrap_or("");
+    // A `diff --git a/x b/` with no path after `b/` yields nothing, not an empty
+    // path — so a malformed header drops the section instead of an empty FileDiff.
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 #[cfg(test)]
@@ -285,6 +293,26 @@ mod tests {
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "a b/c.txt");
+    }
+
+    #[test]
+    fn diff_drops_sections_with_no_resolvable_path() {
+        // A header whose `b/` carries no path, and no `+++`/`---`/rename lines:
+        // there is no usable path, so the section is dropped (no empty-path FileDiff).
+        let bad = "diff --git a/x b/\nbinary files differ\n";
+        assert!(parse_diff(bad).is_empty());
+        // An empty `+++ b/` (and no `--- a/`) falls through to the header's real
+        // `b/<path>` rather than producing an empty path.
+        let recover = "diff --git a/real.txt b/real.txt\n+++ b/\nbinary files differ\n";
+        let files = parse_diff(recover);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "real.txt");
+        // A mode-only change (no +++/---/rename, no hunks) still keeps its path via
+        // the header fallback — the path-resolution change must not drop it.
+        let mode_only = "diff --git a/f.sh b/f.sh\nold mode 100644\nnew mode 100755\n";
+        let files = parse_diff(mode_only);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "f.sh");
     }
 
     #[test]

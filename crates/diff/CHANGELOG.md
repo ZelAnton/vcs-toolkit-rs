@@ -16,7 +16,11 @@ crates; tag releases as `vcs-diff-v<version>`.
 -
 
 ### Fixed
--
+- A diff section whose path can't be resolved to a non-empty string (a malformed
+  `diff --git … b/` with no path, and no `+++`/`---`/rename line) is now **dropped**
+  rather than yielding a `FileDiff` with an empty `path`. A present-but-empty
+  `+++ b/`/`--- a/` likewise falls through to the next path source instead of
+  producing an empty path.
 
 ## [0.1.0] - 2026-06-08
 

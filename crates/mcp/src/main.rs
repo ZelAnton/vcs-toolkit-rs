@@ -162,6 +162,16 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                          repo_commit,forge_pr_create)"
                     ));
                 }
+                // Validate against the canonical write-tool set so a typo is
+                // rejected up front rather than silently producing an inert
+                // allowlist entry (a misspelled name never matches a real tool, so
+                // the intended write would stay disabled with no warning).
+                if let Some(unknown) = names.iter().find(|n| !vcs_mcp::WRITE_TOOLS.contains(n)) {
+                    return Err(format!(
+                        "--allow-tools: unknown tool {unknown:?}; valid write tools are: {}",
+                        vcs_mcp::WRITE_TOOLS.join(", ")
+                    ));
+                }
                 // Repeatable: each occurrence extends the allowlist.
                 allow_tools.extend(names.into_iter().map(String::from));
             }
@@ -321,6 +331,18 @@ mod tests {
         assert!(parse(&["--allow-tools"]).is_err());
         let err = parse_err(&["--allow-tools", " , "]);
         assert!(err.contains("names no tools"), "got: {err}");
+    }
+
+    // A misspelled tool name is rejected up front (it would otherwise be a silently
+    // inert allowlist entry — never matching a real tool, so the write stays off).
+    #[test]
+    fn allow_tools_rejects_unknown_tool_name() {
+        let err = parse_err(&["--allow-tools", "repo_comit"]); // typo
+        assert!(err.contains("unknown tool"), "got: {err}");
+        assert!(err.contains("repo_comit"), "names the offender: {err}");
+        // A read-tool name is also not a valid *write* allowlist entry.
+        let err = parse_err(&["--allow-tools", "repo_commit,repo_status"]);
+        assert!(err.contains("repo_status"), "got: {err}");
     }
 
     // --allow-write is the superset and wins over a redundant allowlist.

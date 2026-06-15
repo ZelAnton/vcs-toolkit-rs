@@ -54,7 +54,12 @@ crates; tag releases as `vcs-mcp-v<version>`.
   cancellation is now core (no feature flag).
 
 ### Fixed
--
+- **`--allow-tools` validates tool names up front.** An unknown/misspelled name is
+  now rejected with an error listing the valid write tools, instead of being added
+  to a silently-inert allowlist (a typo never matched a real tool, so the intended
+  write stayed disabled with no warning). The canonical set is the new public
+  `vcs_mcp::WRITE_TOOLS`; `require_write` debug-asserts every gated tool is listed
+  there, so the two can't drift.
 
 ## [0.1.0] - 2026-06-08
 

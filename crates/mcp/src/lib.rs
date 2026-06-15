@@ -254,6 +254,27 @@ impl From<MergeStrategyArg> for vcs_forge::MergeStrategy {
 
 // --- The server --------------------------------------------------------------
 
+/// The canonical names of every **mutating** (write-gated) tool, in registration
+/// order. The single source of truth for which names `--allow-tools` accepts: a
+/// front-end can validate its allowlist against this set and reject a typo up
+/// front (a misspelled name would otherwise be silently inert — it never matches a
+/// real tool, so the intended write would stay disabled). `require_write`
+/// debug-asserts every gated tool is listed here, so the two can't drift.
+pub const WRITE_TOOLS: &[&str] = &[
+    "repo_commit",
+    "repo_checkout",
+    "repo_fetch",
+    "repo_push",
+    "repo_create_worktree",
+    "repo_remove_worktree",
+    "forge_issue_create",
+    "forge_pr_create",
+    "forge_pr_merge",
+    "forge_pr_close",
+    "forge_pr_comment",
+    "forge_pr_edit",
+];
+
 /// Which mutating tools are callable — the server's write policy.
 ///
 /// Read tools are always available; every mutating tool checks this gate by its
@@ -321,6 +342,10 @@ impl VcsMcpServer {
 
     /// Reject the mutating tool `tool` when the write gate doesn't cover it.
     fn require_write(&self, tool: &str) -> Result<(), ErrorData> {
+        debug_assert!(
+            WRITE_TOOLS.contains(&tool),
+            "write-gated tool {tool:?} is missing from WRITE_TOOLS — keep them in sync"
+        );
         if self.writes.allows(tool) {
             Ok(())
         } else {
