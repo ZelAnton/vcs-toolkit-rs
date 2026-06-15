@@ -61,9 +61,9 @@ adversarially reviewed (≥2 rounds), gated, and pushed.
 
 ### ✅ Shipped — lock-contention retry (2026-06-14)
 
-`is_lock_contention` classifies a *pre-execution* lock-acquisition failure (git
-`index.lock`/ref/`packed-refs.lock`, jj's working-copy lock) — the one error class safe to
-retry on a mutation. `RetryPolicy` (attempts + exponential, jittered backoff) + `ManagedClient`
+`is_lock_contention` classifies a *pre-execution* whole-repo lock-acquisition failure (git
+`index.lock`, jj's working-copy / op-heads lock) — the one error class safe to
+retry on a mutation (per-ref lock failures are excluded; a multi-ref op can fail one mid-way). `RetryPolicy` (attempts + exponential, jittered backoff) + `ManagedClient`
 apply it; `Git::with_retry`/`Jj::with_retry` enable it (opt-in, off by default). Forges
 deliberately untouched (their failures are API/rate-limit, not repo locks).
 

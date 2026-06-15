@@ -890,10 +890,11 @@ impl<R: ProcessRunner> Git<R> {
         self
     }
 
-    /// Retry **lock-contention** failures (another process holds the repo's
-    /// `index.lock`, a ref lock, or `packed-refs.lock`) per `policy` — opt-in, off
-    /// by default. Safe even for mutating commands: a lock-acquisition failure is
-    /// pre-execution (git never ran), so a retry can't double-apply. See
+    /// Retry **whole-repo lock-contention** failures (another process holds the
+    /// repo's `index.lock`) per `policy` — opt-in, off by default. Safe even for
+    /// mutating commands: that lock is acquired before any write, so a failure is
+    /// pre-execution (git never ran) and a retry can't double-apply. Per-ref lock
+    /// failures are *not* retried (a multi-ref op can fail a ref lock mid-way). See
     /// [`RetryPolicy`] and [`is_lock_contention`].
     pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
         self.core = self.core.with_retry(policy);

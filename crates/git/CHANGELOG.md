@@ -19,10 +19,11 @@ crates; tag releases as `vcs-git-v<version>`.
   `remote_branches`) runs with a leading inline `credential.helper` that feeds the
   secret from an environment variable — so the token never appears in `argv`.
   Default is no provider → ambient git credential helpers / SSH agent, unchanged.
-- `Git::with_retry(RetryPolicy)` — opt-in retry of **lock-contention** failures
-  (another process holds `index.lock`, a ref lock, or `packed-refs.lock`), with
-  exponential, jittered backoff. Off by default; safe even for mutating commands
-  because a lock-acquisition failure is pre-execution. Re-exports `RetryPolicy`.
+- `Git::with_retry(RetryPolicy)` — opt-in retry of **whole-repo lock-contention**
+  failures (another process holds the repo's `index.lock`), with exponential,
+  jittered backoff. Off by default; safe even for mutating commands because that
+  lock is acquired pre-write (the command never ran). Per-ref lock failures are
+  *not* retried (a multi-ref op can fail a ref lock mid-way). Re-exports `RetryPolicy`.
   (Internally `Git` now wraps a `ManagedClient` instead of a bare `CliClient` —
   no change to existing methods.)
 

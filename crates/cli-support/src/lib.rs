@@ -83,17 +83,23 @@ pub use credentials::{
 /// leading `-` would be parsed by the CLI as a *flag* (verified: `git checkout
 /// -evil` → "unknown switch"; jj likewise), and an empty (or whitespace-only)
 /// value silently changes most commands' meaning. Refuse both before anything
-/// spawns, surfacing an [`Error::Spawn`] naming `program`. Flag-VALUE positions
-/// (`-m <msg>`, `--branch <b>`) don't need this — the CLI consumes the next
-/// token verbatim there.
+/// spawns, surfacing an [`Error::Spawn`] naming `program`. An interior NUL is
+/// refused too (it can't be passed in argv and otherwise surfaces as an opaque
+/// OS spawn error). Flag-VALUE positions (`-m <msg>`, `--branch <b>`) don't need
+/// this — the CLI consumes the next token verbatim there.
+///
+/// The leading-`-` test is applied to the **trimmed** value, so a value like
+/// `" --upload-pack=…"` (leading whitespace) is still refused — the empty-check
+/// and the flag-check now agree on what "the value" is.
 pub fn reject_flag_like(program: &str, what: &str, value: &str) -> Result<()> {
-    if value.trim().is_empty() || value.starts_with('-') {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') || value.contains('\0') {
         return Err(Error::Spawn {
             program: program.to_string(),
             source: std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(
-                    "{what} {value:?} would be parsed as a flag (or is empty) — \
+                    "{what} {value:?} would be parsed as a flag (or is empty / contains NUL) — \
                      refusing to pass it as a positional argument"
                 ),
             ),
@@ -173,30 +179,33 @@ pub fn is_transient_fetch_error(err: &Error) -> bool {
         || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
 }
 
-/// Lower-case substrings marking a **lock-contention** failure — another process
-/// held a repository lock, so the command **never started** (clean, pre-execution).
-/// These are the only failures safe to retry blindly on a *mutating* operation: the
-/// repository was never touched, so a retry can't double-apply. Network markers
-/// ([`TRANSIENT_FETCH_MARKERS`]) and conflict/exit failures are deliberately absent.
+/// Lower-case substrings marking a **whole-repository / working-copy lock**
+/// contention failure — another process held the *one* repo-wide lock, so the
+/// command **never started** (clean, pre-execution) and touched nothing.
+///
+/// These are deliberately limited to the locks that guard the *entire* operation
+/// up front, so retrying is safe even on a **mutating** command: the repo was not
+/// modified at all. We intentionally do **not** include per-ref lock messages
+/// (`cannot lock ref`, `<ref>.lock: File exists`): a multi-ref `push`/`fetch`
+/// updates refs sequentially, so a ref-lock failure can arrive *after* earlier refs
+/// already moved — replaying that is not idempotent. Network markers
+/// ([`TRANSIENT_FETCH_MARKERS`]) and conflict/exit failures are likewise absent.
 const LOCK_CONTENTION_MARKERS: &[&str] = &[
-    "lock': file exists", // git: index.lock / <ref>.lock / packed-refs.lock
-    "another git process seems to be running", // git's lock hint
-    "cannot lock ref",    // git ref update
-    "could not lock ref", // git ref update (variant)
-    "failed to lock",     // jj lock acquisition (working copy / op heads)
+    "index.lock': file exists", // git: the whole-repo index lock (pre-write)
+    "another git process seems to be running", // git's index-lock hint
+    "failed to lock the working copy", // jj: the working-copy lock (pre-snapshot)
+    "failed to lock op heads",  // jj: the operation-log lock (pre-commit of the op)
 ];
-// `"failed to lock"` is deliberately broad: in *both* tools a lock file is taken
-// before the write it guards (write-to-`.lock`-then-rename), so every "failed to
-// lock …" is pre-execution by construction — safe to retry on a mutation, and the
-// breadth catches jj's lock variants without a per-message allow-list.
 
-/// Whether `err` is a **lock-contention** failure — another process held a
-/// repository lock (git's `index.lock` / a ref lock / `packed-refs.lock`, or jj's
-/// working-copy lock), so the command couldn't even start. Such a failure is
-/// *pre-execution* and therefore the one class of error safe to retry even on a
-/// **mutating** operation (the repo was never modified). Conflict, "nothing to
-/// commit", a real non-zero exit, a timeout, a signal, or a missing binary are all
-/// **not** lock contention and must not be retried this way.
+/// Whether `err` is a **whole-repository lock-contention** failure — another
+/// process held git's `index.lock` or jj's working-copy / op-heads lock, so the
+/// command couldn't even start. Such a failure is *pre-execution* and therefore
+/// safe to retry even on a **mutating** operation (the repo was never modified).
+/// Per-ref lock failures (`cannot lock ref`, `<ref>.lock`) are deliberately **not**
+/// classified here — they can occur mid-way through a multi-ref `push`/`fetch`,
+/// where a retry would not be idempotent. Conflict, "nothing to commit", a real
+/// non-zero exit, a timeout, a signal, or a missing binary are also **not** lock
+/// contention and must not be retried this way.
 pub fn is_lock_contention(err: &Error) -> bool {
     exit_output_matches(err, LOCK_CONTENTION_MARKERS)
 }
@@ -463,15 +472,16 @@ impl<R: ProcessRunner> ManagedClient<R> {
             return Ok(None);
         };
         let request = CredentialRequest { service, host };
-        // An empty secret is not a usable credential — injecting an empty
-        // `GH_TOKEN`/`GITLAB_TOKEN` (or a `password=` line) would *override* the
-        // ambient login with nothing rather than defer to it. Treat it as `None`
-        // (ambient), keeping the "no usable credential ⇒ ambient auth" contract
-        // consistent regardless of which adapter produced it.
+        // An empty (or whitespace-only) secret is not a usable credential —
+        // injecting an empty `GH_TOKEN`/`GITLAB_TOKEN` (or a `password=` line)
+        // would *override* the ambient login with nothing rather than defer to it.
+        // Treat it as `None` (ambient), keeping the "no usable credential ⇒
+        // ambient auth" contract consistent regardless of which adapter produced
+        // it (matching `EnvToken`'s own whitespace-only ⇒ unset rule).
         Ok(provider
             .credential(&request)
             .await?
-            .filter(|cred| !cred.secret().expose().is_empty()))
+            .filter(|cred| !cred.secret().expose().trim().is_empty()))
     }
 
     /// Materialize `call` into a [`Command`], injecting the forge token env if a
@@ -554,16 +564,14 @@ impl<R: ProcessRunner> ManagedClient<R> {
         .await
     }
 
-    /// Like [`CliClient::output`], with credential injection and lock-retry. Note:
+    /// Like [`CliClient::output`], with credential injection. **No lock-retry:**
     /// `output` returns `Ok` on a non-zero exit (it captures the result), so a lock
-    /// failure surfaces as an `Ok` here and is **not** retried — route mutations
-    /// that need lock-retry through [`run`](Self::run)/[`run_unit`](Self::run_unit).
+    /// failure surfaces as an `Ok` here, not an `Err` the retry predicate could
+    /// match — route mutations that need lock-retry through
+    /// [`run`](Self::run)/[`run_unit`](Self::run_unit) instead.
     pub async fn output(&self, call: impl IntoCommand<R>) -> Result<ProcessResult<String>> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.output(cmd.clone())
-        })
-        .await
+        self.inner.output(cmd).await
     }
 
     /// Like [`CliClient::probe`] (zero-or-nonzero exit → `bool`), with credential
@@ -622,6 +630,13 @@ mod tests {
         assert!(reject_flag_like("git", "branch name", "  ").is_err());
         assert!(reject_flag_like("git", "branch name", "\t").is_err());
         assert!(reject_flag_like("git", "branch name", "feature").is_ok());
+        // Leading whitespace before a dash is still refused (the flag-check trims).
+        assert!(reject_flag_like("git", "remote", " --upload-pack=evil").is_err());
+        assert!(reject_flag_like("git", "remote", "\t-x").is_err());
+        // An interior NUL is refused (can't go in argv; opaque OS error otherwise).
+        assert!(reject_flag_like("git", "path", "a\0b").is_err());
+        // A leading-whitespace non-flag value is still accepted (not flag-like).
+        assert!(reject_flag_like("git", "branch name", "  feature").is_ok());
         // The error names the program and surfaces as a spawn-side refusal.
         let err = reject_flag_like("jj", "revset", "--remote").unwrap_err();
         assert!(matches!(err, Error::Spawn { program, .. } if program == "jj"));
@@ -799,9 +814,11 @@ mod tests {
         }
     }
 
-    // `is_lock_contention` recognises the *pre-execution* lock-acquisition failures
-    // (git index/ref locks, jj's working-copy lock) and ONLY those — never a real
-    // failure, a conflict, or a timeout, which must not be retried on a mutation.
+    // `is_lock_contention` recognises ONLY the *whole-repo* / working-copy lock
+    // failures (git index.lock, jj working-copy/op-heads lock) — the ones where the
+    // command did nothing, so a retry is idempotent even on a mutation. Per-ref lock
+    // failures and conflicts/timeouts are deliberately NOT classified (a multi-ref
+    // op can fail a ref lock mid-way, where a retry would not be idempotent).
     #[test]
     fn classifies_lock_contention() {
         let lock_failures = [
@@ -815,17 +832,8 @@ mod tests {
                 128,
                 "Another git process seems to be running in this repository",
             ),
-            exit(
-                "git",
-                1,
-                "error: cannot lock ref 'refs/heads/x': reference already exists",
-            ),
-            exit(
-                "git",
-                128,
-                "Unable to create '/r/.git/packed-refs.lock': File exists.",
-            ),
             exit("jj", 1, "Error: Failed to lock the working copy"),
+            exit("jj", 1, "Error: Failed to lock op heads"),
         ];
         for e in &lock_failures {
             assert!(is_lock_contention(e), "should be lock contention: {e:?}");
@@ -836,6 +844,18 @@ mod tests {
             exit("git", 1, "CONFLICT (content): Merge conflict in a.rs"),
             exit("git", 1, "error: pathspec 'x' did not match any file(s)"),
             exit("git", 128, "fatal: not a git repository"),
+            // Per-ref locks are NOT classified — a multi-ref push/fetch can fail a
+            // ref lock after earlier refs already moved (non-idempotent to replay).
+            exit(
+                "git",
+                1,
+                "error: cannot lock ref 'refs/heads/x': reference already exists",
+            ),
+            exit(
+                "git",
+                128,
+                "Unable to create '/r/.git/packed-refs.lock': File exists.",
+            ),
             Error::Timeout {
                 program: "git".into(),
                 timeout: Duration::from_secs(1),
@@ -951,23 +971,26 @@ mod tests {
         assert_eq!(got.secret().expose(), "t0k");
     }
 
-    // An empty secret is treated as `None` (ambient): injecting an empty token
-    // would override the ambient login with nothing instead of deferring to it.
+    // An empty (or whitespace-only) secret is treated as `None` (ambient):
+    // injecting an empty token would override the ambient login with nothing
+    // instead of deferring to it. Mirrors `EnvToken`'s whitespace-only ⇒ unset rule.
     #[tokio::test]
     async fn resolve_credential_treats_empty_secret_as_ambient() {
-        let client =
-            ManagedClient::new("git").with_credentials(Arc::new(StaticCredential::token("")));
         // Service-agnostic: both the forge (token-env) and git (helper) paths route
-        // through this chokepoint, so an empty secret is ambient for either.
-        for service in [CredentialService::GitHub, CredentialService::Git] {
-            assert!(
-                client
-                    .resolve_credential(service, None)
-                    .await
-                    .unwrap()
-                    .is_none(),
-                "empty secret → ambient (None) for {service:?}"
-            );
+        // through this chokepoint, so a blank secret is ambient for either.
+        for blank in ["", "   ", "\t\n"] {
+            let client = ManagedClient::new("git")
+                .with_credentials(Arc::new(StaticCredential::token(blank)));
+            for service in [CredentialService::GitHub, CredentialService::Git] {
+                assert!(
+                    client
+                        .resolve_credential(service, None)
+                        .await
+                        .unwrap()
+                        .is_none(),
+                    "blank secret {blank:?} → ambient (None) for {service:?}"
+                );
+            }
         }
     }
 }

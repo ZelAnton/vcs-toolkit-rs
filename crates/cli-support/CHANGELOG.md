@@ -22,9 +22,12 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   no provider → ambient CLI auth, unchanged. Adds an `async-trait` dependency.
   `ManagedClient` also gained an `exit_code` verb (used by the forge clients).
 - **Lock-contention retry.** `is_lock_contention(&Error)` classifies a *pre-execution*
-  lock-acquisition failure (git `index.lock`/ref lock/`packed-refs.lock`, jj's
-  working-copy lock) — the one error class safe to retry on a mutation, since the
-  command never ran. `RetryPolicy` (attempts + exponential backoff + full jitter)
+  **whole-repository** lock-acquisition failure (git's `index.lock`, jj's
+  working-copy / op-heads lock) — the one error class safe to retry on a mutation,
+  since the command never ran. Per-ref lock failures (`cannot lock ref`,
+  `<ref>.lock`) are deliberately *excluded*: a multi-ref `push`/`fetch` can fail a
+  ref lock after earlier refs already moved, where a retry would not be idempotent.
+  `RetryPolicy` (attempts + exponential backoff + full jitter)
   and the `retry_async` executor express the strategy; `ManagedClient` is a
   `CliClient` wrapper that applies it to every command (the `vcs-git`/`vcs-jj`
   clients now hold one). Retry is opt-in (default `RetryPolicy::none()`). Adds a
@@ -52,7 +55,21 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   Breaking for anyone who enabled `vcs-cli-support/cancellation`.
 
 ### Fixed
--
+- **Lock-retry safety:** `is_lock_contention` no longer classifies per-ref lock
+  failures (`cannot lock ref`, `<ref>.lock`/`packed-refs.lock`) — a multi-ref
+  `push`/`fetch` can fail a ref lock after earlier refs moved, where a retry would
+  not be idempotent. It now matches only the whole-repo/working-copy locks
+  (`index.lock`, jj working-copy / op-heads), which are genuinely pre-execution.
+- `reject_flag_like` now also refuses an interior NUL, and applies the leading-`-`
+  check to the *trimmed* value (so `" --flag"` with leading whitespace is refused).
+- `EnvToken` treats a whitespace-only environment value as unset (`None` → ambient),
+  and `git_credential_helper`'s inline helper emits nothing when its secret env var
+  is unset/empty (git falls through to ambient instead of using an empty credential).
+  `ManagedClient::resolve_credential` likewise drops a whitespace-only secret (not
+  just an empty one), so every adapter shares one "no usable credential ⇒ ambient" rule.
+- `ManagedClient::output` dropped its dead lock-retry wrapper (it returns `Ok` on a
+  non-zero exit, so the retry predicate could never fire); credential injection on
+  `output` is unchanged.
 
 ## [0.1.0] - 2026-06-08
 

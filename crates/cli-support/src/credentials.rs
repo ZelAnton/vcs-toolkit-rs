@@ -259,7 +259,10 @@ impl EnvToken {
 impl CredentialProvider for EnvToken {
     async fn credential(&self, _request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
         match std::env::var(&self.var) {
-            Ok(value) if !value.is_empty() => Ok(Some(match &self.username {
+            // A set-but-blank (or whitespace-only) variable is treated as unset →
+            // `None` (defer to ambient auth), not an empty token that would override
+            // the ambient login with nothing.
+            Ok(value) if !value.trim().is_empty() => Ok(Some(match &self.username {
                 Some(user) => Credential::userpass(user.clone(), value),
                 None => Credential::token(value),
             })),
@@ -350,8 +353,13 @@ pub fn git_credential_helper(cred: &Credential) -> GitCredentialHelper {
     let username = cred.username().unwrap_or(DEFAULT_GIT_USERNAME).to_string();
     // Reference the values by env-var NAME inside the snippet, so `argv` never
     // carries the secret. Respond only to git's `get` action; ignore store/erase.
+    // Guard on the password var being non-empty (`test -n`): if `config_args` is
+    // applied without `env` (the two fields must travel together), the helper emits
+    // nothing and git falls through to ambient auth — never an empty credential that
+    // would override the ambient login with nothing and fail.
     let helper = format!(
-        "!f() {{ test \"$1\" = get && printf 'username=%s\\npassword=%s\\n' \
+        "!f() {{ test \"$1\" = get && test -n \"${GIT_PASSWORD_VAR}\" && \
+         printf 'username=%s\\npassword=%s\\n' \
          \"${GIT_USERNAME_VAR}\" \"${GIT_PASSWORD_VAR}\"; }}; f"
     );
     GitCredentialHelper {
