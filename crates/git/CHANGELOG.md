@@ -74,6 +74,11 @@ crates; tag releases as `vcs-git-v<version>`.
   behind a feature. Downstream that enabled `vcs-git/cancellation` should drop it.
 
 ### Fixed
+- `push` and `clone_repo` now apply the same `timeout_grace` window as `fetch`:
+  on a per-client timeout, the process tree is terminated gracefully (then
+  hard-killed after the grace window) so a timed-out push releases its lock /
+  doesn't half-update the remote ref, and a timed-out clone can clean up its
+  partial destination. A no-op when no `default_timeout` is set.
 - `config_get` strips only git's trailing line terminator (`\n`/`\r\n`) instead of
   all trailing whitespace, so a config value that legitimately ends in spaces or a
   tab is returned intact.

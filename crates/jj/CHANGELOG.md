@@ -42,6 +42,11 @@ crates; tag releases as `vcs-jj-v<version>`.
   behind a feature. Downstream that enabled `vcs-jj/cancellation` should drop it.
 
 ### Fixed
+- `git_push` and `git_clone` now apply the same `timeout_grace` window as
+  `git_fetch`: on a per-client timeout the process tree is terminated gracefully
+  (then hard-killed after the grace window) so a timed-out push doesn't
+  half-update the remote ref and a timed-out clone can clean up its partial
+  destination. A no-op when no `default_timeout` is set.
 - `parse_diff_summary` no longer reports a self-rename: a malformed `R`/`C` path
   with no `{old => new}` brace form (jj always renders renames with it) expanded to
   `old == new` and set `old_path == path`; it now sets `old_path` to `None`, so

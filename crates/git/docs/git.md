@@ -699,7 +699,9 @@ a trailing `..` and construct via the crate, not struct literals.
 The diff types (`ChangeKind`, `DiffLine`, `Hunk`, `FileDiff`, `DiffStat`,
 `parse_diff`) and `GitVersion` actually live in the shared
 [`vcs-diff`](https://crates.io/crates/vcs-diff) crate — `git diff` and
-`jj diff --git` are byte-identical, so `vcs-git` and `vcs-jj` share one parser.
+`jj diff --git` are byte-identical for ASCII paths (they differ only in
+non-ASCII filename rendering, which the shared parser decodes), so `vcs-git`
+and `vcs-jj` share one parser.
 They're re-exported here, so `vcs_git::FileDiff` etc. still resolve (`GitVersion`
 is an alias of `vcs_diff::Version`).
 

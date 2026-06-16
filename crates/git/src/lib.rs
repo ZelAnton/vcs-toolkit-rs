@@ -1571,7 +1571,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let cmd = apply_secret_env(
             self.core
                 .command_in(dir, &args)
-                .env("GIT_TERMINAL_PROMPT", "0"),
+                .env("GIT_TERMINAL_PROMPT", "0")
+                // On a per-client timeout, terminate gracefully (then hard-kill
+                // after a grace window) so a timed-out push releases its lock and
+                // doesn't leave the remote ref half-updated. No-op without a
+                // deadline (matches `fetch`).
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
             &envs,
         );
         self.core.run_unit(cmd).await
@@ -1770,7 +1775,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             command = command.arg("--bare");
         }
         let command = apply_secret_env(
-            command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0"),
+            command
+                .arg(url)
+                .arg(dest)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                // On a per-client timeout, terminate gracefully (then hard-kill
+                // after a grace window) so a timed-out clone can clean up its
+                // partial `dest`. No-op without a deadline (matches `fetch`).
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
             &envs,
         );
         self.core.run_unit(command).await

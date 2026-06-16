@@ -892,7 +892,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("-b");
             args.push(name);
         }
-        self.core.run_unit(self.cmd_in(dir, args)).await
+        // Graceful terminate-then-kill on a per-client timeout, so a timed-out
+        // push doesn't leave the remote ref half-updated. No-op without a
+        // deadline (matches `git_fetch`).
+        let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
+        self.core.run_unit(cmd).await
     }
 
     async fn root(&self, dir: &Path) -> Result<PathBuf> {
@@ -1289,8 +1293,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             } else {
                 "--no-colocate"
             });
+        // Graceful terminate-then-kill on a per-client timeout, so a timed-out
+        // clone can clean up its partial `dest`. No-op without a deadline.
         self.core
-            .run_unit(command.arg("--color").arg("never"))
+            .run_unit(
+                command
+                    .arg("--color")
+                    .arg("never")
+                    .timeout_grace(FETCH_TIMEOUT_GRACE),
+            )
             .await
     }
 

@@ -191,7 +191,9 @@ pub(crate) fn parse_annotate(output: &str) -> Vec<AnnotationLine> {
             let (change_id, content) = line.split_once('\t')?;
             Some(AnnotationLine {
                 change_id: change_id.to_string(),
-                line: (idx + 1) as u32,
+                // Saturating: a >4 billion-line file would silently wrap a raw
+                // `as u32`. Such input is not realistic, but truncation never is.
+                line: u32::try_from(idx + 1).unwrap_or(u32::MAX),
                 content: content.to_string(),
             })
         })

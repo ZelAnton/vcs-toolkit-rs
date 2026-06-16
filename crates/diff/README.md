@@ -5,7 +5,9 @@
 Shared **git-format unified-diff** model and parser for the
 [vcs-toolkit-rs](https://github.com/ZelAnton/vcs-toolkit-rs) workspace.
 
-`git diff` and `jj diff --git` emit byte-identical output, so `vcs-git` and
+`git diff` and `jj diff --git` emit byte-identical output for ASCII paths —
+they differ only in non-ASCII filename rendering (git octal-C-quotes by default,
+jj writes raw UTF-8), both of which this parser decodes — so `vcs-git` and
 `vcs-jj` share one parser here instead of each carrying a copy that could
 silently drift. **Dependency-free** (std only) — pure data types and pure
 functions, no process execution.
