@@ -148,15 +148,22 @@ pub enum CiStatus {
     Passing,
     /// The pipeline failed or was canceled (`failed`/`canceled`).
     Failing,
-    /// The pipeline is still going (`running`/`pending`/`created`/…).
+    /// The pipeline is still going (`running`/`pending`/`created`/…) **or is
+    /// blocked awaiting action** (`manual`/`scheduled`/`waiting_for_resource`).
+    /// The blocked states are bucketed here conservatively ("not known to be
+    /// done"), so a poller that loops until this is no longer `Pending` should
+    /// bound its wait — a `manual` pipeline stays blocked until someone triggers
+    /// it and would otherwise be polled forever.
     Pending,
     /// No pipeline ran (none attached, or `skipped`).
     None,
 }
 
 impl CiStatus {
-    /// Bucket a raw GitLab pipeline `status` string. Unknown values read as
-    /// [`Pending`](CiStatus::Pending) (conservative — "not known to be done").
+    /// Bucket a raw GitLab pipeline `status` string. Unknown values — and the
+    /// blocked-awaiting-action states `manual`/`scheduled` — read as
+    /// [`Pending`](CiStatus::Pending) (conservative — "not known to be done";
+    /// see the variant docs on bounding a poller's wait).
     pub(crate) fn from_gitlab(status: &str) -> Self {
         match status {
             "success" => CiStatus::Passing,

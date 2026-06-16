@@ -16,7 +16,11 @@ crates; tag releases as `vcs-testkit-v<version>`.
 -
 
 ### Fixed
--
+- The git-sandbox environment scrub now also removes `GIT_CONFIG`,
+  `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, and `GIT_NAMESPACE` (alongside the
+  existing `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_CONFIG_PARAMETERS`),
+  so a host that exports any of those can no longer redirect a sandbox git
+  invocation's config, object store, or ref namespace away from the temp repo.
 
 ## [0.1.0] - 2026-06-08
 

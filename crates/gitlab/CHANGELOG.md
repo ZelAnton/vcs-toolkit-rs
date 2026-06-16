@@ -39,6 +39,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   the regenerated `MockGitLabApi` override them.
 
 ### Changed
+- Documented that `CiStatus::Pending` also covers GitLab's *blocked-awaiting-action*
+  pipeline states (`manual`/`scheduled`/`waiting_for_resource`): they bucket as
+  `Pending` ("not known to be done"), so a poller looping until a pipeline leaves
+  `Pending` must bound its wait — a `manual` pipeline stays blocked until triggered.
+  Behaviour unchanged; doc-only clarification.
 - **The `mr_*` methods' id parameter is renamed `id` → `number` (breaking).**
   `mr_view`/`mr_merge`/`mr_ready`/`mr_close`/`mr_comment`/`mr_edit`/`mr_checks` now
   take `number: u64`, matching this crate's own `issue_*` methods and the other

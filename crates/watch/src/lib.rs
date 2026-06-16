@@ -399,7 +399,7 @@ impl RepoWatcher {
     /// and what the last skip failed on). Cheap relaxed-atomic reads — poll it
     /// from a health check or log it periodically; a climbing
     /// [`skipped`](WatcherStats::skipped) with flat
-    /// [`requeries`](WatcherStats::requeries) means the repository is wedged.
+    /// [`changes`](WatcherStats::changes) means the repository is wedged.
     pub fn stats(&self) -> WatcherStats {
         self.stats.snapshot()
     }

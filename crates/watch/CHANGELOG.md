@@ -17,7 +17,11 @@ crates; tag releases as `vcs-watch-v<version>`.
   cancellation is now core (no feature flag).
 
 ### Fixed
--
+- Corrected the `stats()` doc: the wedged-repo signal is a climbing
+  [`skipped`](WatcherStats::skipped) with **flat `changes`**, not flat
+  `requeries` — a skipped re-query bumps `requeries` too, so it is never flat
+  while skips climb. (Matches the module-level and config docs, which were
+  already correct.)
 
 ## [0.1.0] - 2026-06-08
 

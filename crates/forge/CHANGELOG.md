@@ -75,6 +75,13 @@ crates; tag releases as `vcs-forge-v<version>`.
   processkit 0.10, so `default_cancel_on` is always available without a feature.
 
 ### Fixed
+- `ForgeKind::from_remote_url` host extraction is now IPv6-aware: a bracketed
+  scheme-URL authority (`https://[::1]:443/…`) yields the address `::1` instead
+  of the literal `[`. The bracket is unwrapped **only** when its content is a
+  genuine IPv6 literal (contains a colon), so a bracketed *name* such as
+  `[gitlab.com]` is not unwrapped and cannot spoof a trusted SaaS host. No SaaS
+  host is an IPv6 literal, so the classifier result is unchanged (`None`), but
+  the underlying host parse is now correct for any future consumer.
 - **`pr_checks` CI aggregation: a check set that is *all* unmodeled (`Unknown`)
   buckets now reports `Pending`, not `None`.** A PR that genuinely has checks (in a
   bucket a future `gh` introduces, or with a missing field) previously aggregated to

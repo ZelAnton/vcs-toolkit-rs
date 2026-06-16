@@ -162,9 +162,13 @@ fn command(binary: &str, cwd: &Path) -> Command {
                 .env("GIT_CONFIG_SYSTEM", &nonexistent)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env_remove("GIT_CONFIG_PARAMETERS")
+                .env_remove("GIT_CONFIG")
                 .env_remove("GIT_DIR")
+                .env_remove("GIT_COMMON_DIR")
                 .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE");
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_OBJECT_DIRECTORY")
+                .env_remove("GIT_NAMESPACE");
         }
         "jj" => {
             // Read config exclusively from a nonexistent file (no host

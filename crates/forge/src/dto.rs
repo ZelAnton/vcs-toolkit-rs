@@ -71,14 +71,34 @@ fn host_is(host: &str, domain: &str) -> bool {
 }
 
 /// Extract the host from a git remote URL — scheme URLs (`https://host/…`,
-/// `ssh://git@host:22/…`) and scp-like (`git@host:owner/repo.git`).
+/// `ssh://git@host:22/…`, `https://[::1]:443/…`) and scp-like
+/// (`git@host:owner/repo.git`). For a scheme URL the host is bracket-aware, so
+/// an IPv6 authority `[::1]:443` yields `::1` rather than `[`. (scp-like syntax
+/// has no bracketed-IPv6 form — the `:` is the path separator — so a bare IPv6
+/// literal there is not extracted.)
 fn host_of(url: &str) -> Option<&str> {
     let rest = match url.split_once("://") {
         // A scheme URL: take the authority up to the next `/`, then drop userinfo.
         Some((_scheme, after)) => {
             let authority = after.split(['/', '?', '#']).next().unwrap_or(after);
             let host_port = authority.rsplit('@').next().unwrap_or(authority);
-            return host_port.split(':').next().filter(|h| !h.is_empty());
+            return match host_port.strip_prefix('[') {
+                // IPv6 literal `[::1]:443` → `::1`. Unwrap brackets ONLY when the
+                // content parses as a real IPv6 address — a mere colon is not
+                // enough: a bracketed name like `[gitlab.com]`, or a colon-bearing
+                // fake like `[a:b.gitlab.com]`, would otherwise be unwrapped and
+                // spoof a trusted SaaS host (`a:b.gitlab.com` matches the
+                // `.gitlab.com` proper-subdomain test). A genuine IPv6 literal can
+                // never equal or be a subdomain of a trusted DNS host, so this is
+                // spoof-safe. (Zone IDs like `fe80::1%eth0` don't parse and so are
+                // conservatively dropped — vanishingly rare in a git remote.)
+                Some(inner) => inner
+                    .split(']')
+                    .next()
+                    .filter(|h| h.parse::<std::net::Ipv6Addr>().is_ok()),
+                // Otherwise strip an optional `:port`.
+                None => host_port.split(':').next().filter(|h| !h.is_empty()),
+            };
         }
         // No scheme: scp-like `user@host:path` or bare `host:path` / `host/path`.
         None => url,
@@ -483,6 +503,56 @@ mod tests {
         }
     }
 
+    // `host_of` is bracket-aware for IPv6 scheme-URL authorities — it returns the
+    // address inside the brackets, not the literal `[`. (No SaaS host is an IPv6
+    // literal, so `from_remote_url` still answers `None`, but the host extraction
+    // itself is correct for any future consumer.)
+    #[test]
+    fn host_of_extracts_ipv6_authority() {
+        assert_eq!(host_of("https://[::1]:443/o/r.git"), Some("::1"));
+        assert_eq!(host_of("https://[2001:db8::1]/o/r"), Some("2001:db8::1"));
+        assert_eq!(host_of("ssh://git@[fe80::1]:22/o/r.git"), Some("fe80::1"));
+        // Regular hosts are unaffected by the bracket branch.
+        assert_eq!(
+            host_of("https://github.com:443/o/r.git"),
+            Some("github.com")
+        );
+        assert_eq!(host_of("git@gitlab.com:o/r.git"), Some("gitlab.com"));
+        // An IPv6 literal is never a trusted SaaS host.
+        assert_eq!(ForgeKind::from_remote_url("https://[::1]/o/r"), None);
+    }
+
+    // A bracketed authority is unwrapped ONLY when it is a genuine IPv6 literal.
+    // A bracketed *name* — or a colon-bearing fake crafted to slip past a naive
+    // "contains a colon" check and then match a `.trusted` proper-subdomain suffix
+    // (`[a:b.gitlab.com]`) — must NOT be unwrapped, or it could spoof a trusted
+    // SaaS forge. The `Ipv6Addr` parse rejects every one of these → `None`.
+    #[test]
+    fn host_of_rejects_bracketed_name_spoof() {
+        for url in [
+            "https://[gitlab.com]/o/r",
+            "https://[gitlab.com]:443/o/r",
+            "https://[github.com]/o/r",
+            "https://[gitea.com]/o/r",
+            "https://[codeberg.org]/o/r",
+            "https://[]/o/r",                 // empty brackets
+            "https://[evil.gitlab.com]/o/r",  // bracketed subdomain-looking name
+            "https://[a:b.gitlab.com]/o/r",   // colon-bearing fake ending in .gitlab.com
+            "https://[x:y.github.com]/o/r",   // ditto for github.com
+            "https://[::ffff:gitea.com]/o/r", // IPv4-mapped-looking fake, not real IPv6
+            "https://[a:b.c.codeberg.org]/o/r",
+        ] {
+            assert_eq!(
+                ForgeKind::from_remote_url(url),
+                None,
+                "bracketed non-IPv6 authority must not classify as a trusted forge: {url}"
+            );
+        }
+        // The host extraction itself yields no host for a non-IPv6 bracket.
+        assert_eq!(host_of("https://[gitlab.com]/o/r"), None);
+        assert_eq!(host_of("https://[a:b.gitlab.com]/o/r"), None);
+    }
+
     #[test]
     fn as_str_maps_each_kind() {
         assert_eq!(ForgeKind::GitHub.as_str(), "github");
@@ -532,6 +602,10 @@ mod proptests {
                 Just(format!("ssh://git@{h}:22/o/r.git")),
                 Just(format!("git@{h}:o/r.git")),
                 Just(format!("{h}/o/r")),
+                // Bracketed forms — a bracketed *name* must never be unwrapped into
+                // a trusted host (the IPv6-aware `host_of` guards on a colon).
+                Just(format!("https://[{h}]/o/r")),
+                Just(format!("https://[{h}]:443/o/r")),
             ]
         })
     }
@@ -581,6 +655,30 @@ mod proptests {
                 ForgeKind::from_remote_url(&url),
                 None,
                 "lookalike must not classify: {}",
+                url
+            );
+        }
+
+        // A bracketed authority whose content ends in a *trusted* domain but has a
+        // colon to its left (`https://[<junk>:<more>.gitlab.com]/…`) is crafted to
+        // pass a naive "looks like IPv6 (has a colon)" check and then satisfy the
+        // `.gitlab.com` proper-subdomain test. The `Ipv6Addr` parse rejects all of
+        // them — none is a valid literal — so they must classify as `None`.
+        #[test]
+        fn from_remote_url_rejects_colon_bracket_trusted_suffix(
+            left in "[a-z0-9:]{0,12}",
+            trusted in prop_oneof![
+                Just("github.com"),
+                Just("gitlab.com"),
+                Just("gitea.com"),
+                Just("codeberg.org"),
+            ],
+        ) {
+            let url = format!("https://[{left}:x.{trusted}]/o/r");
+            prop_assert_eq!(
+                ForgeKind::from_remote_url(&url),
+                None,
+                "colon-bracket trusted-suffix spoof must not classify: {}",
                 url
             );
         }
