@@ -37,6 +37,16 @@ crates; tag releases as `vcs-core-v<version>`.
   available without a feature.
 
 ### Fixed
+- **jj worktree ops resolve a relative `path` against the repo dir, not the process
+  cwd.** `create_worktree`/`remove_worktree` (and `cleanup_worktree_blocking`) ran
+  their own `exists()` / `remove_dir_all` / canonicalization on the raw caller
+  `path`, which a relative path resolves against the **process cwd** — while
+  `jj workspace add` runs with cwd = the repo `dir` and resolves the path against
+  *that*. When the two differ (e.g. a `Repo` opened via `vcs-mcp --repo /elsewhere`
+  with a relative worktree path), the facade probed/deleted the wrong location:
+  leaking the half-made worktree on a rollback, or a spurious `WorktreeNotFound` /
+  orphaned dir on removal. The path is now resolved against `dir` for every
+  filesystem op. git is unaffected (`git worktree` resolves the path itself).
 - **jj worktree safety.** `create_worktree`'s rollback (run when the bookmark
   anchor fails after `workspace add` already created the workspace) no longer
   deletes the destination directory unless `workspace add` itself created it — a

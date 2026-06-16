@@ -750,11 +750,16 @@ impl<R: ProcessRunner> Repo<R> {
                 vcs_git::blocking::worktree_remove(&self.cwd, path, true).map_err(Error::Io)
             }
             Backend::Jj(_) => {
-                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, path) {
+                // jj resolves a relative worktree path against the repo dir (its
+                // cwd), so resolve it the same way here — the lookup and the dir
+                // removal must target the location jj used, not one under the process
+                // cwd (which may differ from `self.cwd`).
+                let abs_path = self.cwd.join(path);
+                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path) {
                     Some(name) => {
                         // Delete the on-disk dir first (jj `forget` leaves it), then
                         // drop jj's record of the workspace.
-                        let _ = std::fs::remove_dir_all(path);
+                        let _ = std::fs::remove_dir_all(&abs_path);
                         vcs_jj::blocking::workspace_forget(&self.cwd, &name).map_err(Error::Io)
                     }
                     None => Ok(()),

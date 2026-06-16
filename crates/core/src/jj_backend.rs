@@ -352,11 +352,17 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     base: &str,
 ) -> Result<CreateOutcome> {
     let ws_name = workspace_name_for(branch);
+    // `jj workspace add` runs with cwd = `dir` and resolves a *relative* `path`
+    // against `dir`. Resolve it the same way for our own filesystem ops, so a `Repo`
+    // bound to a directory != the process cwd (e.g. `vcs-mcp --repo /elsewhere`)
+    // probes/deletes the location jj actually used, not one under the process cwd.
+    // `dir.join(path)` returns `path` unchanged when it's already absolute.
+    let abs_path = dir.join(path);
     // Whether the destination existed *before* we touched it. `jj workspace add`
     // creates the directory itself, so a pre-existing path is not ours to delete:
     // the rollback below must not `remove_dir_all` a directory the caller already
     // had (that would be silent data loss on an unrelated failure).
-    let preexisting = path.exists();
+    let preexisting = abs_path.exists();
     jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), base, path))
         .await?;
     // `workspace add -r <base>` puts a fresh empty change on the new workspace's
@@ -370,8 +376,8 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
         // `remove_worktree` (delete the dir first, then forget the workspace
         // best-effort), then surface the original error. Only remove the dir if we
         // created it (it didn't exist before `workspace add`).
-        if !preexisting && path.exists() {
-            let _ = std::fs::remove_dir_all(path);
+        if !preexisting && abs_path.exists() {
+            let _ = std::fs::remove_dir_all(&abs_path);
         }
         let _ = jj.workspace_forget(dir, &ws_name).await;
         return Err(e.into());
@@ -385,11 +391,14 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     path: &Path,
     _force: bool,
 ) -> Result<()> {
-    let name = workspace_name_for_path(jj, dir, path).await?;
+    // Resolve `path` against `dir` (jj's cwd) so the workspace lookup and the dir
+    // removal target the location jj used, even when the process cwd differs.
+    let abs_path = dir.join(path);
+    let name = workspace_name_for_path(jj, dir, &abs_path).await?;
     // Delete the on-disk dir first: an orphan dir jj has forgotten is worse than
     // a still-attached workspace.
-    if path.exists() {
-        std::fs::remove_dir_all(path)?;
+    if abs_path.exists() {
+        std::fs::remove_dir_all(&abs_path)?;
     }
     // Then forget the workspace. jj happily forgets an already-deleted workspace
     // dir, so this normally succeeds; we *surface* a failure rather than swallow it
@@ -597,6 +606,43 @@ mod tests {
         assert!(
             wt.join("keep.txt").exists(),
             "a pre-existing directory must survive the rollback untouched"
+        );
+    }
+
+    // A **relative** worktree path is resolved against `dir` (jj's cwd), NOT the
+    // process cwd. jj's mocked `workspace add` creates `dir/<rel>`; the rollback
+    // must remove exactly that, even though the relative path resolved against the
+    // process cwd would point somewhere else entirely.
+    #[tokio::test]
+    async fn create_worktree_resolves_relative_path_against_dir() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use std::path::Path;
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r1-worktree-relpath");
+        let repo = tmp.path(); // an absolute repo dir, almost certainly != the process cwd
+        let rel = Path::new("rel-wt");
+        let resolved = repo.join(rel); // where jj actually creates it
+        assert!(!resolved.exists());
+
+        let jj = Jj::with_runner(AddCreatesDir {
+            dir: resolved.clone(), // the mocked `workspace add` creates dir/<rel>
+            inner: ScriptedRunner::new()
+                .on(["jj", "workspace", "add"], Reply::ok(""))
+                .on(
+                    ["jj", "bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
+        });
+
+        let result = create_worktree(&jj, repo, rel, "feature", "@").await;
+
+        assert!(result.is_err(), "the bookmark-step failure must propagate");
+        assert!(
+            !resolved.exists(),
+            "the rollback must remove dir/<rel>, the location jj created"
         );
     }
 }
