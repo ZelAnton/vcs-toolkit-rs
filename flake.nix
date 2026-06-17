@@ -18,20 +18,6 @@
         # at the time of writing). The workspace's MSRV is 1.88 (declared
         # in `[workspace.package].rust-version`); nixpkgs always exceeds
         # the MSRV, so the build itself is fine.
-        #
-        # The `cargo test --workspace --all-features` check may fail on
-        # nixpkgs's rustc if the test code in `vcs-jj`/`vcs-git` uses
-        # `Option<&str>` in async-trait params: the rules around
-        # implicit-lifetime elision in async fn arguments tightened
-        # between nixpkgs's stable (1.95) and rust-lang's current stable
-        # (1.96+). `nix build .#vcs-mcp` and `nix run .#vcs-mcp` are
-        # unaffected — they only compile the vcs-mcp package and its
-        # library path-deps, not the test code. The CI workflow
-        # (`.github/workflows/nix.yml`) reflects this: `nix build
-        # .#vcs-mcp` is the merge gate, `nix flake check` is marked
-        # `continue-on-error`. If the test job fails, the fix is
-        # upstream (explicit `<'_>` lifetimes in the wrappers), not in
-        # this flake.
 
         # Filter the local source: drop .git/ (Nix can't rebuild inside a
         # filtered source path, so the .git directory is dead weight) and
@@ -76,7 +62,7 @@
           inherit src;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "vcs-mcp" "--bin" "vcs-mcp" ];
-          doCheck = false; # checks.cargo-test owns tests
+          doCheck = false; # tests run in CI (ci.yml) on real runners, not here
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
             wrapProgram $out/bin/vcs-mcp \
@@ -106,21 +92,9 @@
             pkgs.cargo-edit pkgs.git-cliff pkgs.cargo-deny
           ] ++ runtimeCli;
         };
-
-        checks.cargo-test = rustPlatform.buildRustPackage {
-          pname = "vcs-toolkit-cargo-test";
-          version = "check";
-          inherit src;
-          cargoLock.lockFile = ./Cargo.lock;
-          buildPhase = "true";
-          doCheck = true;
-          checkPhase = ''
-            runHook preCheck
-            cargo test --workspace --all-features
-            runHook postCheck
-          '';
-          installPhase = "mkdir -p $out";
-        };
+        # No custom `checks` here: the workspace test suite needs real
+        # git/jj/gh on PATH and runs in CI (ci.yml). `nix flake check`
+        # still builds every package (incl. vcs-mcp) and the devShell.
       }
     );
 }

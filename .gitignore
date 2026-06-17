@@ -19,4 +19,4 @@ progress.md
 *.pdb
 
 # Nix
-^/result$
+/result
