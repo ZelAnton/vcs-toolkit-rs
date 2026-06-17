@@ -1,0 +1,24 @@
+name: Nix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Builds the vcs-mcp binary the way a downstream consumer would
+  # (`nix build .#vcs-mcp`), so the flake can't silently rot. Compiles
+  # only the vcs-mcp package and its library path-deps. The workspace
+  # test suite is NOT run here — it needs real git/jj/gh on PATH and is
+  # covered by ci.yml on standard runners.
+  build:
+    name: nix build .#vcs-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - run: nix build .#vcs-mcp -L
