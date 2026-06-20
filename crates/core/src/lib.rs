@@ -24,7 +24,7 @@
 //! use vcs_core::Repo;
 //! # async fn demo() -> vcs_core::Result<()> {
 //! let repo = Repo::open(".")?;            // detects git vs jj
-//! let s = repo.snapshot().await?;         // one or two spawns, not a call per field
+//! let s = repo.snapshot().await?;         // a few spawns, not a call per field
 //! let branch = s.branch.as_deref().unwrap_or("(detached)");
 //! println!("{branch} {}", if s.dirty { "*" } else { "" });
 //! # Ok(()) }
@@ -419,8 +419,12 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
-    /// The current branch (git) or bookmark (jj); `None` when detached / no
-    /// bookmark on the working copy.
+    /// The current branch (git) or bookmark (jj). On jj this is the nearest
+    /// bookmark reachable from the working copy (`heads(::@ & bookmarks())`),
+    /// so it stays set across a `jj describe`/`jj new`/`jj commit` — which leave
+    /// the bookmark on the described parent while the new change carries none —
+    /// matching git's "still on my branch" reporting. `None` only when detached
+    /// / no bookmark on or above `@`.
     pub async fn current_branch(&self) -> Result<Option<String>> {
         match &self.backend {
             Backend::Git(g) => git_backend::current_branch(g, &self.cwd).await,
@@ -537,12 +541,14 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// A batched [`RepoSnapshot`] of the common repo state — branch, upstream,
-    /// ahead/behind, dirtiness, change count, and operation state — in **one or
-    /// two** spawns instead of a call per field (git: `status --porcelain=v2
-    /// --branch` + the in-progress probe; jj: one `log -r @` template + a change
-    /// count). Built for prompt/status-bar/TUI refreshes. Note the asymmetry:
-    /// [`tracking`](RepoSnapshot::tracking) (the upstream ref + ahead/behind) is
-    /// always `None` on jj, which has no git-style upstream tracking.
+    /// ahead/behind, dirtiness, change count, and operation state — in a **small
+    /// fixed** number of spawns instead of a call per field (git: `status
+    /// --porcelain=v2 --branch` + the in-progress probe; jj: a `log -r @`
+    /// template for head/empty/conflict, a `reachable_bookmarks` query for
+    /// `branch`, and a change count only when dirty). Built for prompt/status-bar/
+    /// TUI refreshes. Note the asymmetry: [`tracking`](RepoSnapshot::tracking)
+    /// (the upstream ref + ahead/behind) is always `None` on jj, which has no
+    /// git-style upstream tracking.
     pub async fn snapshot(&self) -> Result<RepoSnapshot> {
         match &self.backend {
             Backend::Git(g) => git_backend::snapshot(g, &self.cwd).await,
@@ -1059,10 +1065,17 @@ mod tests {
     // jj: one template row + a status count; a conflicted @ maps to Conflict; no
     // git-style upstream/ahead/behind.
     #[tokio::test]
-    async fn jj_snapshot_from_template_with_change_count() {
+    async fn jj_snapshot_dirty_with_change_count() {
         let repo = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "log"], Reply::ok("deadbeef\tmain\t0\t1\n")) // empty=0 dirty, conflict=1
+                // snapshot template (`jj log -r @`): commit_id \t empty \t conflict
+                .on(["jj", "log", "-r", "@"], Reply::ok("deadbeef\t0\t1\n")) // empty=0 dirty, conflict=1
+                // `branch` via `current_branch` → `reachable_bookmarks`
+                // (`jj log -r heads(::@ & bookmarks())`): bookmarks \t commit
+                .on(
+                    ["jj", "log", "-r", "heads(::@ & bookmarks())"],
+                    Reply::ok("main\tdeadbeef\n"),
+                )
                 .on(["jj", "diff"], Reply::ok("M a.rs\nA b.rs\n")), // status -r @ --summary → 2
         );
         let s = repo.snapshot().await.unwrap();
@@ -1079,7 +1092,14 @@ mod tests {
     // scripts NO `diff` rule, so calling `status` would error.
     #[tokio::test]
     async fn jj_snapshot_clean_skips_change_count() {
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("c0ffee\t\t1\t0\n")));
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(["jj", "log", "-r", "@"], Reply::ok("c0ffee\t1\t0\n"))
+                .on(
+                    ["jj", "log", "-r", "heads(::@ & bookmarks())"],
+                    Reply::ok(""),
+                ),
+        );
         let s = repo.snapshot().await.unwrap();
         assert_eq!(s.head.as_deref(), Some("c0ffee"));
         assert_eq!(s.branch, None, "no bookmark");
@@ -1097,7 +1117,11 @@ mod tests {
     async fn jj_snapshot_conflicted_empty_change_is_dirty() {
         let repo = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "log"], Reply::ok("c0ffee\t\t1\t1\n")) // empty=1, conflict=1
+                .on(["jj", "log", "-r", "@"], Reply::ok("c0ffee\t1\t1\n")) // empty=1, conflict=1
+                .on(
+                    ["jj", "log", "-r", "heads(::@ & bookmarks())"],
+                    Reply::ok(""),
+                ) // no bookmark
                 .on(["jj", "diff"], Reply::ok("M conflicted.rs\n")), // status → 1
         );
         let s = repo.snapshot().await.unwrap();
@@ -1279,10 +1303,28 @@ mod tests {
 
     #[tokio::test]
     async fn jj_current_branch_reads_bookmark() {
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\n")));
+        // current_branch derives from `reachable_bookmarks`, whose template is
+        // `<bookmarks space-joined>\t<commit>` — distinct from the strict
+        // `current_bookmark(@)` comma-joined template.
+        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\t53e4e879\n")));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("main")
+        );
+    }
+
+    #[tokio::test]
+    async fn jj_current_branch_persists_across_commit() {
+        // After a jj commit the new working-copy change carries no bookmark, but
+        // the described parent does. `reachable_bookmarks` resolves the nearest
+        // bookmarked ancestor, so the facade still reports it — git-like "I'm
+        // still on my branch". Under the old strict `current_bookmark(@)` rule
+        // this returned `None`; feeding the reachable template (`feat\t…`,
+        // unparseable as a comma-joined bookmark name) pins the new derivation.
+        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("feat\tc8d49332\n")));
+        assert_eq!(
+            repo.current_branch().await.unwrap().as_deref(),
+            Some("feat")
         );
     }
 

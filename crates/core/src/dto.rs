@@ -101,9 +101,10 @@ pub struct UpstreamTracking {
 }
 
 /// A one-shot snapshot of the common repository state — branch, upstream
-/// tracking, ahead/behind, dirtiness, and operation state — gathered in **one or
-/// two** process spawns instead of a call per field. The data a prompt, status
-/// line, or TUI refresh needs. See [`Repo::snapshot`](crate::Repo::snapshot).
+/// tracking, ahead/behind, dirtiness, and operation state — gathered in a
+/// **small fixed** number of process spawns instead of a call per field. The
+/// data a prompt, status line, or TUI refresh needs. See
+/// [`Repo::snapshot`](crate::Repo::snapshot).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -112,7 +113,11 @@ pub struct RepoSnapshot {
     /// commit id) on both backends; `None` on an unborn git repo. Truncate for
     /// display.
     pub head: Option<String>,
-    /// Current branch (git) / bookmark (jj); `None` when detached or unset.
+    /// Current branch (git) / bookmark (jj). On jj this is the nearest bookmark
+    /// reachable from `@` (`heads(::@ & bookmarks())`), so it stays set across a
+    /// `jj describe`/`jj new`/`jj commit`; `None` when detached / no bookmark on
+    /// or above `@`. Matches [`Repo::current_branch`](crate::Repo::current_branch)
+    /// by construction.
     pub branch: Option<String>,
     /// Upstream tracking and how far the branch is ahead/behind it, as one unit —
     /// `Some` only when an upstream is configured, `None` otherwise (and **always

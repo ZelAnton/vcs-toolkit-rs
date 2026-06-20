@@ -151,8 +151,10 @@ pub async fn diff_stat(&self)        -> Result<DiffStat>;
 pub async fn snapshot(&self)         -> Result<RepoSnapshot>;
 ```
 
-`current_branch` is the current branch (git) or bookmark (jj); `None` when
-detached / no bookmark on the working copy.
+`current_branch` is the current branch (git) or, on jj, the nearest bookmark
+reachable from `@` (`heads(::@ & bookmarks())`) — so it stays set across a
+`jj describe`/`jj new`/`jj commit`, which leave the bookmark on the described
+parent; `None` when detached / no bookmark on or above `@`.
 
 `trunk` resolves in order: the backend's own notion (git's `origin/HEAD`, jj's
 `trunk()` revset), then a fallback to a local `main`, then `master`; `None` when
@@ -171,12 +173,13 @@ insertion/deletion counts.
 
 `snapshot` is the **batched** state query for a prompt/status-bar/TUI refresh —
 branch, upstream, ahead/behind, HEAD, dirtiness, change count, and operation
-state in **one or two** spawns rather than a call per field
+state in a **small fixed** number of spawns rather than a call per field
 ([`RepoSnapshot`](#reposnapshot)). git issues one `status --porcelain=v2 --branch`
-plus the cheap in-progress probe; jj issues one `log -r @` template plus a change
-count only when dirty. Note the asymmetry: `tracking` (the upstream ref plus
-ahead/behind, bundled into one [`UpstreamTracking`](#reposnapshot)) is always
-`None` on jj (no git-style upstream tracking).
+plus the cheap in-progress probe; jj issues a `log -r @` template (HEAD/empty/
+conflict), a `reachable_bookmarks` query for `branch`, and a change count only
+when dirty. Note the asymmetry: `tracking` (the upstream ref plus ahead/behind,
+bundled into one [`UpstreamTracking`](#reposnapshot)) is always `None` on jj (no
+git-style upstream tracking).
 
 > **Backend nuance — untracked files.** `diff_stat` counts the git working tree
 > against `HEAD` (`git diff`, which **excludes untracked files**), but on jj it
@@ -439,7 +442,7 @@ The batched state from [`snapshot`](#status--files). `#[non_exhaustive]`.
 #[non_exhaustive]
 pub struct RepoSnapshot {
     pub head: Option<String>,      // working-copy commit's FULL oid (both backends); None on an unborn git repo; truncate for display
-    pub branch: Option<String>,    // current branch (git) / bookmark (jj); None when detached/unset
+    pub branch: Option<String>,    // current branch (git) / nearest reachable bookmark (jj); None when detached/no bookmark on or above @
     pub tracking: Option<UpstreamTracking>, // upstream ref + ahead/behind, bundled; Some only with an upstream, ALWAYS None on jj
     pub dirty: bool,               // any uncommitted change (tracked or untracked)
     pub change_count: usize,       // number of changed paths

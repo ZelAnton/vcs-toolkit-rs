@@ -21,7 +21,21 @@ pub(crate) async fn current_branch<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
 ) -> Result<Option<String>> {
-    Ok(jj.current_bookmark(dir).await?)
+    // jj has no "current branch" in the git sense: after `jj describe` /
+    // `jj new` / `jj commit` the bookmark stays on the described parent while
+    // the new working-copy change carries none, so a strict "bookmark on `@`"
+    // probe returns `None` right after a commit. Report the nearest bookmark
+    // reachable from `@` instead (revset `heads(::@ & bookmarks())`), which
+    // keeps the answer non-empty across a commit — git's "I'm still on my
+    // branch" reporting. The strict "does `@` itself carry a bookmark" question
+    // (e.g. to decide whether `jj git push` would push `@`) stays on
+    // `vcs_jj::JjApi::current_bookmark`.
+    Ok(jj
+        .reachable_bookmarks(dir)
+        .await?
+        .into_iter()
+        .next()
+        .map(|b| b.name))
 }
 
 pub(crate) async fn trunk<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Option<String>> {
@@ -95,42 +109,43 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Resul
     jj.diff_stat(dir, "@").await.map_err(Into::into)
 }
 
-/// One `jj log -r @` template carrying everything the snapshot needs except the
-/// change count: the full commit id (`head` is the full oid on both backends —
-/// truncate for display; a short id would make a fixed-width truncation panic),
-/// the `@` change's local bookmarks (comma-joined), the `empty` flag (→ dirty),
-/// and the `conflict` flag — all bare keywords valid in the `jj log` commit context.
+/// One `jj log -r @` template carrying the working-copy-only fields the
+/// snapshot needs except the change count: the full commit id (`head` is the
+/// full oid on both backends — truncate for display; a short id would make a
+/// fixed-width truncation panic), the `empty` flag (→ dirty), and the
+/// `conflict` flag — all bare keywords valid in the `jj log` commit context.
+/// The branch comes from [`current_branch`] (the nearest reachable bookmark),
+/// not `@`'s own bookmarks, so the snapshot's `branch` can't disagree with
+/// `Repo::current_branch` after a commit.
 const SNAPSHOT_TEMPLATE: &str = "commit_id ++ \"\\t\" ++ \
-    local_bookmarks.map(|b| b.name()).join(\",\") ++ \"\\t\" ++ \
     if(empty, \"1\", \"0\") ++ \"\\t\" ++ if(conflict, \"1\", \"0\")";
 
 pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<RepoSnapshot> {
-    // 1 spawn: head/bookmark/empty/conflict for `@`.
+    // Spawn 1: head/empty/conflict for `@`. Spawn 2: `branch` via
+    // `current_branch` (the nearest reachable bookmark). Spawn 3, only when
+    // dirty: the change count.
     let row = jj
         .template_query(dir, "@", SNAPSHOT_TEMPLATE, Some(1))
         .await?;
     let line = row.trim_end_matches(['\r', '\n']);
     let fields: Vec<&str> = line.split('\t').collect();
-    // SNAPSHOT_TEMPLATE renders exactly four tab-separated fields: commit_id,
-    // comma-joined bookmarks, the empty-flag, and the conflict-flag. A different
-    // arity means the template / jj contract drifted — debug-assert it (so tests
-    // and debug builds catch a template edit) and read each field by position so a
+    // SNAPSHOT_TEMPLATE renders exactly three tab-separated fields: commit_id,
+    // the empty-flag, and the conflict-flag. A different arity means the
+    // template / jj contract drifted — debug-assert it (so tests and debug
+    // builds catch a template edit) and read each field by position so a
     // release build still returns a *coherent* snapshot rather than one whose
     // `dirty` flag flips on a truncated row.
     debug_assert_eq!(
         fields.len(),
-        4,
-        "jj snapshot template arity drift (expected 4 tab fields): {line:?}"
+        3,
+        "jj snapshot template arity drift (expected 3 tab fields): {line:?}"
     );
     let head = fields
         .first()
         .copied()
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let branch = fields
-        .get(1)
-        .and_then(|b| b.split(',').find(|n| !n.is_empty()))
-        .map(str::to_string);
+    let branch = current_branch(jj, dir).await?;
     // Read the flags as explicit values: `conflict == "1"` ⇒ conflicted, and
     // `empty == "0"` ⇒ a non-empty change ⇒ dirty (so a missing/garbled field falls
     // to clean, not a contradictory "dirty with 0 changes"). A **conflicted** change
@@ -138,8 +153,8 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
     // needing resolution — exactly as git reports conflict markers as unstaged
     // changes — so cross-backend `dirty` stays consistent (no `conflicted: true`
     // alongside `dirty: false`).
-    let conflicted = fields.get(3) == Some(&"1");
-    let dirty = fields.get(2) == Some(&"0") || conflicted;
+    let conflicted = fields.get(2) == Some(&"1");
+    let dirty = fields.get(1) == Some(&"0") || conflicted;
     // jj has no paused merge/rebase; a conflict is recorded on the change itself.
     let operation = if conflicted {
         OperationState::Conflict

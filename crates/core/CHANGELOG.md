@@ -21,6 +21,16 @@ crates; tag releases as `vcs-core-v<version>`.
   reaching into `processkit::Error`.
 
 ### Changed
+- **`Repo::current_branch` and `RepoSnapshot::branch` on jj now report the
+  nearest reachable bookmark** (revset `heads(::@ & bookmarks())`) instead of
+  only a bookmark strictly on `@`. After a `jj describe`/`jj new`/`jj commit` the
+  bookmark is left on the described parent while the new working-copy change
+  carries none, so the strict rule returned `None` right after a commit. Both
+  surfaces now derive from one source (`jj_backend::current_branch`), matching
+  `git_backend`'s structure, and stay non-empty across a commit like git's "still
+  on my branch" reporting. The strict "does `@` carry a bookmark" probe remains
+  on `vcs_jj::JjApi::current_bookmark`. As a side effect the jj `snapshot` gains
+  one spawn (a `reachable_bookmarks` query for `branch`); git is unchanged.
 - **`RepoSnapshot` tracking shape (breaking).** The three coupled `Option` fields
   `upstream` / `ahead` / `behind` are replaced by a single
   `tracking: Option<UpstreamTracking>` — `Some` only when an upstream is set,
