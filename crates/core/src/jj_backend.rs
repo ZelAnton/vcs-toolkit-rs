@@ -30,12 +30,17 @@ pub(crate) async fn current_branch<R: ProcessRunner>(
     // branch" reporting. The strict "does `@` itself carry a bookmark" question
     // (e.g. to decide whether `jj git push` would push `@`) stays on
     // `vcs_jj::JjApi::current_bookmark`.
+    //
+    // Tie-break: `heads(::@ & bookmarks())` can yield several equally-near
+    // bookmarks — a merge of two bookmarked lines (one head each), or one commit
+    // carrying several. Pick the lexicographically-smallest name so the answer is
+    // deterministic instead of dependent on jj's row order.
     Ok(jj
         .reachable_bookmarks(dir)
         .await?
         .into_iter()
-        .next()
-        .map(|b| b.name))
+        .map(|b| b.name)
+        .min())
 }
 
 pub(crate) async fn trunk<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Option<String>> {
