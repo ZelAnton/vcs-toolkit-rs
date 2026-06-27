@@ -895,33 +895,12 @@ facade_trait! {
 mod tests {
     use super::*;
     use processkit::testing::{Reply, ScriptedRunner};
+    // The shared sandbox fixture — a unique temp dir removed on drop. Same impl
+    // the testkit hands every crate, so the wrappers/facades don't each carry a
+    // copy that could drift (e.g. the MAX_PATH-conscious short prefix).
+    use vcs_testkit::TempDir;
 
     // --- detect ------------------------------------------------------------
-
-    /// A unique temp directory, removed on drop.
-    struct TempDir(PathBuf);
-    impl TempDir {
-        fn new(tag: &str) -> Self {
-            // Unique without a temp crate: process id + a monotonic counter, so
-            // parallel tests never collide. Kept short — a long prefix can tip a
-            // nested jj `op_store` path over Windows' MAX_PATH.
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir =
-                std::env::temp_dir().join(format!("vcs-core-{tag}-{}-{n}", std::process::id()));
-            std::fs::create_dir_all(&dir).expect("create temp dir");
-            TempDir(dir)
-        }
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn detect_finds_git_and_jj_and_prefers_jj() {
