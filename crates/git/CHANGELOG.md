@@ -10,6 +10,17 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-06-27
+
+### Added
 - **Per-operation HTTPS credentials (opt-in).** `Git::with_credentials(provider)`
   accepts a `CredentialProvider` (re-exported from `vcs-cli-support`, with
   `Credential`/`Secret`/`StaticCredential`/`EnvToken`/`provider_fn`), plus the
@@ -405,7 +416,8 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.5.0...vcs-git-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.4.0...vcs-git-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.3.1...vcs-git-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.3.0...vcs-git-v0.3.1

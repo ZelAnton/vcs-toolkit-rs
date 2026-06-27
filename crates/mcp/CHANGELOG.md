@@ -10,6 +10,17 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
 - **Read tool** `forge_info` (always available, `readOnlyHint`): the forge
   identity + flat capability map. Returns
   `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge,
@@ -125,5 +136,6 @@ crates; tag releases as `vcs-mcp-v<version>`.
   Read-only by default. The wrappers' argv injection guards apply under every
   tool.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.1.0...vcs-mcp-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-mcp-v0.1.0

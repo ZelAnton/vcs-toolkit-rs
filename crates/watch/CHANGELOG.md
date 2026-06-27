@@ -13,6 +13,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
+-
+
+### Changed
 - Bumped `processkit` to **0.11.0**. Test doubles moved to `processkit::testing`;
   cancellation is now core (no feature flag).
 
@@ -85,5 +96,6 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.1.0...vcs-watch-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-watch-v0.1.0

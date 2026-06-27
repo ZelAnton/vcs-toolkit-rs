@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
 - **Credential provisioning (opt-in).** A new `credentials` module: the
   `CredentialProvider` async trait (dyn-compatible, matching processkit's
   `ProcessRunner` pattern) plus the `Credential`/`Secret` types (`Secret` redacts
@@ -103,5 +114,6 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.1.0...vcs-cli-support-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-cli-support-v0.1.0

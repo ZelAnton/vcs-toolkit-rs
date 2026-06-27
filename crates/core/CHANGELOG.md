@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-06-27
+
+### Added
 - `UpstreamTracking { branch, ahead, behind }` — the upstream ref and ahead/behind
   counts as one value, carried by `RepoSnapshot::tracking`.
 - Re-export of `processkit` itself (`vcs_core::processkit`) so a `vcs-core`-only
@@ -200,7 +211,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.3.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.3.0...vcs-core-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.2.0...vcs-core-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.1.0...vcs-core-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-core-v0.1.0

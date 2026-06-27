@@ -1,6 +1,6 @@
 [package]
 name = "vcs-forge"
-version = "0.1.0"
+version = "0.2.0"
 description = "One async Rust API over GitHub, GitLab, and Gitea: unified pull/merge requests, issues, and releases across the gh, glab, and tea CLIs."
 edition.workspace = true
 rust-version.workspace = true
@@ -16,11 +16,11 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 # tests) and the structured `Error` the wrappers return.
 processkit.workspace = true
 # The transient-fetch-error classifier reused by the facade `Error`.
-vcs-cli-support = { path = "../cli-support", version = "0.1" }
+vcs-cli-support = { path = "../cli-support", version = "0.2" }
 # The three forge wrappers this facade dispatches across.
-vcs-github = { path = "../github", version = "0.5" }
-vcs-gitlab = { path = "../gitlab", version = "0.1" }
-vcs-gitea = { path = "../gitea", version = "0.1" }
+vcs-github = { path = "../github", version = "0.6" }
+vcs-gitlab = { path = "../gitlab", version = "0.2" }
+vcs-gitea = { path = "../gitea", version = "0.2" }
 # `async fn` in the object-safe `ForgeApi` trait (dyn-friendly).
 async-trait = "0.1"
 # Optional: derive `Serialize` on the unified DTOs behind the `serde` feature

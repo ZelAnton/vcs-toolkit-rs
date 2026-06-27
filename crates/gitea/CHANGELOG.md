@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
 - `pr_comment(dir, number, body)` — add a comment to a pull request,
   returning the command's output (`tea comment <index> <body>`). Gitea PRs
   and issues share the `index` space and the same `tea comment` subcommand
@@ -129,5 +140,6 @@ crates; tag releases as `vcs-gitea-v<version>`.
   `--limit 999`, so a PR beyond the first page is no longer a false "not found"
   (PRs beyond 999 still are; documented).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.1.0...vcs-gitea-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-gitea-v0.1.0

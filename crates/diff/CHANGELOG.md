@@ -16,6 +16,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **Git-quoted paths are now decoded instead of dropping the file.** git C-quotes a
   path (wraps it in `"…"` with `\NNN` octal/`\t`/`\"`/`\\` escapes) when it contains a
   control byte, a quote/backslash, or — with the default `core.quotePath=true` — **any
@@ -52,5 +63,6 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.1.0...vcs-diff-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-diff-v0.1.0

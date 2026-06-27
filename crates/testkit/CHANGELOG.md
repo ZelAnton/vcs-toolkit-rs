@@ -16,6 +16,17 @@ crates; tag releases as `vcs-testkit-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - The git-sandbox environment scrub now also removes `GIT_CONFIG`,
   `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, and `GIT_NAMESPACE` (alongside the
   existing `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_CONFIG_PARAMETERS`),
@@ -48,5 +59,6 @@ crates; tag releases as `vcs-testkit-v<version>`.
   hooks a test installs on purpose still run (`core.hooksPath` is deliberately
   not touched).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.1.0...vcs-testkit-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-testkit-v0.1.0

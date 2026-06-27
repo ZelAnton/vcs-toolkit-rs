@@ -10,6 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-06-27
+
+### Added
 - `Jj::with_retry(RetryPolicy)` — opt-in retry of jj **working-copy lock**
   contention, with exponential, jittered backoff. Off by default; safe even for
   mutating commands (a lock-acquisition failure is pre-execution). Re-exports
@@ -333,7 +344,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.5.0...vcs-jj-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.4.0...vcs-jj-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.1...vcs-jj-v0.4.0
 [0.3.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.3.0...vcs-jj-v0.3.1

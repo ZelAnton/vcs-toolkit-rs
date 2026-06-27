@@ -10,6 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.2.0] - 2026-06-27
+
+### Added
 - Re-export of `processkit` itself (`vcs_forge::processkit`) so a `vcs-forge`-only
   consumer can match the wrapped `Error::Forge(processkit::Error::…)` without a
   direct `processkit` dependency (mirrors `vcs_core::processkit`).
@@ -144,5 +155,6 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.1.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.2.0...HEAD
+[0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.1.0...vcs-forge-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-forge-v0.1.0
