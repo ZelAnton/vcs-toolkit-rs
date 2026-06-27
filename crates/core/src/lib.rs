@@ -423,8 +423,9 @@ impl<R: ProcessRunner> Repo<R> {
     /// bookmark reachable from the working copy (`heads(::@ & bookmarks())`),
     /// so it stays set across a `jj describe`/`jj new`/`jj commit` — which leave
     /// the bookmark on the described parent while the new change carries none —
-    /// matching git's "still on my branch" reporting. `None` only when detached
-    /// / no bookmark on or above `@`.
+    /// matching git's "still on my branch" reporting. When several bookmarks are
+    /// equally near `@`, the lexicographically-smallest name is returned
+    /// (deterministic). `None` only when detached / no bookmark on or above `@`.
     pub async fn current_branch(&self) -> Result<Option<String>> {
         match &self.backend {
             Backend::Git(g) => git_backend::current_branch(g, &self.cwd).await,
@@ -1325,6 +1326,23 @@ mod tests {
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("feat")
+        );
+    }
+
+    #[tokio::test]
+    async fn jj_current_branch_tie_break_is_deterministic() {
+        // `heads(::@ & bookmarks())` can yield several equally-near bookmarks —
+        // a merge of two bookmarked lines (one row each) or one commit carrying
+        // several (one row, space-joined). current_branch returns the
+        // lexicographically-smallest name regardless of jj's row order, so the
+        // result is stable. Here: rows `zeta` then `alpha beta` ⇒ `alpha`.
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "log"],
+            Reply::ok("zeta\tabc1234\nalpha beta\tdef5678\n"),
+        ));
+        assert_eq!(
+            repo.current_branch().await.unwrap().as_deref(),
+            Some("alpha")
         );
     }
 
