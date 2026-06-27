@@ -1417,9 +1417,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat> {
         reject_flag_like("range", range)?;
+        // `LC_ALL=C`: git's `--shortstat` summary ("N file(s) changed, …") is
+        // gettext-translated, but `parse_shortstat` keys on the English
+        // "file"/"insertion"/"deletion" — without C locale a non-English git
+        // returns an all-zero `DiffStat` rather than the real counts.
         self.core
             .parse(
-                self.core.command_in(dir, ["diff", "--shortstat", range]),
+                c_locale(self.core.command_in(dir, ["diff", "--shortstat", range])),
                 parse::parse_shortstat,
             )
             .await

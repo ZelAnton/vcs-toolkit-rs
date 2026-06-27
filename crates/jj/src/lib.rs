@@ -1685,7 +1685,17 @@ pub mod blocking {
         let target = normalize(path);
         let out = Command::new(super::BINARY)
             .current_dir(dir)
-            .args(["workspace", "list", "-T", "name ++ \"\\n\""])
+            // `--color never`: this raw probe bypasses `cmd_in`, so pin it here too
+            // — `ui.color = "always"` would otherwise wrap names in ANSI escapes
+            // and break the name->root match below (leaking the workspace on Drop).
+            .args([
+                "workspace",
+                "list",
+                "-T",
+                "name ++ \"\\n\"",
+                "--color",
+                "never",
+            ])
             .output()
             .ok()?;
         if !out.status.success() {
@@ -1698,7 +1708,7 @@ pub mod blocking {
             }
             let root = Command::new(super::BINARY)
                 .current_dir(dir)
-                .args(["workspace", "root", "--name", name])
+                .args(["workspace", "root", "--name", name, "--color", "never"])
                 .output();
             if let Ok(r) = root
                 && r.status.success()
