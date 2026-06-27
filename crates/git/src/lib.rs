@@ -1692,8 +1692,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn stash_pop(&self, dir: &Path) -> Result<()> {
+        // C locale: a conflicting `stash pop` emits git's merge-machinery
+        // `CONFLICT (...)` output, which feeds `is_merge_conflict` (e.g. via
+        // `switch_with_stash`) — a translated message would defeat it.
         self.core
-            .run_unit(self.core.command_in(dir, ["stash", "pop"]))
+            .run_unit(c_locale(self.core.command_in(dir, ["stash", "pop"])))
             .await
     }
 
@@ -3672,6 +3675,7 @@ mod tests {
             .await
             .unwrap();
         git.cherry_pick(Path::new("."), "abc").await.unwrap();
+        git.stash_pop(Path::new(".")).await.unwrap();
         git.fetch(Path::new(".")).await.unwrap();
         for call in rec.calls() {
             assert!(
