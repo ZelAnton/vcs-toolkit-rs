@@ -895,10 +895,9 @@ facade_trait! {
 mod tests {
     use super::*;
     use processkit::testing::{Reply, ScriptedRunner};
-    // The shared sandbox fixture — a unique temp dir removed on drop. Same impl
-    // the testkit hands every crate, so the wrappers/facades don't each carry a
-    // copy that could drift; the testkit prefix is itself kept short for the
-    // deep nested jj paths that brush against Windows' MAX_PATH.
+    // The shared sandbox fixture — a unique temp dir removed on drop. Using the
+    // testkit's one impl instead of a private copy means the wrappers/facades
+    // don't each carry a fixture that could drift.
     use vcs_testkit::TempDir;
 
     // --- detect ------------------------------------------------------------

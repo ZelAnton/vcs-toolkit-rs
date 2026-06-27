@@ -18,6 +18,8 @@ categories = ["command-line-utilities","api-bindings","asynchronous","developmen
 processkit.workspace = true
 # Shared git-format unified-diff model + parser and the `Version` type (`git diff`
 # and `jj diff --git` are byte-identical, so the parser is shared not duplicated).
+# Re-exports `vcs_diff::DiffSpec` (added after 0.2.0): vcs-diff's NEXT release must
+# be >= minor so `cargo set-version` widens this floor past 0.2.0 at release time.
 vcs-diff = { path = "../diff", version = "0.2" }
 # Shared processkit-coupled plumbing: the argv injection guard, fetch-retry
 # policy, and the error classifiers (re-exported below).
