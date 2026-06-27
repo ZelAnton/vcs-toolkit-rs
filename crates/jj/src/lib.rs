@@ -158,7 +158,7 @@ pub use parse::{AnnotationLine, Bookmark, BookmarkRef, Change, ChangedPath, Oper
 // `vcs-git` (identical output) — re-exported so `vcs_jj::FileDiff`,
 // `vcs_jj::parse_diff`, `vcs_jj::JjVersion`, … still resolve.
 pub use vcs_diff::{
-    ChangeKind, DiffLine, DiffStat, FileDiff, Hunk, Version as JjVersion, parse_diff,
+    ChangeKind, DiffLine, DiffSpec, DiffStat, FileDiff, Hunk, Version as JjVersion, parse_diff,
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
@@ -167,18 +167,6 @@ pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_er
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "jj";
-
-/// What a [`JjApi::diff`] / [`JjApi::diff_text`] call compares.
-///
-/// `#[non_exhaustive]` so more comparison shapes can be added later.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum DiffSpec {
-    /// The working-copy change's diff (`jj diff -r @`).
-    WorkingTree,
-    /// A specific revset, e.g. `@-` or `main..@` (`jj diff -r <revset>`).
-    Rev(String),
-}
 
 /// How a new workspace inherits sparse patterns (`jj workspace add
 /// --sparse-patterns <mode>`).

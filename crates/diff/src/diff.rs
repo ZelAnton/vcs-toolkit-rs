@@ -6,6 +6,27 @@
 //! octal-C-quotes it, jj writes raw UTF-8 — and the parser decodes both.) Pure
 //! functions over arbitrary text — no process execution.
 
+/// What a diff call compares — the working tree/copy, or a specific
+/// revision/revset (or range).
+///
+/// Shared by the `vcs-git` and `vcs-jj` wrappers (re-exported as
+/// `vcs_git::DiffSpec` / `vcs_jj::DiffSpec`); each backend interprets it against
+/// its own CLI (`git diff …` / `jj diff -r …`).
+///
+/// Deliberately **not** `#[non_exhaustive]`: each backend's `diff` interpreter
+/// must handle every variant, so adding one is a (pre-1.0) breaking change that
+/// fails the wrappers' exhaustive matches at compile time rather than slipping
+/// through a runtime catch-all.
+#[derive(Debug, Clone)]
+pub enum DiffSpec {
+    /// All tracked changes in the working tree/copy vs the last commit — staged
+    /// or not, excluding untracked files (`git diff HEAD`; `jj diff -r @`).
+    WorkingTree,
+    /// A specific revision/revset or range, e.g. `HEAD~1` / `main..HEAD`
+    /// (`git diff <rev>`) or `@-` / `main..@` (`jj diff -r <revset>`).
+    Rev(String),
+}
+
 /// Aggregate line/file counts from a diff stat (`git diff --shortstat`,
 /// `jj diff --stat`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

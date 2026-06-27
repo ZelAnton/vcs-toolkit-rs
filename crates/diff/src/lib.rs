@@ -78,5 +78,5 @@
 mod diff;
 mod version;
 
-pub use diff::{ChangeKind, DiffLine, DiffStat, FileDiff, Hunk, parse_diff};
+pub use diff::{ChangeKind, DiffLine, DiffSpec, DiffStat, FileDiff, Hunk, parse_diff};
 pub use version::{Version, parse_dotted_version};

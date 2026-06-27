@@ -124,7 +124,7 @@ pub use parse::{BlameLine, Branch, BranchStatus, Commit, StatusEntry, Worktree};
 // `vcs-jj` (identical output) — re-exported so `vcs_git::FileDiff`,
 // `vcs_git::parse_diff`, `vcs_git::GitVersion`, … still resolve.
 pub use vcs_diff::{
-    ChangeKind, DiffLine, DiffStat, FileDiff, Hunk, Version as GitVersion, parse_diff,
+    ChangeKind, DiffLine, DiffSpec, DiffStat, FileDiff, Hunk, Version as GitVersion, parse_diff,
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_git::is_merge_conflict`, … still resolve.
@@ -137,19 +137,6 @@ use vcs_cli_support::{ManagedClient, git_credential_helper};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "git";
-
-/// What a [`GitApi::diff`] / [`GitApi::diff_text`] call compares.
-///
-/// `#[non_exhaustive]` so more comparison shapes can be added later.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum DiffSpec {
-    /// All tracked working-tree changes vs the last commit (`git diff HEAD`),
-    /// staged or not, excluding untracked files.
-    WorkingTree,
-    /// A specific revision or range, e.g. `main..HEAD` or `HEAD~1` (`git diff <rev>`).
-    Rev(String),
-}
 
 /// Options for [`GitApi::worktree_add`] (`git worktree add`).
 ///
