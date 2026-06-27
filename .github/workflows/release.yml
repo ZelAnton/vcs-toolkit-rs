@@ -333,7 +333,7 @@ jobs:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          declare -A DEPS=( [vcs-diff]="" [vcs-cli-support]="" [vcs-git]="vcs-diff vcs-cli-support" [vcs-jj]="vcs-diff vcs-cli-support" [vcs-github]="vcs-cli-support" [vcs-gitlab]="vcs-cli-support" [vcs-gitea]="" [vcs-forge]="vcs-cli-support vcs-github vcs-gitlab vcs-gitea" [vcs-testkit]="" [vcs-core]="vcs-git vcs-jj vcs-diff vcs-cli-support" [vcs-watch]="vcs-core" [vcs-mcp]="vcs-core vcs-forge" )
+          declare -A DEPS=( [vcs-diff]="" [vcs-cli-support]="" [vcs-git]="vcs-diff vcs-cli-support" [vcs-jj]="vcs-diff vcs-cli-support" [vcs-github]="vcs-cli-support" [vcs-gitlab]="vcs-cli-support" [vcs-gitea]="vcs-cli-support" [vcs-forge]="vcs-cli-support vcs-github vcs-gitlab vcs-gitea" [vcs-testkit]="" [vcs-core]="vcs-git vcs-jj vcs-diff vcs-cli-support" [vcs-watch]="vcs-core" [vcs-mcp]="vcs-core vcs-forge" )
           while IFS=$'\t' read -r name dir version prev; do
             # Scan this crate's in-workspace deps: a dep that is in the current PLAN
             # (released this run) or has no published tag forces the build path.
