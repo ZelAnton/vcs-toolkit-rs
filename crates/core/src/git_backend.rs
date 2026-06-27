@@ -233,12 +233,15 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
         }
         Err(err) if vcs_git::is_merge_conflict(&err) => {
             // Collect the conflicted paths BEFORE aborting — `merge --abort`
-            // clears the unmerged index entries this reads.
-            let files = git.conflicted_files(dir).await?;
+            // clears the unmerged index entries this reads. Don't `?` the read
+            // yet: abort first regardless, so a transient read failure can't
+            // leave the probe merge staged in the working tree (matching the jj
+            // path, which always restores).
+            let files = git.conflicted_files(dir).await;
             // A failed abort breaks the guaranteed-rollback contract → propagate
             // rather than return a `Conflicts` that lies about the tree state.
             git.merge_abort(dir).await?;
-            Ok(MergeProbe::Conflicts(files))
+            Ok(MergeProbe::Conflicts(files?))
         }
         Err(err) => {
             // E.g. a dirty-tree refusal or an unknown ref — the merge usually

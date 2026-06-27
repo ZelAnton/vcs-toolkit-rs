@@ -1063,11 +1063,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>> {
-        // `--no-column`: a user's `column.ui = always` would columnate several
-        // names onto one line even when piped, corrupting the line parser.
+        // `--no-column` + `--no-color`: `column.ui = always` would columnate
+        // several names onto one line and `color.{ui,branch} = always` would inject
+        // ANSI escapes — both even when piped, corrupting the line parser and the
+        // returned names.
         self.core
             .parse(
-                self.core.command_in(dir, ["branch", "--no-column"]),
+                self.core
+                    .command_in(dir, ["branch", "--no-column", "--no-color"]),
                 parse::parse_branches,
             )
             .await
@@ -1345,15 +1348,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool> {
         reject_flag_like("branch", branch)?;
         reject_flag_like("target", target)?;
-        // `--no-column`: under `column.ui = always` git would pack several names
-        // per line even when piped, and the marker-stripping compare below would
-        // never match (a false "not merged").
+        // `--no-column` + `--no-color`: under `column.ui = always` git would pack
+        // several names per line and under `color.{ui,branch} = always` it would
+        // inject ANSI escapes — both even when piped, so the marker-stripping
+        // compare below would never match (a false "not merged").
         let out = self
             .core
-            .run(
-                self.core
-                    .command_in(dir, ["branch", "--merged", target, "--no-column"]),
-            )
+            .run(self.core.command_in(
+                dir,
+                ["branch", "--merged", target, "--no-column", "--no-color"],
+            ))
             .await?;
         // Each line is a fixed 2-column marker (`  `/`* `/`+ `) then the name;
         // drop exactly those two columns rather than trimming a char class (which
@@ -3625,19 +3629,22 @@ mod tests {
     }
 
     // The line-parsed list commands must pass `--no-column`: a user's
-    // `column.ui = always` would pack several names per line even when piped.
+    // `column.ui = always` would pack several names per line, and
+    // `color.{ui,branch} = always` would inject ANSI escapes — both even when
+    // piped. Branch listings disable both; `git tag` isn't colorized, so it only
+    // needs `--no-column`.
     #[tokio::test]
-    async fn list_commands_disable_column_output() {
+    async fn list_commands_disable_column_and_color() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.branches(Path::new(".")).await.unwrap();
         git.is_merged(Path::new("."), "b", "main").await.unwrap();
         git.tag_list(Path::new(".")).await.unwrap();
         let calls = rec.calls();
-        assert_eq!(calls[0].args_str(), ["branch", "--no-column"]);
+        assert_eq!(calls[0].args_str(), ["branch", "--no-column", "--no-color"]);
         assert_eq!(
             calls[1].args_str(),
-            ["branch", "--merged", "main", "--no-column"]
+            ["branch", "--merged", "main", "--no-column", "--no-color"]
         );
         assert_eq!(calls[2].args_str(), ["tag", "--list", "--no-column"]);
     }
