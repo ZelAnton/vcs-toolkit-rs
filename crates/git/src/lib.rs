@@ -1579,8 +1579,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()> {
         reject_flag_like("branch", branch)?;
+        // C locale: a conflict's output feeds `is_merge_conflict` (same reason as
+        // `merge_commit`/`merge_no_commit`). `--squash` never commits, so no editor.
         self.core
-            .run_unit(self.core.command_in(dir, ["merge", "--squash", branch]))
+            .run_unit(c_locale(
+                self.core.command_in(dir, ["merge", "--squash", branch]),
+            ))
             .await
     }
 
@@ -3661,6 +3665,10 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.commit(Path::new("."), "msg").await.unwrap();
         git.merge_commit(Path::new("."), MergeCommit::branch("b"))
+            .await
+            .unwrap();
+        git.merge_squash(Path::new("."), "b").await.unwrap();
+        git.merge_no_commit(Path::new("."), MergeNoCommit::branch("b"))
             .await
             .unwrap();
         git.cherry_pick(Path::new("."), "abc").await.unwrap();
