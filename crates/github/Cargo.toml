@@ -18,7 +18,7 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 processkit.workspace = true
 # Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`).
 vcs-cli-support = { path = "../cli-support", version = "0.2" }
-# Deserialize `gh … --json` output into typed structs (PullRequest/Issue/Repo).
+# Deserialize `gh … --json` output into typed structs (PullRequest/Issue/RepoView).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `async fn` in the object-safe `GitHubApi` trait (dyn + mockall friendly).

@@ -36,10 +36,11 @@ pub struct MergeRequest {
     pub draft: bool,
 }
 
-/// A project (`glab repo view --output json`) — GitLab's REST `Project` object.
+/// A project, returned as `RepoView` (`glab repo view --output json`) — the
+/// fields are GitLab's REST `Project` object.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
-pub struct Project {
+pub struct RepoView {
     /// Project name (the last path segment's display name).
     pub name: String,
     /// Full namespace path, e.g. `"group/subgroup/repo"`.
@@ -311,7 +312,7 @@ mod tests {
         assert_eq!(mr.source_branch, "");
         assert_eq!(mr.target_branch, "");
 
-        let project: Project = from_json(
+        let project: RepoView = from_json(
             r#"{"name": "p", "path_with_namespace": null, "default_branch": null, "web_url": null}"#,
         )
         .expect("project with null default_branch");
@@ -367,7 +368,7 @@ mod tests {
             "default_branch": "main", "web_url": "https://gl/p",
             "visibility": "public"
         }"#;
-        let p: Project = from_json(json).expect("parse project");
+        let p: RepoView = from_json(json).expect("parse project");
         assert_eq!(p.name, "cli");
         assert_eq!(p.path_with_namespace, "gitlab-org/cli");
         assert_eq!(p.default_branch, "main");
@@ -379,7 +380,7 @@ mod tests {
     #[test]
     fn project_tolerates_missing_visibility() {
         let json = r#"{"name":"cli","path_with_namespace":"o/cli","default_branch":"main"}"#;
-        let p: Project = from_json(json).expect("parse project");
+        let p: RepoView = from_json(json).expect("parse project");
         assert_eq!(p.visibility, None);
     }
 

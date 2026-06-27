@@ -252,7 +252,7 @@ pub struct PrFeedback {
 /// A repository (`gh repo view --json name,owner,description,url,isPrivate,defaultBranchRef`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct Repo {
+pub struct RepoView {
     /// Repository name.
     pub name: String,
     /// Owner login.
@@ -268,7 +268,7 @@ pub struct Repo {
 }
 
 // gh nests `owner` and `defaultBranchRef` as objects; deserialize into this and
-// flatten into the public `Repo`.
+// flatten into the public `RepoView`.
 #[derive(Deserialize)]
 struct RepoJson {
     name: String,
@@ -302,9 +302,9 @@ pub(crate) fn from_json<T: DeserializeOwned>(json: &str) -> Result<T> {
 }
 
 /// Parse `gh repo view --json …` output, flattening the nested objects.
-pub(crate) fn parse_repo(json: &str) -> Result<Repo> {
+pub(crate) fn parse_repo(json: &str) -> Result<RepoView> {
     let raw: RepoJson = from_json(json)?;
-    Ok(Repo {
+    Ok(RepoView {
         name: raw.name,
         owner: raw.owner.login,
         description: raw.description,

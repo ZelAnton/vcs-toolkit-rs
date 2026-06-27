@@ -13,7 +13,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 -
 
 ### Changed
--
+- **Renamed the `repo_view` DTO `Project` → `RepoView` (breaking).** The struct
+  returned by `repo_view` (and re-exported at the crate root) is now `RepoView`,
+  for a consistent name across the forge wrappers (its fields are still GitLab's
+  REST `Project` object); update `use vcs_gitlab::Project` to
+  `use vcs_gitlab::RepoView`. Fields and behaviour are unchanged.
 
 ### Fixed
 -

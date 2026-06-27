@@ -67,7 +67,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 
 | Method | Runs | Returns |
 |---|---|---|
-| `repo_view(dir)` | `glab repo view --output json` | [`Project`] |
+| `repo_view(dir)` | `glab repo view --output json` | [`RepoView`] |
 | `mr_list(dir)` | `glab mr list --output json` | `Vec<MergeRequest>` |
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
 | `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |

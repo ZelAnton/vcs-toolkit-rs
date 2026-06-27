@@ -48,7 +48,7 @@ use vcs_gitlab::{GitLab, GitLabApi, MrCreate};
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
     let glab = GitLab::new();
 
-    let p = glab.repo_view(repo).await?; // Project { path_with_namespace, default_branch, … }
+    let p = glab.repo_view(repo).await?; // RepoView { path_with_namespace, default_branch, … }
     println!("{} (default: {})", p.path_with_namespace, p.default_branch);
 
     for mr in glab.mr_list(repo).await? {

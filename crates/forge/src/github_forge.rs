@@ -6,7 +6,7 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_github::{
     CheckRun, GitHub, GitHubApi, Issue, PrCreate as GhPrCreate, PrEdit as GhPrEdit, PrMerge,
-    PullRequest, Release, Repo,
+    PullRequest, Release, RepoView,
 };
 
 use crate::dto::{
@@ -225,7 +225,7 @@ fn map_release(r: Release) -> ForgeRelease {
     }
 }
 
-fn map_repo(r: Repo) -> ForgeRepo {
+fn map_repo(r: RepoView) -> ForgeRepo {
     ForgeRepo {
         name: r.name,
         owner: r.owner,

@@ -33,7 +33,7 @@
 //!   on `&dyn GitHubApi` (or generically on `impl GitHubApi`) so a test can swap
 //!   the real client for a double. Repo-scoped methods take the working
 //!   directory as the first argument and return typed results ([`PullRequest`],
-//!   [`Issue`], [`Repo`], [`CheckRun`], [`WorkflowRun`], [`Release`],
+//!   [`Issue`], [`RepoView`], [`CheckRun`], [`WorkflowRun`], [`Release`],
 //!   [`PrFeedback`], …) or a structured [`Error`].
 //! - **[`GitHub`]** — the real client. [`GitHub::new`] uses the job-backed
 //!   runner; [`GitHub::with_runner`] injects a fake one for tests. It is generic
@@ -134,7 +134,7 @@ pub use processkit::CancellationToken;
 
 mod parse;
 pub use parse::{
-    CheckBucket, CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, Repo, Review,
+    CheckBucket, CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, RepoView, Review,
     WorkflowRun,
 };
 
@@ -420,7 +420,7 @@ pub trait GitHubApi: Send + Sync {
     /// error; only a spawn failure or timeout errors.
     async fn auth_status(&self) -> Result<bool>;
     /// The repository for `dir` (`gh repo view --json …`).
-    async fn repo_view(&self, dir: &Path) -> Result<Repo>;
+    async fn repo_view(&self, dir: &Path) -> Result<RepoView>;
     /// Pull requests for `dir` (`gh pr list --limit 100 --json …`). Returns up to
     /// 100 open PRs; use [`run`](GitHubApi::run) for more.
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
@@ -642,7 +642,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         Ok(self.core.exit_code(["auth", "status"]).await? == 0)
     }
 
-    async fn repo_view(&self, dir: &Path) -> Result<Repo> {
+    async fn repo_view(&self, dir: &Path) -> Result<RepoView> {
         self.core
             .try_parse(
                 self.core
@@ -1040,7 +1040,7 @@ github_at_forwarders! {
         fn api(endpoint: &str) -> Result<String>;
     }
     dir {
-        fn repo_view() -> Result<Repo>;
+        fn repo_view() -> Result<RepoView>;
         fn pr_list() -> Result<Vec<PullRequest>>;
         fn pr_list_for_branch(head: &str, base: &str) -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
@@ -1747,7 +1747,7 @@ mod tests {
     }
 
     // repo_view builds the --json request and flattens gh's nested owner/branch
-    // objects into the public Repo.
+    // objects into the public RepoView.
     #[tokio::test]
     async fn repo_view_parses_scripted_json() {
         let json = r#"{"name":"r","owner":{"login":"o"},"description":"d","url":"u","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#;

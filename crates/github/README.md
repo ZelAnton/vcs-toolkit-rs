@@ -46,7 +46,7 @@ use vcs_github::{GitHub, GitHubApi, PrCreate};
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
     let gh = GitHub::new();
 
-    let r = gh.repo_view(repo).await?; // Repo { owner, name, default_branch, is_private, … }
+    let r = gh.repo_view(repo).await?; // RepoView { owner, name, default_branch, is_private, … }
     println!("{}/{} (default: {})", r.owner, r.name, r.default_branch);
 
     // Any PRs (open/closed/merged) merging this branch into main? (title + URL)

@@ -93,7 +93,7 @@ Both are also available on the bound handle (`gh.at(dir).run_args(…)`).
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
 async fn api(&self, endpoint: &str) -> Result<String>;// `gh api <endpoint>`
-async fn repo_view(&self, dir: &Path) -> Result<Repo>;// `gh repo view --json …`
+async fn repo_view(&self, dir: &Path) -> Result<RepoView>;// `gh repo view --json …`
 ```
 
 `auth_status` reads the *exit code* as a bool — `gh auth status` exits 0 when
@@ -120,7 +120,7 @@ against flag-injection: a leading `-` or an empty string is refused *before*
 anything spawns (gh would otherwise parse `gh api -evil` as a flag).
 
 `repo_view` flattens gh's nested `owner`/`defaultBranchRef` objects into a flat
-[`Repo`] — `owner` is the login string, `default_branch` is the ref name (empty
+[`RepoView`] — `owner` is the login string, `default_branch` is the ref name (empty
 for an empty repository).
 
 ## Pull requests — listing & creation
@@ -385,7 +385,7 @@ empty for a deleted account), `body: String`, `url: String`,
 From `pr_feedback`. Fields: `reviews: Vec<Review>` and `comments: Vec<Comment>`,
 each in gh's order (oldest first).
 
-### `Repo`
+### `RepoView`
 
 From `repo_view`, flattening gh's nested objects. Fields: `name: String`,
 `owner: String` (the login), `description: Option<String>` (`None` when GitHub

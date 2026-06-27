@@ -39,7 +39,7 @@
 //! - **[`GitLabApi`]** — the object-safe trait every operation lives on. Depend on
 //!   `&dyn GitLabApi` (or generically on `impl GitLabApi`) so a test can swap the
 //!   real client for a double. Project-scoped methods take the working directory
-//!   as the first argument and return typed results ([`Project`],
+//!   as the first argument and return typed results ([`RepoView`],
 //!   [`MergeRequest`], [`Issue`], [`Release`], [`CiStatus`]) or a structured
 //!   [`Error`]. Unmodelled `glab` commands go through [`run`](GitLabApi::run); any
 //!   REST/GraphQL endpoint through [`api`](GitLabApi::api) (`glab api <endpoint>`).
@@ -128,7 +128,7 @@ pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
 pub use processkit::CancellationToken;
 
 mod parse;
-pub use parse::{CiStatus, Issue, MergeRequest, Project, Release};
+pub use parse::{CiStatus, Issue, MergeRequest, Release, RepoView};
 
 /// Options for [`GitLabApi::mr_create`] (`glab mr create`).
 ///
@@ -297,7 +297,7 @@ pub trait GitLabApi: Send + Sync {
     /// [gitlab-org/cli#911]: https://gitlab.com/gitlab-org/cli/-/issues/911
     async fn auth_status(&self) -> Result<bool>;
     /// The project for `dir` (`glab repo view --output json`).
-    async fn repo_view(&self, dir: &Path) -> Result<Project>;
+    async fn repo_view(&self, dir: &Path) -> Result<RepoView>;
     /// Open merge requests for `dir`
     /// (`glab mr list --per-page 100 --output json`). Returns up to 100 (100 is
     /// the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
@@ -489,7 +489,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         Ok(self.core.exit_code(["auth", "status"]).await? == 0)
     }
 
-    async fn repo_view(&self, dir: &Path) -> Result<Project> {
+    async fn repo_view(&self, dir: &Path) -> Result<RepoView> {
         self.core
             .try_parse(
                 self.core
@@ -765,7 +765,7 @@ gitlab_at_forwarders! {
         fn auth_status() -> Result<bool>;
     }
     dir {
-        fn repo_view() -> Result<Project>;
+        fn repo_view() -> Result<RepoView>;
         fn mr_list() -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;

@@ -6,7 +6,7 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_gitlab::{
     CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MergeStrategy as GlMs, MrCreate,
-    MrEdit as GlMrEdit, Project, Release,
+    MrEdit as GlMrEdit, Release, RepoView,
 };
 
 use crate::dto::{
@@ -228,7 +228,7 @@ fn state_of(state: &str) -> ForgePrState {
     }
 }
 
-fn map_project(p: Project) -> ForgeRepo {
+fn map_project(p: RepoView) -> ForgeRepo {
     // GitLab has no separate "owner" — split the namespace path: everything
     // before the last `/` is the owner, the last segment the project slug.
     let owner = p

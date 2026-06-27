@@ -13,7 +13,11 @@ crates; tag releases as `vcs-github-v<version>`.
 -
 
 ### Changed
--
+- **Renamed the `repo_view` DTO `Repo` → `RepoView` (breaking).** The struct
+  returned by `repo_view` (and re-exported at the crate root) is now `RepoView`,
+  for a consistent name across the forge wrappers; update
+  `use vcs_github::Repo` to `use vcs_github::RepoView`. Fields and behaviour are
+  unchanged.
 
 ### Fixed
 -
