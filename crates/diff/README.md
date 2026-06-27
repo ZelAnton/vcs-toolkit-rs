@@ -30,9 +30,10 @@ for file in parse_diff(diff) {              // Vec<FileDiff>
 }
 ```
 
-It also exposes [`DiffStat`] (the file/line aggregate both `--shortstat` and
-`--stat` parse into) and [`Version`] + [`parse_dotted_version`] for reading a
-`<tool> --version` banner.
+It also exposes [`DiffSpec`] (the diff request — `WorkingTree` / `Rev` — the
+wrapper crates' `diff`/`diff_text` take), [`DiffStat`] (the file/line aggregate
+both `--shortstat` and `--stat` parse into), and [`Version`] +
+[`parse_dotted_version`] for reading a `<tool> --version` banner.
 
 The wrapper crates re-export these types, so `vcs_git::FileDiff`,
 `vcs_git::parse_diff`, and `vcs_git::GitVersion` (an alias of `vcs_diff::Version`)

@@ -13,7 +13,10 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Changed
--
+- `DiffSpec` is now a re-export of `vcs_diff::DiffSpec` (hoisted to the shared
+  crate so `vcs-git`/`vcs-jj` share one definition; `vcs_git::DiffSpec` still
+  resolves) and is no longer `#[non_exhaustive]`, so a `match` over it can be
+  exhaustive. Requires `vcs-diff` ≥ the version that introduces `DiffSpec`.
 
 ### Fixed
 -

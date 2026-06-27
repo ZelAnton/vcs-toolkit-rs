@@ -70,6 +70,11 @@ concurrency:
 permissions:
   contents: write # push the version-bump commit + tags, and create the Releases
 
+env:
+  # Retry transient crates.io download drops (curl/schannel) so a release isn't
+  # tripped by a flaky fetch in the dry-run gate. Default is 3.
+  CARGO_NET_RETRY: "10"
+
 jobs:
   release:
     runs-on: ubuntu-latest

@@ -697,8 +697,9 @@ Result<()>` (a clear "needs jj >= 0.38, found …" error otherwise).
 
 ## Config & builder types
 
-### `DiffSpec` (enum, `#[non_exhaustive]`)
-What `diff` / `diff_text` compares.
+### `DiffSpec` (enum)
+What `diff` / `diff_text` compares — a re-export of `vcs_diff::DiffSpec`,
+deliberately exhaustive (not `#[non_exhaustive]`).
 - `WorkingTree` — the working-copy change's diff (`jj diff -r @`).
 - `Rev(String)` — a specific revset, e.g. `@-` or `main..@` (`jj diff -r <revset>`).
 
@@ -835,7 +836,7 @@ before spawning.
 [`Operation`]: #operation
 [`AnnotationLine`]: #annotationline
 [`JjCapabilities`]: #jjcapabilities
-[`DiffSpec`]: #diffspec-enum-non_exhaustive
+[`DiffSpec`]: #diffspec-enum
 [`WorkspaceAdd`]: #workspaceadd-non_exhaustive
 [`SquashPaths`]: #squashpaths-non_exhaustive
 [`JjFileset`]: #jjfileset

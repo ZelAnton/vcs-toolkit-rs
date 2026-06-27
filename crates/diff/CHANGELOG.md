@@ -10,7 +10,12 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`DiffSpec`** — the diff-request enum (`WorkingTree` / `Rev(String)`) that a
+  wrapper's `diff`/`diff_text` takes, hoisted here from `vcs-git`/`vcs-jj` so both
+  backends share one definition (re-exported as `vcs_git::DiffSpec` /
+  `vcs_jj::DiffSpec`). Deliberately **not** `#[non_exhaustive]`: each backend must
+  interpret every variant, so adding one is a breaking change caught at compile
+  time. This crate defines it but has no method that consumes it.
 
 ### Changed
 -

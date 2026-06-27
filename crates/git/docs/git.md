@@ -846,7 +846,8 @@ Result<()>` (a clear "needs git ≥ 2" error otherwise).
 
 ### `DiffSpec`
 
-`#[non_exhaustive]` enum selecting what `diff` / `diff_text` compares:
+An enum selecting what `diff` / `diff_text` compares — a re-export of
+`vcs_diff::DiffSpec`, deliberately exhaustive (not `#[non_exhaustive]`):
 
 - `DiffSpec::WorkingTree` — all tracked working-tree changes vs the last commit
   (`git diff HEAD`), staged or not, excluding untracked files.

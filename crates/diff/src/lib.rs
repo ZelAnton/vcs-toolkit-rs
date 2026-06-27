@@ -29,6 +29,10 @@
 //!   [`Renamed`](ChangeKind::Renamed).
 //! - **[`DiffStat`]** — the aggregate `files_changed`/`insertions`/`deletions`
 //!   shape both `git diff --shortstat` and `jj diff --stat` parse into.
+//! - **[`DiffSpec`]** — the diff request a wrapper's `diff`/`diff_text` takes
+//!   ([`WorkingTree`](DiffSpec::WorkingTree) / [`Rev`](DiffSpec::Rev)). This
+//!   crate defines it (so the backends share one type) but has no method that
+//!   consumes it.
 //! - **[`Version`]** + **[`parse_dotted_version`]** — a numeric
 //!   `major.minor.patch` (it `Ord`s, so a caller can gate on a minimum) read
 //!   tolerantly from a `<tool> --version` banner.
