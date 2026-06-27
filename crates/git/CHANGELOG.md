@@ -17,6 +17,11 @@ crates; tag releases as `vcs-git-v<version>`.
   crate so `vcs-git`/`vcs-jj` share one definition; `vcs_git::DiffSpec` still
   resolves) and is no longer `#[non_exhaustive]`, so a `match` over it can be
   exhaustive. Requires `vcs-diff` ≥ the version that introduces `DiffSpec`.
+- **Renamed `GitApi::fetch_remote_branch` → `fetch_branch` (breaking).** The
+  single-branch fetch (and its `at(dir)` bound form) is now `fetch_branch`, so
+  git exposes a consistent `fetch`/`fetch_from`/`fetch_branch` family; the emitted
+  `git fetch --quiet origin <refspec>` command is unchanged. Update callers of
+  `fetch_remote_branch` to `fetch_branch`.
 
 ### Fixed
 -

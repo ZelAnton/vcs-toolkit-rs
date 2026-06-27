@@ -242,7 +242,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
-            Some(Forge::for_github(&cwd, c))
+            Some(Forge::from_github(&cwd, c))
         }
         ForgeKind::GitLab => {
             let c = GitLab::new();
@@ -250,7 +250,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
-            Some(Forge::for_gitlab(&cwd, c))
+            Some(Forge::from_gitlab(&cwd, c))
         }
         ForgeKind::Gitea => {
             let c = Gitea::new();
@@ -258,7 +258,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
-            Some(Forge::for_gitea(&cwd, c))
+            Some(Forge::from_gitea(&cwd, c))
         }
         // `ForgeKind` is `#[non_exhaustive]`; a future kind has no constructor here.
         _ => None,

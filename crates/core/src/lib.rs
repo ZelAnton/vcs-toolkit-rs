@@ -77,7 +77,7 @@
 //!   lot in one or two spawns.
 //! - **Mutations** — [`commit_paths`](Repo::commit_paths) (partial commit),
 //!   [`fetch`](Repo::fetch) / [`fetch_from`](Repo::fetch_from) /
-//!   [`fetch_remote_branch`](Repo::fetch_remote_branch) /
+//!   [`fetch_branch`](Repo::fetch_branch) /
 //!   [`push`](Repo::push), [`checkout`](Repo::checkout),
 //!   [`rebase`](Repo::rebase).
 //! - **Merge & operation state** — [`try_merge`](Repo::try_merge) (a
@@ -595,12 +595,12 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// Fetch a single branch/bookmark from `origin` into its remote-tracking ref
-    /// (git `fetch_remote_branch` / jj `git fetch -b`). Transient network failures
+    /// (git `fetch_branch` / jj `git fetch -b`). Transient network failures
     /// are retried by the underlying client.
-    pub async fn fetch_remote_branch(&self, branch: &str) -> Result<()> {
+    pub async fn fetch_branch(&self, branch: &str) -> Result<()> {
         match &self.backend {
-            Backend::Git(g) => git_backend::fetch_remote_branch(g, &self.cwd, branch).await,
-            Backend::Jj(j) => jj_backend::fetch_remote_branch(j, &self.cwd, branch).await,
+            Backend::Git(g) => git_backend::fetch_branch(g, &self.cwd, branch).await,
+            Backend::Jj(j) => jj_backend::fetch_branch(j, &self.cwd, branch).await,
         }
     }
 
@@ -877,7 +877,7 @@ facade_trait! {
         fn commit_paths(paths: &[String], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
-        fn fetch_remote_branch(branch: &str) -> Result<()>;
+        fn fetch_branch(branch: &str) -> Result<()>;
         fn push(branch: &str) -> Result<()>;
         fn checkout(reference: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
@@ -1439,11 +1439,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_remote_branch_dispatches_per_backend() {
+    async fn fetch_branch_dispatches_per_backend() {
         use processkit::testing::RecordingRunner;
         let grec = RecordingRunner::replying(Reply::ok(""));
         Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
-            .fetch_remote_branch("main")
+            .fetch_branch("main")
             .await
             .unwrap();
         assert!(
@@ -1454,7 +1454,7 @@ mod tests {
 
         let jrec = RecordingRunner::replying(Reply::ok(""));
         Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
-            .fetch_remote_branch("main")
+            .fetch_branch("main")
             .await
             .unwrap();
         let args = jrec.only_call().args_str();

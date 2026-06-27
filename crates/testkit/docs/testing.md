@@ -43,7 +43,7 @@ let git = Git::new();   // real, job-backed git — passes as `&dyn GitApi`
 without naming the `ProcessRunner` generic. Note the facade traits (`VcsRepo`
 and `vcs-forge`'s `ForgeApi`) deliberately have **no** `mock` feature — unlike
 the wrapper traits in §2 — so test them with the runner seam (§3): build a
-`Repo`/`Forge` over a fake runner via `Repo::from_git` / `Forge::for_github`
+`Repo`/`Forge` over a fake runner via `Repo::from_git` / `Forge::from_github`
 rather than mocking the trait.
 
 ---

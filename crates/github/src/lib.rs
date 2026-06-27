@@ -46,7 +46,7 @@
 //!   when one client drives one checkout.
 //! - **Method groups** on the trait: PRs ([`pr_list`](GitHubApi::pr_list),
 //!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
-//!   [`pr_merge`](GitHubApi::pr_merge), [`pr_ready`](GitHubApi::pr_ready),
+//!   [`pr_merge`](GitHubApi::pr_merge), [`pr_mark_ready`](GitHubApi::pr_mark_ready),
 //!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
 //!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
 //!   [`pr_feedback`](GitHubApi::pr_feedback), …); Actions runs
@@ -452,7 +452,7 @@ pub trait GitHubApi: Send + Sync {
     /// [--auto] [--delete-branch]`) — see [`PrMerge`].
     async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
     /// Mark a draft pull request as ready for review (`gh pr ready <n>`).
-    async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()>;
+    async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a pull request without merging (`gh pr close <n>
     /// [--delete-branch]`).
     async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
@@ -751,7 +751,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
-    async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()> {
+    async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()> {
         let n = number.to_string();
         self.core
             .run_unit(self.core.command_in(dir, ["pr", "ready", n.as_str()]))
@@ -1047,7 +1047,7 @@ github_at_forwarders! {
         fn issue_list() -> Result<Vec<Issue>>;
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
-        fn pr_ready(number: u64) -> Result<()>;
+        fn pr_mark_ready(number: u64) -> Result<()>;
         fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
         fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
         fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
@@ -1312,10 +1312,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pr_ready_and_close_build_args() {
+    async fn pr_mark_ready_and_close_build_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let gh = GitHub::with_runner(&rec);
-        gh.pr_ready(Path::new("/r"), 3).await.expect("pr_ready");
+        gh.pr_mark_ready(Path::new("/r"), 3)
+            .await
+            .expect("pr_mark_ready");
         gh.pr_close(Path::new("/r"), 3, true).await.expect("close");
         gh.pr_close(Path::new("/r"), 4, false).await.expect("close");
         let calls = rec.calls();

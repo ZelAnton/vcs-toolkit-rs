@@ -210,7 +210,7 @@ pub(crate) async fn fetch_from<R: ProcessRunner>(
     Ok(())
 }
 
-pub(crate) async fn fetch_remote_branch<R: ProcessRunner>(
+pub(crate) async fn fetch_branch<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
     branch: &str,

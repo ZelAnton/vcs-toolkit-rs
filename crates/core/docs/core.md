@@ -241,15 +241,15 @@ Commit exactly `paths` with `message` (git `commit --only`, jj
 ```rust,ignore
 pub async fn fetch(&self)                          -> Result<()>;
 pub async fn fetch_from(&self, remote: &str)       -> Result<()>;
-pub async fn fetch_remote_branch(&self, branch: &str) -> Result<()>;
+pub async fn fetch_branch(&self, branch: &str) -> Result<()>;
 pub async fn push(&self, branch: &str)             -> Result<()>;
 ```
 
 - `fetch` — from the default remote (git `fetch` / jj `git fetch`).
 - `fetch_from` — from a *named* remote (git `fetch <remote>` / jj
   `git fetch --remote <remote>`).
-- `fetch_remote_branch` — a single branch/bookmark from `origin` into its
-  remote-tracking ref (git `fetch_remote_branch` / jj `git fetch -b`).
+- `fetch_branch` — a single branch/bookmark from `origin` into its
+  remote-tracking ref (git `fetch_branch` / jj `git fetch -b`).
 - `push` — an **existing** local branch/bookmark to `origin` (git
   `push -u origin <branch>` / jj `git push -b <branch>`). The backends honestly
   differ: git pushes the *ref* and records the upstream (`-u`, idempotent); jj

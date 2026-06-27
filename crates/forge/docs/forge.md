@@ -42,7 +42,7 @@ match, so a lookalike like `gitlab.com.attacker.net` returns `None`, not GitLab.
 **self-hosted** instance on an arbitrary domain also returns `None`
 (indistinguishable by host alone — pick the kind yourself).
 
-`Forge::for_github(cwd, client)` / `for_gitlab` / `for_gitea` take an explicit
+`Forge::from_github(cwd, client)` / `from_gitlab` / `from_gitea` take an explicit
 client (the test seam); `forge.at(dir)` re-binds the cwd, sharing the client.
 
 ## Operations

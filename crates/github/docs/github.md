@@ -163,12 +163,12 @@ println!("opened {url}");
 
 ```rust,ignore
 async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
-async fn pr_ready(&self, dir: &Path, number: u64) -> Result<()>;
+async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
 async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
 ```
 
 `pr_merge` takes a [`PrMerge`] config (strategy + optional `--auto` /
-`--delete-branch`). `pr_ready` flips a draft to ready-for-review. `pr_close`
+`--delete-branch`). `pr_mark_ready` flips a draft to ready-for-review. `pr_close`
 closes without merging, optionally deleting the head branch.
 
 ```rust,ignore
@@ -176,7 +176,7 @@ closes without merging, optionally deleting the head branch.
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
 let gh = GitHub::new();
-gh.pr_ready(repo, 7).await?;
+gh.pr_mark_ready(repo, 7).await?;
 gh.pr_merge(repo, 7, PrMerge::squash().delete_branch()).await?;
 // or bail out:
 gh.pr_close(repo, 8, true).await?; // --delete-branch

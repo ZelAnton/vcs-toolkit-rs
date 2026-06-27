@@ -166,7 +166,7 @@ pub fn is_nothing_to_commit(err: &Error) -> bool {
     exit_output_matches(err, NOTHING_TO_COMMIT_MARKERS)
 }
 
-/// Whether a failed `fetch`/`fetch_remote_branch`/`remote_branch_exists` looks
+/// Whether a failed `fetch`/`fetch_branch`/`remote_branch_exists` looks
 /// transient (DNS, timeout, dropped connection) and is worth retrying.
 pub fn is_transient_fetch_error(err: &Error) -> bool {
     // A processkit-level timeout (a `.timeout()`-bounded run that expired) is

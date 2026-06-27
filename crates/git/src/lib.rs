@@ -722,7 +722,7 @@ pub trait GitApi: Send + Sync {
     /// Fetch a single branch from `origin` into its remote-tracking ref
     /// (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`), with
     /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried (3×, 500 ms).
-    async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
     /// Push to a remote (`push [-u] <remote> <refspec>`); see [`GitPush`].
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
     /// Stage a branch's changes without committing (`merge --squash <branch>`).
@@ -1498,7 +1498,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn fetch(&self, dir: &Path) -> Result<()> {
         // `GIT_TERMINAL_PROMPT=0` so a remote needing credentials fails fast
         // rather than blocking on an interactive prompt — matching the other
-        // remote ops (`fetch_remote_branch`, `push`, `remote_branch_exists`).
+        // remote ops (`fetch_branch`, `push`, `remote_branch_exists`).
         // Fetch is idempotent, so `retry` replays it on a transient failure
         // (DNS/timeout/dropped connection); a non-transient error fails at once.
         // C locale: the retry decision classifies the failure's message.
@@ -1538,7 +1538,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(cmd).await
     }
 
-    async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()> {
+    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
         let (pre, envs) = self.remote_credentials().await?;
         let mut args: Vec<String> = pre;
@@ -2270,7 +2270,7 @@ git_at_forwarders! {
         fn is_merge_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
-        fn fetch_remote_branch(branch: &str) -> Result<()>;
+        fn fetch_branch(branch: &str) -> Result<()>;
         fn push(spec: GitPush) -> Result<()>;
         fn merge_squash(branch: &str) -> Result<()>;
         fn merge_commit(spec: MergeCommit) -> Result<()>;

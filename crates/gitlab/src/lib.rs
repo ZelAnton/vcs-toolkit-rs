@@ -318,7 +318,7 @@ pub trait GitLabApi: Send + Sync {
     /// [`MergeStrategy`].
     async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
     /// Mark a draft merge request as ready (`glab mr update <id> --ready`).
-    async fn mr_ready(&self, dir: &Path, number: u64) -> Result<()>;
+    async fn mr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
     async fn mr_close(&self, dir: &Path, number: u64) -> Result<()>;
     /// Add a comment to a merge request, returning the command's output
@@ -560,7 +560,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_ready(&self, dir: &Path, number: u64) -> Result<()> {
+    async fn mr_mark_ready(&self, dir: &Path, number: u64) -> Result<()> {
         let id = number.to_string();
         self.core
             .run_unit(
@@ -770,7 +770,7 @@ gitlab_at_forwarders! {
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
         fn mr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
-        fn mr_ready(number: u64) -> Result<()>;
+        fn mr_mark_ready(number: u64) -> Result<()>;
         fn mr_close(number: u64) -> Result<()>;
         fn mr_comment(number: u64, body: &str) -> Result<String>;
         fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
@@ -810,8 +810,8 @@ mod tests {
 
         glab.mr_list(dir).await.unwrap();
         glab.at(dir).mr_list().await.unwrap();
-        glab.mr_ready(dir, 7).await.unwrap();
-        glab.at(dir).mr_ready(7).await.unwrap();
+        glab.mr_mark_ready(dir, 7).await.unwrap();
+        glab.at(dir).mr_mark_ready(7).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
@@ -1036,12 +1036,14 @@ mod tests {
         }
     }
 
-    // mr_ready maps to `mr update <id> --ready`; mr_close to `mr close <id>`.
+    // mr_mark_ready maps to `mr update <id> --ready`; mr_close to `mr close <id>`.
     #[tokio::test]
-    async fn mr_ready_and_close_build_expected_argv() {
+    async fn mr_mark_ready_and_close_build_expected_argv() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let glab = GitLab::with_runner(&rec);
-        glab.mr_ready(Path::new("/repo"), 3).await.expect("ready");
+        glab.mr_mark_ready(Path::new("/repo"), 3)
+            .await
+            .expect("ready");
         assert_eq!(rec.only_call().args_str(), ["mr", "update", "3", "--ready"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));

@@ -100,7 +100,7 @@ pub(crate) async fn pr_mark_ready<R: ProcessRunner>(
     dir: &Path,
     number: u64,
 ) -> Result<()> {
-    glab.mr_ready(dir, number).await?;
+    glab.mr_mark_ready(dir, number).await?;
     Ok(())
 }
 

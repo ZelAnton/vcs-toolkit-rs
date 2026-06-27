@@ -139,7 +139,7 @@ A per-command `cancel_on` on a built command **replaces** the client default
 you need two cancel sources. `Error::Cancelled` is **terminal** — the fetch-retry
 treats it as non-transient and will not replay a cancelled run. Through the facades,
 build the wrapped client the same way (`GitHub::new().default_cancel_on(t)`) and
-hand it to `Forge::for_github(cwd, client)` / `Repo::from_git(root, cwd, client)`.
+hand it to `Forge::from_github(cwd, client)` / `Repo::from_git(root, cwd, client)`.
 
 **Cancellation is "stop now", not "stop and clean up".** A fired token kills
 *every* command the client still runs — **including any cleanup the toolkit itself

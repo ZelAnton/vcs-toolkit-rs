@@ -107,8 +107,8 @@
 //! The facade trait has **no mock feature** — `mockall` can't process the
 //! macro-generated [`ForgeApi`] signatures. Test the *real* dispatch instead:
 //! build a [`Forge`] over an explicit client wrapping a fake runner — e.g.
-//! `Forge::for_github(cwd, GitHub::with_runner(ScriptedRunner::new()))` (likewise
-//! [`for_gitlab`](Forge::for_gitlab) / [`for_gitea`](Forge::for_gitea)) — and
+//! `Forge::from_github(cwd, GitHub::with_runner(ScriptedRunner::new()))` (likewise
+//! [`from_gitlab`](Forge::from_gitlab) / [`from_gitea`](Forge::from_gitea)) — and
 //! script the canned CLI output, exercising the argv-building and DTO parsing
 //! end to end. The cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
@@ -139,7 +139,7 @@ pub use dto::{
 pub use error::{Error, Result};
 
 // Re-export the underlying wrappers so a consumer depending only on `vcs-forge`
-// can construct the clients (`Forge::for_github(cwd, GitHub::new())`) and reach
+// can construct the clients (`Forge::from_github(cwd, GitHub::new())`) and reach
 // forge-specific operations off the common surface.
 pub use vcs_gitea;
 pub use vcs_github;
@@ -210,7 +210,7 @@ impl Forge<JobRunner> {
 impl<R: ProcessRunner> Forge<R> {
     /// Build a GitHub-backed handle from an explicit client — for a custom runner
     /// (e.g. a test seam) or a pre-configured [`GitHub`].
-    pub fn for_github(cwd: impl Into<PathBuf>, client: GitHub<R>) -> Self {
+    pub fn from_github(cwd: impl Into<PathBuf>, client: GitHub<R>) -> Self {
         Forge {
             cwd: cwd.into(),
             backend: Backend::GitHub(Arc::new(client)),
@@ -218,7 +218,7 @@ impl<R: ProcessRunner> Forge<R> {
     }
 
     /// Build a GitLab-backed handle from an explicit [`GitLab`] client.
-    pub fn for_gitlab(cwd: impl Into<PathBuf>, client: GitLab<R>) -> Self {
+    pub fn from_gitlab(cwd: impl Into<PathBuf>, client: GitLab<R>) -> Self {
         Forge {
             cwd: cwd.into(),
             backend: Backend::GitLab(Arc::new(client)),
@@ -226,7 +226,7 @@ impl<R: ProcessRunner> Forge<R> {
     }
 
     /// Build a Gitea-backed handle from an explicit [`Gitea`] client.
-    pub fn for_gitea(cwd: impl Into<PathBuf>, client: Gitea<R>) -> Self {
+    pub fn from_gitea(cwd: impl Into<PathBuf>, client: Gitea<R>) -> Self {
         Forge {
             cwd: cwd.into(),
             backend: Backend::Gitea(Arc::new(client)),
@@ -241,7 +241,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// the all-`false` shape without spawning anything. Useful for a forge
     /// auto-detector that wants to surface a typed "I tried, no luck" rather
     /// than a guessed-but-wrong kind.
-    pub fn for_unknown(cwd: impl Into<PathBuf>) -> Self {
+    pub fn from_unknown(cwd: impl Into<PathBuf>) -> Self {
         Forge {
             cwd: cwd.into(),
             backend: Backend::Unknown,
@@ -760,13 +760,13 @@ mod tests {
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     fn github(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
-        Forge::for_github("/repo", GitHub::with_runner(runner))
+        Forge::from_github("/repo", GitHub::with_runner(runner))
     }
     fn gitlab(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
-        Forge::for_gitlab("/repo", GitLab::with_runner(runner))
+        Forge::from_gitlab("/repo", GitLab::with_runner(runner))
     }
     fn gitea(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
-        Forge::for_gitea("/repo", Gitea::with_runner(runner))
+        Forge::from_gitea("/repo", Gitea::with_runner(runner))
     }
 
     #[tokio::test]
@@ -838,7 +838,7 @@ mod tests {
     #[tokio::test]
     async fn gitea_unsupported_ops_error_without_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
-        let forge = Forge::for_gitea("/repo", Gitea::with_runner(&rec));
+        let forge = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
         for err in [
             forge.repo_view().await.unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
@@ -855,7 +855,7 @@ mod tests {
     // the all-`false` shape WITHOUT spawning.
     #[tokio::test]
     async fn unknown_forge_reports_all_unsupported() {
-        let forge: Forge = Forge::for_unknown("/repo");
+        let forge: Forge = Forge::from_unknown("/repo");
         assert_eq!(forge.kind(), ForgeKind::Unknown);
         assert!(!forge.auth_status().await.unwrap(), "unknown = not authed");
         let caps = forge.capabilities().await.unwrap();
@@ -980,13 +980,13 @@ mod tests {
     // report `true` for all of them — a pure, no-spawn capability check.
     #[test]
     fn supports_matches_unsupported_ops() {
-        let gitea = Forge::for_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
+        let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
             assert!(!gitea.supports(op), "gitea should not support {op:?}");
         }
         for forge in [
-            Forge::for_github("/repo", GitHub::with_runner(ScriptedRunner::new())),
-            Forge::for_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
+            Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new())),
+            Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
         ] {
             for &op in ForgeOp::ALL {
                 assert!(
@@ -1073,14 +1073,14 @@ mod tests {
     #[tokio::test]
     async fn pr_merge_maps_strategy_per_backend() {
         let rec = RecordingRunner::replying(Reply::ok(""));
-        Forge::for_github("/repo", GitHub::with_runner(&rec))
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
             .pr_merge(5, MergeStrategy::Squash)
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["pr", "merge", "5", "--squash"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
-        Forge::for_gitlab("/repo", GitLab::with_runner(&rec))
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
             .pr_merge(5, MergeStrategy::Rebase)
             .await
             .unwrap();
@@ -1097,7 +1097,7 @@ mod tests {
         );
 
         let rec = RecordingRunner::replying(Reply::ok(""));
-        Forge::for_gitea("/repo", Gitea::with_runner(&rec))
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .pr_merge(5, MergeStrategy::Merge)
             .await
             .unwrap();

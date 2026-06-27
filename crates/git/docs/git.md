@@ -430,7 +430,7 @@ let _ = exists;
 ```rust,ignore
 async fn fetch(&self, dir: &Path) -> Result<()>;
 async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
-async fn fetch_remote_branch(&self, dir: &Path, branch: &str) -> Result<()>;
+async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
 async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
 async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()>;
 async fn merge_commit(&self, dir: &Path, spec: MergeCommit) -> Result<()>;
@@ -444,7 +444,7 @@ async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
 - **`fetch`** — `fetch --quiet` from the default remote, prompt-off, retried on
   transient failures (3 attempts, 500 ms backoff).
 - **`fetch_from`** — fetch from a *named* remote; same containment and retry.
-- **`fetch_remote_branch`** — fetch one branch into its remote-tracking ref
+- **`fetch_branch`** — fetch one branch into its remote-tracking ref
   (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`); same retry.
 - **`push`** — `push [-u] <remote> <refspec>`, prompt-off; built through
   [`GitPush`](#gitpush).

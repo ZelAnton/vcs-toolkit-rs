@@ -72,7 +72,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
 | `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |
 | `mr_merge(dir, id, strategy)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
-| `mr_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
+| `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
 | `mr_checks(dir, id)` | `glab mr view <id> --output json` (reads `head_pipeline.status`) | [`CiStatus`] |
 

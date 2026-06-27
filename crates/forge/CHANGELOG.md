@@ -13,7 +13,11 @@ crates; tag releases as `vcs-forge-v<version>`.
 -
 
 ### Changed
--
+- **Renamed the inject constructors `Forge::for_github`/`for_gitlab`/`for_gitea`/
+  `for_unknown` → `from_github`/`from_gitlab`/`from_gitea`/`from_unknown`
+  (breaking).** This mirrors `vcs-core`'s `Repo::from_git`/`from_jj` naming. The
+  force-backend constructors `github()`/`gitlab()`/`gitea()` are unchanged.
+  Update callers of `Forge::for_*` to `Forge::from_*`.
 
 ### Fixed
 -

@@ -181,12 +181,12 @@ pub(crate) async fn fetch_from<R: ProcessRunner>(
     Ok(())
 }
 
-pub(crate) async fn fetch_remote_branch<R: ProcessRunner>(
+pub(crate) async fn fetch_branch<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
     branch: &str,
 ) -> Result<()> {
-    git.fetch_remote_branch(dir, branch).await?;
+    git.fetch_branch(dir, branch).await?;
     Ok(())
 }
 

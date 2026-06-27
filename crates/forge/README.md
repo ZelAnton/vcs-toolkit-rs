@@ -49,7 +49,7 @@ single-release view, so `repo_view`, `pr_mark_ready`, `pr_checks`, and
 
 Consumers can code against the object-safe `ForgeApi` trait (`&dyn ForgeApi`), and
 build a `Forge` over a fake runner for hermetic tests
-(`Forge::for_github("/repo", GitHub::with_runner(runner))`).
+(`Forge::from_github("/repo", GitHub::with_runner(runner))`).
 
 ## License
 

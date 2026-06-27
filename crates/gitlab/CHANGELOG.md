@@ -18,6 +18,10 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   for a consistent name across the forge wrappers (its fields are still GitLab's
   REST `Project` object); update `use vcs_gitlab::Project` to
   `use vcs_gitlab::RepoView`. Fields and behaviour are unchanged.
+- **Renamed `GitLabApi::mr_ready` → `mr_mark_ready` (breaking).** The draft→ready
+  method (and its `at(dir)` bound form) is now `mr_mark_ready`, matching
+  `vcs-github`'s `pr_mark_ready`; the emitted `glab mr update <id> --ready`
+  command is unchanged. Update callers of `mr_ready` to `mr_mark_ready`.
 
 ### Fixed
 -

@@ -99,7 +99,7 @@ pub(crate) async fn pr_mark_ready<R: ProcessRunner>(
     dir: &Path,
     number: u64,
 ) -> Result<()> {
-    gh.pr_ready(dir, number).await?;
+    gh.pr_mark_ready(dir, number).await?;
     Ok(())
 }
 

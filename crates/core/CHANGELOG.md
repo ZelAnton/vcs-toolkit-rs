@@ -13,7 +13,11 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Changed
--
+- **Renamed `Repo::fetch_remote_branch` → `fetch_branch` (breaking).** The unified
+  single-branch/bookmark fetch (and the `VcsRepo` facade-trait method) is now
+  `fetch_branch`, aligning with `vcs-git`'s renamed `fetch_branch`; backend
+  dispatch and behaviour are unchanged. Update callers of `fetch_remote_branch`
+  to `fetch_branch`.
 
 ### Fixed
 -

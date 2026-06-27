@@ -18,6 +18,10 @@ crates; tag releases as `vcs-github-v<version>`.
   for a consistent name across the forge wrappers; update
   `use vcs_github::Repo` to `use vcs_github::RepoView`. Fields and behaviour are
   unchanged.
+- **Renamed `GitHubApi::pr_ready` → `pr_mark_ready` (breaking).** The draft→ready
+  method (and its `at(dir)` bound form) is now `pr_mark_ready`, for a clearer
+  mark-ready verb; the emitted `gh pr ready <n>` command is unchanged. Update
+  callers of `pr_ready` to `pr_mark_ready`.
 
 ### Fixed
 -

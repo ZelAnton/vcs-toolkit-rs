@@ -1077,7 +1077,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let out = server.forge_issue_list().await.expect("issue list ok");
@@ -1105,7 +1105,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_gitea("/repo", tea));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitea("/repo", tea));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let err = server
@@ -1128,7 +1128,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let err = server
@@ -1149,7 +1149,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let err = server
@@ -1171,7 +1171,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let err = server
@@ -1195,7 +1195,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
 
         let err = server
@@ -1220,7 +1220,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
 
         let err = server
@@ -1253,7 +1253,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
 
         let out = server
@@ -1299,7 +1299,7 @@ mod tests {
             "/repo",
             Git::with_runner(ScriptedRunner::new()),
         ));
-        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::for_github("/repo", gh));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
         let out = server.forge_info().await.expect("forge_info ok");
