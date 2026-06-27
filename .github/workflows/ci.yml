@@ -12,6 +12,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Retry transient crates.io download drops (e.g. the Windows schannel
+  # "server closed abruptly (missing close_notify)" mid-transfer) instead of
+  # failing the job outright. Default is 3.
+  CARGO_NET_RETRY: "10"
 
 jobs:
   fmt:
