@@ -108,11 +108,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use processkit::{Command, ProcessRunner};
+use processkit::Command;
 // Re-export the processkit types that appear in this crate's public API, so
-// consumers needn't depend on processkit directly. (`Error`/`Result`/`ProcessResult`
-// are in scope here too via this `pub use`.)
-pub use processkit::{Error, ProcessResult, Result};
+// consumers needn't depend on processkit directly — incl. `ProcessRunner` (the
+// `with_runner`/`Git<R>` seam) and the `JobRunner` default. (`Error`/`Result`/
+// `ProcessResult`/`ProcessRunner` are in scope here too via this `pub use`.)
+pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;

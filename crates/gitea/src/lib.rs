@@ -119,10 +119,11 @@
 
 use std::path::Path;
 
-use processkit::ProcessRunner;
-// Re-export the processkit types in this crate's public API (also brings
-// `Error`/`Result`/`ProcessResult` into scope here).
-pub use processkit::{Error, ProcessResult, Result};
+// Re-export the processkit types in this crate's public API, so consumers needn't
+// depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/`Gitea<R>`
+// seam) and the `JobRunner` default. (Also brings `Error`/`Result`/`ProcessResult`/
+// `ProcessRunner` into scope here.)
+pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;

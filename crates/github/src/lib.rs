@@ -115,7 +115,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use processkit::ProcessRunner;
 // The shared managed client (lock-retry + credential injection) and the
 // credential seam — re-exported so a consumer can supply a token provider.
 use vcs_cli_support::ManagedClient;
@@ -123,9 +122,11 @@ pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
     Secret, StaticCredential, provider_fn,
 };
-// Re-export the processkit types in this crate's public API (also brings
-// `Error`/`Result`/`ProcessResult` into scope here).
-pub use processkit::{Error, ProcessResult, Result};
+// Re-export the processkit types in this crate's public API, so consumers needn't
+// depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
+// `GitHub<R>` seam) and the `JobRunner` default. (Also brings
+// `Error`/`Result`/`ProcessResult`/`ProcessRunner` into scope here.)
+pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency. (Cancellation is core in processkit
 // 0.10 — always available, no feature.)
