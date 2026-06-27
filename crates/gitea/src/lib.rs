@@ -656,31 +656,11 @@ impl<R: ProcessRunner> Clone for GiteaAt<'_, R> {
 }
 impl<R: ProcessRunner> Copy for GiteaAt<'_, R> {}
 
-/// Generate [`GiteaAt`] forwarders: `bare` methods forward verbatim, `dir`
-/// methods inject `self.dir` as the first argument.
-macro_rules! gitea_at_forwarders {
-    (
-        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
-        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
-    ) => {
-        impl<'a, R: ProcessRunner> GiteaAt<'a, R> {
-            $(
-                #[doc = concat!("Bound form of [`Gitea`]'s `", stringify!($bn), "`.")]
-                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
-                    self.tea.$bn($($ba),*).await
-                }
-            )*
-            $(
-                #[doc = concat!("Bound form of [`Gitea`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
-                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
-                    self.tea.$dn(self.dir, $($da),*).await
-                }
-            )*
-        }
-    };
-}
-
-gitea_at_forwarders! {
+// Generate [`GiteaAt`] forwarders: `bare` methods forward verbatim, `dir`
+// methods inject `self.dir` as the first argument. The shared macro lives in
+// `vcs-cli-support` (see `vcs_cli_support::at_forwarders!`).
+vcs_cli_support::at_forwarders! {
+    GiteaAt, tea, "Gitea",
     bare {
         fn run(args: &[String]) -> Result<String>;
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;

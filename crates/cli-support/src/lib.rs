@@ -79,6 +79,62 @@ pub use credentials::{
     GitCredentialHelper, Secret, StaticCredential, git_credential_helper, provider_fn,
 };
 
+/// Generate the cwd-bound forwarders for a CLI wrapper's `…At` view.
+///
+/// Each CLI wrapper (`vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`)
+/// exposes a cwd-bound view — `GitAt`, `JjAt`, `GitHubAt`, `GitLabAt`, `GiteaAt` —
+/// that holds a reference to the client plus a pre-bound `dir`, and re-exposes the
+/// client's methods with `dir` already supplied. The forwarder bodies are
+/// byte-identical across the five backends but for three things, so they live here
+/// once instead of as a copied `macro_rules!` per crate:
+///
+/// - `$view` — the bound view type (e.g. `GitAt`). It must be generic over
+///   `<'a, R: ProcessRunner>` and have a field named `$field` holding the client
+///   plus a `dir: &'a Path` field.
+/// - `$field` — the inner field naming the client (e.g. `git`, `gh`, `glab`,
+///   `tea`).
+/// - `$client` — a **string literal** naming the client type, used in the
+///   generated doc strings and rendered as an intra-doc link (e.g. `"Git"` →
+///   ``[`Git`]``).
+/// - `bare { … }` — methods forwarded verbatim to `self.$field`.
+/// - `dir  { … }` — methods that take `self.dir` as their first argument.
+///
+/// The argument and return types in the method lists resolve in the **calling**
+/// crate, so they are written exactly as that wrapper's own methods are. The
+/// `ProcessRunner` bound is fully qualified (`::processkit::ProcessRunner`) so the
+/// expansion compiles regardless of which items the caller has imported.
+///
+/// ```ignore
+/// vcs_cli_support::at_forwarders! {
+///     GitAt, git, "Git",
+///     bare { fn version() -> Result<String>; }
+///     dir  { fn status() -> Result<Vec<StatusEntry>>; }
+/// }
+/// ```
+#[macro_export]
+macro_rules! at_forwarders {
+    (
+        $view:ident, $field:ident, $client:literal,
+        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
+        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
+    ) => {
+        impl<'a, R: ::processkit::ProcessRunner> $view<'a, R> {
+            $(
+                #[doc = concat!("Bound form of [`", $client, "`]'s `", stringify!($bn), "`.")]
+                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
+                    self.$field.$bn($($ba),*).await
+                }
+            )*
+            $(
+                #[doc = concat!("Bound form of [`", $client, "`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
+                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
+                    self.$field.$dn(self.dir, $($da),*).await
+                }
+            )*
+        }
+    };
+}
+
 /// Injection guard for bare positional argv slots: a caller-supplied value with a
 /// leading `-` would be parsed by the CLI as a *flag* (verified: `git checkout
 /// -evil` → "unknown switch"; jj likewise), and an empty (or whitespace-only)

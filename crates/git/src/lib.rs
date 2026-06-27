@@ -2192,31 +2192,11 @@ impl<R: ProcessRunner> Clone for GitAt<'_, R> {
 }
 impl<R: ProcessRunner> Copy for GitAt<'_, R> {}
 
-/// Generate [`GitAt`] forwarders from a method list: `bare` methods forward
-/// verbatim, `dir` methods inject `self.dir` as the first argument.
-macro_rules! git_at_forwarders {
-    (
-        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
-        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
-    ) => {
-        impl<'a, R: ProcessRunner> GitAt<'a, R> {
-            $(
-                #[doc = concat!("Bound form of [`Git`]'s `", stringify!($bn), "`.")]
-                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
-                    self.git.$bn($($ba),*).await
-                }
-            )*
-            $(
-                #[doc = concat!("Bound form of [`Git`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
-                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
-                    self.git.$dn(self.dir, $($da),*).await
-                }
-            )*
-        }
-    };
-}
-
-git_at_forwarders! {
+// Generate [`GitAt`] forwarders from a method list: `bare` methods forward
+// verbatim, `dir` methods inject `self.dir` as the first argument. The shared
+// macro lives in `vcs-cli-support` (see `vcs_cli_support::at_forwarders!`).
+vcs_cli_support::at_forwarders! {
+    GitAt, git, "Git",
     bare {
         fn run(args: &[String]) -> Result<String>;
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;

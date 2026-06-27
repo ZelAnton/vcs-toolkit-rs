@@ -1545,31 +1545,11 @@ impl<R: ProcessRunner> Clone for JjAt<'_, R> {
 }
 impl<R: ProcessRunner> Copy for JjAt<'_, R> {}
 
-/// Generate [`JjAt`] forwarders from a method list: `bare` methods forward
-/// verbatim, `dir` methods inject `self.dir` as the first argument.
-macro_rules! jj_at_forwarders {
-    (
-        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
-        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
-    ) => {
-        impl<'a, R: ProcessRunner> JjAt<'a, R> {
-            $(
-                #[doc = concat!("Bound form of [`Jj`]'s `", stringify!($bn), "`.")]
-                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
-                    self.jj.$bn($($ba),*).await
-                }
-            )*
-            $(
-                #[doc = concat!("Bound form of [`Jj`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
-                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
-                    self.jj.$dn(self.dir, $($da),*).await
-                }
-            )*
-        }
-    };
-}
-
-jj_at_forwarders! {
+// Generate [`JjAt`] forwarders from a method list: `bare` methods forward
+// verbatim, `dir` methods inject `self.dir` as the first argument. The shared
+// macro lives in `vcs-cli-support` (see `vcs_cli_support::at_forwarders!`).
+vcs_cli_support::at_forwarders! {
+    JjAt, jj, "Jj",
     bare {
         fn run(args: &[String]) -> Result<String>;
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;

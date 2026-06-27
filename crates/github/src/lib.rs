@@ -1005,31 +1005,11 @@ impl<R: ProcessRunner> Clone for GitHubAt<'_, R> {
 }
 impl<R: ProcessRunner> Copy for GitHubAt<'_, R> {}
 
-/// Generate [`GitHubAt`] forwarders: `bare` methods forward verbatim, `dir`
-/// methods inject `self.dir` as the first argument.
-macro_rules! github_at_forwarders {
-    (
-        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
-        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
-    ) => {
-        impl<'a, R: ProcessRunner> GitHubAt<'a, R> {
-            $(
-                #[doc = concat!("Bound form of [`GitHub`]'s `", stringify!($bn), "`.")]
-                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
-                    self.gh.$bn($($ba),*).await
-                }
-            )*
-            $(
-                #[doc = concat!("Bound form of [`GitHub`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
-                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
-                    self.gh.$dn(self.dir, $($da),*).await
-                }
-            )*
-        }
-    };
-}
-
-github_at_forwarders! {
+// Generate [`GitHubAt`] forwarders: `bare` methods forward verbatim, `dir`
+// methods inject `self.dir` as the first argument. The shared macro lives in
+// `vcs-cli-support` (see `vcs_cli_support::at_forwarders!`).
+vcs_cli_support::at_forwarders! {
+    GitHubAt, gh, "GitHub",
     bare {
         fn run(args: &[String]) -> Result<String>;
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;

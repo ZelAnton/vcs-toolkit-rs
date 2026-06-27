@@ -730,31 +730,11 @@ impl<R: ProcessRunner> Clone for GitLabAt<'_, R> {
 }
 impl<R: ProcessRunner> Copy for GitLabAt<'_, R> {}
 
-/// Generate [`GitLabAt`] forwarders: `bare` methods forward verbatim, `dir`
-/// methods inject `self.dir` as the first argument.
-macro_rules! gitlab_at_forwarders {
-    (
-        bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
-        dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
-    ) => {
-        impl<'a, R: ProcessRunner> GitLabAt<'a, R> {
-            $(
-                #[doc = concat!("Bound form of [`GitLab`]'s `", stringify!($bn), "`.")]
-                pub async fn $bn(&self, $($ba: $bt),*) -> $br {
-                    self.glab.$bn($($ba),*).await
-                }
-            )*
-            $(
-                #[doc = concat!("Bound form of [`GitLab`]'s `", stringify!($dn), "` (with `dir` pre-bound).")]
-                pub async fn $dn(&self, $($da: $dt),*) -> $dr {
-                    self.glab.$dn(self.dir, $($da),*).await
-                }
-            )*
-        }
-    };
-}
-
-gitlab_at_forwarders! {
+// Generate [`GitLabAt`] forwarders: `bare` methods forward verbatim, `dir`
+// methods inject `self.dir` as the first argument. The shared macro lives in
+// `vcs-cli-support` (see `vcs_cli_support::at_forwarders!`).
+vcs_cli_support::at_forwarders! {
+    GitLabAt, glab, "GitLab",
     bare {
         fn run(args: &[String]) -> Result<String>;
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
