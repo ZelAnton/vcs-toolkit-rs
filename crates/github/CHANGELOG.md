@@ -10,7 +10,10 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Re-export of `processkit::ProcessRunner` and `JobRunner` (`vcs_github::{ProcessRunner,
+  JobRunner}`) — so a consumer naming the client's runner type parameter (for
+  `with_runner`, or to write a custom `ProcessRunner`) needn't add a direct `processkit`
+  dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
 
 ### Changed
 - **Renamed the `repo_view` DTO `Repo` → `RepoView` (breaking).** The struct
@@ -29,7 +32,9 @@ crates; tag releases as `vcs-github-v<version>`.
   via the dependency). No public API or behaviour change.
 
 ### Fixed
--
+- `Review` / `Comment` string fields now tolerate an explicit JSON `null` from `gh`
+  (decoded as empty), matching how the crate's other `--json` DTOs already handle a
+  present-but-null optional field — a null no longer fails the parse.
 
 ## [0.6.0] - 2026-06-27
 

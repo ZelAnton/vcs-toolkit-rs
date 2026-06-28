@@ -202,7 +202,7 @@ merge". **Status:** implemented; gh CLI facts (exit codes, JSON shapes, flag
 spellings) validated empirically on gh 2.93.
 
 - **3.1 ✅** `pr_merge` (merge/squash/rebase strategy via a `PrMerge` builder,
-  `--auto`, `--delete-branch`), `pr_ready`, `pr_close`
+  `--auto`, `--delete-branch`), `pr_mark_ready`, `pr_close`
 - **3.2 ✅** `pr_checks` → `Vec<CheckRun>` (gh's 0/8/1 outcome exit codes all
   return the parsed list; branch on `bucket`) and `run_list` / `run_view` /
   `run_watch` for GitHub Actions runs. `run_watch` returns the final
@@ -425,7 +425,7 @@ additive follow-ups, not a blocking wave.
   `Reply::pending()` for hermetic tests — all now unconditional, no feature flag.
   Adoption needed **zero new vcs-* API** exactly as predicted: a consumer builds a
   cancellable client and passes it through the existing `Repo::from_git`/
-  `Forge::for_github` constructors, then a controller calls `token.cancel()` to
+  `Forge::from_github` constructors, then a controller calls `token.cancel()` to
   kill every in-flight call (`Error::Cancelled`, treated as terminal by the
   fetch-retry). Shipped with it: hermetic paused-clock cancellation tests
   (`run_watch` in vcs-github, retried `fetch` in vcs-git, via `Reply::pending()`),

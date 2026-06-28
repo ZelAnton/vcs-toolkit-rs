@@ -10,7 +10,10 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Re-export of `processkit::ProcessRunner` and `JobRunner` (`vcs_gitea::{ProcessRunner,
+  JobRunner}`) — so a consumer naming the client's runner type parameter (for
+  `with_runner`, or to write a custom `ProcessRunner`) needn't add a direct `processkit`
+  dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
 
 ### Changed
 - Internal: the JSON parse helpers `null_to_empty` (the `null → ""`
