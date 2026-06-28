@@ -17,3 +17,7 @@ moving its substance back into `ideas/`.
   "Deliberately out of scope" and "Consciously rejected" lists that used to live inline in
   `ROADMAP.md`, plus the rejections from the 2026-06-09 development sweep. Each carries a
   one-line reason so reviewers don't re-litigate.
+- **`keep-bindable.md`** — the language-binding contract: the invariants that keep these
+  crates cleanly bindable (for the planned `vcs-toolkit-py` PyO3 wrapper) and must not
+  regress, plus the verdicts on what was deliberately *not* added (already-covered or
+  doc-only) during the binding-prep sweep.
