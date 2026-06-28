@@ -33,7 +33,11 @@ crates; tag releases as `vcs-forge-v<version>`.
   Update callers of `Forge::for_*` to `Forge::from_*`.
 
 ### Fixed
--
+- **Docs:** `Forge::pr_comment` now documents that comment-body handling differs by
+  backend — GitHub/GitLab take the body in a flag-value slot (a `-`-leading body is
+  fine), while Gitea's `tea comment` takes it positionally and rejects a flag-like
+  body (one whose first non-space char is `-`, e.g. a Markdown bullet). The previous
+  doc wrongly claimed every backend used a flag-value slot. No behavior change.
 
 ## [0.2.0] - 2026-06-27
 

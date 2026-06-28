@@ -222,11 +222,13 @@ impl Default for PrEdit {
 
 /// Name of the underlying CLI binary this crate drives.
 ///
-/// Note on injection safety: like `vcs-gitlab`, the lean surface has **no bare
-/// positional string slot** for a caller value — PR numbers are `u64`, the
-/// title/body/branch arguments ride in flag-VALUE positions, and `run` is the
-/// caller-owns-the-argv escape hatch. So there is nothing here to guard with
-/// `vcs_cli_support::reject_flag_like`.
+/// Note on injection safety: most of the lean surface keeps caller values out of
+/// bare positional slots — PR numbers are `u64`, and the title/body/branch
+/// arguments ride in flag-VALUE positions. The one exception is `pr_comment`'s
+/// body: `tea comment <n> <body>` takes it as a bare positional, so it is guarded
+/// with `vcs_cli_support::reject_flag_like` (mirroring `vcs-gitlab`'s `release_view`
+/// `<tag>`). `run` is the caller-owns-the-argv escape hatch; guard any future bare
+/// positional the same way.
 pub const BINARY: &str = "tea";
 
 // tea's `list` commands serialize a print-table whose columns are chosen with

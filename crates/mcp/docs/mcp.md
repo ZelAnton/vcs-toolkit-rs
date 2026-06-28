@@ -6,10 +6,10 @@ agent harness (Claude Code, an IDE assistant, any MCP client) drives a git/jj re
 — and its forge — through **structured, validated calls** instead of raw shell.
 Each tool wraps a [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (`Repo`) or [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 (`Forge`) operation and returns its DTO as JSON. The binary drives git through a
-**hardened** client (`Git::hardened()` — repo hooks and config disabled) and every
-tool argument flows through the wrappers' injection guards (`reject_flag_like`), so
-serving a repository you didn't create can't run its hooks or smuggle a flag into
-argv.
+**hardened** client (`Git::hardened()` — repo hooks and config disabled) and tool
+arguments are injection-guarded (the MCP seam rejects a leading-`-` `body`/`title`,
+and the wrappers keep caller values out of flag position), so serving a repository
+you didn't create can't run its hooks or smuggle a flag into argv.
 
 It's the workspace's **first binary crate** — a thin `vcs-mcp` binary over a
 hermetically-testable library (`VcsMcpServer`) — and its **second runtime-tokio**
@@ -156,9 +156,11 @@ The `vcs-mcp` binary applies, in order:
    content-materializing tools are write-gated, so the default read-only mode does
    not expose the smudge-filter path; a `textconv` driver can still run on a diff of
    a **fully untrusted** repo, so sandbox the process (OS-level) for that case.
-4. **The wrappers' argv guards underneath.** Every argument flows through the
-   `vcs-core`/`vcs-forge` facades, so the injection guards (`reject_flag_like`)
-   apply — a tool parameter can't smuggle a leading-`-` flag into argv.
+4. **Argv injection guards.** A tool parameter can't smuggle a leading-`-` flag
+   into argv: the MCP seam rejects a leading-`-` `body`/`title` up front, and
+   underneath the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
+   position — typed (`u64`/`Path`) or flag-VALUE arguments, with `reject_flag_like`
+   on the few bare positionals (a revision, a release tag, Gitea's comment body).
 5. **A per-command timeout.** Every git/forge command runs under the `--timeout`
    deadline (default 120s), so a stalled network call (`repo_fetch`, the `forge_*`
    tools) can't hang a request indefinitely.

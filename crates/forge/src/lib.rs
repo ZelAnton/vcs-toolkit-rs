@@ -385,12 +385,18 @@ impl<R: ProcessRunner> Forge<R> {
     }
 
     /// Post a comment to an existing PR/MR. An empty (or whitespace-only) body is
-    /// rejected with [`Error::InvalidInput`] before any CLI spawn — every backend
-    /// passes the body in a `--body`/`--comment` flag-value slot (so a flag-like
-    /// body is safe), but an empty comment is a caller bug that the CLIs either post
-    /// blank or reject opaquely, so fail fast and uniformly instead. (This guard is
-    /// facade-level; the per-crate clients reached directly apply their own
-    /// argument handling.)
+    /// rejected with [`Error::InvalidInput`] before any CLI spawn — a blank comment
+    /// is a caller bug the CLIs either post empty or reject opaquely, so fail fast
+    /// and uniformly. (This guard is facade-level; the per-crate clients reached
+    /// directly apply their own argument handling.)
+    ///
+    /// Body handling differs by backend: GitHub (`gh ... --body`) and GitLab
+    /// (`glab ... -m`) put the body in a flag-value slot, so a body that begins
+    /// with `-` is fine. Gitea's `tea comment <n> <body>` takes the body as a
+    /// **positional**, so a body whose first non-space character is `-` (e.g. a
+    /// Markdown bullet list, or `---`) is rejected with an error — it would
+    /// otherwise be parsed as a `tea` flag. When targeting Gitea, lead such a body
+    /// with text (or a newline) to keep the first character non-`-`.
     pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
         if body.trim().is_empty() {
             return Err(Error::InvalidInput(

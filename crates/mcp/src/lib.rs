@@ -409,10 +409,13 @@ fn forge_err(e: vcs_forge::Error) -> ErrorData {
 }
 
 /// Belt-and-braces argv guard for the mutating tool's `body` / `title`
-/// fields. The wrappers already run their fields through `reject_flag_like`;
-/// this is the second line of defence at the MCP seam so a `body: "-evil"`
-/// value never reaches any subprocess. Mirrors the wrapper's `Error::Spawn`
-/// shape so the surfaced message is recognisable.
+/// fields. The wrappers already handle a flag-like value per backend — GitHub and
+/// GitLab pass `body`/`title` in a flag-VALUE slot (`--body`/`-m`/`--title`, where
+/// a leading `-` is safe), and Gitea guards its one bare positional (`tea comment`'s
+/// body) with `reject_flag_like`. This guard is a *uniform* second line of defence
+/// at the MCP seam, so a `body: "-evil"` value never reaches any subprocess
+/// regardless of backend. Mirrors the wrapper's `Error::Spawn` shape so the
+/// surfaced message is recognisable.
 ///
 /// **Empty string is a real value** (clears the field per spec §2) — it
 /// passes through this guard. The wrappers themselves reject `""` on flag
@@ -799,12 +802,12 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrCommentParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_comment")?;
-        // Pre-spawn argv guard — the facade's wrapper already runs `body`
-        // through `reject_flag_like` (GitHub/GitLab) or guards the bare
-        // positional itself (Gitea), but the MCP layer adds a second line of
-        // defence: a body that starts with `-` would be parsed by the CLI as
-        // a flag. `Some("")` is a real value (clears the field) and is *not*
-        // rejected by the leading-`-` check, so we pass it through.
+        // Pre-spawn argv guard — the facade's wrapper already handles a flag-like
+        // `body` per backend (GitHub/GitLab pass it in a flag-VALUE slot; Gitea
+        // guards its bare positional with `reject_flag_like`), but the MCP layer
+        // adds a uniform second line of defence: a body that starts with `-` would
+        // be parsed by the CLI as a flag. (An empty body is rejected by the facade
+        // itself, before any spawn.)
         guard_argv_field("body", &p.body)?;
         let out = self
             .forge()?
