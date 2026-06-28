@@ -337,15 +337,22 @@ struct FeedbackJson {
     comments: Vec<CommentJson>,
 }
 
+// Optional string fields use `null_to_empty` (not bare `default`) so a present
+// JSON `null` maps to "" like an absent key — uniform with the rest of this
+// crate's `gh --json` DTOs, robust to whatever `gh` emits for an empty value.
 #[derive(Deserialize)]
 struct ReviewJson {
     #[serde(default)]
     author: Option<AuthorJson>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     state: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     body: String,
-    #[serde(rename = "submittedAt", default)]
+    #[serde(
+        rename = "submittedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     submitted_at: String,
 }
 
@@ -353,11 +360,15 @@ struct ReviewJson {
 struct CommentJson {
     #[serde(default)]
     author: Option<AuthorJson>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     body: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     url: String,
-    #[serde(rename = "createdAt", default)]
+    #[serde(
+        rename = "createdAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     created_at: String,
 }
 
