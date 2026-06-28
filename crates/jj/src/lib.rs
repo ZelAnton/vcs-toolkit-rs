@@ -163,7 +163,6 @@ pub use vcs_diff::{
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
-use vcs_cli_support::ManagedClient;
 pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_error};
 
 /// Name of the underlying CLI binary this crate drives.
@@ -616,72 +615,22 @@ pub trait JjApi: Send + Sync {
     async fn workspace_forget(&self, dir: &Path, name: &str) -> Result<()>;
 }
 
-/// The real jj client. Generic over the [`ProcessRunner`] so tests can inject a
-/// fake process executor; [`Jj::new`] uses the real job-backed runner.
-///
-/// Wraps a [`ManagedClient`]: enable lock-contention retry with
-/// [`with_retry`](Jj::with_retry) (opt-in; off by default).
-///
-/// **Remote authentication is ambient.** Unlike `vcs-git` (which accepts a
-/// per-operation `CredentialProvider` via `with_credentials`), `jj`'s git remote
-/// support runs through its own in-process backend, which offers no per-invocation
-/// credential override — `jj git fetch`/`push` authenticate from the ambient git
-/// credential helpers / SSH agent. Configure those out of band.
-pub struct Jj<R: ProcessRunner = processkit::JobRunner> {
-    core: ManagedClient<R>,
-}
-
-impl Jj<processkit::JobRunner> {
-    /// Create a client driving the real job-backed runner.
-    pub fn new() -> Self {
-        Self {
-            core: ManagedClient::new(BINARY),
-        }
-    }
-}
-
-impl Default for Jj<processkit::JobRunner> {
-    fn default() -> Self {
-        Self::new()
-    }
+vcs_cli_support::managed_client! {
+    /// The real jj client. Generic over the [`ProcessRunner`] so tests can inject a
+    /// fake process executor; [`Jj::new`] uses the real job-backed runner.
+    ///
+    /// Wraps a [`ManagedClient`](vcs_cli_support::ManagedClient): enable lock-contention retry with
+    /// [`with_retry`](Jj::with_retry) (opt-in; off by default).
+    ///
+    /// **Remote authentication is ambient.** Unlike `vcs-git` (which accepts a
+    /// per-operation `CredentialProvider` via `with_credentials`), `jj`'s git remote
+    /// support runs through its own in-process backend, which offers no per-invocation
+    /// credential override — `jj git fetch`/`push` authenticate from the ambient git
+    /// credential helpers / SSH agent. Configure those out of band.
+    pub struct Jj => BINARY
 }
 
 impl<R: ProcessRunner> Jj<R> {
-    /// Create a client driving `runner` — inject a fake in tests.
-    pub fn with_runner(runner: R) -> Self {
-        Self {
-            core: ManagedClient::with_runner(BINARY, runner),
-        }
-    }
-
-    /// Apply a default timeout to every command this client builds.
-    pub fn default_timeout(mut self, timeout: Duration) -> Self {
-        self.core = self.core.default_timeout(timeout);
-        self
-    }
-
-    /// Set an environment variable on every command this client builds.
-    pub fn default_env(
-        mut self,
-        key: impl AsRef<std::ffi::OsStr>,
-        value: impl AsRef<std::ffi::OsStr>,
-    ) -> Self {
-        self.core = self.core.default_env(key, value);
-        self
-    }
-
-    /// Remove an inherited environment variable on every command this client builds.
-    pub fn default_env_remove(mut self, key: impl AsRef<std::ffi::OsStr>) -> Self {
-        self.core = self.core.default_env_remove(key);
-        self
-    }
-
-    /// Cancel every command this client builds when `token` fires.
-    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
-        self.core = self.core.default_cancel_on(token);
-        self
-    }
-
     /// Retry **lock-contention** failures (another process holds jj's working-copy
     /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
     /// a lock-acquisition failure is pre-execution (jj never ran). See [`RetryPolicy`]

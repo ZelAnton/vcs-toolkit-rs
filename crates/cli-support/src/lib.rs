@@ -135,6 +135,107 @@ macro_rules! at_forwarders {
     };
 }
 
+/// Emit the common client scaffold every CLI wrapper hand-writes around a
+/// [`ManagedClient`].
+///
+/// `vcs-git`, `vcs-jj`, `vcs-github`, and `vcs-gitlab` each wrap a
+/// [`ManagedClient`] in a thin newtype that re-exposes the same handful of
+/// constructors and default-applying builders — `new` / `Default` /
+/// `with_runner` / `default_timeout` / `default_env` / `default_env_remove` /
+/// `default_cancel_on` — with byte-identical bodies and doc strings. This macro
+/// generates that shared part so it can't drift between backends; each wrapper
+/// keeps its *capability* builders (`with_retry`, `with_credentials`, every verb,
+/// the `…At` view, …) hand-written in a separate `impl` block.
+///
+/// The generated newtype is `struct $name<R: ProcessRunner = JobRunner>` with a
+/// single private `core: ManagedClient<R>` field — accessible to the rest of the
+/// wrapper crate (same module). All paths are fully qualified, so the expansion
+/// compiles regardless of what the caller has imported.
+///
+/// - `$name` — the wrapper type (e.g. `Git`). The struct-level doc comment (and
+///   any other attributes) written before `struct` are attached to it verbatim.
+/// - `$binary` — the program the client drives (an expression, typically the
+///   crate's `BINARY` const).
+/// - `token_env = ($svc, $var)` — *optional*. When given, `new`/`with_runner`
+///   chain [`ManagedClient::with_token_env`] so a resolved credential is injected
+///   into the `$var` environment variable for service `$svc` (the forge case:
+///   `GH_TOKEN`, `GITLAB_TOKEN`). Omit it for the ambient-auth backends (git, jj).
+///
+/// ```ignore
+/// vcs_cli_support::managed_client! {
+///     /// The real GitHub client.
+///     pub struct GitHub => BINARY, token_env = (CredentialService::GitHub, "GH_TOKEN")
+/// }
+/// ```
+#[macro_export]
+macro_rules! managed_client {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident => $binary:expr
+        $(, token_env = ($svc:expr, $var:expr) )?
+        $(,)?
+    ) => {
+        $(#[$meta])*
+        $vis struct $name<R: ::processkit::ProcessRunner = ::processkit::JobRunner> {
+            core: $crate::ManagedClient<R>,
+        }
+
+        impl $name<::processkit::JobRunner> {
+            /// Create a client driving the real job-backed runner.
+            pub fn new() -> Self {
+                Self { core: $crate::ManagedClient::new($binary) $(.with_token_env($svc, $var))? }
+            }
+        }
+
+        impl ::core::default::Default for $name<::processkit::JobRunner> {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl<R: ::processkit::ProcessRunner> $name<R> {
+            /// Create a client driving `runner` — inject a fake in tests.
+            pub fn with_runner(runner: R) -> Self {
+                Self {
+                    core: $crate::ManagedClient::with_runner($binary, runner)
+                        $(.with_token_env($svc, $var))?,
+                }
+            }
+
+            /// Apply a default timeout to every command this client builds.
+            pub fn default_timeout(mut self, timeout: ::core::time::Duration) -> Self {
+                self.core = self.core.default_timeout(timeout);
+                self
+            }
+
+            /// Set an environment variable on every command this client builds.
+            pub fn default_env(
+                mut self,
+                key: impl ::core::convert::AsRef<::std::ffi::OsStr>,
+                value: impl ::core::convert::AsRef<::std::ffi::OsStr>,
+            ) -> Self {
+                self.core = self.core.default_env(key, value);
+                self
+            }
+
+            /// Remove an inherited environment variable on every command this client builds.
+            pub fn default_env_remove(
+                mut self,
+                key: impl ::core::convert::AsRef<::std::ffi::OsStr>,
+            ) -> Self {
+                self.core = self.core.default_env_remove(key);
+                self
+            }
+
+            /// Cancel every command this client builds when `token` fires.
+            pub fn default_cancel_on(mut self, token: ::processkit::CancellationToken) -> Self {
+                self.core = self.core.default_cancel_on(token);
+                self
+            }
+        }
+    };
+}
+
 /// Injection guard for bare positional argv slots: a caller-supplied value with a
 /// leading `-` would be parsed by the CLI as a *flag* (verified: `git checkout
 /// -evil` → "unknown switch"; jj likewise), and an empty (or whitespace-only)
