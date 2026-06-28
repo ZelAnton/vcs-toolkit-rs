@@ -19,7 +19,18 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   ambient-auth backends (`vcs-git`/`vcs-jj`) never pull in `serde`/`serde_json`.
 
 ### Changed
--
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
+  processkit's 1.0 makes the `processkit` types surfaced in this crate's public API
+  (`Error`/`ProcessResult`/…) 1.x — **breaking** for a downstream that pins `processkit`
+  `0.x` directly. processkit is semver-stable from 1.0, so future 1.x updates are
+  non-breaking.
+- **`ManagedClient::output` → `output_string` (breaking).** Mirrors processkit's
+  crate-wide `output`→`output_string` rename (one name per operation; disambiguates from
+  `std`'s bytes-returning `output`), keeping `ManagedClient`'s verb set a faithful mirror
+  of `CliClient`. Update `mc.output(..)` to `mc.output_string(..)`.
+- **`ManagedClient::parse`/`try_parse` now require `T: Send` and the parser `+ Send`
+  (breaking).** Matches processkit 1.x's tightened bounds; a real parser closure is
+  already `Send`, so callers are unaffected in practice.
 
 ### Fixed
 -

@@ -16,6 +16,10 @@ crates; tag releases as `vcs-github-v<version>`.
   dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
 
 ### Changed
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
+  processkit's 1.0 makes the re-exported `processkit` types (`Error`/`ProcessResult`/…)
+  1.x — **breaking** for a downstream that pins `processkit` `0.x` directly. No
+  behaviour change. processkit is semver-stable from 1.0, so future 1.x updates are non-breaking.
 - **Renamed the `repo_view` DTO `Repo` → `RepoView` (breaking).** The struct
   returned by `repo_view` (and re-exported at the crate root) is now `RepoView`,
   for a consistent name across the forge wrappers; update

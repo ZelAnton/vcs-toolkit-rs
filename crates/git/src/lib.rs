@@ -916,7 +916,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     async fn version(&self) -> Result<String> {
@@ -998,7 +998,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // not a repository, exit 128) stays a real error.
         let res = self
             .core
-            .output(
+            .output_string(
                 self.core
                     .command_in(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
             )
@@ -1007,7 +1007,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             Some(0) => Ok(Some(res.stdout().trim().to_string())),
             Some(1) => Ok(None), // detached HEAD: no named branch
             _ => {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
                 Ok(None) // unreachable: a non-zero exit always errors above
             }
         }
@@ -1184,7 +1184,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `ensure_success` — mirroring `config_get`, rather than swallowing it.
         let res = self
             .core
-            .output(
+            .output_string(
                 self.core
                     .command_in(dir, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]),
             )
@@ -1202,7 +1202,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             }
             Some(1) => Ok(None), // unset origin/HEAD
             _ => {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
                 Ok(None) // unreachable: a non-zero/no-code exit always errors above
             }
         }
@@ -1221,7 +1221,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
         // No credential prompt, bounded wait: a missing helper or a flaky network
-        // must not hang the call. `output` reports a timeout as a flagged result
+        // must not hang the call. `output_string` reports a timeout as a flagged result
         // (non-zero exit) rather than erroring, so an unreachable remote reads as
         // "absent" (`false`) — the best-effort answer a probe wants. A genuine
         // spawn failure (no `git`) still surfaces as an error.
@@ -1240,7 +1240,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .timeout(Duration::from_secs(10)),
             &envs,
         );
-        let res = self.core.output(cmd).await?;
+        let res = self.core.output_string(cmd).await?;
         Ok(res.code() == Some(0) && !res.stdout().trim().is_empty())
     }
 
@@ -1261,7 +1261,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // exit-code-mapping sites.
         let res = self
             .core
-            .output(self.core.command_in(
+            .output_string(self.core.command_in(
                 dir,
                 ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
             ))
@@ -1273,7 +1273,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             }
             Some(_) => Ok(None), // any non-zero exit ⇒ no upstream configured
             None => {
-                res.ensure_success()?; // timeout/signal ⇒ a real error
+                let _ = res.ensure_success()?; // timeout/signal ⇒ a real error
                 Ok(None) // unreachable: ensure_success errors on a no-code outcome
             }
         }
@@ -1802,7 +1802,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         reject_flag_like("config key", key)?;
         let res = self
             .core
-            .output(self.core.command_in(dir, ["config", "--get", key]))
+            .output_string(self.core.command_in(dir, ["config", "--get", key]))
             .await?;
         match res.code() {
             // Exit 1 = unset (git lumps "no such key/section" in here too).
@@ -1815,7 +1815,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 res.stdout().trim_end_matches(['\r', '\n']).to_string(),
             )),
             _ => {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
                 Ok(None) // unreachable: a non-zero exit always errors above.
             }
         }
@@ -1945,7 +1945,7 @@ impl<R: ProcessRunner> Git<R> {
     /// Like [`run_args`](Git::run_args) but never errors on a non-zero exit
     /// (mirrors [`GitApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     /// Bind this client to `dir`, returning a [`GitAt`] handle whose methods omit

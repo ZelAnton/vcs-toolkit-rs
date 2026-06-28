@@ -414,7 +414,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     async fn api(&self, endpoint: &str) -> Result<String> {
@@ -650,7 +650,7 @@ impl<R: ProcessRunner> GitLab<R> {
     /// Like [`run_args`](GitLab::run_args) but never errors on a non-zero exit
     /// (mirrors [`GitLabApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     /// Bind a working directory, so the project-scoped methods omit that argument:

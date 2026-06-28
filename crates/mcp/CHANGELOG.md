@@ -13,7 +13,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Changed
--
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). `vcs-mcp`
+  doesn't re-export `processkit` itself, but the bump is **breaking transitively** via
+  the `vcs-core`/`vcs-forge` types it surfaces (their re-exported `processkit` is now
+  1.x). No behaviour change here. processkit is semver-stable from 1.0, so future 1.x
+  updates are non-breaking.
 
 ### Fixed
 -

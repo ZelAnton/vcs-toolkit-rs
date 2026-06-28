@@ -672,7 +672,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     async fn version(&self) -> Result<String> {
@@ -1012,7 +1012,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>> {
         let res = self
             .core
-            .output(self.cmd_in(dir, ["resolve", "--list", "-r", revset]))
+            .output_string(self.cmd_in(dir, ["resolve", "--list", "-r", revset]))
             .await?;
         match res.code() {
             Some(0) => Ok(parse::parse_resolve_list(res.stdout())),
@@ -1026,7 +1026,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             // absorb a capitalization change.
             _ if res.stderr().to_ascii_lowercase().contains("no conflicts") => Ok(Vec::new()),
             _ => {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
                 Ok(Vec::new()) // unreachable: a non-zero exit always errors above.
             }
         }
@@ -1426,7 +1426,7 @@ impl<R: ProcessRunner> Jj<R> {
     /// Like [`run_args`](Jj::run_args) but never errors on a non-zero exit
     /// (mirrors [`JjApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     /// Bind this client to `dir`, returning a [`JjAt`] handle whose methods omit

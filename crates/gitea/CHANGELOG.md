@@ -16,6 +16,10 @@ crates; tag releases as `vcs-gitea-v<version>`.
   dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
 
 ### Changed
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
+  processkit's 1.0 makes the re-exported `processkit` types (`Error`/`ProcessResult`/…)
+  1.x — **breaking** for a downstream that pins `processkit` `0.x` directly. No
+  behaviour change. processkit is semver-stable from 1.0, so future 1.x updates are non-breaking.
 - Internal: the JSON parse helpers `null_to_empty` (the `null → ""`
   `deserialize_with`) and `from_json` (the `Error::Parse`-mapping decoder) now come
   from `vcs_cli_support::json` instead of being defined locally, so the three forge

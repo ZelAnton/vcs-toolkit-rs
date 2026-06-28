@@ -131,7 +131,7 @@ Three mechanical sweeps plus targeted error-handling work, full gate green:
   `CONTRIBUTING.md`).
 - **R7 ✅** — `keywords` + `categories` on all 12 crate manifests.
 - **R8 ✅ (resolved by analysis — won't implement)** — our exit-code idioms
-  (`probe` / `exit_code` / `output`) are already correct; `ok_codes` would not improve them.
+  (`probe` / `exit_code` / `output_string`) are already correct; `ok_codes` would not improve them.
   See [`decisions/wont-do-2026-06.md`](decisions/wont-do-2026-06.md).
 - **R9 ✅** — `is_transient_fetch_error` now also consults processkit's io-level
   `Error::is_transient()` (`crates/cli-support/src/lib.rs`), with a test.

@@ -575,7 +575,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     async fn version(&self) -> Result<String> {
@@ -720,7 +720,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         let n = number.to_string();
         let res = self
             .core
-            .output(
+            .output_string(
                 self.core
                     .command_in(dir, ["pr", "checks", n.as_str(), "--json", CHECK_FIELDS]),
             )
@@ -751,7 +751,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             // Anything else (no such PR, auth required, timeout, signal…) is a
             // genuine failure; `ensure_success` builds the faithful error.
             _ => {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
                 Ok(Vec::new()) // unreachable: a non-zero exit always errors above.
             }
         }
@@ -852,13 +852,14 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // passed: it would map the run's outcome onto the exit code (1 failed,
         // 2 cancelled), which can't be reported faithfully — the follow-up
         // `run view`'s `conclusion` can. Without it, a non-zero watch exit is a
-        // genuine error (no such run, auth, …). `output` does NOT error on a
+        // genuine error (no such run, auth, …). `output_string` does NOT error on a
         // timeout (it returns the result with a timeout flag), so
         // `ensure_success` is what surfaces a killed watch as `Error::Timeout`
         // instead of reading a half-finished run below.
         let id_str = id.to_string();
-        self.core
-            .output(self.core.command_in(dir, ["run", "watch", id_str.as_str()]))
+        let _ = self
+            .core
+            .output_string(self.core.command_in(dir, ["run", "watch", id_str.as_str()]))
             .await?
             .ensure_success()?;
         self.run_view(dir, id).await
@@ -929,7 +930,7 @@ impl<R: ProcessRunner> GitHub<R> {
     /// Like [`run_args`](GitHub::run_args) but never errors on a non-zero exit
     /// (mirrors [`GitHubApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking
@@ -1609,7 +1610,7 @@ mod tests {
     }
 
     // A timed-out or failing watch must error — NOT report a half-finished run
-    // via the follow-up view. (`output` does not error on a timeout; the
+    // via the follow-up view. (`output_string` does not error on a timeout; the
     // `ensure_success` in run_watch is what surfaces it.)
     #[tokio::test]
     async fn run_watch_surfaces_timeout_and_watch_errors() {

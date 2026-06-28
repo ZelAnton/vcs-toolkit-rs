@@ -541,7 +541,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl processkit::ProcessRunner for AddCreatesDir {
-        async fn output(
+        async fn output_string(
             &self,
             command: &processkit::Command,
         ) -> processkit::Result<processkit::ProcessResult<String>> {
@@ -553,7 +553,7 @@ mod tests {
             if args.iter().any(|a| a == "workspace") && args.iter().any(|a| a == "add") {
                 let _ = std::fs::create_dir_all(&self.dir);
             }
-            self.inner.output(command).await
+            self.inner.output_string(command).await
         }
     }
 

@@ -390,7 +390,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     async fn version(&self) -> Result<String> {
@@ -400,19 +400,19 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     async fn auth_status(&self) -> Result<bool> {
         // `tea login list --output json` is a global (non-repo) command that
         // yields the configured logins as a JSON array; non-empty ⇒ logged in.
-        // `output` (not `run`) so a NON-ZERO exit — e.g. tea erroring because no
+        // `output_string` (not `run`) so a NON-ZERO exit — e.g. tea erroring because no
         // config file exists yet — reads as "not logged in" rather than surfacing
         // as an error; a spawn failure or timeout still errors via `ensure_success`.
         let res = self
             .core
-            .output(["login", "list", "--output", "json"])
+            .output_string(["login", "list", "--output", "json"])
             .await?;
         if res.code() != Some(0) {
             // A timeout / signal-kill (no exit code) is a genuine failure;
             // `ensure_success` surfaces it as `Error::Timeout`/IO. A plain
             // non-zero exit, however, just means "no logins" → false.
             if res.code().is_none() {
-                res.ensure_success()?;
+                let _ = res.ensure_success()?;
             }
             return Ok(false);
         }
@@ -630,7 +630,7 @@ impl<R: ProcessRunner> Gitea<R> {
     /// Like [`run_args`](Gitea::run_args) but never errors on a non-zero exit
     /// (mirrors [`GiteaApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output(args).await
+        self.core.output_string(args).await
     }
 
     /// Bind a working directory, so the repo-scoped methods omit that argument:

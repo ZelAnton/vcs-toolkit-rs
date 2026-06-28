@@ -1000,7 +1000,7 @@ mod pipeline_tests {
 
     #[async_trait::async_trait]
     impl ProcessRunner for FlakyStatus {
-        async fn output(
+        async fn output_string(
             &self,
             command: &processkit::Command,
         ) -> processkit::Result<processkit::ProcessResult<String>> {
@@ -1014,7 +1014,9 @@ mod pipeline_tests {
                     stderr: "fatal: Unable to create '.git/index.lock'".into(),
                 });
             }
-            scripted(&self.gitdir, self.head).output(command).await
+            scripted(&self.gitdir, self.head)
+                .output_string(command)
+                .await
         }
     }
 
@@ -1071,12 +1073,14 @@ mod pipeline_tests {
 
     #[async_trait::async_trait]
     impl ProcessRunner for Sleepy {
-        async fn output(
+        async fn output_string(
             &self,
             command: &processkit::Command,
         ) -> processkit::Result<processkit::ProcessResult<String>> {
             tokio::time::sleep(self.delay).await;
-            scripted(&self.gitdir, self.head).output(command).await
+            scripted(&self.gitdir, self.head)
+                .output_string(command)
+                .await
         }
     }
 
@@ -1156,7 +1160,7 @@ mod pipeline_tests {
 
     #[async_trait::async_trait]
     impl ProcessRunner for VaryingHead {
-        async fn output(
+        async fn output_string(
             &self,
             command: &processkit::Command,
         ) -> processkit::Result<processkit::ProcessResult<String>> {
@@ -1167,7 +1171,7 @@ mod pipeline_tests {
                 self.statuses.load(Ordering::Relaxed)
             };
             scripted(&self.gitdir, &format!("h{n}"))
-                .output(command)
+                .output_string(command)
                 .await
         }
     }

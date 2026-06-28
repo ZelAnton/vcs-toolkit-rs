@@ -755,14 +755,14 @@ impl<R: ProcessRunner> ManagedClient<R> {
         .await
     }
 
-    /// Like [`CliClient::output`], with credential injection. **No lock-retry:**
-    /// `output` returns `Ok` on a non-zero exit (it captures the result), so a lock
-    /// failure surfaces as an `Ok` here, not an `Err` the retry predicate could
+    /// Like [`CliClient::output_string`], with credential injection. **No lock-retry:**
+    /// `output_string` returns `Ok` on a non-zero exit (it captures the result), so a
+    /// lock failure surfaces as an `Ok` here, not an `Err` the retry predicate could
     /// match — route mutations that need lock-retry through
     /// [`run`](Self::run)/[`run_unit`](Self::run_unit) instead.
-    pub async fn output(&self, call: impl IntoCommand<R>) -> Result<ProcessResult<String>> {
+    pub async fn output_string(&self, call: impl IntoCommand<R>) -> Result<ProcessResult<String>> {
         let cmd = self.prepare(call).await?;
-        self.inner.output(cmd).await
+        self.inner.output_string(cmd).await
     }
 
     /// Like [`CliClient::probe`] (zero-or-nonzero exit → `bool`), with credential
@@ -791,8 +791,11 @@ impl<R: ProcessRunner> ManagedClient<R> {
     pub async fn parse<T>(
         &self,
         call: impl IntoCommand<R>,
-        parser: impl FnOnce(&str) -> T,
-    ) -> Result<T> {
+        parser: impl FnOnce(&str) -> T + Send,
+    ) -> Result<T>
+    where
+        T: Send,
+    {
         let cmd = self.prepare(call).await?;
         self.inner.parse(cmd, parser).await
     }
@@ -802,8 +805,11 @@ impl<R: ProcessRunner> ManagedClient<R> {
     pub async fn try_parse<T>(
         &self,
         call: impl IntoCommand<R>,
-        parser: impl FnOnce(&str) -> Result<T>,
-    ) -> Result<T> {
+        parser: impl FnOnce(&str) -> Result<T> + Send,
+    ) -> Result<T>
+    where
+        T: Send,
+    {
         let cmd = self.prepare(call).await?;
         self.inner.try_parse(cmd, parser).await
     }

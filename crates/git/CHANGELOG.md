@@ -16,6 +16,11 @@ crates; tag releases as `vcs-git-v<version>`.
   dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
 
 ### Changed
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
+  processkit's 1.0 makes the re-exported `processkit` types (`Error`/`ProcessResult`/…)
+  1.x — **breaking** for a downstream that pins `processkit` `0.x` directly. No
+  behaviour change (processkit's text-capture verb is now `output_string`, used
+  internally). processkit is semver-stable from 1.0, so future 1.x updates are non-breaking.
 - `DiffSpec` is now a re-export of `vcs_diff::DiffSpec` (hoisted to the shared
   crate so `vcs-git`/`vcs-jj` share one definition; `vcs_git::DiffSpec` still
   resolves) and is no longer `#[non_exhaustive]`, so a `match` over it can be

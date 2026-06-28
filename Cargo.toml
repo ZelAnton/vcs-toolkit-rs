@@ -47,21 +47,19 @@ authors = ["Anton Zhelezniakou"]
 # External job-backed process launcher (Windows Job Object / Linux cgroup v2, so a
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
-# test seams the wrappers build on (under `processkit::testing` as of 0.10). Was the
-# internal `vcs-process` crate; now the published `processkit`. The 0.11.0 floor is a
-# breaking release ahead of the 1.0 freeze. What touches us from the 0.10→0.11 jump:
-# (1) the **`stats` feature is now opt-in** (default is `["process-control"]` only) —
-# we never used the metrics surface (`ProcessGroup::stats`, `RunningProcess::cpu_time`/
-# `peak_memory_bytes`, `RunProfile`), so dropping it from the default set is a leaner
-# build with no code change; (2) **`OutputEvent` now carries an `OutputLine`** (not a
-# bare `String`) — we don't stream `output_events`, so nothing to migrate; (3) an
-# internal **cancel-precedence race fix** ("Issue 7": a self-reaped run can no longer
-# be misreported as `Cancelled`) and (4, from 0.10.2) the one-line `Error` `Display`
-# now sanitizes control chars to `U+FFFD` — both free reliability/security wins for
-# our hostile-`stderr` threat model, no API change. (Earlier 0.10.1 baseline: see git
-# history — cancellation is core, test doubles under `processkit::testing`,
-# program-aware `ScriptedRunner::on`, partial-output `Timeout`/`Signalled`.)
-processkit = "0.11.0"
+# test seams the wrappers build on (under `processkit::testing`). Was the internal
+# `vcs-process` crate; now the published `processkit`. Floor `"1"`: processkit reached
+# its **1.0 freeze** and is semver-stable within 1.x, so the caret spans every future
+# 1.x and `cargo update` pulls them safely — the prior run of breaking 0.x minors is
+# over. What the 0.11→1.0/1.1 jump touched us: the text-capture verb was renamed
+# **`output` → `output_string`** crate-wide (a pure rename, same `ProcessResult<String>`);
+# **`CliClient::parse`/`try_parse` tightened to `T: Send` + parser `+ Send`** (mirrored on
+# our `ManagedClient`); and **`ProcessResult` is now `#[must_use]`** (so an intentional
+# error-path discard takes `let _ =`). All internal — no behavior change. The other 1.0
+# breaking changes are N/A for us: `OutputLine.text`→`text()` (we don't stream
+# `output_events`), `Error::ResourceLimit` struct variant (the `limits` feature is off),
+# and the 1.1 `+ Send` on readiness-probe callbacks (we don't use probes).
+processkit = "1"
 
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.

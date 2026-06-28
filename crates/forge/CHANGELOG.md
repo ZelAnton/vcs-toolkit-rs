@@ -26,6 +26,11 @@ crates; tag releases as `vcs-forge-v<version>`.
   (documented on [`Forge::gitea`]).
 
 ### Changed
+- Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
+  processkit's 1.0 makes the re-exported `processkit` (`vcs_forge::processkit`, incl.
+  `Error`/`ProcessResult`) 1.x — **breaking** for a downstream that pins `processkit`
+  `0.x` directly. No behaviour change. processkit is semver-stable from 1.0, so future
+  1.x updates are non-breaking.
 - **Renamed the inject constructors `Forge::for_github`/`for_gitlab`/`for_gitea`/
   `for_unknown` → `from_github`/`from_gitlab`/`from_gitea`/`from_unknown`
   (breaking).** This mirrors `vcs-core`'s `Repo::from_git`/`from_jj` naming. The
