@@ -309,6 +309,34 @@ want to assert *which* commands the flow would have run.
 
 ---
 
+## Testing through a language binding (FFI)
+
+A language binding (the planned `vcs-toolkit-py`) can't reuse seams §1 and §2: a
+host-language test can't implement a Rust trait (§1) or drive `mockall` (§2) — both
+live entirely in Rust's type system. The **runner seam (§3) is the one that crosses
+the FFI boundary**: you pass a concrete runner *value* (not a trait you implement),
+so `processkit`'s test runners (`ScriptedRunner` / `RecordingRunner`) — concrete types
+implementing the `ProcessRunner` seam — are exactly what a binding's test surface
+wraps. `vcs-toolkit-py` would re-expose those runners through its own
+`vcs_toolkit.testing` (mirroring how `processkit-py` binds `processkit`'s testing),
+rather than re-implementing the seam.
+
+The bindable recipe is the one used throughout this guide: build a `ScriptedRunner`,
+hand it to a client via a `with_runner` / `from_*` constructor, and exercise the real
+argv-building and parsing — no subprocess, no trait impl, no closures:
+
+- `Git::with_runner(runner)` / `Jj::` / `GitHub::` / … — a client over the fake.
+- `Repo::from_git(root, cwd, Git::with_runner(runner))` / `Repo::from_jj(…)` — the
+  backend-agnostic git/jj facade over a fake.
+- `Forge::from_github(cwd, GitHub::with_runner(runner))` / `from_gitlab` /
+  `from_gitea` — the forge facade over a fake.
+
+A binding wires the same runner through these from its host language; the `mock`
+feature and the trait objects stay Rust-only conveniences a binding neither needs
+nor exposes.
+
+---
+
 ## Integration tests with real binaries
 
 When a check genuinely needs the real `git` / `jj` / `gh` — output formats,

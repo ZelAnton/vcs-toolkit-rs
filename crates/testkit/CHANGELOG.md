@@ -13,7 +13,10 @@ crates; tag releases as `vcs-testkit-v<version>`.
 -
 
 ### Changed
--
+- **Docs:** the testing guide gained a "Testing through a language binding (FFI)"
+  section — the runner seam (`with_runner` + `processkit`'s `ScriptedRunner`) is the
+  one that crosses an FFI boundary, so a binding (e.g. `vcs-toolkit-py`) wraps it
+  rather than the Rust-only `mock`/trait seams.
 
 ### Fixed
 -
