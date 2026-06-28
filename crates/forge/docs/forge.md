@@ -42,6 +42,12 @@ match, so a lookalike like `gitlab.com.attacker.net` returns `None`, not GitLab.
 **self-hosted** instance on an arbitrary domain also returns `None`
 (indistinguishable by host alone — pick the kind yourself).
 
+`Forge::github(cwd)` / `gitlab` / `gitea` build over the real runner using the CLI's
+ambient login; `Forge::github_with_token(cwd, token)` / `gitlab_with_token`
+authenticate with an explicit token instead (injected as `GH_TOKEN` / `GITLAB_TOKEN`;
+`token` takes `impl Into<Secret>`, so a `&str`/`String` works). Gitea is
+**ambient-only** — `tea` reads its own config and has no token-via-environment
+override, so there is no `gitea_with_token`; run `tea login` out of band.
 `Forge::from_github(cwd, client)` / `from_gitlab` / `from_gitea` take an explicit
 client (the test seam); `forge.at(dir)` re-binds the cwd, sharing the client.
 

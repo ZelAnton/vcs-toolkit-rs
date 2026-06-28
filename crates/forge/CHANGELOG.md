@@ -16,6 +16,14 @@ crates; tag releases as `vcs-forge-v<version>`.
   CLI's output, so a caller (or a language binding) can map them to dedicated
   errors instead of string-matching `stderr`. Conservative/phrase-based: a miss
   degrades to a generic forge error.
+- `Forge::github_with_token(cwd, token)` and `Forge::gitlab_with_token(cwd, token)`
+  convenience constructors — a real-runner handle that authenticates with an explicit
+  token (injected as `GH_TOKEN` / `GITLAB_TOKEN`) instead of the CLI's ambient login,
+  without hand-building the underlying client. `token` takes `impl Into<Secret>`, so a
+  plain `&str`/`String` works. `Secret` is now re-exported (`vcs_forge::Secret`).
+  **Gitea has no such constructor**: `tea` reads credentials from its own config and
+  has no token-via-environment override, so it authenticates only through `tea login`
+  (documented on [`Forge::gitea`]).
 
 ### Changed
 - **Renamed the inject constructors `Forge::for_github`/`for_gitlab`/`for_gitea`/

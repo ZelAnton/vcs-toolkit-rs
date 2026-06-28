@@ -38,7 +38,10 @@
 //! - **[`Forge`]** — the cwd-bound, forge-agnostic handle. Operations run against
 //!   the bound directory ([`cwd`](Forge::cwd)); the CLI infers the repository from
 //!   that directory's git remote. [`Forge::github`] / [`gitlab`](Forge::gitlab) /
-//!   [`gitea`](Forge::gitea) build over the real job-backed runner;
+//!   [`gitea`](Forge::gitea) build over the real job-backed runner (the CLI's ambient
+//!   login); [`github_with_token`](Forge::github_with_token) /
+//!   [`gitlab_with_token`](Forge::gitlab_with_token) authenticate with an explicit
+//!   token instead (Gitea is ambient-only — `tea` has no token override).
 //!   [`at`](Forge::at) re-binds the cwd, sharing the client; [`kind`](Forge::kind)
 //!   reports which forge drives it.
 //! - **[`ForgeApi`]** — the object-safe trait the common surface lives on. Hold a
@@ -144,6 +147,11 @@ pub use error::{Error, Result};
 pub use vcs_gitea;
 pub use vcs_github;
 pub use vcs_gitlab;
+// Re-export `Secret` so a consumer can name the token type the `*_with_token`
+// constructors accept (a plain `&str`/`String` also coerces via `Into<Secret>`, so
+// most callers never name it). It is `vcs_cli_support::Secret`, the very type the
+// wrappers' `with_token` takes.
+pub use vcs_cli_support::Secret;
 // Re-export `processkit` itself so a `vcs-forge`-only consumer can match the
 // wrapped error — `Error::Forge(vcs_forge::processkit::Error::Timeout { .. })` —
 // and name the `CancellationToken` for a `default_cancel_on` client, without a
@@ -199,10 +207,41 @@ impl Forge<JobRunner> {
     }
 
     /// A Gitea-backed handle bound to `cwd`, using the real job-backed runner.
+    ///
+    /// Gitea authenticates **only** through `tea`'s ambient login (`tea login add`);
+    /// there is deliberately no `gitea_with_token` constructor, because `tea` reads
+    /// its credentials from its own config file and offers no token-via-environment
+    /// override the way `gh`/`glab` do. Authenticate once, out of band, with
+    /// `tea login`.
     pub fn gitea(cwd: impl Into<PathBuf>) -> Self {
         Forge {
             cwd: cwd.into(),
             backend: Backend::Gitea(Arc::new(Gitea::new())),
+        }
+    }
+
+    /// A GitHub-backed handle bound to `cwd` that authenticates with an explicit
+    /// personal-access `token` (injected as `GH_TOKEN` for the spawned `gh`) instead
+    /// of `gh`'s ambient login. Convenience for the common
+    /// `Forge::from_github(cwd, GitHub::new().with_token(token))`; a plain
+    /// `&str`/`String` works (it coerces into a [`Secret`]). For an env-var
+    /// indirection or a rotating provider, build the [`GitHub`] client yourself and
+    /// pass it to [`from_github`](Forge::from_github).
+    pub fn github_with_token(cwd: impl Into<PathBuf>, token: impl Into<Secret>) -> Self {
+        Forge {
+            cwd: cwd.into(),
+            backend: Backend::GitHub(Arc::new(GitHub::new().with_token(token))),
+        }
+    }
+
+    /// A GitLab-backed handle bound to `cwd` that authenticates with an explicit
+    /// `token` (injected as `GITLAB_TOKEN` for the spawned `glab`) instead of
+    /// `glab`'s ambient login — the GitLab analogue of
+    /// [`github_with_token`](Forge::github_with_token).
+    pub fn gitlab_with_token(cwd: impl Into<PathBuf>, token: impl Into<Secret>) -> Self {
+        Forge {
+            cwd: cwd.into(),
+            backend: Backend::GitLab(Arc::new(GitLab::new().with_token(token))),
         }
     }
 }
@@ -774,6 +813,22 @@ mod tests {
         assert_eq!(github(ScriptedRunner::new()).kind(), ForgeKind::GitHub);
         assert_eq!(gitlab(ScriptedRunner::new()).kind(), ForgeKind::GitLab);
         assert_eq!(gitea(ScriptedRunner::new()).kind(), ForgeKind::Gitea);
+    }
+
+    // The token convenience constructors build a real-runner handle of the right
+    // backend; the `GH_TOKEN`/`GITLAB_TOKEN` injection itself is covered by the
+    // wrapper tests. (Gitea has no such constructor — `tea` authenticates only
+    // ambiently.) Constructing the handle spawns nothing.
+    #[test]
+    fn token_constructors_build_the_right_backend() {
+        assert_eq!(
+            Forge::github_with_token("/repo", "ghp_x").kind(),
+            ForgeKind::GitHub
+        );
+        assert_eq!(
+            Forge::gitlab_with_token("/repo", "glpat-x").kind(),
+            ForgeKind::GitLab
+        );
     }
 
     // GitHub's "OPEN"/"MERGED" states map onto the unified ForgePrState.
