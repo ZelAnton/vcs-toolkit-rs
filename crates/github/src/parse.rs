@@ -1,24 +1,10 @@
 //! Typed results from `gh … --json` and the deserialization helpers. Parsing is
 //! pure, so these tests are hermetic and run on CI.
 
-use processkit::{Error, Result};
+use processkit::Result;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use crate::BINARY;
-
-/// Deserialize a `String` field that `gh` may send as JSON `null` for an empty
-/// optional value (e.g. `headRefName`/`baseRefName` on a PR whose head branch was
-/// deleted): `null` → empty string, the same result as an absent key.
-/// `#[serde(default)]` alone only covers an **absent** key; a present `null` would
-/// otherwise fail the *whole* object parse with "invalid type: null, expected a
-/// string".
-fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
-}
 
 /// A pull request (`gh pr list/view --json number,title,state,headRefName,baseRefName,url`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -31,13 +17,21 @@ pub struct PullRequest {
     /// State, e.g. `"OPEN"`, `"MERGED"`, `"CLOSED"`.
     pub state: String,
     /// Source (head) branch name.
-    #[serde(rename = "headRefName", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "headRefName",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub head_ref_name: String,
     /// Target (base) branch name.
-    #[serde(rename = "baseRefName", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "baseRefName",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub base_ref_name: String,
     /// Web URL.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
 }
 
@@ -53,10 +47,10 @@ pub struct Issue {
     /// State, e.g. `"OPEN"`, `"CLOSED"`.
     pub state: String,
     /// Issue body (markdown). Fetched by both `issue_list` and `issue_view`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub body: String,
     /// Web URL. Fetched by both `issue_list` and `issue_view`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
 }
 
@@ -68,32 +62,48 @@ pub struct WorkflowRun {
     #[serde(rename = "databaseId")]
     pub database_id: u64,
     /// Workflow name as shown in the runs list.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub name: String,
     /// The run's display title (usually the commit subject).
-    #[serde(rename = "displayTitle", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "displayTitle",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub display_title: String,
     /// Lifecycle status, e.g. `"queued"`, `"in_progress"`, `"completed"`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub status: String,
     /// Outcome, e.g. `"success"`, `"failure"`, `"cancelled"`, `"skipped"` —
     /// gh reports an **empty string** until the run completes (not `null`).
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub conclusion: String,
     /// Name of the workflow that produced the run.
-    #[serde(rename = "workflowName", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "workflowName",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub workflow_name: String,
     /// Branch the run was triggered for.
-    #[serde(rename = "headBranch", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "headBranch",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub head_branch: String,
     /// Triggering event, e.g. `"push"`, `"workflow_dispatch"`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub event: String,
     /// Web URL.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
     /// Creation timestamp (ISO 8601).
-    #[serde(rename = "createdAt", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "createdAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub created_at: String,
 }
 
@@ -159,22 +169,30 @@ pub struct CheckRun {
     /// Check name.
     pub name: String,
     /// Raw state, e.g. `"SUCCESS"`, `"FAILURE"`, `"IN_PROGRESS"`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub state: String,
     /// gh's categorisation of `state` — the field to branch on. See [`CheckBucket`].
     #[serde(default)]
     pub bucket: CheckBucket,
     /// Workflow the check belongs to (empty for non-Actions checks).
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub workflow: String,
     /// Web link to the check's details.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub link: String,
     /// Start timestamp (ISO 8601), empty until started.
-    #[serde(rename = "startedAt", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "startedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub started_at: String,
     /// Completion timestamp (ISO 8601), empty until completed.
-    #[serde(rename = "completedAt", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "completedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub completed_at: String,
 }
 
@@ -186,17 +204,21 @@ pub struct Release {
     #[serde(rename = "tagName")]
     pub tag_name: String,
     /// Release title (may be empty/null).
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub name: String,
     /// Release notes (markdown); empty from `release_list`, which doesn't
     /// fetch it.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub body: String,
     /// Web URL; empty from `release_list`, which doesn't fetch it.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
     /// Publication timestamp (ISO 8601); empty/null for a draft.
-    #[serde(rename = "publishedAt", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "publishedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub published_at: String,
     /// `true` for an unpublished draft.
     #[serde(rename = "isDraft", default)]
@@ -292,18 +314,9 @@ struct BranchRefJson {
     name: String,
 }
 
-/// Deserialize `gh --json` output into `T`, mapping parse errors to
-/// [`Error::Parse`].
-pub(crate) fn from_json<T: DeserializeOwned>(json: &str) -> Result<T> {
-    serde_json::from_str(json).map_err(|e| Error::Parse {
-        program: BINARY.to_string(),
-        message: e.to_string(),
-    })
-}
-
 /// Parse `gh repo view --json …` output, flattening the nested objects.
 pub(crate) fn parse_repo(json: &str) -> Result<RepoView> {
-    let raw: RepoJson = from_json(json)?;
+    let raw: RepoJson = vcs_cli_support::json::from_json(BINARY, json)?;
     Ok(RepoView {
         name: raw.name,
         owner: raw.owner.login,
@@ -357,7 +370,7 @@ struct AuthorJson {
 /// Parse `gh pr view --json reviews,comments` output, flattening the nested
 /// author objects (a deleted account's `null` author becomes an empty login).
 pub(crate) fn parse_feedback(json: &str) -> Result<PrFeedback> {
-    let raw: FeedbackJson = from_json(json)?;
+    let raw: FeedbackJson = vcs_cli_support::json::from_json(BINARY, json)?;
     Ok(PrFeedback {
         reviews: raw
             .reviews
@@ -385,6 +398,7 @@ pub(crate) fn parse_feedback(json: &str) -> Result<PrFeedback> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::Error;
 
     #[test]
     fn parses_pr_list() {
@@ -392,7 +406,8 @@ mod tests {
             {"number": 12, "title": "Add feature", "state": "OPEN",
              "headRefName": "feat/x", "baseRefName": "main", "url": "https://gh/pr/12"}
         ]"#;
-        let prs: Vec<PullRequest> = from_json(json).expect("parse prs");
+        let prs: Vec<PullRequest> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse prs");
         assert_eq!(prs.len(), 1);
         assert_eq!(
             prs[0],
@@ -410,7 +425,8 @@ mod tests {
     #[test]
     fn parses_issue_list() {
         let json = r#"[{"number": 3, "title": "Docs", "state": "OPEN"}]"#;
-        let issues: Vec<Issue> = from_json(json).expect("parse issues");
+        let issues: Vec<Issue> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse issues");
         assert_eq!(issues[0].number, 3);
     }
 
@@ -420,7 +436,8 @@ mod tests {
     // must turn it into an empty string rather than failing the whole parse.
     #[test]
     fn null_optional_fields_parse_to_empty() {
-        let pr: PullRequest = from_json(
+        let pr: PullRequest = vcs_cli_support::json::from_json(
+            BINARY,
             r#"{"number": 1, "title": "t", "state": "CLOSED",
                 "headRefName": null, "baseRefName": null, "url": null}"#,
         )
@@ -429,13 +446,16 @@ mod tests {
         assert_eq!(pr.base_ref_name, "");
         assert_eq!(pr.url, "");
 
-        let issue: Issue =
-            from_json(r#"{"number": 2, "title": "t", "state": "OPEN", "body": null, "url": null}"#)
-                .expect("issue with null body/url");
+        let issue: Issue = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"number": 2, "title": "t", "state": "OPEN", "body": null, "url": null}"#,
+        )
+        .expect("issue with null body/url");
         assert_eq!(issue.body, "");
         assert_eq!(issue.url, "");
 
-        let release: Release = from_json(
+        let release: Release = vcs_cli_support::json::from_json(
+            BINARY,
             r#"{"tagName": "v1", "name": null, "body": null, "url": null, "publishedAt": null}"#,
         )
         .expect("release with null name/body/url/publishedAt");
@@ -471,7 +491,7 @@ mod tests {
 
     #[test]
     fn malformed_json_is_a_parse_error() {
-        match from_json::<Vec<Issue>>("not json").unwrap_err() {
+        match vcs_cli_support::json::from_json::<Vec<Issue>>(BINARY, "not json").unwrap_err() {
             Error::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
@@ -488,7 +508,8 @@ mod tests {
              "url": "https://gh/runs/27023111945",
              "createdAt": "2026-06-05T10:00:00Z"}
         ]"#;
-        let runs: Vec<WorkflowRun> = from_json(json).expect("parse runs");
+        let runs: Vec<WorkflowRun> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse runs");
         assert_eq!(runs[0].database_id, 27023111945);
         assert_eq!(runs[0].status, "in_progress");
         assert_eq!(runs[0].conclusion, "");
@@ -510,7 +531,8 @@ mod tests {
             {"name": "bench", "state": "CANCELLED", "bucket": "cancel",
              "workflow": "", "link": "", "startedAt": "", "completedAt": ""}
         ]"#;
-        let checks: Vec<CheckRun> = from_json(json).expect("parse checks");
+        let checks: Vec<CheckRun> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse checks");
         let buckets: Vec<CheckBucket> = checks.iter().map(|c| c.bucket).collect();
         assert_eq!(
             buckets,
@@ -538,7 +560,8 @@ mod tests {
              "isLatest": true, "isDraft": false, "isPrerelease": false,
              "publishedAt": "2026-06-04T12:00:00Z"}
         ]"#;
-        let releases: Vec<Release> = from_json(list).expect("parse list");
+        let releases: Vec<Release> =
+            vcs_cli_support::json::from_json(BINARY, list).expect("parse list");
         assert!(releases[0].is_latest);
         assert_eq!(releases[0].tag_name, "vcs-git-v0.4.0");
         assert_eq!(releases[0].body, "", "list doesn't fetch the body");
@@ -547,7 +570,7 @@ mod tests {
             "body": "Added\n- stuff", "url": "https://gh/releases/1",
             "publishedAt": "2026-06-04T12:00:00Z",
             "isDraft": false, "isPrerelease": false}"#;
-        let release: Release = from_json(view).expect("parse view");
+        let release: Release = vcs_cli_support::json::from_json(BINARY, view).expect("parse view");
         assert!(!release.is_latest, "view has no isLatest → default false");
         assert_eq!(release.body, "Added\n- stuff");
         assert_eq!(release.url, "https://gh/releases/1");
@@ -581,13 +604,14 @@ mod tests {
     #[test]
     fn issue_parses_with_and_without_view_fields() {
         let list = r#"[{"number": 3, "title": "Docs", "state": "OPEN"}]"#;
-        let issues: Vec<Issue> = from_json(list).expect("parse list");
+        let issues: Vec<Issue> =
+            vcs_cli_support::json::from_json(BINARY, list).expect("parse list");
         assert_eq!(issues[0].body, "");
         assert_eq!(issues[0].url, "");
 
         let view = r#"{"number": 3, "title": "Docs", "state": "OPEN",
             "body": "Write them.", "url": "https://gh/issues/3"}"#;
-        let issue: Issue = from_json(view).expect("parse view");
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, view).expect("parse view");
         assert_eq!(issue.body, "Write them.");
         assert_eq!(issue.url, "https://gh/issues/3");
     }

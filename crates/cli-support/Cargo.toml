@@ -22,6 +22,17 @@ async-trait = "0.1"
 # The async backoff sleep in `retry_async` (the `ManagedClient` retry loop). Only
 # the time driver is needed; the wrappers already run on tokio.
 tokio = { version = "1", features = ["time"] }
+# Optional: the JSON helpers in the `json` module (`null_to_empty` / `from_json`)
+# the forge wrappers share. Only the `Deserialize`/`Deserializer`/`DeserializeOwned`
+# traits are needed (no derive), plus `serde_json` for the parse. Gated behind the
+# `serde` feature so the ambient-auth backends (`vcs-git`/`vcs-jj`) never pull serde.
+serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+# Enable the `json` module: the shared `null_to_empty` / `from_json` forge-parser
+# helpers. Off by default — only the forge wrappers (github/gitlab/gitea) opt in.
+serde = ["dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async `retry_async` / `ManagedClient` tests.
@@ -29,9 +40,9 @@ tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature and pass `--cfg docsrs` so any feature-gated
-# item renders an "Available on feature `x`" badge. (This crate has no features of
-# its own — cancellation is now core in processkit 0.10 — but the metadata stays
-# uniform with the rest of the workspace.)
+# item renders an "Available on feature `x`" badge. `all-features` documents the
+# optional `serde` feature (the `json` module); the metadata stays uniform with
+# the rest of the workspace.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 

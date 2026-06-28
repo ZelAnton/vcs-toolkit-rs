@@ -420,7 +420,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         if json.is_empty() {
             return Ok(false);
         }
-        let logins: Vec<serde_json::Value> = parse::from_json(json)?;
+        let logins: Vec<serde_json::Value> = vcs_cli_support::json::from_json(BINARY, json)?;
         Ok(!logins.is_empty())
     }
 

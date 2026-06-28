@@ -2,9 +2,8 @@
 //! Parsing is pure (over GitLab's REST JSON, which `glab` emits verbatim), so
 //! these tests are hermetic and run on CI.
 
-use processkit::{Error, Result};
+use processkit::Result;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use crate::BINARY;
 
@@ -22,13 +21,13 @@ pub struct MergeRequest {
     /// lower-case spelling — note it is `"opened"`, not `"open"`).
     pub state: String,
     /// Source (head) branch name.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub source_branch: String,
     /// Target (base) branch name.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub target_branch: String,
     /// Web URL.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub web_url: String,
     /// Whether the MR is a draft (GitLab's `draft`; the deprecated
     /// `work_in_progress` is not read).
@@ -44,13 +43,13 @@ pub struct RepoView {
     /// Project name (the last path segment's display name).
     pub name: String,
     /// Full namespace path, e.g. `"group/subgroup/repo"`.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub path_with_namespace: String,
     /// Default branch name (empty/null for an empty project).
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub default_branch: String,
     /// Web URL.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub web_url: String,
     /// Visibility, e.g. `"public"`, `"internal"`, `"private"`. `None` when glab
     /// omits the field — a consumer must treat an absent visibility as *unknown*,
@@ -79,10 +78,18 @@ pub struct Issue {
     pub state: String,
     /// Issue body (GitLab's `description`, markdown). `glab issue list` does
     /// include it, but it can be absent/null, so it is tolerant.
-    #[serde(rename = "description", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "description",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub body: String,
     /// Web URL.
-    #[serde(rename = "web_url", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "web_url",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub url: String,
 }
 
@@ -95,7 +102,7 @@ pub struct Release {
     /// [`release_view`](crate::GitLabApi::release_view) takes).
     pub tag_name: String,
     /// Release title (may be empty/absent/null — GitLab defaults it to the tag).
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub name: String,
     /// Web URL of the release page. GitLab carries it as `_links.self` (there
     /// is no top-level `web_url` on a release), so it is pulled off that nested
@@ -104,24 +111,15 @@ pub struct Release {
     pub url: String,
     /// Publication timestamp (GitLab's `released_at`, ISO 8601); empty when
     /// absent/null (e.g. an upcoming/unpublished release).
-    #[serde(rename = "released_at", default, deserialize_with = "null_to_empty")]
+    #[serde(
+        rename = "released_at",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
     pub published_at: String,
     /// Release notes (GitLab's `description`, markdown); empty when absent/null.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub description: String,
-}
-
-/// Deserialize a `String` field that GitLab may send as JSON `null` for an empty
-/// optional value (a *very* common shape — e.g. an issue/MR with no `description`,
-/// a project with no `default_branch`): `null` → empty string, the same result as
-/// an absent key. `#[serde(default)]` alone only covers an **absent** key; a
-/// present `null` would otherwise fail the *whole* object parse with "invalid
-/// type: null, expected a string".
-fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Deserialize a `Release`'s `url` from GitLab's `_links.self`. The links object
@@ -182,15 +180,6 @@ impl CiStatus {
     }
 }
 
-/// Deserialize `glab … --output json` output into `T`, mapping parse errors to
-/// [`Error::Parse`].
-pub(crate) fn from_json<T: DeserializeOwned>(json: &str) -> Result<T> {
-    serde_json::from_str(json).map_err(|e| Error::Parse {
-        program: BINARY.to_string(),
-        message: e.to_string(),
-    })
-}
-
 // The MR JSON carries the pipeline as a nested object; deserialize just the
 // status off it. `head_pipeline` is the current one; `pipeline` is the older
 // alias — accept either.
@@ -212,7 +201,7 @@ struct PipelineJson {
 /// `head_pipeline.status` (falling back to the deprecated `pipeline.status`);
 /// no pipeline at all is [`CiStatus::None`].
 pub(crate) fn parse_ci_status(json: &str) -> Result<CiStatus> {
-    let raw: MrPipelineJson = from_json(json)?;
+    let raw: MrPipelineJson = vcs_cli_support::json::from_json(BINARY, json)?;
     let status = raw
         .head_pipeline
         .or(raw.pipeline)
@@ -224,6 +213,7 @@ pub(crate) fn parse_ci_status(json: &str) -> Result<CiStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::Error;
 
     #[test]
     fn parses_mr_list() {
@@ -232,7 +222,8 @@ mod tests {
              "source_branch": "feat/x", "target_branch": "main",
              "web_url": "https://gl/mr/12", "draft": false}
         ]"#;
-        let mrs: Vec<MergeRequest> = from_json(json).expect("parse mrs");
+        let mrs: Vec<MergeRequest> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse mrs");
         assert_eq!(mrs.len(), 1);
         assert_eq!(
             mrs[0],
@@ -253,7 +244,7 @@ mod tests {
     #[test]
     fn mr_tolerates_missing_optional_fields() {
         let json = r#"{"iid": 5, "title": "wip", "state": "opened", "draft": true}"#;
-        let mr: MergeRequest = from_json(json).expect("parse mr");
+        let mr: MergeRequest = vcs_cli_support::json::from_json(BINARY, json).expect("parse mr");
         assert_eq!(mr.source_branch, "");
         assert_eq!(mr.web_url, "");
         assert!(mr.draft);
@@ -266,7 +257,8 @@ mod tests {
             {"iid": 1, "title": "Fix bug", "state": "opened",
              "description": "the body", "web_url": "https://gl/i/1"}
         ]"#;
-        let issues: Vec<Issue> = from_json(json).expect("parse issues");
+        let issues: Vec<Issue> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse issues");
         assert_eq!(issues.len(), 1);
         assert_eq!(
             issues[0],
@@ -285,7 +277,7 @@ mod tests {
     #[test]
     fn issue_tolerates_missing_optional_fields() {
         let json = r#"{"iid": 9, "title": "wip", "state": "closed"}"#;
-        let issue: Issue = from_json(json).expect("parse issue");
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json).expect("parse issue");
         assert_eq!(issue.body, "");
         assert_eq!(issue.url, "");
     }
@@ -297,14 +289,16 @@ mod tests {
     // failing the whole parse. These are the single most common real shapes.
     #[test]
     fn null_optional_fields_parse_to_empty() {
-        let issue: Issue = from_json(
+        let issue: Issue = vcs_cli_support::json::from_json(
+            BINARY,
             r#"{"iid": 9, "title": "t", "state": "closed", "description": null, "web_url": null}"#,
         )
         .expect("issue with null description/web_url");
         assert_eq!(issue.body, "");
         assert_eq!(issue.url, "");
 
-        let mr: MergeRequest = from_json(
+        let mr: MergeRequest = vcs_cli_support::json::from_json(
+            BINARY,
             r#"{"iid": 3, "title": "t", "state": "opened",
                 "source_branch": null, "target_branch": null, "web_url": null}"#,
         )
@@ -312,13 +306,14 @@ mod tests {
         assert_eq!(mr.source_branch, "");
         assert_eq!(mr.target_branch, "");
 
-        let project: RepoView = from_json(
+        let project: RepoView = vcs_cli_support::json::from_json(BINARY,
             r#"{"name": "p", "path_with_namespace": null, "default_branch": null, "web_url": null}"#,
         )
         .expect("project with null default_branch");
         assert_eq!(project.default_branch, "");
 
-        let release: Release = from_json(
+        let release: Release = vcs_cli_support::json::from_json(
+            BINARY,
             r#"{"tag_name": "v1", "name": null, "released_at": null, "description": null}"#,
         )
         .expect("release with null name/date/description");
@@ -337,7 +332,7 @@ mod tests {
             "description": "the notes",
             "_links": {"self": "https://gl/-/releases/v1.0"}
         }"#;
-        let rel: Release = from_json(json).expect("parse release");
+        let rel: Release = vcs_cli_support::json::from_json(BINARY, json).expect("parse release");
         assert_eq!(
             rel,
             Release {
@@ -355,7 +350,7 @@ mod tests {
     #[test]
     fn release_tolerates_missing_links_and_date() {
         let json = r#"{"tag_name": "v2.0"}"#;
-        let rel: Release = from_json(json).expect("parse release");
+        let rel: Release = vcs_cli_support::json::from_json(BINARY, json).expect("parse release");
         assert_eq!(rel.name, "");
         assert_eq!(rel.url, "");
         assert_eq!(rel.published_at, "");
@@ -368,7 +363,7 @@ mod tests {
             "default_branch": "main", "web_url": "https://gl/p",
             "visibility": "public"
         }"#;
-        let p: RepoView = from_json(json).expect("parse project");
+        let p: RepoView = vcs_cli_support::json::from_json(BINARY, json).expect("parse project");
         assert_eq!(p.name, "cli");
         assert_eq!(p.path_with_namespace, "gitlab-org/cli");
         assert_eq!(p.default_branch, "main");
@@ -380,13 +375,14 @@ mod tests {
     #[test]
     fn project_tolerates_missing_visibility() {
         let json = r#"{"name":"cli","path_with_namespace":"o/cli","default_branch":"main"}"#;
-        let p: RepoView = from_json(json).expect("parse project");
+        let p: RepoView = vcs_cli_support::json::from_json(BINARY, json).expect("parse project");
         assert_eq!(p.visibility, None);
     }
 
     #[test]
     fn malformed_json_is_a_parse_error() {
-        match from_json::<Vec<MergeRequest>>("not json").unwrap_err() {
+        match vcs_cli_support::json::from_json::<Vec<MergeRequest>>(BINARY, "not json").unwrap_err()
+        {
             Error::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }

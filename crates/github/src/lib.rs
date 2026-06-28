@@ -606,7 +606,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["pr", "list", "--limit", "100", "--json", PR_FIELDS]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -628,7 +628,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                         "100", "--json", PR_FIELDS,
                     ],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -639,7 +639,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["pr", "view", n.as_str(), "--json", PR_FIELDS]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -658,7 +658,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                         ISSUE_LIST_FIELDS,
                     ],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -731,8 +731,10 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             // three — parse it and let the caller branch on each `bucket`.
             // A parse failure here is a real schema problem and must surface
             // as `Error::Parse`, not be masked by the exit code.
-            Some(0) => parse::from_json(res.stdout()),
-            Some(1 | 8) if !res.stdout().trim().is_empty() => parse::from_json(res.stdout()),
+            Some(0) => vcs_cli_support::json::from_json(BINARY, res.stdout()),
+            Some(1 | 8) if !res.stdout().trim().is_empty() => {
+                vcs_cli_support::json::from_json(BINARY, res.stdout())
+            }
             // gh exits 1 with NO JSON for a PR that simply has no checks — the
             // one bare non-zero we read as an empty list (cf. jj's
             // `resolve_list` and its "No conflicts" exit). Matched
@@ -828,7 +830,9 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         }
         args.extend(["--json", RUN_FIELDS]);
         self.core
-            .try_parse(self.core.command_in(dir, args), parse::from_json)
+            .try_parse(self.core.command_in(dir, args), |s| {
+                vcs_cli_support::json::from_json(BINARY, s)
+            })
             .await
     }
 
@@ -838,7 +842,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["run", "view", id.as_str(), "--json", RUN_FIELDS]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -877,7 +881,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                     dir,
                     ["issue", "view", n.as_str(), "--json", ISSUE_VIEW_FIELDS],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -896,7 +900,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                         RELEASE_LIST_FIELDS,
                     ],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -907,7 +911,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["release", "view", tag, "--json", RELEASE_VIEW_FIELDS]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }

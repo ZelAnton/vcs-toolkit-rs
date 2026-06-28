@@ -10,7 +10,13 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- New optional **`serde`** feature exposing a **`json`** module with the two
+  forge-parser JSON helpers shared by `vcs-github`/`vcs-gitlab`/`vcs-gitea`:
+  `null_to_empty` (a `deserialize_with` that turns a present JSON `null` into an
+  empty string) and `from_json(program, json)` (deserialize a CLI's `--json`
+  output into `T`, mapping a parse failure to `Error::Parse` tagged with the
+  binary name). Off by default — only the forge wrappers enable it, so the
+  ambient-auth backends (`vcs-git`/`vcs-jj`) never pull in `serde`/`serde_json`.
 
 ### Changed
 -

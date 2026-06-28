@@ -22,6 +22,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   method (and its `at(dir)` bound form) is now `mr_mark_ready`, matching
   `vcs-github`'s `pr_mark_ready`; the emitted `glab mr update <id> --ready`
   command is unchanged. Update callers of `mr_ready` to `mr_mark_ready`.
+- Internal: the JSON parse helpers `null_to_empty` (the `null → ""`
+  `deserialize_with`) and `from_json` (the `Error::Parse`-mapping decoder) now come
+  from `vcs_cli_support::json` instead of being defined locally, so the three forge
+  parsers share one convention. Requires cli-support's new `serde` feature (enabled
+  via the dependency). No public API or behaviour change.
 
 ### Fixed
 -

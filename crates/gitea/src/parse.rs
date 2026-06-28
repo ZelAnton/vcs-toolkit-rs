@@ -25,7 +25,6 @@
 
 use processkit::{Error, Result};
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use crate::BINARY;
 
@@ -148,21 +147,10 @@ struct IssueDetailJson {
     state: String,
     // Gitea's API can carry a null `body` for an issue with no description; tolerate
     // it (null → empty) so the typed-detail parse doesn't fail the whole view.
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     body: String,
-    #[serde(default, deserialize_with = "null_to_empty")]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     url: String,
-}
-
-/// Deserialize a `String` field that may arrive as JSON `null` (Gitea's typed
-/// detail objects null an empty `body`/`url`): `null` → empty string, same as an
-/// absent key. `#[serde(default)]` alone only covers an absent key; a present
-/// `null` would otherwise fail the parse.
-fn null_to_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl From<IssueDetailJson> for Issue {
@@ -260,37 +248,28 @@ fn parse_index(value: &str) -> Result<u64> {
     })
 }
 
-/// Deserialize `tea … --output json` output into `T`, mapping parse errors to
-/// [`Error::Parse`].
-pub(crate) fn from_json<T: DeserializeOwned>(json: &str) -> Result<T> {
-    serde_json::from_str(json).map_err(|e| Error::Parse {
-        program: BINARY.to_string(),
-        message: e.to_string(),
-    })
-}
-
 /// Parse `tea pr list --output json` into the flattened [`PullRequest`]s.
 pub(crate) fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>> {
-    let raw: Vec<PrJson> = from_json(json)?;
+    let raw: Vec<PrJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     raw.into_iter().map(PullRequest::try_from).collect()
 }
 
 /// Parse `tea issues list --output json` into the flattened [`Issue`]s.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<Issue>> {
-    let raw: Vec<IssueListJson> = from_json(json)?;
+    let raw: Vec<IssueListJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     raw.into_iter().map(Issue::try_from).collect()
 }
 
 /// Parse `tea issues <index> --output json` into a single [`Issue`]. Unlike the
 /// list, the single-issue view yields one **typed** object, not an array.
 pub(crate) fn parse_issue(json: &str) -> Result<Issue> {
-    let raw: IssueDetailJson = from_json(json)?;
+    let raw: IssueDetailJson = vcs_cli_support::json::from_json(BINARY, json)?;
     Ok(Issue::from(raw))
 }
 
 /// Parse `tea releases list --output json` into the flattened [`Release`]s.
 pub(crate) fn parse_release_list(json: &str) -> Result<Vec<Release>> {
-    let raw: Vec<ReleaseJson> = from_json(json)?;
+    let raw: Vec<ReleaseJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     Ok(raw.into_iter().map(Release::from).collect())
 }
 
@@ -503,9 +482,11 @@ mod tests {
     #[test]
     fn login_array_counts() {
         let some: Vec<serde_json::Value> =
-            from_json(r#"[{"name":"gitea"}]"#).expect("parse logins");
+            vcs_cli_support::json::from_json(BINARY, r#"[{"name":"gitea"}]"#)
+                .expect("parse logins");
         assert!(!some.is_empty());
-        let none: Vec<serde_json::Value> = from_json("[]").expect("parse empty");
+        let none: Vec<serde_json::Value> =
+            vcs_cli_support::json::from_json(BINARY, "[]").expect("parse empty");
         assert!(none.is_empty());
     }
 }

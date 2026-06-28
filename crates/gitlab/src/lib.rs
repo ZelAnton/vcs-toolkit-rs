@@ -442,7 +442,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["repo", "view", "--output", "json"]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -454,7 +454,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["mr", "list", "--per-page", "100", "--output", "json"]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -465,7 +465,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["mr", "view", id.as_str(), "--output", "json"]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -577,7 +577,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
                     dir,
                     ["issue", "list", "--per-page", "100", "--output", "json"],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -588,7 +588,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["issue", "view", number.as_str(), "--output", "json"]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -621,7 +621,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
                     dir,
                     ["release", "list", "--per-page", "100", "--output", "json"],
                 ),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }
@@ -632,7 +632,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["release", "view", tag, "--output", "json"]),
-                parse::from_json,
+                |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
     }

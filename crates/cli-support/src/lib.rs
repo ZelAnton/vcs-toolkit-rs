@@ -79,6 +79,36 @@ pub use credentials::{
     GitCredentialHelper, Secret, StaticCredential, git_credential_helper, provider_fn,
 };
 
+/// JSON helpers shared by the forge wrappers, behind the `serde` feature — so the
+/// three forge parsers share one `null -> ""` and parse-error convention.
+#[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+pub mod json {
+    use processkit::{Error, Result};
+    use serde::Deserialize;
+    use serde::de::DeserializeOwned;
+
+    /// Deserialize a `String` a forge CLI may send as JSON `null` for an empty
+    /// optional value: `null` -> empty string, same as an absent key. `#[serde(default)]`
+    /// alone covers only an absent key; a present `null` would fail the whole-object
+    /// parse. Use as `#[serde(deserialize_with = "vcs_cli_support::json::null_to_empty")]`.
+    pub fn null_to_empty<'de, D>(deserializer: D) -> ::core::result::Result<String, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+    }
+
+    /// Deserialize a forge CLI's `--json` output into `T`, mapping a parse failure to
+    /// [`Error::Parse`] tagged with `program` (the CLI's binary name).
+    pub fn from_json<T: DeserializeOwned>(program: &str, json: &str) -> Result<T> {
+        serde_json::from_str(json).map_err(|e| Error::Parse {
+            program: program.to_string(),
+            message: e.to_string(),
+        })
+    }
+}
+
 /// Generate the cwd-bound forwarders for a CLI wrapper's `…At` view.
 ///
 /// Each CLI wrapper (`vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`)

@@ -13,7 +13,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
 -
 
 ### Changed
--
+- Internal: the JSON parse helpers `null_to_empty` (the `null → ""`
+  `deserialize_with`) and `from_json` (the `Error::Parse`-mapping decoder) now come
+  from `vcs_cli_support::json` instead of being defined locally, so the three forge
+  parsers share one convention. Requires cli-support's new `serde` feature (enabled
+  via the dependency). No public API or behaviour change.
 
 ### Fixed
 -

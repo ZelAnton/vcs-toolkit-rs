@@ -22,6 +22,11 @@ crates; tag releases as `vcs-github-v<version>`.
   method (and its `at(dir)` bound form) is now `pr_mark_ready`, for a clearer
   mark-ready verb; the emitted `gh pr ready <n>` command is unchanged. Update
   callers of `pr_ready` to `pr_mark_ready`.
+- Internal: the JSON parse helpers `null_to_empty` (the `null → ""`
+  `deserialize_with`) and `from_json` (the `Error::Parse`-mapping decoder) now come
+  from `vcs_cli_support::json` instead of being defined locally, so the three forge
+  parsers share one convention. Requires cli-support's new `serde` feature (enabled
+  via the dependency). No public API or behaviour change.
 
 ### Fixed
 -

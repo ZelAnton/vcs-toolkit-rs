@@ -17,7 +17,8 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 # seam, `CliClient` core, and structured `Error`.
 processkit.workspace = true
 # Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`).
-vcs-cli-support = { path = "../cli-support", version = "0.2" }
+# features=["serde"]: shared JSON helpers (json::null_to_empty/from_json) live in cli-support behind that feature — added after cli-support 0.2.0, so its NEXT release must be >= minor and this floor raised to match.
+vcs-cli-support = { path = "../cli-support", version = "0.2", features = ["serde"] }
 # Deserialize `tea … --output json` output into typed structs (PullRequest).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

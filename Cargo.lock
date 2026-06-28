@@ -1152,6 +1152,8 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "processkit",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
