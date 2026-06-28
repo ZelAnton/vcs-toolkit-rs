@@ -27,7 +27,73 @@ pub enum Error {
     InvalidInput(String),
 }
 
+/// Lowercase markers identifying an **authentication** failure in a forge CLI's
+/// output (`gh`/`glab`/`tea`). Phrase-based and conservative: a miss degrades to a
+/// generic forge error, and the phrases are chosen to avoid a false
+/// `is_unauthorized` (they don't occur in the CLIs' non-auth error text). Strictly authentication
+/// (HTTP 401 / missing-or-bad token / not-logged-in) — a 403 *permission* refusal
+/// stays a generic error.
+const AUTH_MARKERS: &[&str] = &[
+    "unauthorized",
+    // Status-qualified, not a bare "401": a bare code would false-positive on a
+    // PR/issue number, object id, or SHA echoed in an unrelated error message.
+    "http 401",
+    "bad credentials",
+    "requires authentication",
+    "authentication required",
+    "authentication failed",
+    "not logged in",
+    "auth login",
+];
+
+/// Lowercase markers identifying a **rate-limit** failure. Keyed on the message
+/// (not the ambiguous 403 status, which GitHub also uses for permission errors).
+const RATE_LIMIT_MARKERS: &[&str] = &[
+    "rate limit",
+    // Status-qualified (see AUTH_MARKERS) — a bare "429" would match a stray number.
+    "http 429",
+    "too many requests",
+    "retry-after",
+    "abuse detection",
+];
+
 impl Error {
+    /// Lowercased `stdout`+`stderr` of an underlying non-zero `Exit` — the CLI's
+    /// message body, for marker classification. `None` for non-`Exit` errors
+    /// (spawn/timeout/signal/not-found) and the facade's own variants, which carry
+    /// no CLI message to classify.
+    fn cli_output(&self) -> Option<String> {
+        match self {
+            Error::Forge(processkit::Error::Exit { stdout, stderr, .. }) => {
+                Some(format!("{stdout}\n{stderr}").to_ascii_lowercase())
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the forge CLI reported an **authentication** failure — a missing,
+    /// expired, or invalid token, or "not logged in" — as opposed to a transient
+    /// network error or a generic non-zero exit. Lets a caller (or a language
+    /// binding) surface a dedicated auth error and prompt a re-login.
+    ///
+    /// Note: this classifies an auth failure *raised by an operation*. The separate
+    /// [`Forge::auth_status`](crate::Forge::auth_status) probe returns `Ok(false)`
+    /// for "not authenticated" rather than an error.
+    pub fn is_unauthorized(&self) -> bool {
+        self.cli_output()
+            .is_some_and(|out| AUTH_MARKERS.iter().any(|m| out.contains(m)))
+    }
+
+    /// Whether the forge CLI was **rate-limited** (HTTP 429, "API rate limit
+    /// exceeded", or a secondary/abuse limit) — a back-off-and-retry-later signal,
+    /// distinct from [`is_transient_fetch_error`](Error::is_transient_fetch_error)
+    /// (transient network blips). Lets a caller honour the limit instead of
+    /// hammering the API.
+    pub fn is_rate_limited(&self) -> bool {
+        self.cli_output()
+            .is_some_and(|out| RATE_LIMIT_MARKERS.iter().any(|m| out.contains(m)))
+    }
+
     /// Whether this is a **transient** network failure worth retrying (DNS,
     /// connection reset, timeout) — forge commands are network-bound, so a higher
     /// flow may want to retry. Named to match the wrapper classifiers
@@ -135,6 +201,69 @@ mod tests {
                 operation: "pr_checks",
             }
             .is_transient()
+        );
+    }
+
+    #[test]
+    fn classifies_auth_and_rate_limit_from_cli_output() {
+        let exit = |stderr: &str| {
+            Error::Forge(processkit::Error::Exit {
+                program: "gh".into(),
+                code: 1,
+                stdout: String::new(),
+                stderr: stderr.into(),
+            })
+        };
+        // Authentication failures (representative gh / glab phrasings) — auth, not rate-limit.
+        for msg in [
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)",
+            "error: 401 Unauthorized",
+            "401 Unauthorized (could not authenticate, run `glab auth login`)",
+            "you are not logged in. Run gh auth login to authenticate",
+            "GraphQL: requires authentication",
+        ] {
+            assert!(
+                exit(msg).is_unauthorized(),
+                "{msg:?} should be unauthorized"
+            );
+            assert!(!exit(msg).is_rate_limited(), "{msg:?} is not rate-limited");
+        }
+        // Rate limits (incl. the secondary/abuse limit) — rate-limit, not auth.
+        for msg in [
+            "API rate limit exceeded for user ID 123",
+            "HTTP 429: Too Many Requests",
+            "You have exceeded a secondary rate limit (abuse detection mechanism)",
+        ] {
+            assert!(
+                exit(msg).is_rate_limited(),
+                "{msg:?} should be rate-limited"
+            );
+            assert!(!exit(msg).is_unauthorized(), "{msg:?} is not an auth error");
+        }
+        // A generic non-zero exit is neither — crucially including a not-found that
+        // merely *echoes a number* like 401/429 (markers are status-qualified
+        // `http 401`/`http 429`, not bare integers, so no false positive).
+        assert!(!exit("no pull requests found").is_unauthorized());
+        assert!(!exit("no pull requests found").is_rate_limited());
+        assert!(
+            !exit("Could not resolve to a PullRequest with the number of 401.").is_unauthorized()
+        );
+        assert!(!exit("Could not resolve to an Issue with the number of 429.").is_rate_limited());
+        // Empty / message-less output is neither.
+        assert!(!exit("").is_unauthorized() && !exit("").is_rate_limited());
+        // Non-`Exit` errors and the facade's own variants carry no CLI body → neither.
+        let spawn = Error::Forge(processkit::Error::Spawn {
+            program: "gh".into(),
+            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
+        });
+        assert!(!spawn.is_unauthorized() && !spawn.is_rate_limited());
+        assert!(!Error::InvalidInput("x".into()).is_unauthorized());
+        assert!(
+            !Error::Unsupported {
+                forge: ForgeKind::Gitea,
+                operation: "pr_checks",
+            }
+            .is_rate_limited()
         );
     }
 }

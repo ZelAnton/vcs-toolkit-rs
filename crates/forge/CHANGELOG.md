@@ -10,7 +10,12 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Error::is_unauthorized()` and `Error::is_rate_limited()` classifiers — detect an
+  authentication failure (missing/invalid token, "not logged in") or a rate-limit
+  (HTTP 429 / "API rate limit exceeded" / secondary-abuse limit) from the forge
+  CLI's output, so a caller (or a language binding) can map them to dedicated
+  errors instead of string-matching `stderr`. Conservative/phrase-based: a miss
+  degrades to a generic forge error.
 
 ### Changed
 - **Renamed the inject constructors `Forge::for_github`/`for_gitlab`/`for_gitea`/
