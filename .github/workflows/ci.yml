@@ -32,6 +32,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo clippy --all-targets -- -D warnings
       # Lint every optional feature too: `mock` (mockall + generated mocks) and
       # `tracing` (the per-command observability events).
@@ -50,6 +54,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo doc --no-deps --workspace --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -75,6 +83,10 @@ jobs:
       # libs + bins only, deliberately NOT --all-targets: the MSRV contract is for
       # consumers compiling the LIBRARIES, not our tests/benches/examples (which may
       # use newer toolchain features). --all-features covers `mock` and `tracing`.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo check --workspace --all-features
 
   # Check every optional feature compiles SOLO on the crate that declares it. The
@@ -89,6 +101,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Check each optional feature in isolation
         # Data-driven: one `<crate> <feature>` pair per line. Adding a pair is a
         # one-line change here.
@@ -130,6 +146,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo build --all-targets
       - run: cargo test
       # Exercise every optional feature: the mock layer (automock + ScriptedRunner)
@@ -163,6 +183,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - name: Install jj ${{ matrix.jj }}
         # jj has no install-action entry and cargo-binstall ignores the pinned
         # version, so download the release tarball and drop the binary on PATH.
@@ -228,6 +252,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       # Only crates with no *unpublished* workspace dependency can be packaged here:
       # vcs-diff (no deps), vcs-cli-support (only the published `processkit`), and
       # vcs-testkit (no deps). They package and verify-build fully — catching missing
