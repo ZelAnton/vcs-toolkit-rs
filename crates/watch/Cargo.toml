@@ -24,6 +24,11 @@ notify = "8"
 # crate in the workspace to take tokio as a *runtime* (not just dev) dependency —
 # everything else hides it behind `processkit`; documented in the crate docs.
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+# Re-exported as `vcs_watch::processkit` so `Error::processkit_error()` can hand back
+# the structured underlying process error (`program`/`code`/`stdout`/`stderr`) — it is
+# part of the public API now. Also the `ScriptedRunner`/`ProcessRunner` test seam the
+# hermetic pipeline tests build on (available through this same dep, as in vcs-core).
+processkit.workspace = true
 
 [features]
 # Emit a `tracing` debug event when a re-query is skipped (e.g. a transient
@@ -50,9 +55,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-
 # `StreamExt::next` to drive the `stream`-feature test (works on any
 # `futures_core::Stream`; lighter than futures-util and already in the graph).
 tokio-stream = "0.1"
-# The `ScriptedRunner` seam backing the hermetic fake-`Repo` the pipeline tests
-# re-query, plus `ProcessRunner` to write the delaying/flaky test runners.
-processkit.workspace = true
 # `#[async_trait]` to implement `ProcessRunner` for the custom test runners.
 async-trait = "0.1"
 # Real throwaway git/jj repositories for the `#[ignore]` integration tests.

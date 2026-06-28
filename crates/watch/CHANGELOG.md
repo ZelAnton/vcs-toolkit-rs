@@ -10,7 +10,20 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Error::is_transient()` and `Error::is_not_found()` classifiers — delegate through
+  the wrapped `vcs-core` error so a caller can branch on a transient io/spawn hiccup
+  or a missing `git`/`jj` binary without hand-walking the nesting. Mirrors the
+  corresponding classifiers on `vcs_core::Error` / `vcs_forge::Error` (which expose a
+  superset; `is_transient_fetch_error` is intentionally omitted here — the watcher
+  never fetches, so it would always be `false`).
+- `Error::processkit_error() -> Option<&processkit::Error>` — flattens the two-level
+  `Vcs(vcs_core::Error::Vcs(_))` nesting to the structured underlying process error
+  (`program`/`code`/`stdout`/`stderr`), so a consumer (or the planned `vcs-toolkit-py`
+  binding) can read it uniformly. `None` for `Notify`/`Io` and non-subprocess
+  `vcs-core` errors.
+- Re-export of `processkit` (`vcs_watch::processkit`) so a `vcs-watch`-only consumer
+  can name the `processkit_error()` return type without a direct dependency (mirrors
+  `vcs_core::processkit` / `vcs_forge::processkit`).
 
 ### Changed
 -

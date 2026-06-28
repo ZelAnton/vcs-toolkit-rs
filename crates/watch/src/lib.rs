@@ -124,6 +124,10 @@ pub use event::{RepoChange, RepoEvent};
 // Re-export the snapshot types a consumer reads off a `RepoChange`, so depending
 // on `vcs-watch` alone suffices.
 pub use vcs_core::{OperationState, RepoSnapshot};
+// Re-export `processkit` so a `vcs-watch`-only consumer can name the
+// `Error::processkit_error()` return type without a direct `processkit`
+// dependency (mirrors `vcs_core::processkit` / `vcs_forge::processkit`).
+pub use processkit;
 
 /// Default quiet window: a re-query fires once the watched dir has been silent
 /// for this long after the last event.
