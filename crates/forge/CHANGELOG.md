@@ -71,6 +71,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   body is rejected with `Error::InvalidInput` *before* any spawn — every backend
   passes the body in a `--body`/`--comment` flag-value slot (so a flag-like body is
   safe), but a blank comment is a caller bug, so it fails fast and uniformly.
+  *(Correction: the "every backend … flag-value slot" claim is inaccurate — Gitea
+  takes the body positionally; see the `[Unreleased]` ▸ Fixed entry.)*
 - `Forge::pr_edit(number, PrEdit)` — edit a PR/MR's title and/or body. Rejects
   both-`None` with `Error::InvalidInput` *before* any spawn; routes to the three
   per-forge wrappers.

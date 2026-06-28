@@ -395,8 +395,9 @@ impl<R: ProcessRunner> Forge<R> {
     /// with `-` is fine. Gitea's `tea comment <n> <body>` takes the body as a
     /// **positional**, so a body whose first non-space character is `-` (e.g. a
     /// Markdown bullet list, or `---`) is rejected with an error — it would
-    /// otherwise be parsed as a `tea` flag. When targeting Gitea, lead such a body
-    /// with text (or a newline) to keep the first character non-`-`.
+    /// otherwise be parsed as a `tea` flag. (Leading whitespace doesn't help: the
+    /// guard trims first.) When targeting Gitea, start such a body with a non-`-`
+    /// character — e.g. a heading or a sentence above the list.
     pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
         if body.trim().is_empty() {
             return Err(Error::InvalidInput(
