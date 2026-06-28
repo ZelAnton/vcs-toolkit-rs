@@ -17,6 +17,11 @@ crates; tag releases as `vcs-jj-v<version>`.
   crate so `vcs-git`/`vcs-jj` share one definition; `vcs_jj::DiffSpec` still
   resolves) and is no longer `#[non_exhaustive]`, so a `match` over it can be
   exhaustive. Requires `vcs-diff` ≥ the version that introduces `DiffSpec`.
+- **Docs:** `Jj::transaction` now documents the **non-closure path** for FFI /
+  language bindings (which can't drive the borrowed-`JjAt` closure form across
+  the boundary): capture `op_head` before the mutations and call `op_restore`
+  back to it on failure — the public `JjApi` primitives that `transaction` wraps
+  internally. No API change; the imperative path already existed.
 
 ### Fixed
 -

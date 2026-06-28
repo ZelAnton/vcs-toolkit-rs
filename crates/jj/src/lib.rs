@@ -114,6 +114,12 @@
 //! # Ok(()) }
 //! ```
 //!
+//! A binding (or any caller that can't pass a Rust closure) drives the same
+//! rollback imperatively with the primitives [`transaction`](Jj::transaction)
+//! wraps — [`op_head`](JjApi::op_head) to capture a savepoint and
+//! [`op_restore`](JjApi::op_restore) to roll back to it on failure (both on the
+//! object-safe [`JjApi`]).
+//!
 //! # Testing
 //!
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
@@ -1456,6 +1462,15 @@ impl<R: ProcessRunner> Jj<R> {
     /// - If the restore itself fails, the *original* error from `f` is returned
     ///   and the repo may be left mid-transaction; re-probe
     ///   [`op_head`](JjApi::op_head) to detect that.
+    ///
+    /// **Non-closure / FFI callers**: the borrowed [`JjAt`] and the `'a`-bound
+    /// future this closure form takes don't cross an FFI boundary cleanly, so a
+    /// language binding replicates the rollback with the public primitives this
+    /// method wraps — capture [`op_head`](JjApi::op_head) before the mutations, run
+    /// them (through a [`JjAt`] or the dir-taking methods), then on failure call
+    /// [`op_restore`](JjApi::op_restore) back to the captured id, best-effort
+    /// (don't let its error mask the original — the same caveats apply). Both are
+    /// on the object-safe [`JjApi`], so this also works through `&dyn JjApi`.
     pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
     where
         F: FnOnce(JjAt<'a, R>) -> Fut,
