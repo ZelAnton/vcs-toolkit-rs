@@ -17,13 +17,20 @@ pub enum Error {
 }
 
 impl Error {
-    /// Whether this wraps a **transient** io/spawn failure (interrupted /
-    /// would-block / resource-busy) from the underlying `vcs-core` query —
-    /// delegates to [`vcs_core::Error::is_transient`]. Mirrors the classifier
-    /// family on the other facades. `Notify`/`Io` and non-transient errors are
-    /// `false`.
+    /// Whether this wraps a **transient** failure worth retrying — an
+    /// interrupted / would-block / resource-busy io/spawn failure from the
+    /// underlying `vcs-core` query (delegates to
+    /// [`vcs_core::Error::is_transient`]), **or** a baseline-snapshot **timeout**
+    /// (`Io` `TimedOut`, raised when the startup snapshot exceeds
+    /// `requery_timeout`) — a wedged repo may un-wedge, and the loop already treats
+    /// a re-query timeout as a transient skip, so `build()` agrees. Other `Io` and
+    /// `Notify` errors are `false`. Mirrors the classifier family on the other facades.
     pub fn is_transient(&self) -> bool {
-        matches!(self, Error::Vcs(e) if e.is_transient())
+        match self {
+            Error::Vcs(e) => e.is_transient(),
+            Error::Io(e) => e.kind() == std::io::ErrorKind::TimedOut,
+            _ => false,
+        }
     }
 
     /// Whether the underlying VCS binary (`git`/`jj`) **wasn't found** — a setup

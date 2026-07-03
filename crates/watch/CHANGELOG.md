@@ -43,6 +43,18 @@ crates; tag releases as `vcs-watch-v<version>`.
   overflows `Instant + Duration` and aborts the background loop — which would drop
   the event channel and leave the watcher permanently, silently deaf.
   (`docs/audit-2026-07.md` P1.)
+- **The notify→loop bridge is now bounded, so a back-pressured watcher can't leak
+  memory.** It was an *unbounded* channel: if the consumer kept the `RepoWatcher`
+  alive but stopped calling `recv()` while the filesystem churned, the raw-event queue
+  grew without limit. It is now a **capacity-1** channel the callback fills with
+  `try_send` — a burst *coalesces* into one pending "re-check" signal (the loop
+  re-queries the full snapshot anyway, so no state is lost). (`docs/audit-2026-07.md` R2.)
+- **The startup baseline snapshot now honors `requery_timeout`.** A snapshot that
+  wedged (a hung fsmonitor, a network filesystem, a held jj lock) on a `Repo` built
+  without its own `default_timeout` would hang `build()` **at startup** — the very
+  failure the loop-side deadline prevents. `build()` now bounds the baseline capture
+  with the same deadline, returning an `Io` `TimedOut` error instead of hanging.
+  (`docs/audit-2026-07.md` R4.)
 
 ## [0.2.0] - 2026-06-27
 

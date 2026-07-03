@@ -228,11 +228,16 @@ impl Builder {
         // branch create/delete is seen). See `state_dirs`.
         let state_dirs = state_dirs(self.repo.kind(), &root)?;
 
-        // Bridge: notify's callback thread pushes a unit signal per event into an
-        // unbounded channel (non-blocking, thread-safe); the debounce loop drains
-        // it. Build the watcher and register paths *before* the baseline snapshot,
-        // so a change racing the baseline is queued, not lost.
-        let (raw_tx, raw_rx) = mpsc::unbounded_channel::<()>();
+        // Bridge: notify's callback thread pushes a unit "something changed" signal
+        // per event; the debounce loop drains it. The channel is **capacity 1** and
+        // the callback uses `try_send`, so a burst *coalesces* into a single pending
+        // signal (extra events while one is pending are dropped — the loop re-queries
+        // the full snapshot anyway, so no state is lost). This bounds memory: an
+        // unbounded channel would grow without limit if the consumer stopped draining
+        // the output while a filesystem storm churned (R2). Build the watcher and
+        // register paths *before* the baseline snapshot, so a change racing the
+        // baseline is queued, not lost.
+        let (raw_tx, raw_rx) = mpsc::channel::<()>(1);
         let stats = Arc::new(StatsInner::default());
         let cb_stats = Arc::clone(&stats);
         let mut watcher =
@@ -245,7 +250,11 @@ impl Builder {
                 if res.is_err() {
                     cb_stats.note_watch_error();
                 }
-                let _ = raw_tx.send(());
+                // `try_send` on the capacity-1 channel: succeeds when no signal is
+                // pending, drops (coalesces) when one already is. Never blocks the
+                // notify callback thread; `Err` (full or loop-ended) is intentionally
+                // ignored.
+                let _ = raw_tx.try_send(());
             })?;
         if self.working_tree {
             watcher.watch(&root, RecursiveMode::Recursive)?;
@@ -262,8 +271,12 @@ impl Builder {
             }
         }
 
-        let snapshot = self.repo.snapshot().await?;
-        let branches = self.repo.local_branches().await?;
+        // Capture the baseline under the same `requery_timeout` deadline the loop
+        // applies to every re-query (R4) — otherwise a snapshot that wedges (a hung
+        // fsmonitor, a network filesystem, a held jj lock) on a `Repo` built without
+        // its own `default_timeout` would hang `build()` at startup, the very failure
+        // the loop-side deadline exists to prevent.
+        let (snapshot, branches) = capture_baseline(&*self.repo, self.requery_timeout).await?;
         let baseline = snapshot.clone();
         let prev = event::WatchState::from_snapshot(&snapshot, branches);
 
@@ -481,6 +494,32 @@ impl Drop for RepoWatcher {
     }
 }
 
+/// Capture the startup baseline (snapshot + local branches) under `requery_timeout`
+/// (R4). A `Some(limit)` bounds the whole capture with `tokio::time::timeout`; on
+/// expiry it returns [`Error::Io`] `TimedOut` and dropping the future kills the
+/// underlying process (kill-on-drop), exactly as the loop does for a re-query — so a
+/// wedged snapshot can't hang `build()` forever. `None` leaves it unbounded.
+async fn capture_baseline(
+    repo: &dyn VcsRepo,
+    requery_timeout: Option<Duration>,
+) -> Result<(vcs_core::RepoSnapshot, Vec<String>)> {
+    let query = async {
+        let snapshot = repo.snapshot().await?;
+        let branches = repo.local_branches().await?;
+        Ok::<_, Error>((snapshot, branches))
+    };
+    match requery_timeout {
+        Some(limit) => match tokio::time::timeout(limit, query).await {
+            Ok(result) => result,
+            Err(_elapsed) => Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("baseline snapshot exceeded the {limit:?} requery_timeout"),
+            ))),
+        },
+        None => query.await,
+    }
+}
+
 /// The background loop: coalesce a burst of filesystem signals, re-query the
 /// settled state, diff against the previous, and emit a [`RepoChange`] when
 /// anything changed.
@@ -491,7 +530,7 @@ impl Drop for RepoWatcher {
 /// the debounce/ceiling/skip semantics without any real filesystem or process.
 async fn watch_loop(
     repo: Box<dyn VcsRepo>,
-    mut raw_rx: mpsc::UnboundedReceiver<()>,
+    mut raw_rx: mpsc::Receiver<()>,
     out_tx: mpsc::Sender<RepoChange>,
     mut prev: event::WatchState,
     config: LoopConfig,
@@ -593,7 +632,7 @@ async fn watch_loop(
 /// Drop every already-queued unit signal — the burst is one observation. Leaves
 /// channel-closed detection to the caller's next `recv` (a drained-empty and a
 /// closed channel both just stop yielding here).
-fn drain(raw_rx: &mut mpsc::UnboundedReceiver<()>) {
+fn drain(raw_rx: &mut mpsc::Receiver<()>) {
     while raw_rx.try_recv().is_ok() {}
 }
 
@@ -905,14 +944,24 @@ mod pipeline_tests {
     }
 
     struct Harness {
-        sig: mpsc::UnboundedSender<()>,
+        sig: mpsc::Sender<()>,
         out: mpsc::Receiver<RepoChange>,
         stats: Arc<StatsInner>,
         task: tokio::task::JoinHandle<()>,
     }
 
+    impl Harness {
+        // Mirror the production notify callback: fire-and-forget `try_send` on the
+        // capacity-1 bridge (a pending signal coalesces the next one). `Err` (full or
+        // loop-ended) is intentionally ignored — a still-pending signal already
+        // triggers the re-query the caller wants.
+        fn signal(&self) {
+            let _ = self.sig.try_send(());
+        }
+    }
+
     fn spawn_loop(repo: Box<dyn VcsRepo>, prev: event::WatchState, config: LoopConfig) -> Harness {
-        let (sig, raw_rx) = mpsc::unbounded_channel();
+        let (sig, raw_rx) = mpsc::channel(1);
         let (out_tx, out) = mpsc::channel(config.output_capacity);
         let stats = Arc::new(StatsInner::default());
         let task = tokio::spawn(watch_loop(
@@ -950,7 +999,7 @@ mod pipeline_tests {
         let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
 
         for _ in 0..5 {
-            h.sig.send(()).expect("send");
+            h.signal();
             tokio::time::advance(Duration::from_millis(10)).await;
         }
         let change = h.out.recv().await.expect("one coalesced change");
@@ -989,7 +1038,10 @@ mod pipeline_tests {
         let pump_sig = h.sig.clone();
         let pump = tokio::spawn(async move {
             loop {
-                if pump_sig.send(()).is_err() {
+                // `try_send` mirrors the notify callback. `Full` means our previous
+                // signal is still pending (coalesced) — keep pumping; `Closed` means
+                // the loop ended — stop.
+                if let Err(mpsc::error::TrySendError::Closed(())) = pump_sig.try_send(()) {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1024,7 +1076,7 @@ mod pipeline_tests {
             ..defaults()
         };
         let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, config);
-        h.sig.send(()).expect("send");
+        h.signal();
         tokio::time::advance(Duration::from_millis(300)).await; // past the 250 ms debounce
         let change = h
             .out
@@ -1041,7 +1093,7 @@ mod pipeline_tests {
         let prev = baseline(&scratch.0, "aaa").await;
         let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
 
-        h.sig.send(()).expect("send");
+        h.signal();
         let change = h.out.recv().await.expect("change after the quiet gap");
         assert!(
             change
@@ -1060,7 +1112,7 @@ mod pipeline_tests {
         // Same head as the baseline → empty diff.
         let mut h = spawn_loop(scripted_repo(&scratch.0, "aaa"), prev, defaults());
 
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await; // let the loop register its quiet timer first
         tokio::time::advance(Duration::from_millis(300)).await; // past debounce
         settle().await; // let the re-query run
@@ -1122,7 +1174,7 @@ mod pipeline_tests {
         let mut h = spawn_loop(repo, prev, defaults());
 
         // First attempt: the snapshot fails → skip, nothing emitted.
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await; // loop registers the quiet timer
         tokio::time::advance(Duration::from_millis(300)).await;
         settle().await; // the (failing) re-query runs
@@ -1132,7 +1184,7 @@ mod pipeline_tests {
         assert!(h.out.try_recv().is_err());
 
         // Second signal: the lock "cleared" — the re-query recovers and emits.
-        h.sig.send(()).expect("send");
+        h.signal();
         let change = h.out.recv().await.expect("recovered change");
         assert!(
             change
@@ -1189,7 +1241,7 @@ mod pipeline_tests {
         };
         let mut h = spawn_loop(repo, prev, config);
 
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await; // loop registers the quiet timer
         tokio::time::advance(Duration::from_millis(300)).await; // debounce
         settle().await; // re-query starts; Sleepy + the deadline register timers
@@ -1201,13 +1253,47 @@ mod pipeline_tests {
         assert!(h.out.try_recv().is_err());
 
         // The loop is alive: a second attempt runs (and times out the same way).
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await;
         tokio::time::advance(Duration::from_millis(300)).await;
         settle().await;
         tokio::time::advance(Duration::from_secs(6)).await;
         settle().await;
         assert_eq!(h.stats.snapshot().requeries, 2);
+    }
+
+    // R4: the startup baseline honors `requery_timeout` — a snapshot that wedges (a
+    // `Sleepy` repo far past the deadline) errors with `TimedOut` instead of hanging
+    // `build()` forever. Exercises `capture_baseline` directly (the `build()` path is
+    // only reachable with a real notify watcher).
+    #[tokio::test(start_paused = true)]
+    async fn baseline_capture_honors_requery_timeout() {
+        let scratch = Scratch::new();
+        let repo = Repo::from_git(
+            "/r",
+            "/r",
+            Git::with_runner(Sleepy {
+                delay: Duration::from_secs(10),
+                gitdir: scratch.0.clone(),
+                head: "bbb",
+            }),
+        );
+        let err = capture_baseline(&repo, Some(Duration::from_secs(5)))
+            .await
+            .expect_err("a wedged baseline must time out, not hang");
+        assert!(
+            matches!(&err, Error::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+            "expected an Io TimedOut, got {err:?}"
+        );
+        // A wedged baseline is retryable — `build()` agrees with the loop's transient
+        // treatment of a re-query timeout.
+        assert!(err.is_transient(), "a baseline timeout is transient");
+
+        // With no deadline the same query completes (Sleepy still returns, just late);
+        // advancing the clock lets it finish so we prove the timeout — not the repo —
+        // is what produced the error above.
+        let ok = capture_baseline(&repo, None).await;
+        assert!(ok.is_ok(), "an unbounded baseline still succeeds: {ok:?}");
     }
 
     // Closing the signal channel mid-debounce ends the loop promptly and closes
@@ -1223,7 +1309,7 @@ mod pipeline_tests {
             task,
         } = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
 
-        sig.send(()).expect("send");
+        sig.try_send(()).expect("send"); // empty capacity-1 channel → succeeds
         tokio::time::advance(Duration::from_millis(100)).await; // mid-debounce
         drop(sig);
 
@@ -1281,13 +1367,13 @@ mod pipeline_tests {
         let mut h = spawn_loop(repo, prev, config);
 
         // First change fills the capacity-1 channel.
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await; // loop registers the quiet timer
         tokio::time::advance(Duration::from_millis(300)).await;
         settle().await; // re-query runs; emission 1 fills the channel
         // Second re-query produces another change; the send parks (channel full):
         // the re-query ran but the emission hasn't landed.
-        h.sig.send(()).expect("send");
+        h.signal();
         settle().await;
         tokio::time::advance(Duration::from_millis(300)).await;
         settle().await;
@@ -1343,7 +1429,10 @@ mod pipeline_tests {
         };
         assert_eq!(watcher.current().head.as_deref(), Some("aaa"));
 
-        h.sig.send(()).expect("send");
+        // `h` is partially moved into `watcher` above, so reach the remaining `sig`
+        // field directly rather than through the `h.signal()` method (which would
+        // borrow all of `h`).
+        let _ = h.sig.try_send(());
         let change = watcher.next().await.expect("stream item");
         assert!(
             change
