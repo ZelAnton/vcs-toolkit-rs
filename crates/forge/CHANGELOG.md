@@ -16,7 +16,15 @@ crates; tag releases as `vcs-forge-v<version>`.
 -
 
 ### Fixed
--
+- **`Error::is_unauthorized` no longer false-fires on `gh`'s wrong-remote hint.** The
+  bare `gh auth login` *suggestion* verb was an auth marker, but `gh` also prints it in
+  a misconfiguration message ("none of the git remotes … point to a known GitHub host …
+  please use `gh auth login`") — so a caller prompted a futile re-login instead of
+  surfacing the wrong/absent forge remote. The bare verb is replaced by the unique
+  phrase of gh's genuine no-auth message (`get started with github cli`), so that real
+  failure — and `not logged in` / `HTTP 401` / `bad credentials` / `authentication
+  required`/`failed` — still classify, while the hint does not. (`docs/audit-2026-07.md`
+  M27.)
 
 ## [0.4.0] - 2026-07-03
 

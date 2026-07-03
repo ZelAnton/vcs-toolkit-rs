@@ -44,7 +44,13 @@ const AUTH_MARKERS: &[&str] = &[
     "authentication required",
     "authentication failed",
     "not logged in",
-    "auth login",
+    // gh's canonical "run an operation with no auth configured" message
+    // ("To get started with GitHub CLI, please run: gh auth login"). Keyed on this
+    // unique phrase, NOT the bare "gh auth login" suggestion verb — gh prints that verb
+    // in a wrong-remote *hint* too ("none of the git remotes … point to a known GitHub
+    // host … please use `gh auth login`"), a misconfiguration, not an auth failure, so
+    // matching the bare verb prompted a futile re-login (M27).
+    "get started with github cli",
 ];
 
 /// Lowercase markers identifying a **rate-limit** failure. Keyed on the message
@@ -279,6 +285,9 @@ mod tests {
             "401 Unauthorized (could not authenticate, run `glab auth login`)",
             "you are not logged in. Run gh auth login to authenticate",
             "GraphQL: requires authentication",
+            // gh's canonical no-auth operation failure — carries only the "get started"
+            // phrase, not the other markers (M27: this must still classify).
+            "To get started with GitHub CLI, please run:  gh auth login",
         ] {
             assert!(
                 exit(msg).is_unauthorized(),
@@ -286,6 +295,16 @@ mod tests {
             );
             assert!(!exit(msg).is_rate_limited(), "{msg:?} is not rate-limited");
         }
+        // M27: gh's wrong-remote hint SUGGESTS `gh auth login` but is a
+        // misconfiguration, not an auth failure — matching the bare "auth login"
+        // suggestion verb would prompt a futile re-login, so it must NOT classify.
+        let wrong_host = "none of the git remotes configured for this repository point \
+                          to a known GitHub host. To tell gh about a new GitHub host, \
+                          please use `gh auth login`";
+        assert!(
+            !exit(wrong_host).is_unauthorized(),
+            "a wrong-remote hint is a misconfiguration, not an auth failure"
+        );
         // Rate limits (incl. the secondary/abuse limit) — rate-limit, not auth.
         for msg in [
             "API rate limit exceeded for user ID 123",

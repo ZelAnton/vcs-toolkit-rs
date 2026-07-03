@@ -16,7 +16,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
 -
 
 ### Fixed
--
+- **A fork PR's `head_branch` is now a flat branch name.** tea renders a cross-fork
+  PR's head as `owner:branch` (and `<marker>:branch` for a deleted fork), unlike the
+  plain branch it renders for a same-repo PR — and unlike GitHub/GitLab's flat head. The
+  parser now strips the `owner:` prefix, so `head_branch` is always the bare branch (a
+  same-repo head, which has no `:`, is unchanged). (`docs/audit-2026-07.md` M26.)
 
 ## [0.4.0] - 2026-07-03
 

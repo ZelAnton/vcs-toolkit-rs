@@ -43,7 +43,9 @@ pub struct PullRequest {
     /// Whether the PR has been merged — derived from `state == "merged"` (tea has
     /// no separate merged column).
     pub merged: bool,
-    /// Source (head) branch name (tea's `head` column, a flat branch name).
+    /// Source (head) branch name — a **flat** branch. tea renders a fork PR's head as
+    /// `owner:branch`; the parser strips the `owner:` prefix so this is always the bare
+    /// branch (matching GitHub/GitLab; the fork owner isn't modelled).
     pub head_branch: String,
     /// Target (base) branch name (tea's `base` column, a flat branch name).
     pub base_branch: String,
@@ -79,7 +81,7 @@ impl TryFrom<PrJson> for PullRequest {
             // tea's `state` column already folds in the merge flag.
             merged: raw.state.eq_ignore_ascii_case("merged"),
             state: raw.state,
-            head_branch: raw.head,
+            head_branch: strip_fork_owner(raw.head),
             base_branch: raw.base,
             url: raw.url,
         })
@@ -239,6 +241,19 @@ impl From<ReleaseJson> for Release {
     }
 }
 
+/// Normalise tea's PR **head** column to a flat branch name. For a **fork** PR,
+/// tea's `formatPRHead` renders `owner:branch` (and `<marker>:branch` for a deleted
+/// fork), unlike the plain branch it renders for a same-repo PR — and unlike
+/// GitHub's/GitLab's flat head. Since a git ref can't contain `:`, splitting on the
+/// first `:` recovers the branch (the fork owner isn't modelled on the flat DTO,
+/// matching the other backends); a same-repo head with no `:` is returned as-is. (M26)
+fn strip_fork_owner(head: String) -> String {
+    match head.split_once(':') {
+        Some((_owner, branch)) => branch.to_string(),
+        None => head,
+    }
+}
+
 /// Parse a tea table cell holding an issue/PR index (always a JSON **string**,
 /// e.g. `"4"`) into a `u64`, mapping a non-numeric value to [`Error::Parse`].
 fn parse_index(value: &str) -> Result<u64> {
@@ -355,6 +370,26 @@ mod tests {
                 url: "https://gitea/pr/7".into(),
             }
         );
+    }
+
+    // M26: a fork PR's head is rendered `owner:branch` by tea; the parser strips the
+    // `owner:` prefix to a flat branch (a same-repo head has no `:` and is unchanged).
+    #[test]
+    fn fork_pr_head_strips_owner_prefix() {
+        let json = r#"[
+            {"index": "8", "title": "From a fork", "state": "open",
+             "head": "alice:feature", "base": "main", "url": "https://gitea/pr/8"},
+            {"index": "9", "title": "Same repo", "state": "open",
+             "head": "topic/y", "base": "main", "url": "https://gitea/pr/9"}
+        ]"#;
+        let prs = parse_pr_list(json).expect("parse prs");
+        assert_eq!(prs[0].head_branch, "feature", "fork owner stripped");
+        assert_eq!(prs[1].head_branch, "topic/y", "same-repo head unchanged");
+        // The direct helper: deleted-fork marker prefix also strips to the branch;
+        // degenerate inputs (empty, no colon) pass through unchanged.
+        assert_eq!(strip_fork_owner("delete:old".into()), "old");
+        assert_eq!(strip_fork_owner("plain".into()), "plain");
+        assert_eq!(strip_fork_owner(String::new()), "");
     }
 
     // tea folds the merge flag into the `state` column: a merged PR reads
