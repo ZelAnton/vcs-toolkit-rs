@@ -10,10 +10,17 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `MergeCheck` (+ its partial builder `MergeCheckBranch`) — the spec that `is_merged`
+  now takes.
 
 ### Changed
--
+- **`GitApi::is_merged` takes a `MergeCheck` spec, not two bare `&str` refs
+  (breaking).** `is_merged(dir, branch, target)` had two adjacent same-typed refs that
+  compiled when transposed and **inverted** the answer (asking "is `target` merged into
+  `branch`"). It's now `is_merged(dir, MergeCheck::branch("feature").into_base("main"))`
+  — the branch and the base are named across two builder steps, so a swap can't compile
+  silently. Emitted `git branch --merged <base>` is unchanged. (`docs/audit-2026-07.md`
+  A5.)
 
 ### Fixed
 -

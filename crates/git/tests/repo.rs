@@ -8,7 +8,7 @@ use std::path::PathBuf;
 // (initialisation IS the subject), so they use `TempDir` + `configure_identity`
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
-use vcs_git::{AnnotatedTag, Git, GitApi, MergeCommit, WorktreeAdd};
+use vcs_git::{AnnotatedTag, Git, GitApi, MergeCheck, MergeCommit, WorktreeAdd};
 use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
 
 #[tokio::test]
@@ -177,7 +177,14 @@ async fn worktree_add_list_remove_cycle() {
         .await
         .expect("current_branch")
         .expect("on a branch");
-    assert!(git.is_merged(dir, &cur, &cur).await.expect("is_merged"));
+    assert!(
+        git.is_merged(
+            dir,
+            MergeCheck::branch(cur.as_str()).into_base(cur.as_str())
+        )
+        .await
+        .expect("is_merged")
+    );
     // No origin configured: `remote_head_branch` is `None`, not an error
     // (the `--quiet` path).
     assert!(
@@ -423,13 +430,13 @@ async fn is_merged_distinguishes_merged_and_unmerged() {
     git.checkout(dir, &main).await.expect("checkout");
 
     assert!(
-        git.is_merged(dir, "done", &main)
+        git.is_merged(dir, MergeCheck::branch("done").into_base(main.as_str()))
             .await
             .expect("is_merged done"),
         "`done` was merged into main"
     );
     assert!(
-        !git.is_merged(dir, "pending", &main)
+        !git.is_merged(dir, MergeCheck::branch("pending").into_base(main.as_str()))
             .await
             .expect("is_merged pending"),
         "`pending` was never merged into main"

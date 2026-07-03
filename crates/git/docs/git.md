@@ -219,7 +219,7 @@ async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
 async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
 async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>;
 async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
-async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool>;
+async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>; // MergeCheck::branch(b).into_base(base)
 async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
 async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 ```
@@ -229,8 +229,10 @@ async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 - **`branch_exists`** — `show-ref --verify --quiet refs/heads/<name>`, exit-code mapped.
 - **`delete_branch`** — `branch -d`, or `-D` when `force`.
 - **`rename_branch`** — `branch -m <old> <new>`.
-- **`is_merged`** — whether `branch` is fully merged into `target` (`branch --merged
-  <target>`).
+- **`is_merged`** — whether the [`MergeCheck`]'s `branch` is fully merged into its
+  `base` (`branch --merged <base>`). Built as
+  `MergeCheck::branch("feature").into_base("main")` — naming the two same-typed refs
+  across two steps so a swap (which would *invert* the answer) can't compile silently.
 - **`set_upstream`** — `branch --set-upstream-to=<upstream> <branch>`.
 - **`current_branch`** — `symbolic-ref --quiet --short HEAD` → `Some("main")` for a
   normal **or unborn** branch, `None` on a detached HEAD. (Mirrors jj's `Option`
@@ -238,13 +240,13 @@ async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{Git, GitApi, MergeCheck};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if !git.branch_exists(repo, "feature").await? {            // bool
     git.create_branch(repo, "feature").await?;
 }
 git.set_upstream(repo, "feature", "origin/feature").await?;
-if git.is_merged(repo, "feature", "main").await? {         // bool
+if git.is_merged(repo, MergeCheck::branch("feature").into_base("main")).await? { // bool
     git.delete_branch(repo, "feature", false).await?;      // `branch -d feature`
 }
 for b in git.branches(repo).await? {                       // Vec<Branch>

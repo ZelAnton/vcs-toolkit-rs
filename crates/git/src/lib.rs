@@ -320,6 +320,46 @@ impl CommitPaths {
     }
 }
 
+/// Partial [`MergeCheck`] — names the branch being tested; chain
+/// [`into_base`](MergeCheckBranch::into_base) to name the base it must be merged into.
+#[derive(Debug, Clone)]
+pub struct MergeCheckBranch {
+    branch: String,
+}
+
+impl MergeCheckBranch {
+    /// The base branch/ref `branch` should be fully merged **into**.
+    pub fn into_base(self, base: impl Into<String>) -> MergeCheck {
+        MergeCheck {
+            branch: self.branch,
+            base: base.into(),
+        }
+    }
+}
+
+/// A "is `branch` fully merged into `base`?" check for [`GitApi::is_merged`].
+///
+/// Built as `MergeCheck::branch("feature").into_base("main")` — the two same-typed
+/// refs are named across **two** builder steps, so they can't be silently transposed
+/// (a swap would *invert* the answer). `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MergeCheck {
+    /// The branch/ref being tested for having been merged.
+    pub branch: String,
+    /// The base branch/ref it should be fully merged into.
+    pub base: String,
+}
+
+impl MergeCheck {
+    /// Name the `branch` to test; chain [`into_base`](MergeCheckBranch::into_base).
+    pub fn branch(name: impl Into<String>) -> MergeCheckBranch {
+        MergeCheckBranch {
+            branch: name.into(),
+        }
+    }
+}
+
 /// Options for [`GitApi::merge_commit`] (`git merge` that commits the result).
 ///
 /// `#[non_exhaustive]`, so build it through [`MergeCommit::branch`] and the
@@ -684,8 +724,11 @@ pub trait GitApi: Send + Sync {
 
     // --- Branches ------------------------------------------------------------
 
-    /// Whether `branch` is fully merged into `target` (`branch --merged <target>`).
-    async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool>;
+    /// Whether the [`MergeCheck`]'s `branch` is fully merged into its `base`
+    /// (`branch --merged <base>`). Build it as
+    /// `MergeCheck::branch("feature").into_base("main")` so the two refs can't be
+    /// transposed (a swap would invert the answer).
+    async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>;
     /// Set `branch`'s upstream to `upstream` (e.g. `origin/main`)
     /// (`branch --set-upstream-to=<upstream> <branch>`).
     async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
@@ -1345,9 +1388,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.parse(cmd, parse::parse_ls_remote_heads).await
     }
 
-    async fn is_merged(&self, dir: &Path, branch: &str, target: &str) -> Result<bool> {
-        reject_flag_like("branch", branch)?;
-        reject_flag_like("target", target)?;
+    async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool> {
+        reject_flag_like("branch", &spec.branch)?;
+        reject_flag_like("base", &spec.base)?;
         // `--no-column` + `--no-color`: under `column.ui = always` git would pack
         // several names per line and under `color.{ui,branch} = always` it would
         // inject ANSI escapes — both even when piped, so the marker-stripping
@@ -1356,7 +1399,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .core
             .run(self.core.command_in(
                 dir,
-                ["branch", "--merged", target, "--no-column", "--no-color"],
+                [
+                    "branch",
+                    "--merged",
+                    spec.base.as_str(),
+                    "--no-column",
+                    "--no-color",
+                ],
             ))
             .await?;
         // Each line is a fixed 2-column marker (`  `/`* `/`+ `) then the name;
@@ -1365,7 +1414,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         Ok(out
             .lines()
             .filter_map(|line| line.get(2..))
-            .any(|b| b == branch))
+            .any(|b| b == spec.branch.as_str()))
     }
 
     async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()> {
@@ -2385,7 +2434,7 @@ vcs_cli_support::at_forwarders! {
         fn remote_url(remote: &str) -> Result<String>;
         fn upstream() -> Result<Option<String>>;
         fn remote_branches(remote: &str) -> Result<Vec<String>>;
-        fn is_merged(branch: &str, target: &str) -> Result<bool>;
+        fn is_merged(spec: MergeCheck) -> Result<bool>;
         fn set_upstream(branch: &str, upstream: &str) -> Result<()>;
         fn delete_branch(name: &str, force: bool) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
@@ -3470,14 +3519,43 @@ mod tests {
         ));
         for name in ["main", "feature", "wt-branch"] {
             assert!(
-                git.is_merged(Path::new("."), name, "main").await.unwrap(),
+                git.is_merged(Path::new("."), MergeCheck::branch(name).into_base("main"))
+                    .await
+                    .unwrap(),
                 "{name} should be reported merged"
             );
         }
         assert!(
-            !git.is_merged(Path::new("."), "absent", "main")
-                .await
-                .unwrap()
+            !git.is_merged(
+                Path::new("."),
+                MergeCheck::branch("absent").into_base("main")
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    // A5: the `MergeCheck` builder lands branch/base in the right slots, and
+    // `is_merged` queries `branch --merged <base>` — so a transposed pair would
+    // change the emitted command, not silently invert a same-shaped call.
+    #[tokio::test]
+    async fn merge_check_names_branch_and_base_without_transposition() {
+        use processkit::testing::RecordingRunner;
+        let spec = MergeCheck::branch("feature").into_base("main");
+        assert_eq!(spec.branch, "feature");
+        assert_eq!(spec.base, "main");
+
+        let rec = RecordingRunner::replying(Reply::ok("  feature\n* main\n"));
+        Git::with_runner(&rec)
+            .is_merged(
+                Path::new("/repo"),
+                MergeCheck::branch("feature").into_base("main"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["branch", "--merged", "main", "--no-column", "--no-color"]
         );
     }
 
@@ -3682,7 +3760,11 @@ mod tests {
         );
         assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
         assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
-        assert!(git.is_merged(dir, "-evil", "main").await.is_err());
+        assert!(
+            git.is_merged(dir, MergeCheck::branch("-evil").into_base("main"))
+                .await
+                .is_err()
+        );
         assert!(git.config_get(dir, "-evil").await.is_err());
         assert!(
             git.worktree_add(
@@ -4016,7 +4098,9 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.branches(Path::new(".")).await.unwrap();
-        git.is_merged(Path::new("."), "b", "main").await.unwrap();
+        git.is_merged(Path::new("."), MergeCheck::branch("b").into_base("main"))
+            .await
+            .unwrap();
         git.tag_list(Path::new(".")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["branch", "--no-column", "--no-color"]);
