@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(s.branch.as_deref(), Some("main"));
         let tracking = s.tracking.as_ref().expect("upstream tracking");
         assert_eq!(tracking.branch, "origin/main");
-        assert_eq!((tracking.ahead, tracking.behind), (2, 0));
+        assert_eq!((tracking.ahead, tracking.behind), (Some(2), Some(0)));
         assert!(s.dirty);
         assert_eq!(s.change_count, 2, "1 tracked + 1 untracked");
         assert!(!s.conflicted);
@@ -1125,6 +1125,37 @@ mod tests {
         let s = repo.snapshot().await.unwrap();
         assert_eq!(s.branch.as_deref(), Some("main"));
         assert!(s.tracking.is_none(), "no upstream → no tracking");
+    }
+
+    // M17: an upstream that is SET but GONE (deleted on the remote, or not yet
+    // fetched) — porcelain v2 emits `# branch.upstream` but OMITS `# branch.ab`, so the
+    // counts are uncountable. `tracking` must be `Some { branch, ahead: None, behind:
+    // None }` (tracking configured but uncountable), NOT a fabricated in-sync `0`/`0`.
+    #[tokio::test]
+    async fn git_snapshot_upstream_set_but_gone_is_uncountable() {
+        let v2 = concat!(
+            "# branch.oid abc123\0",
+            "# branch.head main\0",
+            "# branch.upstream origin/main\0", // upstream named…
+                                               // …but no `# branch.ab` line — it doesn't resolve.
+        );
+        let gitdir = TempDir::new("snap-git-gone");
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        let tracking = s.tracking.as_ref().expect("upstream is set");
+        assert_eq!(tracking.branch, "origin/main");
+        assert_eq!(
+            (tracking.ahead, tracking.behind),
+            (None, None),
+            "a gone upstream is uncountable, not in-sync 0/0"
+        );
     }
 
     // jj: one template row + a status count; a conflicted @ maps to Conflict; no

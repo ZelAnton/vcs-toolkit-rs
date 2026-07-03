@@ -117,9 +117,12 @@ impl WatchState {
             branch: snapshot.branch.clone(),
             // Flatten the bundled tracking back into the watcher's per-field deltas
             // so `UpstreamChanged` / `AheadBehindChanged` stay distinct signals.
+            // `and_then`: the count is `None` for either "no upstream" or an upstream
+            // that's set-but-uncountable (M17) — both read as "no count" for the delta,
+            // and a set→gone transition still flips `ahead`/`behind` so the event fires.
             upstream: snapshot.tracking.as_ref().map(|t| t.branch.clone()),
-            ahead: snapshot.tracking.as_ref().map(|t| t.ahead),
-            behind: snapshot.tracking.as_ref().map(|t| t.behind),
+            ahead: snapshot.tracking.as_ref().and_then(|t| t.ahead),
+            behind: snapshot.tracking.as_ref().and_then(|t| t.behind),
             dirty: snapshot.dirty,
             change_count: snapshot.change_count,
             conflicted: snapshot.conflicted,

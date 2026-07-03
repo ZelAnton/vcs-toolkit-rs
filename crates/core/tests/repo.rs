@@ -48,8 +48,8 @@ async fn snapshot_git_branch_upstream_ahead_and_dirty() {
     let s = repo.snapshot().await.expect("snapshot");
     let tracking = s.tracking.as_ref().expect("upstream tracking");
     assert_eq!(tracking.branch, "base");
-    assert_eq!(tracking.ahead, 1, "one commit ahead of base");
-    assert_eq!(tracking.behind, 0);
+    assert_eq!(tracking.ahead, Some(1), "one commit ahead of base");
+    assert_eq!(tracking.behind, Some(0));
     assert!(s.dirty);
     assert!(s.change_count >= 1);
 }

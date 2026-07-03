@@ -43,6 +43,14 @@ crates; tag releases as `vcs-core-v<version>`.
   (`docs/audit-2026-07.md` H11.)
 
 ### Fixed
+- **A gone upstream is no longer reported as "in sync" (breaking: `UpstreamTracking`
+  `ahead`/`behind` are now `Option<usize>`).** git's porcelain omits the ahead/behind
+  line when the upstream is set but doesn't resolve (deleted on the remote, or not yet
+  fetched); the old `unwrap_or(0)` turned that into a fabricated `↑0↓0` (falsely
+  in-sync). `ahead`/`behind` are now `Option<usize>` — `None` means "tracking
+  configured but uncountable", distinct from `Some(0)` (genuinely in sync). Update
+  consumers to handle `None` (e.g. render "gone"/"?" rather than "up to date").
+  (`docs/audit-2026-07.md` M17.)
 - **Docs:** `local_branches` / `branch_exists` now document the jj *tombstone*
   divergence — a bookmark deleted locally but still tracked on a remote lingers in the
   list until the deletion is pushed, so a just-deleted tracked bookmark can still read

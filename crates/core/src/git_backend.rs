@@ -133,14 +133,15 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
     let dirty = bs.is_dirty();
     let change_count = bs.tracked_changes + bs.untracked;
     let conflicted = bs.conflicts > 0;
-    // Upstream + ahead/behind travel together: git reports the counts only when an
-    // upstream is set. Bundle them into one `UpstreamTracking`.
-    let ahead = bs.ahead.unwrap_or(0);
-    let behind = bs.behind.unwrap_or(0);
+    // Upstream and its ahead/behind counts are separate signals: git names the
+    // upstream branch whenever one is configured, but reports the counts only when
+    // that upstream ref actually resolves. So carry the counts as `Option` — a set-
+    // but-gone upstream keeps `branch` with `ahead`/`behind: None` (uncountable),
+    // instead of a `unwrap_or(0)` fabricating a false "in sync" (M17).
     let tracking = bs.upstream.map(|branch| UpstreamTracking {
         branch,
-        ahead,
-        behind,
+        ahead: bs.ahead,
+        behind: bs.behind,
     });
     Ok(RepoSnapshot {
         head: bs.head,

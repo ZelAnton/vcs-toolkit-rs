@@ -465,9 +465,9 @@ pub struct RepoSnapshot {
 
 #[non_exhaustive]
 pub struct UpstreamTracking {  // RepoSnapshot::tracking; Some only when an upstream is set
-    pub branch: String,        // the upstream ref, e.g. "origin/main"
-    pub ahead: usize,          // commits ahead of the upstream
-    pub behind: usize,         // commits behind the upstream
+    pub branch: String,          // the upstream ref, e.g. "origin/main"
+    pub ahead: Option<usize>,    // commits ahead; None if the upstream is set-but-gone (uncountable)
+    pub behind: Option<usize>,   // commits behind; None if uncountable
 }
 ```
 

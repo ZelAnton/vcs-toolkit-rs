@@ -85,19 +85,26 @@ pub enum OperationState {
 }
 
 /// Upstream tracking for the current branch: the upstream ref and how far the
-/// branch is ahead/behind it. Only meaningful as a whole — git reports the three
-/// together or not at all — so [`RepoSnapshot`] carries it as one
-/// `Option<UpstreamTracking>` rather than three coupled `Option`s.
+/// branch is ahead/behind it. [`RepoSnapshot`] carries it as one
+/// `Option<UpstreamTracking>` — `None` when no upstream is configured at all.
+///
+/// The ahead/behind counts are themselves `Option`: git reports them only when the
+/// upstream ref actually **resolves**, so a branch whose upstream is *set but gone*
+/// (deleted on the remote, or not yet fetched) yields `Some(UpstreamTracking { branch,
+/// ahead: None, behind: None })` — "tracking configured but uncountable", distinct
+/// from the in-sync `Some(0)`/`Some(0)` that a `unwrap_or(0)` used to fabricate (M17).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct UpstreamTracking {
     /// The upstream tracking branch, e.g. `"origin/main"`.
     pub branch: String,
-    /// Commits the local branch is ahead of the upstream.
-    pub ahead: usize,
-    /// Commits the local branch is behind the upstream.
-    pub behind: usize,
+    /// Commits the local branch is ahead of the upstream; `None` when the upstream is
+    /// set but git couldn't count against it (gone remote / not fetched).
+    pub ahead: Option<usize>,
+    /// Commits the local branch is behind the upstream; `None` when uncountable (see
+    /// [`ahead`](UpstreamTracking::ahead)).
+    pub behind: Option<usize>,
 }
 
 /// A one-shot snapshot of the common repository state — branch, upstream
@@ -189,8 +196,8 @@ mod serde_tests {
             branch: Some("main".into()),
             tracking: Some(UpstreamTracking {
                 branch: "origin/main".into(),
-                ahead: 1,
-                behind: 0,
+                ahead: Some(1),
+                behind: Some(0),
             }),
             dirty: true,
             change_count: 2,
