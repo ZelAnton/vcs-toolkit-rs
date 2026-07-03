@@ -16,7 +16,15 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
--
+- **`commit_paths` refuses an empty fileset slice instead of committing the whole
+  working copy.** `commit_paths(dir, &[], msg)` degraded to a bare `jj commit -m msg`,
+  which finalises *every* pending change — the opposite of its "exactly these filesets"
+  contract. It now returns `Error::Spawn`/`InvalidInput` before spawning, mirroring
+  `split_paths`. (`docs/audit-2026-07.md` M7.)
+- **`JjFileset::path` no longer corrupts a Unix filename containing a backslash.** The
+  `\`→`/` separator rewrite is now **Windows-only** (`#[cfg(windows)]`); on Unix a `\`
+  is a legitimate filename byte and is preserved verbatim, matching `vcs-git`'s twin.
+  (`docs/audit-2026-07.md` M4.)
 
 ## [0.8.0] - 2026-07-03
 

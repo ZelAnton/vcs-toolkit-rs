@@ -206,13 +206,19 @@ impl SparseMode {
 pub struct JjFileset(String);
 
 impl JjFileset {
-    /// Wrap a repo-relative `path` as an exact-path fileset. Backslash separators
-    /// are normalised to `/` first — jj filesets are forward-slash and
-    /// repo-root-relative, so a Windows caller's `src\a.rs` would otherwise become
-    /// a literal-backslash filename that matches nothing — then `"` is escaped for
-    /// the `file:"…"` string literal.
+    /// Wrap a repo-relative `path` as an exact-path fileset. **On Windows** the
+    /// caller's `\` path separators are normalised to jj's forward slash (so
+    /// `src\a.rs` matches); **on Unix** `\` is a legitimate filename byte and is left
+    /// intact — rewriting it there would corrupt a real path (matching `vcs-git`'s
+    /// twin, which also gates the rewrite on Windows). Then `"` is escaped for the
+    /// `file:"…"` string literal.
     pub fn path(path: impl AsRef<str>) -> Self {
-        let escaped = path.as_ref().replace('\\', "/").replace('"', "\\\"");
+        let path = path.as_ref();
+        #[cfg(windows)]
+        let normalised = path.replace('\\', "/");
+        #[cfg(not(windows))]
+        let normalised = path.to_string();
+        let escaped = normalised.replace('"', "\\\"");
         JjFileset(format!("file:\"{escaped}\""))
     }
 
@@ -575,7 +581,9 @@ pub trait JjApi: Send + Sync {
         use_destination_message: bool,
     ) -> Result<()>;
     /// Finalise a commit from exactly these filesets (`commit -m <message>
-    /// <filesets>`); the rest stay in the new working-copy change.
+    /// <filesets>`); the rest stay in the new working-copy change. An **empty**
+    /// `filesets` slice is refused with `Error::Spawn`/`InvalidInput` before spawning
+    /// (a bare `jj commit` would commit the whole working copy, not "exactly these").
     async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
     /// Squash exactly these filesets from one revision into another
     /// (`squash --from <from> --into <into> [--use-destination-message] <filesets>`).
@@ -1201,6 +1209,20 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()> {
+        // An empty fileset slice would degrade `jj commit -m <msg> <filesets…>` to a
+        // bare `jj commit -m <msg>`, which commits the ENTIRE working copy — the
+        // opposite of the "exactly these filesets" contract. Refuse it before spawning
+        // (mirrors `split_paths`).
+        if filesets.is_empty() {
+            return Err(Error::Spawn {
+                program: BINARY.to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "commit_paths requires at least one fileset — an empty set would \
+                     commit the entire working copy, not just the named paths",
+                ),
+            });
+        }
         let mut args: Vec<String> = vec!["commit".into(), "-m".into(), message.into()];
         args.extend(filesets.iter().map(|f| f.as_str().to_string()));
         self.core.run_unit(self.cmd_in(dir, args)).await
@@ -1912,11 +1934,26 @@ mod tests {
             JjFileset::path("src/a(b).rs").as_str(),
             "file:\"src/a(b).rs\""
         );
-        // A Windows backslash separator is normalised to `/` so jj matches it
-        // (a literal-backslash filename would match nothing).
-        assert_eq!(JjFileset::path("src\\a.rs").as_str(), "file:\"src/a.rs\"");
-        // A literal quote is escaped for the `file:"…"` string literal.
+        // A literal quote is escaped for the `file:"…"` string literal (both platforms).
         assert_eq!(JjFileset::path("a\"b").as_str(), "file:\"a\\\"b\"");
+    }
+
+    // M4: the `\`→`/` rewrite is Windows-only. On Windows a `\` is a path separator
+    // (normalise it so jj matches); on Unix `\` is a legitimate filename byte and must
+    // be preserved verbatim, else a real path is corrupted.
+    #[test]
+    #[cfg(windows)]
+    fn fileset_normalises_backslash_on_windows() {
+        assert_eq!(JjFileset::path("src\\a.rs").as_str(), "file:\"src/a.rs\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn fileset_preserves_backslash_on_unix() {
+        assert_eq!(
+            JjFileset::path("weird\\name.rs").as_str(),
+            "file:\"weird\\name.rs\""
+        );
     }
 
     #[tokio::test]
@@ -2635,6 +2672,20 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         let err = jj
             .split_paths(Path::new("/r"), &[], "msg")
+            .await
+            .expect_err("empty filesets must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // M7: an empty fileset slice must NOT degrade to a bare `jj commit` (which would
+    // commit the whole working copy) — it's refused before any spawn.
+    #[tokio::test]
+    async fn commit_paths_refuses_empty_filesets_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .commit_paths(Path::new("/r"), &[], "msg")
             .await
             .expect_err("empty filesets must be refused");
         assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
