@@ -46,12 +46,13 @@ Requires the `tea` binary on `PATH`, configured via `tea login add`.
 PR-checks command, and no single-release view (`tea releases` ignores any
 positional and always lists). Consequences:
 
-- **`pr_view` is synthesized** by listing with `--state all --limit 999` and
-  filtering by number — a missing number is an `Error::Parse`. When the listing
-  fills that 999-row cap, the not-found error says so (a *possible* page-miss: a
-  higher-numbered PR may exist beyond the page) rather than asserting a flat
-  absence. (`issue_view`, by contrast, is a *first-class* `tea issues <index>` —
-  see [Issues & releases](#issues--releases).)
+- **`pr_view` is synthesized** by **paging** `tea pr list --state all` (`--page N`,
+  50 rows each) and filtering by number. The Gitea *server* caps a page at
+  `MAX_RESPONSE_ITEMS` (default 50), so a single large `--limit` is silently clamped
+  — paging is what lets `pr_view` find a PR past that cap instead of a false "not
+  found". It stops at the first empty page (a genuine absence → `Error::Parse`) or a
+  large safety bound. (`issue_view`, by contrast, is a *first-class* `tea issues
+  <index>` — see [Issues & releases](#issues--releases).)
 - **`repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are simply
   absent** from `GiteaApi`. Through the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade they return
   `Error::Unsupported` for the Gitea backend (`err.is_unsupported()`).
@@ -85,7 +86,7 @@ configured.
 | Method | Runs | Returns |
 |---|---|---|
 | `pr_list(dir)` | `tea pr list --limit 100 --fields index,title,state,head,base,url --output json` | `Vec<PullRequest>` |
-| `pr_view(dir, number)` | `tea pr list --state all --limit 999 --fields … --output json` + filter | [`PullRequest`] |
+| `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output json` (paged) + filter | [`PullRequest`] |
 | `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …]` | `String` |
 | `pr_merge(dir, number, strategy)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
@@ -132,10 +133,12 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 | `issue_create(dir, title, body)` | `tea issues create --title … --description …` | `String` |
 | `release_list(dir)` | `tea releases list --limit 100 --output json` | `Vec<Release>` |
 
-The list methods pin `--limit 100` so tea's default page size of 30 can't silently
-truncate them; reach beyond 100 through `run`. `issue_list` also pins `--fields`
-to fetch `body`/`url` (tea's default issue columns omit them). Unlike `pr_view`
-(which lists and filters the string-table), **`issue_view` is a first-class
+The list methods pass `--limit 100`, but the Gitea **server** caps a page at
+`MAX_RESPONSE_ITEMS` (default 50), so each returns **at most ~50** rows in one call —
+a busier repo is silently truncated. Page beyond that through `run` (`--page N`) or
+the API. `issue_list` also pins `--fields` to fetch `body`/`url` (tea's default issue
+columns omit them). Unlike `pr_view` (which pages and filters the string-table),
+**`issue_view` is a first-class
 single-issue view** — `tea issues <number>` (the bare-index form), which returns a
 *typed* detail object (numeric `index`), a different shape from the list.
 `issue_create`, like `pr_create`, returns tea's textual summary verbatim — its

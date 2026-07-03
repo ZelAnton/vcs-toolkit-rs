@@ -515,8 +515,9 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Open issues for the bound directory (up to 100; drop to the underlying
-    /// client for more).
+    /// Open issues for the bound directory (up to 100 on GitHub/GitLab; **Gitea
+    /// returns at most ~50** per its server page cap — drop to the underlying client
+    /// and page for more).
     pub async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_list(c, &self.cwd).await,
@@ -548,8 +549,9 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Releases for the bound directory, newest first (up to 100; drop to the
-    /// underlying client for more).
+    /// Releases for the bound directory, newest first (up to 100 on GitHub/GitLab;
+    /// **Gitea returns at most ~50** per its server page cap — drop to the underlying
+    /// client and page for more).
     pub async fn release_list(&self) -> Result<Vec<ForgeRelease>> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::release_list(c, &self.cwd).await,

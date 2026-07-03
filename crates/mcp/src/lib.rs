@@ -651,7 +651,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Open pull/merge requests on the configured forge (up to 100).",
+        description = "Open pull/merge requests on the configured forge (up to 100; ~50 on Gitea).",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_pr_list(&self) -> Result<CallToolResult, ErrorData> {
@@ -681,7 +681,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Open issues on the configured forge (up to 100).",
+        description = "Open issues on the configured forge (up to 100; ~50 on Gitea).",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_issue_list(&self) -> Result<CallToolResult, ErrorData> {
@@ -706,7 +706,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Releases on the configured forge, newest first (up to 100).",
+        description = "Releases on the configured forge, newest first (up to 100; ~50 on Gitea).",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_release_list(&self) -> Result<CallToolResult, ErrorData> {

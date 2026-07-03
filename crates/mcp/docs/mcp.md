@@ -83,12 +83,12 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_worktrees` | — | Attached worktrees (git) / workspaces (jj). |
 | `forge_auth_status` | — | Whether the forge CLI reports an authenticated session. |
 | `forge_repo_view` | — | The repository/project on the forge (`Unsupported` on Gitea). |
-| `forge_pr_list` | — | Open pull/merge requests (up to 100). |
+| `forge_pr_list` | — | Open pull/merge requests (up to 100; ~50 on Gitea). |
 | `forge_pr_view` | `{ number }` | A single PR/MR by number (GitLab uses the project-scoped `iid`). |
 | `forge_pr_checks` | `{ number }` | The PR/MR's coarse CI status (`Unsupported` on Gitea). |
-| `forge_issue_list` | — | Open issues (up to 100), as unified [`ForgeIssue`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
+| `forge_issue_list` | — | Open issues (up to 100; ~50 on Gitea), as unified [`ForgeIssue`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
-| `forge_release_list` | — | Releases, newest first (up to 100), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
+| `forge_release_list` | — | Releases, newest first (up to 100; ~50 on Gitea), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
 | `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `authed` is the auth probe result; the other flags are the intersection of "the CLI ships the command" and "the CLI is authenticated". |
 

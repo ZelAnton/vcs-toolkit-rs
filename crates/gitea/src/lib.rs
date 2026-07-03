@@ -22,7 +22,7 @@
 //! use vcs_gitea::{Gitea, GiteaApi};
 //! # async fn demo() -> Result<(), processkit::Error> {
 //! let tea = Gitea::new();
-//! let prs = tea.pr_list(Path::new(".")).await?; // up to 100 open PRs
+//! let prs = tea.pr_list(Path::new(".")).await?; // open PRs (≈50/page server cap)
 //! # let _ = prs; Ok(()) }
 //! ```
 //!
@@ -61,9 +61,9 @@
 //! and always lists), so those operations are simply absent here (the
 //! [`vcs-forge`](https://crates.io/crates/vcs-forge) facade reports them
 //! `Unsupported` for the Gitea backend). [`pr_view`](GiteaApi::pr_view) is
-//! synthesized by listing with `--state all` and filtering by number;
-//! [`issue_view`](GiteaApi::issue_view), by contrast, is a first-class
-//! `tea issues <index>`.
+//! synthesized by **paging** `--state all` and filtering by number (so it finds a PR
+//! past the server's ~50-row page cap); [`issue_view`](GiteaApi::issue_view), by
+//! contrast, is a first-class `tea issues <index>`.
 //!
 //! One shape caveat: `tea`'s `--output json` is **not** the Gitea REST shape. Its
 //! *list* commands emit tea's print-*table* — a JSON array of string-maps whose
@@ -84,7 +84,7 @@
 //! let tea = Gitea::new();
 //! let repo = Path::new(".");
 //! let authed = tea.auth_status().await?;             // any login configured?
-//! for pr in tea.pr_list(repo).await? {               // up to 100 open PRs
+//! for pr in tea.pr_list(repo).await? {               // open PRs (≈50/page cap)
 //!     println!("#{} [{}] {}", pr.number, pr.state, pr.title);
 //! }
 //! # let _ = authed; Ok(()) }
@@ -238,12 +238,12 @@ pub const BINARY: &str = "tea";
 const PR_FIELDS: &str = "index,title,state,head,base,url";
 const ISSUE_FIELDS: &str = "index,title,state,body,url";
 
-// `pr_view` has no single-PR endpoint in `tea`, so it lists all states and
-// filters by number. This caps the page; a repo with more PRs than this would
-// page-miss a high-numbered PR. Shared between the argv and the not-found path so
-// a miss at the cap can be reported as *possibly truncated* rather than a flat
-// "no such PR".
-const PR_VIEW_LIMIT: &str = "999";
+// `pr_view` has no single-PR endpoint in `tea`, so it lists all states and pages
+// through, filtering by number. `PR_VIEW_PAGE_SIZE` is the requested per-page size
+// (the Gitea server may clamp it lower, which the page-until-empty loop tolerates);
+// `PR_VIEW_MAX_PAGES` bounds the walk so a pathological repo can't loop unboundedly.
+const PR_VIEW_PAGE_SIZE: usize = 50;
+const PR_VIEW_MAX_PAGES: usize = 200;
 
 /// How [`GiteaApi::pr_merge`] merges the PR — maps to `tea pr merge --style`
 /// (Gitea's default is a merge commit).
@@ -298,15 +298,18 @@ pub trait GiteaApi: Send + Sync {
     /// outcome: a non-zero exit (e.g. no config file yet) reads as `false`, the
     /// same as an empty array; only a spawn failure or timeout errors.
     async fn auth_status(&self) -> Result<bool>;
-    /// Open pull requests for `dir` (`tea pr list --limit 100 --output json`).
-    /// Returns up to 100 open PRs; use [`run`](GiteaApi::run) for more.
+    /// Open pull requests for `dir` (`tea pr list --output json`). The Gitea
+    /// **server** caps an API page at `MAX_RESPONSE_ITEMS` (default 50) and `tea`
+    /// makes a single call, so this returns **at most ~50** open PRs regardless of
+    /// the requested limit — a busier repo is silently truncated here. For the full
+    /// set, page via [`run`](GiteaApi::run) (`tea pr list --page N`) or the API.
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
     /// A single pull request by number. `tea` has no single-PR view, so this
-    /// **lists** (`tea pr list --state all --limit 999 --output json`) and filters
-    /// by number; a missing number is an [`Error::Parse`]. The high `--limit`
-    /// guards against a false "not found"; a PR beyond the first 999 is still not
-    /// returned, but when the listing fills that cap the not-found error says so
-    /// (a *possible* page-miss) rather than asserting a flat absence.
+    /// **pages** through `tea pr list --state all` (`--page N`) and filters by
+    /// number — correctly finding a PR past the server's ~50-row page cap, unlike a
+    /// single capped listing. It stops at the first empty page (a genuine absence →
+    /// [`Error::Parse`]) or a large safety bound; a miss is not a false negative for
+    /// any normally-sized repo.
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
     /// Open a pull request, returning the command's output (`tea pr create`).
     /// Unlike `gh`/`glab`, `tea` prints a textual summary on success, **not** the
@@ -344,8 +347,10 @@ pub trait GiteaApi: Send + Sync {
             operation: "pr_edit".into(),
         })
     }
-    /// Open issues for `dir` (`tea issues list --limit 100 --output json`).
-    /// Returns up to 100 open issues; use [`run`](GiteaApi::run) for more.
+    /// Open issues for `dir` (`tea issues list --output json`). As with
+    /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
+    /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** open issues
+    /// in one call — page via [`run`](GiteaApi::run) (`--page N`) for the rest.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
     /// A single issue by number. Unlike PRs, `tea` *does* have a single-issue
     /// view — `tea issues <number>` (the bare index form), here run as
@@ -358,8 +363,10 @@ pub trait GiteaApi: Send + Sync {
     /// its URL) — there is no `--output`/`--fields` flag to shape create output —
     /// so this returns the trimmed stdout verbatim rather than a parsed URL.
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
-    /// Releases for `dir` (`tea releases list --limit 100 --output json`).
-    /// Returns up to 100 releases; use [`run`](GiteaApi::run) for more.
+    /// Releases for `dir` (`tea releases list --output json`). As with
+    /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
+    /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** releases in
+    /// one call — page via [`run`](GiteaApi::run) (`--page N`) for the rest.
     ///
     /// There is intentionally no `release_view`: `tea releases` takes no
     /// positional and always lists, so a single-release-by-tag view does not
@@ -427,10 +434,12 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
-        // `--limit 100` overrides tea's default page size (30), which would
-        // otherwise silently truncate the list. `--fields` selects exactly the
-        // table columns we parse — tea's default field set omits `head`/`base`/
-        // `url`, so without this the branches and URL would always be empty.
+        // `--limit 100` raises tea's default page size (30), but the Gitea *server*
+        // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
+        // ~50 open PRs in one call — a repo with more is silently truncated here; page
+        // via `run`/the API for the rest (see the trait doc). `--fields` selects the
+        // table columns we parse — tea's default set omits `head`/`base`/`url`, so
+        // without this the branches and URL would always be empty.
         self.core
             .try_parse(
                 self.core.command_in(
@@ -445,49 +454,65 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest> {
-        // `tea` has no single-PR view; list all states and filter by number. A
-        // high `--limit` is essential here: without it, tea's default page size
-        // (30) would make any PR past the first page a false "not found".
-        // `--fields` selects the columns we parse (see `pr_list`).
-        let prs = self
-            .core
-            .try_parse(
-                self.core.command_in(
-                    dir,
-                    [
-                        "pr",
-                        "list",
-                        "--state",
-                        "all",
-                        "--limit",
-                        PR_VIEW_LIMIT,
-                        "--fields",
-                        PR_FIELDS,
-                        "--output",
-                        "json",
-                    ],
-                ),
-                parse::parse_pr_list,
-            )
-            .await?;
-        let truncated = prs.len() >= PR_VIEW_LIMIT.parse::<usize>().unwrap_or(usize::MAX);
-        prs.into_iter()
-            .find(|pr| pr.number == number)
-            .ok_or_else(|| Error::Parse {
-                program: BINARY.to_string(),
-                // When the listing filled the page cap, a miss may be a page-miss
-                // rather than a genuine absence — say so instead of a flat "no such
-                // PR", so a caller on a very large repo can tell the difference.
-                message: if truncated {
-                    format!(
-                        "no pull request #{number} in the first {PR_VIEW_LIMIT} of `tea pr list` \
-                         (the listing hit the {PR_VIEW_LIMIT}-row cap, so a higher-numbered PR may \
-                         exist but was not returned)"
-                    )
-                } else {
-                    format!("no pull request #{number} in `tea pr list`")
-                },
-            })
+        // `tea` has no single-PR view (verified: `tea pulls`/`pr` has no `view`/index
+        // subcommand — only list/checkout/create/…), so we list all states and filter
+        // by number. The Gitea server caps each API page at `MAX_RESPONSE_ITEMS`
+        // (default 50) and `tea` makes one call per page, so a single large `--limit`
+        // is silently clamped — a PR past the first page would be a false "not found".
+        // Instead page through (`--page`, a documented `tea pr list` flag) until
+        // #number is found or a page returns empty (past the end — an empty page ends
+        // the walk regardless of the server's actual clamp, so an instance whose cap
+        // is below our request still tiles correctly). `--fields` selects the columns
+        // we parse (see `pr_list`).
+        let limit = PR_VIEW_PAGE_SIZE.to_string();
+        for page in 1..=PR_VIEW_MAX_PAGES {
+            let page_str = page.to_string();
+            let prs = self
+                .core
+                .try_parse(
+                    self.core.command_in(
+                        dir,
+                        [
+                            "pr",
+                            "list",
+                            "--state",
+                            "all",
+                            "--limit",
+                            limit.as_str(),
+                            "--page",
+                            page_str.as_str(),
+                            "--fields",
+                            PR_FIELDS,
+                            "--output",
+                            "json",
+                        ],
+                    ),
+                    parse::parse_pr_list,
+                )
+                .await?;
+            let exhausted = prs.is_empty();
+            if let Some(pr) = prs.into_iter().find(|pr| pr.number == number) {
+                return Ok(pr);
+            }
+            if exhausted {
+                // An empty page means we walked past the last PR — a genuine absence.
+                return Err(Error::Parse {
+                    program: BINARY.to_string(),
+                    message: format!("no pull request #{number} in `tea pr list`"),
+                });
+            }
+        }
+        // Ran out of the page safety bound without finding it — an extremely large
+        // repo. Report honestly rather than a confident false "not found".
+        Err(Error::Parse {
+            program: BINARY.to_string(),
+            message: format!(
+                "pull request #{number} not found in the first {} of `tea pr list` (stopped at \
+                 the {PR_VIEW_MAX_PAGES}-page safety bound; query `tea`/the Gitea API directly for \
+                 a repository this large)",
+                PR_VIEW_MAX_PAGES * PR_VIEW_PAGE_SIZE
+            ),
+        })
     }
 
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String> {
@@ -556,10 +581,11 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
-        // `--limit 100` overrides tea's default page size (30), mirroring
-        // `pr_list`, so the list is not silently truncated. `--fields` selects
-        // the columns we parse — tea's default issue fields omit `body`/`url`,
-        // so without this both would always come back empty.
+        // `--limit 100` raises tea's default page size (30), but the Gitea server
+        // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
+        // ~50 issues in one call (page via `run` for more), mirroring `pr_list`.
+        // `--fields` selects the columns we parse — tea's default issue fields omit
+        // `body`/`url`, so without this both would always come back empty.
         self.core
             .try_parse(
                 self.core.command_in(
@@ -604,8 +630,9 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>> {
-        // `--limit 100` overrides tea's default page size (30); `tea releases`
-        // has no `--state`, so this returns the most recent 100 releases.
+        // `--limit 100` raises tea's default page size (30), but the Gitea server
+        // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
+        // ~50 (most-recent) releases in one call — page via `run` for more.
         self.core
             .try_parse(
                 self.core.command_in(
@@ -758,34 +785,62 @@ mod tests {
         assert!(pr.merged);
     }
 
-    // When the listing fills the `--limit` page cap, a not-found is reported as a
-    // *possible* page-miss (mentions the cap), distinct from a flat absence.
+    // pr_view pages past the server's per-page cap: a PR that only appears on a
+    // *later* page is still found (H8) — a single capped listing would false-negative
+    // it. `on_sequence` feeds successive `tea pr list` calls their page's rows; the
+    // `RecordingRunner` wrapper lets us assert the `--page` counter increments.
     #[tokio::test]
-    async fn pr_view_signals_possible_paging_miss_at_cap() {
-        let limit: u64 = super::PR_VIEW_LIMIT.parse().unwrap();
-        let rows: Vec<String> = (1..=limit)
+    async fn pr_view_pages_past_the_server_cap() {
+        // Page 1: a full 50 rows, none is #77. Page 2: #77 is present.
+        let page1_rows: Vec<String> = (1..=50)
             .map(|i| {
                 format!(
                     r#"{{"index":"{i}","title":"t","state":"open","head":"h","base":"main","url":"u"}}"#
                 )
             })
             .collect();
-        let json = format!("[{}]", rows.join(","));
-        let tea =
-            Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(&json)));
-        // Ask for a number beyond the cap.
-        let err = tea.pr_view(Path::new("."), limit + 1).await.unwrap_err();
-        match err {
-            Error::Parse { message, .. } => assert!(
-                message.contains("cap"),
-                "a cap-filling miss must hint at truncation, got: {message}"
-            ),
-            other => panic!("expected Error::Parse, got {other:?}"),
-        }
+        let page1 = format!("[{}]", page1_rows.join(","));
+        let page2 = r#"[{"index":"77","title":"Target","state":"open","head":"h","base":"main","url":"u"}]"#;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(["tea", "pr", "list"], [Reply::ok(&page1), Reply::ok(page2)]),
+        );
+        let tea = Gitea::with_runner(&rec);
+        let pr = tea
+            .pr_view(Path::new("."), 77)
+            .await
+            .expect("pr_view finds a PR on a later page");
+        assert_eq!(pr.title, "Target");
+        // Exactly two pages fetched, with an incrementing `--page`.
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "should fetch page 1 then page 2");
+        assert!(calls[0].args_str().windows(2).any(|w| w == ["--page", "1"]));
+        assert!(calls[1].args_str().windows(2).any(|w| w == ["--page", "2"]));
     }
 
-    // pr_view passes `--state all` + `--fields` so a closed/merged PR is found
-    // with its branches/url, and a missing number is a parse error, not a panic.
+    // The walk must stop on an *empty* page, not a *short* one: a page shorter than
+    // the requested limit is still a real page (the server may clamp below our ask),
+    // so pr_view must keep going. Here page 1 has only 3 rows (no #9) and #9 lives on
+    // page 2 — a `len < limit` stop would false-negative it.
+    #[tokio::test]
+    async fn pr_view_continues_past_a_short_nonempty_page() {
+        let page1 = r#"[
+            {"index":"1","title":"a","state":"open","head":"h","base":"main","url":"u"},
+            {"index":"2","title":"b","state":"open","head":"h","base":"main","url":"u"},
+            {"index":"3","title":"c","state":"open","head":"h","base":"main","url":"u"}
+        ]"#;
+        let page2 = r#"[{"index":"9","title":"Found","state":"merged","head":"h","base":"main","url":"u"}]"#;
+        let tea = Gitea::with_runner(
+            ScriptedRunner::new()
+                .on_sequence(["tea", "pr", "list"], [Reply::ok(page1), Reply::ok(page2)]),
+        );
+        let pr = tea.pr_view(Path::new("."), 9).await.expect("pr_view");
+        assert_eq!(pr.title, "Found");
+        assert!(pr.merged);
+    }
+
+    // pr_view passes `--state all` + `--fields` and pages from `--page 1`; an empty
+    // first page is a genuine absence → parse error (not a panic), in one call.
     #[tokio::test]
     async fn pr_view_requests_all_states_and_errors_when_missing() {
         let rec = RecordingRunner::replying(Reply::ok("[]"));
@@ -800,7 +855,9 @@ mod tests {
                 "--state",
                 "all",
                 "--limit",
-                "999",
+                "50",
+                "--page",
+                "1",
                 "--fields",
                 "index,title,state,head,base,url",
                 "--output",

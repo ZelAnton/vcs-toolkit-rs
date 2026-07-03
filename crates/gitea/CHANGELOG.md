@@ -27,7 +27,22 @@ crates; tag releases as `vcs-gitea-v<version>`.
   via the dependency). No public API or behaviour change.
 
 ### Fixed
--
+- **`pr_view` no longer returns a false "not found" for a PR past the server's page
+  cap.** The Gitea server clamps an API page to `MAX_RESPONSE_ITEMS` (default 50) and
+  `tea` makes one call per page, so the previous single `tea pr list --limit 999` was
+  silently capped at ~50 rows — a PR numbered beyond that got a confident false
+  `Error::Parse "no such PR"`. `pr_view` now **pages** through (`--page N`) until the
+  PR is found or a page comes back empty (a genuine absence), so it finds a PR
+  regardless of repo size. The walk stops on an *empty* page (not a short one), so it
+  is robust to an instance whose page cap is below the request; and the list parsers
+  now read empty/whitespace stdout as an empty list (some `tea` builds print nothing,
+  not `[]`, for an empty result) rather than a spurious parse error.
+  (`docs/audit-2026-07.md` H8.)
+- **Documented the list verbs' honest server-side cap.** `pr_list` / `issue_list` /
+  `release_list` return **at most ~50** rows on a default Gitea instance (the same
+  `MAX_RESPONSE_ITEMS` clamp), not the "up to 100" the old `--limit 100` comment
+  implied; the docs now say so and point at `run` (`--page N`) for the rest. Behavior
+  unchanged — only the misleading comment/doc is corrected. (`docs/audit-2026-07.md` H8.)
 
 ## [0.2.0] - 2026-06-27
 

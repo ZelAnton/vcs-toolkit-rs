@@ -250,12 +250,21 @@ fn parse_index(value: &str) -> Result<u64> {
 
 /// Parse `tea pr list --output json` into the flattened [`PullRequest`]s.
 pub(crate) fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>> {
+    // Some `tea` builds print nothing (not `[]`) for an empty result — an empty
+    // page (`pr_view` walks one past the end) or a repo with no PRs. Treat that as
+    // the empty list it is, rather than a serde "EOF while parsing" error.
+    if json.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let raw: Vec<PrJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     raw.into_iter().map(PullRequest::try_from).collect()
 }
 
 /// Parse `tea issues list --output json` into the flattened [`Issue`]s.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<Issue>> {
+    if json.trim().is_empty() {
+        return Ok(Vec::new()); // empty result printed as nothing — see `parse_pr_list`
+    }
     let raw: Vec<IssueListJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     raw.into_iter().map(Issue::try_from).collect()
 }
@@ -269,6 +278,9 @@ pub(crate) fn parse_issue(json: &str) -> Result<Issue> {
 
 /// Parse `tea releases list --output json` into the flattened [`Release`]s.
 pub(crate) fn parse_release_list(json: &str) -> Result<Vec<Release>> {
+    if json.trim().is_empty() {
+        return Ok(Vec::new()); // empty result printed as nothing — see `parse_pr_list`
+    }
     let raw: Vec<ReleaseJson> = vcs_cli_support::json::from_json(BINARY, json)?;
     Ok(raw.into_iter().map(Release::from).collect())
 }
@@ -277,6 +289,18 @@ pub(crate) fn parse_release_list(json: &str) -> Result<Vec<Release>> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    // Some `tea` builds print nothing (not `[]`) for an empty result; the list
+    // parsers must read that as an empty list, not a serde error — this is what lets
+    // `pr_view` detect an empty (past-the-end) page as a clean absence.
+    #[test]
+    fn empty_output_parses_as_an_empty_list() {
+        for blank in ["", "   ", "\n", " \r\n "] {
+            assert!(parse_pr_list(blank).unwrap().is_empty());
+            assert!(parse_issue_list(blank).unwrap().is_empty());
+            assert!(parse_release_list(blank).unwrap().is_empty());
+        }
+    }
 
     proptest! {
         // tea's `--output json` is an empirically reverse-engineered shape (an
