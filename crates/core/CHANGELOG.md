@@ -43,6 +43,17 @@ crates; tag releases as `vcs-core-v<version>`.
   (`docs/audit-2026-07.md` H11.)
 
 ### Fixed
+- **`detect` no longer lets a stray `.jj` directory shadow a healthy `.git` repo.** It
+  checked only that `.jj` `is_dir()`, so an empty/leftover `mkdir .jj` beat a real git
+  repository in the same or a parent directory. It now requires a real jj marker (a
+  `.jj/repo` store — a directory in a main workspace/colocated repo, a file pointer in
+  a secondary workspace), symmetric with the validated `.git` probe. (`docs/audit-2026-07.md` M19.)
+- **`has_uncommitted_changes` now agrees with `snapshot().dirty` on a conflicted jj
+  change.** A jj change that is `empty` but **conflicted** is uncommitted state (it
+  needs resolution); `snapshot().dirty` already treated `conflict ⇒ dirty`, but the
+  boolean `has_uncommitted_changes` read only the `empty` flag and reported `false`.
+  It now also returns `true` when `@` is conflicted (probed only when `@` is empty, so
+  the common case stays one query). (`docs/audit-2026-07.md` M18.)
 - **`remove_worktree` no longer risks wiping the repository or silently losing
   edits on jj.** It now (a) refuses to remove the repository's **main** workspace —
   whose directory is the main working copy, so deleting it destroyed the whole

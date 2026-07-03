@@ -227,7 +227,7 @@ pub struct Located {
 pub fn detect(start: &Path) -> Option<Located> {
     let mut current = Some(start);
     while let Some(dir) = current {
-        if dir.join(".jj").is_dir() {
+        if is_jj_marker(&dir.join(".jj")) {
             return Some(Located {
                 kind: BackendKind::Jj,
                 root: dir.to_path_buf(),
@@ -244,12 +244,23 @@ pub fn detect(start: &Path) -> Option<Located> {
     None
 }
 
+/// Whether `path` (a candidate `.jj`) is a real jj repository marker — a `.jj`
+/// **directory** that contains a **`repo`** entry (the store: a *directory* in a
+/// repo's main workspace / a colocated repo, a *file* pointer in a secondary
+/// workspace). A stray/empty directory merely *named* `.jj` (e.g. a leftover
+/// `mkdir .jj`) has no `repo` entry, so it can't shadow a healthy `.git` repo in the
+/// same or a higher directory (M19). Symmetric with [`is_git_marker`]: both require a
+/// *valid* marker, not mere existence.
+fn is_jj_marker(path: &Path) -> bool {
+    path.is_dir() && path.join("repo").exists()
+}
+
 /// Whether `path` (a candidate `.git`) is a real git repository marker — a `.git`
 /// **directory**, or a **gitlink file** (a linked worktree / submodule) whose
 /// content starts with `gitdir:`. A stray/garbage file merely *named* `.git` is
 /// rejected, so it can't shadow a real repository higher up the tree, and a binary
 /// or unreadable file is rejected too (the read fails → `false`). Symmetric with
-/// the `.jj` `is_dir()` probe: both require a *valid* marker, not mere existence.
+/// [`is_jj_marker`]: both require a *valid* marker, not mere existence.
 fn is_git_marker(path: &Path) -> bool {
     use std::io::Read;
     match std::fs::metadata(path) {
@@ -955,9 +966,31 @@ mod tests {
         assert_eq!(located.kind, BackendKind::Git);
         assert_eq!(located.root, root);
 
-        // Colocated: adding .jj makes jj win.
-        std::fs::create_dir_all(root.join(".jj")).unwrap();
+        // Colocated: adding a *valid* .jj (with its `repo` store) makes jj win.
+        std::fs::create_dir_all(root.join(".jj").join("repo")).unwrap();
         assert_eq!(detect(root).unwrap().kind, BackendKind::Jj);
+    }
+
+    // M19: a stray/empty `.jj` directory (no `repo` store — e.g. a leftover
+    // `mkdir .jj`) is NOT a jj marker and must not shadow a healthy `.git` repo in the
+    // same directory. A valid `.jj` (with `repo`, dir or file) still wins.
+    #[test]
+    fn detect_ignores_a_dotjj_without_a_repo_store() {
+        let tmp = TempDir::new("stray-jj");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join(".jj")).unwrap(); // empty — no `repo`
+        assert_eq!(
+            detect(root).expect("git still detected").kind,
+            BackendKind::Git,
+            "an empty .jj must not shadow a real .git"
+        );
+
+        // A secondary workspace's `.jj/repo` is a *file* pointer — still valid.
+        let sec = TempDir::new("jj-secondary");
+        std::fs::create_dir_all(sec.path().join(".jj")).unwrap();
+        std::fs::write(sec.path().join(".jj").join("repo"), b"/path/to/store\n").unwrap();
+        assert_eq!(detect(sec.path()).unwrap().kind, BackendKind::Jj);
     }
 
     #[test]
@@ -1521,6 +1554,25 @@ mod tests {
         assert!(dirty.has_uncommitted_changes().await.unwrap());
         let clean = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\ttrue\t\n")));
         assert!(!clean.has_uncommitted_changes().await.unwrap());
+    }
+
+    // M18: a conflicted-but-**empty** `@` is uncommitted state (it needs resolution),
+    // so `has_uncommitted_changes` returns true — agreeing with `snapshot().dirty`,
+    // which already treats `conflict ⇒ dirty`. First `jj log` = current_change (empty),
+    // second = is_conflicted (`"1"`).
+    #[tokio::test]
+    async fn jj_has_uncommitted_changes_true_when_conflicted_even_if_empty() {
+        let repo = jj_repo(ScriptedRunner::new().on_sequence(
+            ["jj", "log"],
+            [
+                Reply::ok("kz\t38\ttrue\t\n"), // current_change: empty = true
+                Reply::ok("1\n"),              // is_conflicted: conflicted
+            ],
+        ));
+        assert!(
+            repo.has_uncommitted_changes().await.unwrap(),
+            "a conflicted empty @ is dirty"
+        );
     }
 
     #[tokio::test]

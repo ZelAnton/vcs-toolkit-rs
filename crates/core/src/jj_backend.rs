@@ -72,7 +72,14 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
 ) -> Result<bool> {
-    Ok(!jj.current_change(dir).await?.empty)
+    if !jj.current_change(dir).await?.empty {
+        return Ok(true);
+    }
+    // A **conflicted** change is uncommitted state (it needs resolution) even when jj
+    // marks it `empty` — so `has_uncommitted_changes` agrees with `snapshot().dirty`,
+    // which already treats `conflict ⇒ dirty` (M18). Only probed when `@` is empty, so
+    // the common non-empty case stays a single query.
+    Ok(jj.is_conflicted(dir, "@").await?)
 }
 
 pub(crate) async fn conflicted_files<R: ProcessRunner>(
