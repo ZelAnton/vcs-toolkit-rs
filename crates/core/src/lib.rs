@@ -1107,6 +1107,33 @@ mod tests {
         assert_eq!(s.operation, OperationState::Clear);
     }
 
+    // M20 (whole-solution): `snapshot()` has its OWN operation probe (separate from
+    // `in_progress_state`); it too must report a `git am` as `ApplyMailbox`, not
+    // `Rebase` — otherwise the new variant is dead on the snapshot → watch → mcp path.
+    #[tokio::test]
+    async fn git_snapshot_reports_git_am_as_apply_mailbox() {
+        let v2 = concat!("# branch.oid abc\0", "# branch.head main\0");
+        let gitdir = TempDir::new("snap-git-am");
+        // A `git am` in progress: `rebase-apply/` WITH the `applying` marker.
+        let apply = gitdir.path().join("rebase-apply");
+        std::fs::create_dir_all(&apply).unwrap();
+        std::fs::write(apply.join("applying"), b"").unwrap();
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        assert_eq!(
+            s.operation,
+            OperationState::ApplyMailbox,
+            "a git am must not read as Rebase in snapshot()"
+        );
+    }
+
     // git with NO upstream configured: porcelain v2 omits the `# branch.upstream`
     // and `# branch.ab` lines, so `tracking` is None (the all-or-nothing invariant —
     // git is the only backend that can produce either) — mirrors the jj None case.

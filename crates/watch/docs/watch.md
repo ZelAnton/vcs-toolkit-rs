@@ -55,8 +55,8 @@ state.
 Two semantics worth knowing:
 
 - **Conflicts → `ConflictChanged`, on both backends.** `OperationChanged` covers
-  only git's merge/rebase lifecycle (`Clear`/`Merge`/`Rebase`); it never fires on
-  jj. `vcs-core` derives jj's `operation` and `conflicted` from the same bit, so a
+  only git's merge/rebase/am lifecycle (`Clear`/`Merge`/`Rebase`/`ApplyMailbox`); it
+  never fires on jj. `vcs-core` derives jj's `operation` and `conflicted` from the same bit, so a
   jj conflict appearing would otherwise double-signal — the redundant
   `OperationChanged` is suppressed, and `ConflictChanged` is the one true conflict
   event everywhere. (A git merge that *has* conflicts is two distinct facts and

@@ -21,7 +21,9 @@ let s = repo.snapshot().await?;                 // RepoSnapshot — one/two spaw
 let branch = s.branch.as_deref().unwrap_or("(detached)");
 let mut line = branch.to_string();
 if let Some(t) = &s.tracking {
-    line.push_str(&format!(" ↑{}↓{}", t.ahead, t.behind)); // upstream tracking — git only
+    // ahead/behind are Option: `None` = upstream set but gone/uncountable (render "?").
+    let n = |c: Option<usize>| c.map_or_else(|| "?".to_string(), |v| v.to_string());
+    line.push_str(&format!(" ↑{}↓{}", n(t.ahead), n(t.behind))); // upstream tracking — git only
 }
 if s.dirty {
     line.push_str(" *");                        // uncommitted changes

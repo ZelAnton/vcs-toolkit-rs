@@ -77,7 +77,8 @@ pub enum OperationState {
     Clear,
     /// A git merge is in progress (`MERGE_HEAD` present).
     Merge,
-    /// A git rebase is in progress (a `rebase-merge`/`rebase-apply` dir present).
+    /// A git rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir
+    /// **not** left by `git am` — see [`ApplyMailbox`](OperationState::ApplyMailbox)).
     Rebase,
     /// A git `am` (mailbox patch apply) is in progress. Distinct from `Rebase`
     /// because it aborts with `am --abort`, not `rebase --abort` (M20).

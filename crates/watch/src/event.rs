@@ -55,17 +55,18 @@ pub enum RepoEvent {
     },
     /// The ahead/behind counts versus the upstream changed (git only).
     AheadBehindChanged {
-        /// Commits ahead of the upstream now, or `None` with no upstream.
+        /// Commits ahead of the upstream now; `None` when there's no upstream **or**
+        /// the upstream is set but uncountable (gone/unfetched).
         ahead: Option<usize>,
-        /// Commits behind the upstream now, or `None` with no upstream.
+        /// Commits behind the upstream now; `None` when uncountable (see `ahead`).
         behind: Option<usize>,
     },
-    /// The in-progress **operation** changed — a git merge or rebase started or
-    /// finished. A transition to/from [`OperationState::Conflict`] (jj's conflict
+    /// The in-progress **operation** changed — a git merge, rebase, or `am` started
+    /// or finished. A transition to/from [`OperationState::Conflict`] (jj's conflict
     /// marker) is **not** reported here: `vcs-core` derives jj's `operation` and
     /// `conflicted` from the same bit, so [`ConflictChanged`](RepoEvent::ConflictChanged)
     /// already signals it on both backends. So this event fires only on git, and
-    /// `from`/`to` are `Clear`/`Merge`/`Rebase`.
+    /// `from`/`to` are `Clear`/`Merge`/`Rebase`/`ApplyMailbox`.
     OperationChanged {
         /// The previous operation state.
         from: OperationState,

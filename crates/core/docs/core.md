@@ -31,13 +31,14 @@ pub fn detect(start: &Path) -> Option<Located>
 ```
 
 `detect` walks up from `start` to the filesystem root, returning the first
-repository it finds. A `.jj` directory **wins over `.git`** — colocated repos are
-driven through jj, since that's the tool actually managing the working copy.
-`.git` may be a directory *or* a gitlink file (a linked worktree or submodule),
-so the git probe accepts either — but it **validates** a `.git` file is a real
-gitlink (its content starts with `gitdir:`), so a stray file merely named `.git`
-doesn't register as a repository or shadow a real one higher up. Pure filesystem
-probing — no subprocess is ever spawned.
+repository it finds. A **valid** `.jj` **wins over `.git`** — colocated repos are
+driven through jj, since that's the tool actually managing the working copy. Both
+markers are **validated**, not merely present: a `.jj` must contain its `repo` store
+(a directory in a main workspace / colocated repo, a file pointer in a secondary
+workspace), and a `.git` may be a directory *or* a gitlink file (a linked worktree or
+submodule) whose content starts with `gitdir:`. So a stray/empty `.jj` (a leftover
+`mkdir .jj`) or a file merely named `.git` doesn't register as a repository or shadow
+a real one higher up. Pure filesystem probing — no subprocess is ever spawned.
 
 `start` is walked via `Path::parent`, so pass an **absolute** path to search
 ancestors. A relative path like `"."` has no ancestor chain — only its own

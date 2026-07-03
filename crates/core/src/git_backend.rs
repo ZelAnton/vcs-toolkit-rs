@@ -112,19 +112,25 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
     // 1 spawn: branch + upstream + ahead/behind + change counts (porcelain v2).
     let bs = git.branch_status(dir).await?;
     // 1 spawn: resolve the git dir, then a filesystem probe for an interrupted
-    // merge/rebase (porcelain v2 doesn't report it). A git conflict is part of
-    // that paused state, so `operation` is Merge/Rebase/Clear here (matching
-    // `in_progress_state`); the unresolved-files signal is `conflicted`. Mirrors
-    // the client's private `resolved_git_dir` (relative `--git-dir` → join `dir`).
+    // merge/rebase/am (porcelain v2 doesn't report it). A git conflict is part of
+    // that paused state, so `operation` is Merge/Rebase/ApplyMailbox/Clear here
+    // (matching `in_progress_state`); the unresolved-files signal is `conflicted`.
+    // Mirrors the client's private `resolved_git_dir` (relative `--git-dir` → join `dir`).
     let raw = git.git_dir(dir).await?;
     let git_dir = if raw.is_absolute() {
         raw
     } else {
         dir.join(raw)
     };
+    // `git am` and an apply-backend rebase share `rebase-apply/`, but am marks it
+    // `applying` — check that first so an am reads `ApplyMailbox`, not `Rebase` (M20;
+    // keeps this probe in step with `in_progress_state`).
+    let rebase_apply = git_dir.join("rebase-apply");
     let operation = if git_dir.join("MERGE_HEAD").exists() {
         OperationState::Merge
-    } else if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+    } else if rebase_apply.join("applying").exists() {
+        OperationState::ApplyMailbox
+    } else if git_dir.join("rebase-merge").exists() || rebase_apply.exists() {
         OperationState::Rebase
     } else {
         OperationState::Clear
