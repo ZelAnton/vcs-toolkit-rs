@@ -16,6 +16,12 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **`git_fetch`/`git_fetch_from`/`git_fetch_branch` run under `LC_ALL=C`, so a transient
+  network failure is retried on a non-English locale.** jj's `git fetch` surfaces
+  libc/gai/curl errors ("Temporary failure in name resolution"); a localized
+  environment translated them, so `is_transient_fetch_error` didn't match and the fetch
+  wasn't retried. Pinning the C locale (mirroring `vcs-git`) keeps the retry markers
+  stable. (`docs/audit-2026-07.md` M28.)
 - **`JjFileset` now targets the intended file when a command runs below the workspace
   root.** It emitted jj's **cwd-relative** `file:"<path>"`, but the path is documented
   workspace-root-relative — so with `dir` ≠ the workspace root (a command run from a

@@ -341,6 +341,16 @@ fn exact(name: &str) -> String {
     format!("exact:{name}")
 }
 
+/// Pin `LC_ALL=C` on a command whose failure output is classified by matching
+/// **untranslated English substrings** — the transient-fetch markers
+/// (`is_transient_fetch_error`). jj's `git fetch` surfaces libc/gai/curl network
+/// errors ("Temporary failure in name resolution"), which a localized environment
+/// would translate — silently turning a retryable transient failure into an
+/// unclassified one that is *not* retried. Mirrors `vcs-git`'s `c_locale`.
+fn c_locale(cmd: processkit::Command) -> processkit::Command {
+    cmd.env("LC_ALL", "C")
+}
+
 /// A pre-validated revset expression, for callers that accept revsets from
 /// untrusted input (UIs, bots, agents) and want to fail early. Deliberately
 /// *minimal* — jj's revset grammar is too rich to validate here — it only
@@ -846,8 +856,8 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
         // Idempotent → `retry` replays it on a transient (network) failure.
-        let cmd = self
-            .cmd_in(dir, ["git", "fetch"])
+        // `c_locale`: the retry decision classifies the failure's message (M28).
+        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch"]))
             // Graceful terminate-then-kill on a per-client timeout, so a timed-out
             // fetch can close its connection cleanly.
             .timeout_grace(FETCH_TIMEOUT_GRACE)
@@ -860,8 +870,8 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // fetching from every configured remote. Idempotent → `retry` replays it
         // on a transient (network) failure.
         let remote_pat = exact(remote);
-        let cmd = self
-            .cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()])
+        // `c_locale`: the retry decision classifies the failure's message (M28).
+        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
             .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
@@ -1280,20 +1290,20 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // `-b` is glob-matched, so `exact:` keeps a `*` branch from fetching
         // every branch instead of erroring on a bogus name.
         let branch_pat = exact(branch);
-        let cmd = self
-            .cmd_in(
-                dir,
-                [
-                    "git",
-                    "fetch",
-                    "--remote",
-                    "origin",
-                    "-b",
-                    branch_pat.as_str(),
-                ],
-            )
-            .timeout_grace(FETCH_TIMEOUT_GRACE)
-            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        // `c_locale`: the retry decision classifies the failure's message (M28).
+        let cmd = c_locale(self.cmd_in(
+            dir,
+            [
+                "git",
+                "fetch",
+                "--remote",
+                "origin",
+                "-b",
+                branch_pat.as_str(),
+            ],
+        ))
+        .timeout_grace(FETCH_TIMEOUT_GRACE)
+        .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
     }
 
@@ -2400,6 +2410,13 @@ mod tests {
             &rec2.only_call().args_str()[..6],
             &["git", "fetch", "--remote", "origin", "-b", "exact:foo"]
         );
+        // M28: pinned C locale so a localized transient marker still classifies.
+        assert!(
+            rec2.only_call().envs.iter().any(|(k, v)| {
+                k.to_str() == Some("LC_ALL") && v.as_deref().and_then(|s| s.to_str()) == Some("C")
+            }),
+            "git_fetch_branch must pin LC_ALL=C"
+        );
     }
 
     // `git_fetch` retries a transient (network) failure up to FETCH_ATTEMPTS times.
@@ -2409,6 +2426,14 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         assert!(jj.git_fetch(Path::new(".")).await.is_err());
         assert_eq!(rec.calls().len(), FETCH_ATTEMPTS as usize);
+        // M28: the fetch runs under LC_ALL=C, so a localized libc/gai transient marker
+        // ("Temporary failure in name resolution") still classifies as retryable.
+        assert!(
+            rec.calls()[0].envs.iter().any(|(k, v)| {
+                k.to_str() == Some("LC_ALL") && v.as_deref().and_then(|s| s.to_str()) == Some("C")
+            }),
+            "git fetch must pin LC_ALL=C"
+        );
     }
 
     // Opt-in lock-contention retry mirrors `vcs-git`: a mutation that fails on jj's
@@ -2460,6 +2485,13 @@ mod tests {
                 "--color",
                 "never"
             ]
+        );
+        // M28: pinned C locale so a localized transient marker still classifies.
+        assert!(
+            rec.only_call().envs.iter().any(|(k, v)| {
+                k.to_str() == Some("LC_ALL") && v.as_deref().and_then(|s| s.to_str()) == Some("C")
+            }),
+            "git_fetch_from must pin LC_ALL=C"
         );
 
         let failing = RecordingRunner::replying(Reply::fail(1, "Error: Connection timed out"));
