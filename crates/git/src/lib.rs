@@ -1771,13 +1771,32 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .arg(url)
                 .arg(dest)
                 .env("GIT_TERMINAL_PROMPT", "0")
-                // On a per-client timeout, terminate gracefully (then hard-kill
-                // after a grace window) so a timed-out clone can clean up its
-                // partial `dest`. No-op without a deadline (matches `fetch`).
+                // On a per-client timeout, terminate gracefully (then hard-kill after
+                // a grace window). No-op without a deadline (matches `fetch`).
                 .timeout_grace(FETCH_TIMEOUT_GRACE),
             &envs,
         );
-        self.core.run_unit(command).await
+
+        // R7: git populates `dest` incrementally, so a failed clone (timeout, network,
+        // auth) can leave a **partial, non-empty** `dest` that blocks a retry with
+        // "destination path already exists and is not empty". `timeout_grace` alone
+        // can't prevent it — Windows' job-kill is atomic (no graceful tier) and the
+        // Unix grace is too short to delete a multi-GB partial. So clean it ourselves.
+        //
+        // Only clean a `dest` we could have *created*: absent, or an empty directory.
+        // git refuses to clone into a **non-empty** existing dir, so a non-empty `dest`
+        // means the failure was that refusal and the caller's data is untouched — never
+        // delete that. (A best-effort blocking remove on the error path; a partial clone
+        // may be large, but this path is rare.)
+        let cleanable = match std::fs::read_dir(dest) {
+            Err(_) => true,                              // absent/unreadable → clone creates it
+            Ok(mut entries) => entries.next().is_none(), // an empty directory
+        };
+        let result = self.core.run_unit(command).await;
+        if result.is_err() && cleanable {
+            let _ = std::fs::remove_dir_all(dest);
+        }
+        result
     }
 
     async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()> {
@@ -3669,6 +3688,89 @@ mod tests {
             .await
             .expect("clone");
         assert_eq!(bare.only_call().args_str(), ["clone", "u", "/d"]);
+    }
+
+    // R7: a failed clone cleans a `dest` it could have *created* (absent or empty) so
+    // a retry isn't blocked by "destination already exists and is not empty" — but it
+    // must NEVER delete a non-empty pre-existing dir (git would have refused, so the
+    // caller's data is untouched). Scripted-fail clone + real temp dirs (only the fs
+    // cleanup is real; nothing spawns).
+    #[tokio::test]
+    async fn clone_failure_cleans_only_a_dest_it_could_have_created() {
+        use vcs_testkit::TempDir;
+        let tmp = TempDir::new("r7-clone");
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "clone"],
+            Reply::fail(
+                128,
+                "fatal: could not read Username for 'https://x': prompts disabled",
+            ),
+        ));
+
+        // A non-empty caller dir must survive a failed clone.
+        let occupied = tmp.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
+        assert!(
+            git.clone_repo("https://x/r", &occupied, CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            occupied.join("keep.txt").exists(),
+            "a non-empty caller dir must survive a failed clone"
+        );
+
+        // An empty dest we could have populated is removed on failure.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(
+            git.clone_repo("https://x/r", &empty, CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            !empty.exists(),
+            "an empty dest is cleaned so a retry isn't blocked"
+        );
+
+        // A pre-existing FILE at `dest` must survive (read_dir errs → cleanable, but
+        // remove_dir_all refuses a non-dir). Pins that a future "also remove a file"
+        // change can't slip in unnoticed.
+        let file_dest = tmp.path().join("a-file");
+        std::fs::write(&file_dest, b"caller file").unwrap();
+        assert!(
+            git.clone_repo("https://x/r", &file_dest, CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            file_dest.exists() && std::fs::read(&file_dest).unwrap() == b"caller file",
+            "a caller's file at dest must survive a failed clone"
+        );
+
+        // A symlink `dest` → an EMPTY dir the caller owns: `read_dir` follows the
+        // link and sees empty, so `cleanable` is true and `remove_dir_all` DOES run on
+        // the link — it must unlink only the symlink, never delete THROUGH it. The
+        // target dir (and a sibling sentinel) must survive.
+        #[cfg(unix)]
+        {
+            let target = tmp.path().join("link-target"); // stays empty → cleanable path
+            std::fs::create_dir(&target).unwrap();
+            let sentinel = tmp.path().join("sibling.txt");
+            std::fs::write(&sentinel, b"untouched").unwrap();
+            let link = tmp.path().join("a-symlink");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert!(
+                git.clone_repo("https://x/r", &link, CloneSpec::new())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                target.exists() && sentinel.exists(),
+                "a failed clone must unlink at most the symlink, never delete through it"
+            );
+        }
     }
 
     #[tokio::test]

@@ -63,6 +63,12 @@ crates; tag releases as `vcs-jj-v<version>`.
   with its `@@` count, and a template that ends in `\n\n`/spaces is preserved.
   `description` trims explicitly to keep its scalar contract. (Behavior change: a
   caller that relied on the old trimming should trim itself.) (`docs/audit-2026-07.md` H7.)
+- **A failed `git_clone` cleans up its partial `dest`.** A clone that fails midway
+  (timeout, network, auth) left a partial, non-empty `dest` that blocked a retry with
+  "destination already exists". It now removes a `dest` it could have created (absent,
+  or an empty directory) on failure, but **never** a non-empty pre-existing directory
+  (the caller's data, which jj/git refuse to clone into). Mirrors `vcs-git`.
+  (`docs/audit-2026-07.md` R7.)
 
 ## [0.6.0] - 2026-06-27
 

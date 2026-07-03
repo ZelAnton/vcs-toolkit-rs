@@ -1296,16 +1296,27 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             } else {
                 "--no-colocate"
             });
-        // Graceful terminate-then-kill on a per-client timeout, so a timed-out
-        // clone can clean up its partial `dest`. No-op without a deadline.
-        self.core
-            .run_unit(
-                command
-                    .arg("--color")
-                    .arg("never")
-                    .timeout_grace(FETCH_TIMEOUT_GRACE),
-            )
-            .await
+        // Graceful terminate-then-kill on a per-client timeout. No-op without a deadline.
+        let command = command
+            .arg("--color")
+            .arg("never")
+            .timeout_grace(FETCH_TIMEOUT_GRACE);
+
+        // R7: like `vcs_git::clone_repo`, a failed clone can leave a partial `dest`
+        // that blocks a retry ("destination already exists"); `timeout_grace` can't
+        // prevent it (Windows' job-kill is atomic; the Unix grace is too short for a
+        // multi-GB partial). Clean a `dest` we could have created — absent or an empty
+        // dir — but never a non-empty pre-existing one (that's the caller's data,
+        // untouched because jj/git refuses to clone into it). Best-effort, error path.
+        let cleanable = match std::fs::read_dir(dest) {
+            Err(_) => true,
+            Ok(mut entries) => entries.next().is_none(),
+        };
+        let result = self.core.run_unit(command).await;
+        if result.is_err() && cleanable {
+            let _ = std::fs::remove_dir_all(dest);
+        }
+        result
     }
 
     async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()> {
@@ -2539,6 +2550,38 @@ mod tests {
         let call = plain.only_call();
         assert!(call.has_flag("--no-colocate"), "explicit either way");
         assert!(!call.has_flag("--colocate"));
+    }
+
+    // R7 (mirrors vcs-git): a failed `git_clone` cleans a `dest` it could have created
+    // (absent/empty) so a retry isn't blocked, but never a non-empty pre-existing dir
+    // (the caller's data). Scripted-fail clone + real temp dirs.
+    #[tokio::test]
+    async fn git_clone_failure_cleans_only_a_dest_it_could_have_created() {
+        use vcs_testkit::TempDir;
+        let tmp = TempDir::new("r7-jj-clone");
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "git", "clone"],
+            Reply::fail(1, "Error: fetch failed"),
+        ));
+
+        // A non-empty caller dir must survive.
+        let occupied = tmp.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
+        assert!(jj.git_clone("https://x/r", &occupied, false).await.is_err());
+        assert!(
+            occupied.join("keep.txt").exists(),
+            "a non-empty caller dir must survive a failed jj clone"
+        );
+
+        // An empty dest we could have populated is removed on failure.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(jj.git_clone("https://x/r", &empty, false).await.is_err());
+        assert!(
+            !empty.exists(),
+            "an empty dest is cleaned so a retry isn't blocked"
+        );
     }
 
     #[tokio::test]

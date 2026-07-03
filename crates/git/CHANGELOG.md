@@ -69,6 +69,13 @@ crates; tag releases as `vcs-git-v<version>`.
   so the old 3× fetch-retry blocked ≈ 3× the configured ceiling against a black-holed
   remote; a timeout now surfaces immediately. Fast transient failures (DNS, dropped
   connection) still retry. (`docs/audit-2026-07.md` R6.)
+- **A failed `clone_repo` cleans up its partial `dest`.** A clone that fails midway
+  (timeout, network, auth) left a partial, non-empty `dest` that blocked a retry with
+  "destination path already exists and is not empty" (`timeout_grace` can't prevent it
+  — Windows' job-kill is atomic, the Unix grace too short for a large partial). It now
+  removes a `dest` it could have created (absent, or an empty directory) on failure,
+  but **never** a non-empty pre-existing directory (git refuses to clone into one, so
+  the caller's data is untouched). (`docs/audit-2026-07.md` R7.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a
