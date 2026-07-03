@@ -408,7 +408,10 @@ impl ReviewAction {
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitHubApi: Send + Sync {
-    /// Run `gh <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `gh <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit). A raw escape hatch — you supply the whole
+    /// argv, so pass `-R owner/repo` to target a specific repo; the `at(dir)` bound
+    /// view does *not* re-bind it (unlike [`api`](GitHubApi::api), which is dir-bound).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitHubApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -443,8 +446,10 @@ pub trait GitHubApi: Send + Sync {
     /// [`PrCreate`] for the title/body and the optional `head` (source branch;
     /// `None` = current branch) / `base` (target; `None` = repo default).
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
-    /// Raw GitHub REST/GraphQL response body (`gh api <endpoint>`).
-    async fn api(&self, endpoint: &str) -> Result<String>;
+    /// Raw GitHub REST/GraphQL response body (`gh api <endpoint>`), run in `dir` so
+    /// a relative endpoint's `{owner}/{repo}` placeholder resolves against the bound
+    /// repository — not whatever repo the process's current directory happens to be in.
+    async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;
 
     // --- PR lifecycle ----------------------------------------------------
 
@@ -683,9 +688,11 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn api(&self, endpoint: &str) -> Result<String> {
+    async fn api(&self, dir: &Path, endpoint: &str) -> Result<String> {
         reject_flag_like("endpoint", endpoint)?;
-        self.core.run(["api", endpoint]).await
+        self.core
+            .run(self.core.command_in(dir, ["api", endpoint]))
+            .await
     }
 
     async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()> {
@@ -971,9 +978,9 @@ vcs_cli_support::at_forwarders! {
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn auth_status() -> Result<bool>;
-        fn api(endpoint: &str) -> Result<String>;
     }
     dir {
+        fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn pr_list() -> Result<Vec<PullRequest>>;
         fn pr_list_for_branch(head: &str, base: &str) -> Result<Vec<PullRequest>>;
@@ -1215,10 +1222,27 @@ mod tests {
     async fn flag_like_positionals_are_rejected_before_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let gh = GitHub::with_runner(&rec);
-        assert!(gh.api("-evil").await.is_err());
+        assert!(gh.api(Path::new("."), "-evil").await.is_err());
         assert!(gh.release_view(Path::new("."), "-evil").await.is_err());
-        assert!(gh.api("").await.is_err(), "empty refused too");
+        assert!(
+            gh.api(Path::new("."), "").await.is_err(),
+            "empty refused too"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn api_runs_in_the_bound_repo_dir() {
+        let rec = RecordingRunner::replying(Reply::ok("{}\n"));
+        let gh = GitHub::with_runner(&rec);
+        gh.api(Path::new("/repo"), "repos/o/r/pulls")
+            .await
+            .expect("api");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["api", "repos/o/r/pulls"]);
+        // H9: the request runs in the bound repo dir, so gh resolves a relative
+        // endpoint's `{owner}/{repo}` from *that* repo — not the process cwd.
+        assert_eq!(call.cwd, Some(std::path::PathBuf::from("/repo")));
     }
 
     // pr_merge builds the strategy flag plus the optional --auto/--delete-branch.

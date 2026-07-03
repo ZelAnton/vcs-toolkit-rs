@@ -270,7 +270,10 @@ impl MergeStrategy {
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitLabApi: Send + Sync {
-    /// Run `glab <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `glab <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit). A raw escape hatch — you supply the whole
+    /// argv, so pass `-R group/project` to target a specific repo; the `at(dir)` bound
+    /// view does *not* re-bind it (unlike [`api`](GitLabApi::api), which is dir-bound).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitLabApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -278,10 +281,12 @@ pub trait GitLabApi: Send + Sync {
     /// Make an authenticated GitLab API request through glab (`glab api
     /// <endpoint>`), returning the raw response body — the escape hatch for any
     /// REST/GraphQL endpoint this crate doesn't model (mirrors
-    /// [`GitHubApi::api`](../vcs_github/trait.GitHubApi.html#tymethod.api)). The
+    /// [`GitHubApi::api`](../vcs_github/trait.GitHubApi.html#tymethod.api)). Run in
+    /// `dir` so a relative endpoint's `:id`/project placeholder resolves against the
+    /// bound repository, not whatever repo the process's current directory is in. The
     /// `endpoint` is guarded against being parsed as a flag (empty or leading `-`
     /// is refused before spawning); pass query/body flags via [`run`](GitLabApi::run).
-    async fn api(&self, endpoint: &str) -> Result<String>;
+    async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;
     /// Installed GitLab CLI version (`glab --version`).
     async fn version(&self) -> Result<String>;
     /// Whether the user is authenticated (`glab auth status` exits zero). Reflects
@@ -417,9 +422,11 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.output_string(args).await
     }
 
-    async fn api(&self, endpoint: &str) -> Result<String> {
+    async fn api(&self, dir: &Path, endpoint: &str) -> Result<String> {
         reject_flag_like("endpoint", endpoint)?;
-        self.core.run(["api", endpoint]).await
+        self.core
+            .run(self.core.command_in(dir, ["api", endpoint]))
+            .await
     }
 
     async fn version(&self) -> Result<String> {
@@ -688,11 +695,11 @@ vcs_cli_support::at_forwarders! {
         fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
         fn run_args(args: &[&str]) -> Result<String>;
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
-        fn api(endpoint: &str) -> Result<String>;
         fn version() -> Result<String>;
         fn auth_status() -> Result<bool>;
     }
     dir {
+        fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn mr_list() -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
@@ -759,12 +766,18 @@ mod tests {
     async fn api_builds_endpoint_and_guards_flags() {
         let rec = RecordingRunner::replying(Reply::ok("{}\n"));
         let glab = GitLab::with_runner(&rec);
-        glab.api("/projects/1").await.expect("api");
-        assert_eq!(rec.only_call().args_str(), ["api", "/projects/1"]);
+        glab.api(Path::new("/repo"), "/projects/1")
+            .await
+            .expect("api");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["api", "/projects/1"]);
+        // H9: the request runs in the bound repo dir, so glab resolves the project
+        // from *that* repo's remote — not the process's current directory.
+        assert_eq!(call.cwd, Some(std::path::PathBuf::from("/repo")));
         // A flag-like endpoint is refused before spawning.
         let glab = GitLab::with_runner(ScriptedRunner::new());
-        assert!(glab.api("-X").await.is_err());
-        assert!(glab.api("").await.is_err());
+        assert!(glab.api(Path::new("/repo"), "-X").await.is_err());
+        assert!(glab.api(Path::new("/repo"), "").await.is_err());
     }
 
     // Hermetic: real mr_list() arg-building + JSON deserialization against canned

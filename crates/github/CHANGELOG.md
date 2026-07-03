@@ -36,6 +36,13 @@ crates; tag releases as `vcs-github-v<version>`.
   via the dependency). No public API or behaviour change.
 
 ### Fixed
+- **`api` now targets the bound repository, not the process's current directory
+  (breaking: `api(endpoint)` → `api(dir, endpoint)`).** It builds `gh api` with the
+  repo dir as its working directory, so a relative endpoint's `{owner}/{repo}`
+  placeholder resolves against the bound repo. Previously it ran in the process cwd,
+  so a client bound to `/repo-a` while the process sat in `/repo-b` hit the **wrong
+  repository**. The `at(dir)` bound form (`GitHubAt::api(endpoint)`) is unchanged.
+  (`docs/audit-2026-07.md` H9.)
 - `Review` / `Comment` string fields now tolerate an explicit JSON `null` from `gh`
   (decoded as empty), matching how the crate's other `--json` DTOs already handle a
   present-but-null optional field — a null no longer fails the parse.

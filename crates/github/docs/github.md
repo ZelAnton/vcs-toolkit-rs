@@ -92,7 +92,7 @@ Both are also available on the bound handle (`gh.at(dir).run_args(…)`).
 ```rust,ignore
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
-async fn api(&self, endpoint: &str) -> Result<String>;// `gh api <endpoint>`
+async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;// `gh api <endpoint>` in `dir`
 async fn repo_view(&self, dir: &Path) -> Result<RepoView>;// `gh repo view --json …`
 ```
 

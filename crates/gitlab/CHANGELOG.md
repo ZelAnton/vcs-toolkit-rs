@@ -36,7 +36,12 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   via the dependency). No public API or behaviour change.
 
 ### Fixed
--
+- **`api` now targets the bound repository, not the process's current directory
+  (breaking: `api(endpoint)` → `api(dir, endpoint)`).** It builds `glab api` with the
+  repo dir as its working directory, so a relative endpoint resolves the project from
+  *that* repo's remote. Previously it ran in the process cwd, so a client bound to
+  `/repo-a` while the process sat in `/repo-b` hit the **wrong project**. The `at(dir)`
+  bound form (`GitLabAt::api(endpoint)`) is unchanged. (`docs/audit-2026-07.md` H9.)
 
 ## [0.2.0] - 2026-06-27
 

@@ -82,7 +82,7 @@ independently.
 - **Tier 2 — forge surface (additive).** `Forge::supports(ForgeOp)` /
   `capabilities() -> ForgeCapabilities` capability introspection; `ForgeRelease` gained
   `body`/`draft`/`prerelease` and `ForgeIssue` body/url are now populated by `issue_list`;
-  `GitLabApi::api(endpoint)` (the `glab api` escape hatch). Labels/assignees deferred to
+  `GitLabApi::api(dir, endpoint)` (the `glab api` escape hatch). Labels/assignees deferred to
   [`ideas/next-forge-fields.md`](ideas/next-forge-fields.md) (non-breaking, additive later).
 - **Tier 3 — error ergonomics (additive).** `vcs-core` re-exports `processkit`
   (`vcs_core::processkit`) so downstream can match the wrapped error without a direct dep;
