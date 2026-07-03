@@ -37,6 +37,59 @@ impl WorktreeRemove {
     }
 }
 
+/// Partial [`WorktreeCreate`] — carries the path and new-branch name; chain
+/// [`base`](WorktreeCreatePartial::base) to name the ref it forks from.
+#[derive(Debug, Clone)]
+pub struct WorktreeCreatePartial {
+    path: PathBuf,
+    branch: String,
+}
+
+impl WorktreeCreatePartial {
+    /// The ref the new worktree/workspace forks from — a branch, tag, or commit
+    /// (git `HEAD`; jj `@` / a change id). Required and explicit: it has no default
+    /// because the sentinel for "current" differs by backend.
+    pub fn base(self, base: impl Into<String>) -> WorktreeCreate {
+        WorktreeCreate {
+            path: self.path,
+            branch: self.branch,
+            base: base.into(),
+        }
+    }
+}
+
+/// Options for [`Repo::create_worktree`](crate::Repo::create_worktree).
+///
+/// Built as `WorktreeCreate::new(path, "feature").base("main")` — the new-branch name
+/// and the fork-point `base` (both plain strings that a swap would silently accept,
+/// creating a branch *named* like the base) are named across **two** builder steps, so
+/// they can't be transposed. `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorktreeCreate {
+    /// Where the new attached worktree (git) / secondary workspace (jj) is created.
+    pub path: PathBuf,
+    /// The new branch (git) / bookmark (jj) to create at the worktree.
+    pub branch: String,
+    /// The ref the new branch forks from (git `HEAD`, jj `@`, a branch/tag/commit).
+    pub base: String,
+}
+
+impl WorktreeCreate {
+    /// Name the worktree `path` and the new `branch` to create there; chain
+    /// [`base`](WorktreeCreatePartial::base) to name the fork point.
+    ///
+    // A type-state builder entry: `new` returns the partial (not `Self`) so `base`
+    // is mandatory — the recognised builder exception to `new_ret_no_self`.
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(path: impl Into<PathBuf>, branch: impl Into<String>) -> WorktreeCreatePartial {
+        WorktreeCreatePartial {
+            path: path.into(),
+            branch: branch.into(),
+        }
+    }
+}
+
 /// Options for [`Repo::delete_branch`](crate::Repo::delete_branch).
 ///
 /// `#[non_exhaustive]`, so build it through [`BranchDelete::new`] and the chained

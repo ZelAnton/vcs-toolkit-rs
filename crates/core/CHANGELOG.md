@@ -10,10 +10,18 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `WorktreeCreate` (+ its partial builder `WorktreeCreatePartial`) — the spec that
+  `Repo::create_worktree` now takes.
 
 ### Changed
--
+- **`Repo::create_worktree` takes a `WorktreeCreate` spec, not `(path, branch, base)`
+  positional args (breaking).** The new-branch name and the fork-point `base` were two
+  adjacent plain strings that compiled when transposed — `create_worktree(p, "main",
+  "feature")` silently created a branch *named* `main` off `feature`. It's now
+  `create_worktree(WorktreeCreate::new(path, "feature").base("main"))`: `path`+`branch`
+  go in `new` (distinct types), and `base` is a separate named step, so the two names
+  can't be swapped. `base` stays explicit (no default — the "current" sentinel is git
+  `HEAD` vs jj `@`). (`docs/audit-2026-07.md` A5.)
 
 ### Fixed
 -

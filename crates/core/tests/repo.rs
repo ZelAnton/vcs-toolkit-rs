@@ -5,7 +5,7 @@
 //! Scaffolding (throwaway repos, raw scenario steps) comes from `vcs-testkit`;
 //! the typed facade under test does the rest.
 
-use vcs_core::{BackendKind, ChangeKind, OperationState, Repo};
+use vcs_core::{BackendKind, ChangeKind, OperationState, Repo, WorktreeCreate};
 use vcs_testkit::{GitSandbox, JjSandbox, git, jj};
 
 /// A git sandbox with the one seed commit the facade tests build on.
@@ -149,7 +149,7 @@ async fn git_create_then_blocking_cleanup() {
     let repo = Repo::open(dir).expect("open");
 
     let wt = dir.join("wt");
-    repo.create_worktree(&wt, "feat", "HEAD")
+    repo.create_worktree(WorktreeCreate::new(wt.as_path(), "feat").base("HEAD"))
         .await
         .expect("create_worktree");
     assert!(wt.join("seed.txt").exists(), "worktree populated");
@@ -167,7 +167,7 @@ async fn jj_create_then_blocking_cleanup() {
     let repo = Repo::open(dir).expect("open");
 
     let ws = dir.join("ws");
-    repo.create_worktree(&ws, "feat", "@")
+    repo.create_worktree(WorktreeCreate::new(ws.as_path(), "feat").base("@"))
         .await
         .expect("create_worktree");
     assert!(ws.exists(), "workspace dir created");

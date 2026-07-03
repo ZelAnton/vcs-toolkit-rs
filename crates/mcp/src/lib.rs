@@ -608,11 +608,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<CreateWorktreeParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_create_worktree").await?;
-        let outcome = self
-            .repo
-            .create_worktree(Path::new(&p.path), &p.branch, &p.base)
-            .await
-            .map_err(core_err)?;
+        let spec = vcs_core::WorktreeCreate::new(p.path, p.branch).base(p.base);
+        let outcome = self.repo.create_worktree(spec).await.map_err(core_err)?;
         ok_json(&outcome)
     }
 

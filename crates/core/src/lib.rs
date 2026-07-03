@@ -127,14 +127,16 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_core::{MergeProbe, Repo};
+//! use vcs_core::{MergeProbe, Repo, WorktreeCreate};
 //! # async fn demo(repo: &Repo) -> vcs_core::Result<()> {
 //! match repo.try_merge("feature").await? {
 //!     MergeProbe::Clean            => println!("merges cleanly"),
 //!     MergeProbe::Conflicts(paths) => println!("would conflict in {paths:?}"),
 //!     _                            => {} // #[non_exhaustive]
 //! }
-//! let wt = repo.create_worktree(Path::new("/tmp/feat"), "feature", "main").await?;
+//! let wt = repo
+//!     .create_worktree(WorktreeCreate::new(Path::new("/tmp/feat"), "feature").base("main"))
+//!     .await?;
 //! # let _ = wt;
 //! # Ok(()) }
 //! ```
@@ -182,7 +184,8 @@ mod jj_backend;
 
 pub use dto::{
     BackendKind, BranchDelete, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, RepoSnapshot, UpstreamTracking, WorktreeInfo, WorktreeRemove,
+    OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial,
+    WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 
@@ -760,12 +763,8 @@ impl<R: ProcessRunner> Repo<R> {
     /// created it (a pre-existing directory the caller already had is left intact),
     /// the workspace is forgotten best-effort, and the original error is surfaced —
     /// so a failed call doesn't leak a half-made worktree.
-    pub async fn create_worktree(
-        &self,
-        path: &Path,
-        branch: &str,
-        base: &str,
-    ) -> Result<CreateOutcome> {
+    pub async fn create_worktree(&self, spec: WorktreeCreate) -> Result<CreateOutcome> {
+        let WorktreeCreate { path, branch, base } = &spec;
         match &self.backend {
             Backend::Git(g) => git_backend::create_worktree(g, &self.cwd, path, branch, base).await,
             Backend::Jj(j) => jj_backend::create_worktree(j, &self.cwd, path, branch, base).await,
@@ -956,7 +955,7 @@ facade_trait! {
         fn continue_in_progress() -> Result<OperationState>;
         fn in_progress_state() -> Result<OperationState>;
         fn list_worktrees() -> Result<Vec<WorktreeInfo>>;
-        fn create_worktree(path: &Path, branch: &str, base: &str) -> Result<CreateOutcome>;
+        fn create_worktree(spec: WorktreeCreate) -> Result<CreateOutcome>;
         fn remove_worktree(spec: WorktreeRemove) -> Result<()>;
     }
 }
