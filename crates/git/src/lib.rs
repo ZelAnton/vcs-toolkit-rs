@@ -45,8 +45,8 @@
 //!   when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`CommitPaths`],
 //!   [`MergeCommit`] / [`MergeNoCommit`], [`GitPush`], [`CloneSpec`],
-//!   [`WorktreeAdd`], [`AnnotatedTag`] — each `#[non_exhaustive]`, built with a
-//!   constructor + chained setters, named after the flags they emit.
+//!   [`WorktreeAdd`], [`AnnotatedTag`], [`MergeCheck`] — each `#[non_exhaustive]`, built
+//!   with a constructor + chained setters, named after the flags they emit.
 //! - **[`conflict`]** — a typed conflict-marker model: parse marker soup into
 //!   structured regions, re-render byte-exact, and resolve to a chosen side.
 //! - **[`Git::hardened`]** — a profile for untrusted repositories (hooks off,

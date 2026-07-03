@@ -856,6 +856,21 @@ An enum selecting what `diff` / `diff_text` compares — a re-export of
 - `DiffSpec::Rev(String)` — a specific revision or range, e.g. `main..HEAD` or
   `HEAD~1` (`git diff <rev>`).
 
+### `MergeCheck`
+
+The spec `is_merged` takes — "is `branch` fully merged into `base`?". A two-step
+type-state builder (`#[non_exhaustive]`), so the two same-typed refs are named across
+separate steps and can't be silently transposed (a swap would *invert* the answer):
+
+```rust,ignore
+pub fn branch(name: impl Into<String>) -> MergeCheckBranch; // entry: names the branch tested
+pub fn into_base(self, base: impl Into<String>) -> MergeCheck; // on MergeCheckBranch: names the base
+// fields: pub branch: String, pub base: String
+```
+
+- Built as `MergeCheck::branch("feature").into_base("main")`; `is_merged` then runs
+  `git branch --merged <base>` and reports whether `<branch>` appears.
+
 ### `WorktreeAdd`
 
 Options for `worktree_add`. `#[non_exhaustive]` — build it through the constructors,

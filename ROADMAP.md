@@ -24,10 +24,22 @@ links.
 The R1–R10 wave (2026-06-09 / 2026-06-10), the **processkit 0.10.1 → 0.11.0
 migration**, the **pre-1.0 interface wave (Tier 1–4)**, the **lock-contention
 retry**, and the **credential-provider** feature (all 2026-06-14) are **shipped** —
-summaries below. With them cleared, the active list is empty; the next committed items
-get promoted from [`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred
-forge fields) when work resumes. Settled-against items live in
-[`decisions/`](decisions/).
+summaries below. The **2026-07 audit-remediation wave** (see below) and the
+**processkit 1.1.0 adoption** shipped since. The next committed items get promoted from
+[`ideas/next-*`](ideas/) (`examples/`, MCP HTTP transport, deferred forge fields) when
+work resumes. Settled-against items live in [`decisions/`](decisions/).
+
+### ✅ Shipped — 2026-07 audit remediation + processkit 1.1.0 (2026-07)
+
+The [`docs/audit-2026-07.md`](docs/audit-2026-07.md) review drove a large remediation
+programme (see its "Remediation status"): the data-loss/security **Wave 0** (C1–C3, H1,
+H5, P1), the dead/degraded-safety **Wave 1**, error-model classifiers, the wrong-result
+**Wave 2** (H7–H11, the R- and M-clusters), and the first API-shape reshapes — released
+as **0.3.0** (vcs-core 0.5.0, vcs-git/jj/github 0.7.0, the rest 0.3.0). A **0.4.0 cycle**
+then landed the A-cluster (A4 return-DTO builders, A5 transposition specs, A7 variant
+field-safety, A10 RFC-3339 jj timestamps). processkit was bumped **1.0 → 1.1.0** (the
+re-exported types are now semver-stable 1.x). Lower-value/CLI-blind items (A6, A8, A9,
+A11–A16, release-workflow gates) are deferred to a later pre-1.0 cycle.
 
 ### ✅ Shipped — processkit 0.11.0 bump (2026-06-15)
 

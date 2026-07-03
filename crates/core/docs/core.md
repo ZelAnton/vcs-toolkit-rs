@@ -391,8 +391,12 @@ repo.remove_worktree(WorktreeRemove::new("/tmp/feat")).await?; // add `.force()`
 
 ## DTOs
 
-All facade DTOs are `#[non_exhaustive]` — construct via the facade, match with a
-`..` rest pattern, and don't rely on field-init syntax from outside the crate.
+All facade DTOs are `#[non_exhaustive]` — match with a `..` rest pattern, and don't
+rely on field-init syntax from outside the crate. They normally come *from* the facade,
+but the **return DTOs also have public builder constructors** (`RepoSnapshot::new()`,
+`WorktreeInfo::new(path)`, `FileChange::new(path, kind)`, `UpstreamTracking::new(branch)`
+— each with chained setters) so a custom `VcsRepo` backend or a test double can build one
+to return despite the `#[non_exhaustive]`.
 
 ### `BackendKind`
 

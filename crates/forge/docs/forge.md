@@ -140,7 +140,7 @@ The CLIs differ in coverage. Gitea's `tea` lacks four operations, which return
 | `release_view` | ✅ | ✅ | ❌ Unsupported (`tea releases` only lists — filter `release_list`) |
 | `pr_close` honours `delete_branch` | ✅ | ignored | ignored |
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |
-| `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | 100 |
+| `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | ~50 (server page cap) |
 
 Handle a gap **reactively** — call and classify the error:
 
@@ -155,8 +155,9 @@ match forge.pr_checks(7).await {
 # }
 ```
 
-…or **proactively** — ask up front (no spawn) with [`Forge::supports`] /
-[`Forge::capabilities`], e.g. to hide an unavailable button:
+…or **proactively** — ask up front with [`Forge::supports`] (a pure, spawn-free
+match on the backend) or [`Forge::capabilities`] (one auth probe, then the whole
+flat map), e.g. to hide an unavailable button:
 
 ```rust,ignore
 # use vcs_forge::{Forge, ForgeOp};
@@ -164,13 +165,13 @@ match forge.pr_checks(7).await {
 if forge.supports(ForgeOp::PrChecks) {
     // render the "CI checks" button
 }
-let caps = forge.capabilities();          // the whole matrix at once
-if caps.release_view { /* show a release detail link */ }
+if forge.supports(ForgeOp::ReleaseView) { /* show a release detail link */ }
 # }
 ```
 
-`Error` is `Forge(processkit::Error)` or `Unsupported { forge, operation }`, with
-`is_unsupported()` and `is_transient_fetch_error()` classifiers.
+`Error` is `Forge(processkit::Error)`, `Unsupported { forge, operation }`, or
+`InvalidInput(String)`, with `is_unsupported()`, `is_invalid_input()`,
+`is_resource_not_found()`, and `is_transient_fetch_error()` classifiers.
 
 ## When to drop to the wrapped client (the escape hatch)
 

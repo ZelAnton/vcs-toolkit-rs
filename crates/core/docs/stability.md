@@ -29,18 +29,18 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 
 | Crate | Version | Tier |
 |---|---|---|
-| `vcs-diff` | 0.1 | settling |
-| `vcs-cli-support` | 0.1 | settling |
-| `vcs-testkit` | 0.1 | stable-ish (dev-only) |
-| `vcs-git` | 0.4 | maturing |
-| `vcs-jj` | 0.4 | maturing |
-| `vcs-github` | 0.4 | maturing |
-| `vcs-core` | 0.2 | evolving |
-| `vcs-gitlab` | 0.1 | new |
-| `vcs-gitea` | 0.1 | new |
-| `vcs-forge` | 0.1 | new |
-| `vcs-watch` | 0.1 | new |
-| `vcs-mcp` | 0.1 | new |
+| `vcs-diff` | 0.3 | settling |
+| `vcs-cli-support` | 0.3 | settling |
+| `vcs-testkit` | 0.3 | stable-ish (dev-only) |
+| `vcs-git` | 0.7 | maturing |
+| `vcs-jj` | 0.7 | maturing |
+| `vcs-github` | 0.7 | maturing |
+| `vcs-core` | 0.5 | evolving |
+| `vcs-gitlab` | 0.3 | evolving |
+| `vcs-gitea` | 0.3 | evolving |
+| `vcs-forge` | 0.3 | evolving |
+| `vcs-watch` | 0.3 | evolving |
+| `vcs-mcp` | 0.3 | evolving |
 
 **What the tiers mean — and the per-crate caveats:**
 
@@ -52,14 +52,14 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 - **maturing** — broad, consumer-validated surfaces that still grow *additively*:
   `vcs-git`, `vcs-jj` (tracks jj, whose CLI/template surface churns — see the CI
   version matrix), and `vcs-github` (the `gh` PR/issue/run/release surface).
-- **evolving** — `vcs-core`'s common facade surface grows as cross-backend needs
-  surface (e.g. `snapshot`); expect the most movement among the non-`new` crates.
-- **new** — just landed; the surface and the empirically-validated CLI argv/JSON may
-  still shift. `vcs-gitlab` / `vcs-gitea` are lean MR/PR lifecycles, mostly
+- **evolving** — the surfaces with the most movement among the released crates; still
+  growing (often additively), with the empirically-validated CLI argv/JSON occasionally
+  shifting. `vcs-core`'s common facade grows as cross-backend needs surface (e.g.
+  `snapshot`). `vcs-gitlab` / `vcs-gitea` are lean MR/PR lifecycles, mostly
   fixture-pinned (`vcs-gitea` is the narrower of the two — see its capability notes);
   `vcs-forge`'s unified DTOs grow with the wrappers; `vcs-watch` is the workspace's
-  first runtime-tokio + streaming API (its event set may shift); `vcs-mcp` is the MCP
-  server (a lib + binary), whose tool catalogue, names, and JSON shapes will grow.
+  first runtime-tokio + streaming API (its event set may still shift); `vcs-mcp` is the
+  MCP server (a lib + binary), whose tool catalogue, names, and JSON shapes will grow.
 
 ## MSRV policy
 
