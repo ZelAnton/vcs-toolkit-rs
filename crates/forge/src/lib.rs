@@ -360,7 +360,9 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Open pull/merge requests for the bound directory.
+    /// Open pull/merge requests for the bound directory (up to 100 on GitHub/GitLab;
+    /// **Gitea returns at most ~50** per its server page cap — drop to the underlying
+    /// client and page for more).
     pub async fn pr_list(&self) -> Result<Vec<ForgePr>> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_list(c, &self.cwd).await,
@@ -370,8 +372,9 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// A single PR/MR by number (GitLab `iid`). On Gitea this lists and filters
-    /// (`tea` has no single-PR view).
+    /// A single PR/MR by number (GitLab `iid`). On Gitea this **pages** a listing and
+    /// filters (`tea` has no single-PR view), so it finds a PR past the ~50-row server
+    /// page cap — a very large Gitea repo may issue several `tea` calls.
     pub async fn pr_view(&self, number: u64) -> Result<ForgePr> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_view(c, &self.cwd, number).await,

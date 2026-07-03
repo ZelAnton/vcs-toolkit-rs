@@ -508,7 +508,8 @@ pub trait JjApi: Send + Sync {
     /// Aggregate change stats for a revset (`diff -r <revset> --stat`).
     async fn diff_stat(&self, dir: &Path, revset: &str) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec` (`diff -r <spec> --git`) —
-    /// stable machine output.
+    /// stable machine output, returned **verbatim** (a trailing blank context line
+    /// is preserved, so the last hunk stays in sync with its `@@` line count).
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](JjApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
@@ -551,7 +552,9 @@ pub trait JjApi: Send + Sync {
     /// A file's content at a revision (`jj file show -r <revset>
     /// file:"<path>"` — the path is wrapped as an exact-path fileset, so
     /// fileset metacharacters in the name stay literal). Content is decoded
-    /// lossily — a binary file comes back mangled rather than erroring.
+    /// lossily — a binary file comes back mangled rather than erroring — and
+    /// returned **verbatim**: the file's trailing newline(s) are preserved (not
+    /// trimmed), so a read-modify-write round-trip is byte-exact.
     async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String>;
 
     // --- Mutations -----------------------------------------------------------

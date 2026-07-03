@@ -18,6 +18,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
   the `vcs-core`/`vcs-forge` types it surfaces (their re-exported `processkit` is now
   1.x). No behaviour change here. processkit is semver-stable from 1.0, so future 1.x
   updates are non-breaking.
+- **Docs:** the `forge_pr_list` / `forge_issue_list` / `forge_release_list` tool
+  descriptions (a wire-visible contract an agent reads) now note that Gitea returns at
+  most **~50** rows per its server page cap, not the "up to 100" of GitHub/GitLab.
+  (`docs/audit-2026-07.md` H8.)
 
 ### Fixed
 - **`repo_remove_worktree` inherits the `vcs-core` C1 safety fix.** Without `force`,

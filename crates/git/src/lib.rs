@@ -695,7 +695,9 @@ pub trait GitApi: Send + Sync {
     /// match `vcs_jj::JjApi::diff_stat`.
     async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec`
-    /// (`diff <spec> --no-color --no-ext-diff -M`) — stable machine output.
+    /// (`diff <spec> --no-color --no-ext-diff -M`) — stable machine output, returned
+    /// **verbatim** (a trailing blank context line is preserved, so the last hunk
+    /// stays in sync with its `@@` line count for a re-parse/re-apply).
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](GitApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
@@ -796,7 +798,8 @@ pub trait GitApi: Send + Sync {
     /// A file's content at a revision (`git show <rev>:<path>`). `path` is
     /// repo-relative; backslashes are normalised to `/` (git requires it).
     /// Content is decoded **lossily** — binary files come back mangled rather
-    /// than erroring.
+    /// than erroring — and returned **verbatim**: the blob's trailing newline(s)
+    /// are preserved (not trimmed), so a read-modify-write round-trip is byte-exact.
     async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String>;
     /// The value of a config key, or `None` when unset (`config --get <key>`,
     /// whose exit 1 covers both "unset" and "no such section" — git doesn't

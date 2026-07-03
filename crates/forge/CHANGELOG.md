@@ -54,6 +54,10 @@ crates; tag releases as `vcs-forge-v<version>`.
   fine), while Gitea's `tea comment` takes it positionally and rejects a flag-like
   body (one whose first non-space char is `-`, e.g. a Markdown bullet). The previous
   doc wrongly claimed every backend used a flag-value slot. No behavior change.
+- **Docs:** `pr_list` / `issue_list` / `release_list` now note that Gitea returns at
+  most **~50** rows per its server page cap (GitHub/GitLab return up to 100), and
+  `pr_view` notes it **pages** the Gitea listing so it finds a PR past that cap. No
+  behavior change in this crate (the fix is in `vcs-gitea`). (`docs/audit-2026-07.md` H8.)
 
 ## [0.2.0] - 2026-06-27
 
