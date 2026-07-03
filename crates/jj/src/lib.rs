@@ -68,8 +68,8 @@
 //! - **Builder specs** for the multi-option commands — [`WorkspaceAdd`],
 //!   [`SquashPaths`] — each `#[non_exhaustive]`, built with a constructor +
 //!   chained setters, named after the flags they emit. [`JjFileset`] wraps a
-//!   repo-relative path as an exact-path `file:"…"` fileset; [`RevsetExpr`] is an
-//!   optional up-front-validated revset newtype for untrusted input.
+//!   workspace-root-relative path as an exact-path `root-file:"…"` fileset;
+//!   [`RevsetExpr`] is an optional up-front-validated revset newtype for untrusted input.
 //! - **[`conflict`]** — a typed model of jj's *native* conflict markers (the
 //!   `diff`/`snapshot` styles): parse a materialized file into structured
 //!   regions, re-render byte-exact, and resolve to a chosen side. (Files
@@ -198,20 +198,24 @@ impl SparseMode {
     }
 }
 
-/// An exact-path jj fileset (`file:"<path>"`), so path metacharacters like `(`,
+/// An exact-path jj fileset (`root-file:"<path>"`), so path metacharacters like `(`,
 /// `)`, `|`, `*` are treated literally rather than as fileset operators.
 ///
-/// Build it with [`JjFileset::path`]; the path is repo-root-relative.
+/// Build it with [`JjFileset::path`]; the path is **workspace-root-relative** and
+/// resolved as such regardless of the command's working directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JjFileset(String);
 
 impl JjFileset {
-    /// Wrap a repo-relative `path` as an exact-path fileset. **On Windows** the
-    /// caller's `\` path separators are normalised to jj's forward slash (so
-    /// `src\a.rs` matches); **on Unix** `\` is a legitimate filename byte and is left
-    /// intact — rewriting it there would corrupt a real path (matching `vcs-git`'s
-    /// twin, which also gates the rewrite on Windows). Then `"` is escaped for the
-    /// `file:"…"` string literal.
+    /// Wrap a workspace-root-relative `path` as an exact-path fileset. Uses jj's
+    /// **`root-file:`** anchor (not the cwd-relative `file:`), so the path is
+    /// interpreted relative to the workspace root even when the command runs from a
+    /// subdirectory (`dir` ≠ root) — a plain `file:` there would silently target a
+    /// same-named file under `dir`, or nothing (M2). **On Windows** the caller's `\`
+    /// path separators are normalised to jj's forward slash (so `src\a.rs` matches);
+    /// **on Unix** `\` is a legitimate filename byte and is left intact — rewriting it
+    /// there would corrupt a real path (matching `vcs-git`'s twin, which also gates
+    /// the rewrite on Windows). Then `"` is escaped for the string literal.
     pub fn path(path: impl AsRef<str>) -> Self {
         let path = path.as_ref();
         #[cfg(windows)]
@@ -219,10 +223,10 @@ impl JjFileset {
         #[cfg(not(windows))]
         let normalised = path.to_string();
         let escaped = normalised.replace('"', "\\\"");
-        JjFileset(format!("file:\"{escaped}\""))
+        JjFileset(format!("root-file:\"{escaped}\""))
     }
 
-    /// The rendered `file:"…"` expression.
+    /// The rendered `root-file:"…"` expression.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -556,8 +560,8 @@ pub trait JjApi: Send + Sync {
         revset: Option<String>,
     ) -> Result<Vec<AnnotationLine>>;
     /// A file's content at a revision (`jj file show -r <revset>
-    /// file:"<path>"` — the path is wrapped as an exact-path fileset, so
-    /// fileset metacharacters in the name stay literal). Content is decoded
+    /// root-file:"<path>"` — the path is wrapped as a workspace-root-relative
+    /// exact-path fileset, so fileset metacharacters in the name stay literal). Content is decoded
     /// lossily — a binary file comes back mangled rather than erroring — and
     /// returned **verbatim**: the file's trailing newline(s) are preserved (not
     /// trimmed), so a read-modify-write round-trip is byte-exact.
@@ -1985,10 +1989,24 @@ mod tests {
     fn fileset_quotes_metacharacters() {
         assert_eq!(
             JjFileset::path("src/a(b).rs").as_str(),
-            "file:\"src/a(b).rs\""
+            "root-file:\"src/a(b).rs\""
         );
-        // A literal quote is escaped for the `file:"…"` string literal (both platforms).
-        assert_eq!(JjFileset::path("a\"b").as_str(), "file:\"a\\\"b\"");
+        // A literal quote is escaped for the `root-file:"…"` string literal (both platforms).
+        assert_eq!(JjFileset::path("a\"b").as_str(), "root-file:\"a\\\"b\"");
+    }
+
+    // M2: the fileset uses jj's `root-file:` anchor (workspace-root-relative), NOT the
+    // cwd-relative `file:` — so a command run from a subdirectory (`dir` ≠ workspace
+    // root) targets the intended root-relative path rather than a same-named file under
+    // `dir`. (jj resolves `root-file:"x"` from the workspace root; `file:"x"` from cwd.)
+    #[test]
+    fn fileset_is_workspace_root_relative() {
+        assert!(
+            JjFileset::path("src/a.rs")
+                .as_str()
+                .starts_with("root-file:\"")
+        );
+        assert!(!JjFileset::path("src/a.rs").as_str().starts_with("file:"));
     }
 
     // M4: the `\`→`/` rewrite is Windows-only. On Windows a `\` is a path separator
@@ -1997,7 +2015,10 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn fileset_normalises_backslash_on_windows() {
-        assert_eq!(JjFileset::path("src\\a.rs").as_str(), "file:\"src/a.rs\"");
+        assert_eq!(
+            JjFileset::path("src\\a.rs").as_str(),
+            "root-file:\"src/a.rs\""
+        );
     }
 
     #[test]
@@ -2005,7 +2026,7 @@ mod tests {
     fn fileset_preserves_backslash_on_unix() {
         assert_eq!(
             JjFileset::path("weird\\name.rs").as_str(),
-            "file:\"weird\\name.rs\""
+            "root-file:\"weird\\name.rs\""
         );
     }
 
@@ -2026,8 +2047,8 @@ mod tests {
                 "commit",
                 "-m",
                 "msg",
-                "file:\"x|y.rs\"",
-                "file:\"z.rs\"",
+                "root-file:\"x|y.rs\"",
+                "root-file:\"z.rs\"",
                 "--color",
                 "never"
             ]
@@ -2052,7 +2073,7 @@ mod tests {
                 "@",
                 "--into",
                 "feat",
-                "file:\"a.rs\"",
+                "root-file:\"a.rs\"",
                 "--color",
                 "never"
             ]
@@ -2080,7 +2101,7 @@ mod tests {
                 "--into",
                 "feat",
                 "--use-destination-message",
-                "file:\"a.rs\"",
+                "root-file:\"a.rs\"",
                 "--color",
                 "never"
             ]
@@ -2698,7 +2719,7 @@ mod tests {
                 "absorb",
                 "--from",
                 "@-",
-                "file:\"src/a.rs\"",
+                "root-file:\"src/a.rs\"",
                 "--color",
                 "never"
             ]
@@ -2709,7 +2730,7 @@ mod tests {
                 "split",
                 "-m",
                 "split out b",
-                "file:\"b.rs\"",
+                "root-file:\"b.rs\"",
                 "--color",
                 "never"
             ]
@@ -2836,7 +2857,7 @@ mod tests {
                 "show",
                 "-r",
                 "@-",
-                "file:\"src/a.rs\"",
+                "root-file:\"src/a.rs\"",
                 "--color",
                 "never"
             ]

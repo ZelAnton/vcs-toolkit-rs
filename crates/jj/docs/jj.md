@@ -269,9 +269,10 @@ async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String
 async fn file_annotate(&self, dir: &Path, path: &str, revset: Option<String>) -> Result<Vec<AnnotationLine>>;
 ```
 
-`file_show` returns a file's content at a revision. `path` is wrapped as an
-exact-path fileset (`file:"<path>"`) so fileset metacharacters in the name stay
-literal; content is decoded **lossily** — a binary file comes back mangled
+`file_show` returns a file's content at a revision. `path` is wrapped as a
+workspace-root-relative exact-path fileset (`root-file:"<path>"`) so fileset
+metacharacters in the name stay literal and the path resolves from the workspace root
+regardless of `dir`; content is decoded **lossily** — a binary file comes back mangled
 rather than erroring.
 
 `file_annotate` returns per-line authorship (`file annotate`; `revset: None` =
@@ -780,16 +781,17 @@ assert!(RevsetExpr::new("-x").is_err());   // leading `-` → would parse as a f
 implements `Display`.
 
 ### `JjFileset`
-An exact-path jj fileset (`file:"<path>"`), so path metacharacters like `(`,
+An exact-path jj fileset (`root-file:"<path>"`), so path metacharacters like `(`,
 `)`, `|`, `*` are treated literally rather than as fileset operators. Build it
-with `JjFileset::path(path)` (repo-root-relative); a Windows backslash separator
-is normalised to `/` (jj filesets are forward-slash — a literal-backslash path
-would match nothing), and a `"` is escaped for the `file:"…"` literal.
+with `JjFileset::path(path)` (workspace-root-relative — jj's `root-file:` anchor, so
+the path resolves from the workspace root even when the command runs from a
+subdirectory); on **Windows** a `\` separator is normalised to `/` (on Unix `\` is a
+legitimate filename byte, preserved), and a `"` is escaped for the string literal.
 
 ```rust,ignore
 # use vcs_jj::JjFileset;
 let fs = JjFileset::path(r#"src/a (copy).rs"#);
-assert_eq!(fs.as_str(), r#"file:"src/a (copy).rs""#);
+assert_eq!(fs.as_str(), r#"root-file:"src/a (copy).rs""#);
 ```
 
 `JjFileset::path(impl AsRef<str>) -> Self`; `.as_str() -> &str`.

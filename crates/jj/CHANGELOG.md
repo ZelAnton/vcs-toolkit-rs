@@ -16,6 +16,14 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **`JjFileset` now targets the intended file when a command runs below the workspace
+  root.** It emitted jj's **cwd-relative** `file:"<path>"`, but the path is documented
+  workspace-root-relative — so with `dir` ≠ the workspace root (a command run from a
+  subdirectory), a fileset silently hit a *same-named file under `dir`*, or nothing.
+  Every fileset consumer (`file_show`, `commit_paths`, `squash_paths`, `split_paths`,
+  `absorb`) was affected. It now emits the **root-relative** `root-file:"<path>"`, so
+  the path resolves from the workspace root regardless of the working directory. No
+  change when `dir` already is the root. (`docs/audit-2026-07.md` M2.)
 - **Workspace root-path probes (`workspace_root`, `workspace_roots`, the Drop-cleanup
   `workspace_name_for_path`) run `--ignore-working-copy`, so a read no longer snapshots
   the working copy.** All resolve *static* workspace root paths, but ran plain `jj
