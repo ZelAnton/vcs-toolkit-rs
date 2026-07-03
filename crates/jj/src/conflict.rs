@@ -81,7 +81,7 @@ impl JjConflictRegion {
     /// contributes its new text; base sections are not sides). Each side is a
     /// list of newline-terminated lines whose concatenation is the side's exact
     /// bytes — including a **missing** terminating newline, which jj encodes and
-    /// this reconstruction honors (see [`join_sublines`]).
+    /// this reconstruction honors.
     pub fn sides(&self) -> Vec<Vec<String>> {
         let mixed = self.mixed_eol();
         self.sections
