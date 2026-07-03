@@ -18,6 +18,129 @@ crates; tag releases as `vcs-github-v<version>`.
 ### Fixed
 -
 
+## [0.8.0] - 2026-07-03
+
+### Added
+
+- feat(wrappers): re-export ProcessRunner + JobRunner so consumers needn't depend on processkit directly
+
+
+### Changed
+
+- refactor(forge)!: rename vcs_github::Repo + vcs_gitlab::Project to RepoView
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- refactor(cli-support): share one at_forwarders! macro across the 5 wrappers
+- refactor(cli-support): managed_client! macro for the common wrapper scaffold
+- refactor(cli-support): hoist forge JSON helpers (null_to_empty, from_json) behind a serde feature
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(github): null-tolerant Review/Comment string fields (uniform with the crate's other --json DTOs)
+- fix(wave2): gh/glab api() binds the repo dir instead of process cwd (H9)
+- fix(wave2): bound gh run watch's discarded output buffer (R5)
+
+
+### Added
+
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+- feat(forge)!: capability introspection (supports/capabilities), DTO field parity (labels/assignees/draft/prerelease), glab api() parity
+- feat(credentials): CredentialProvider abstraction + forge (gh/glab) token injection (Phase 1)
+- feat(mcp): forge PR comment/edit + capability map + forge_info tool (#2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- refactor: adopt processkit 0.10 direct-arg-list verbs (drop self.core.command double-mention) + envs() for env sets
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(forge): gitea pr_view page-miss signal + release key aliases; gh pr_checks case-insensitive; forge pr_comment empty-body guard
+- fix(forges): tolerate JSON null in optional string fields; jj self-rename guard
+- fix(forge): github CI aggregate maps all-unknown checks to Pending (gitlab parity)
+
+
+### Added
+
+- feat(github): PR lifecycle — merge/ready/close, checks, runs, review/comment/feedback, issues, releases
+- feat: injection guards + validating newtypes, Git::hardened, typed conflict model
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- refactor: extract vcs-diff + vcs-cli-support foundational crates
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: review follow-ups — docs, CI, Windows paths, mappers, and tests
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
+
+### Added
+
+- feat: cwd-bound handles, wider facade, new ops, VcsRepo trait
+
+
+### Changed
+
+- deps: processkit 0.6 — probe() predicates + transient fetch-retry
+- Release: vcs-git v0.4.0, vcs-jj v0.4.0, vcs-github v0.4.0, vcs-core v0.2.0
+
+
+### Changed
+
+- Release: vcs-git v0.3.1, vcs-jj v0.3.1, vcs-github v0.3.1, vcs-core v0.1.0
+
+
+### Added
+
+- feat: Step B + 1d + 1e — error classifiers, status/diff_stat consistency, &[&str] ergonomics
+- feat(github): query PRs by head->base branch; allow head in pr_create
+
+
+### Changed
+
+- deps: bump processkit 0.4 -> 0.5; absorb breaking API changes
+- Release: vcs-git v0.3.0, vcs-jj v0.3.0, vcs-github v0.3.0
+
+
+### Changed
+
+- Release: vcs-git v0.2.1, vcs-jj v0.2.1, vcs-github v0.2.1
+
+
+### Changed
+
+- Release: vcs-git v0.2.0, vcs-jj v0.2.0, vcs-github v0.2.0
+
+
+### Added
+
+- feat(process): job-backed spawn (JobObject/cgroup) + publish setup
+- feat: typed command wrappers, exec options, integration tests
+- feat: mockable trait-based API + Runner injection
+- feat: async (tokio) API, timeouts, structured errors, richer models
+- feat: non_exhaustive result structs, optional tracing, cli_client! macro
+
+
+### Changed
+
+- Scaffold vcs-toolkit-rs workspace from rust-repo-template
+- review: harden whole solution, fix potential issues
+- refactor: portable Output model, CliClient core, richer test seam, -z git parsing
+- refactor: replace internal vcs-process with external processkit 0.3
+- ci: release workflow picks major/minor/patch with auto-increment (+ all-crates, first-release)
+- Release: vcs-git v0.1.0, vcs-jj v0.1.0, vcs-github v0.1.0
+
 ## [0.7.0] - 2026-07-03
 
 ### Added
@@ -332,7 +455,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.7.0...vcs-github-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.6.0...vcs-github-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.5.0...vcs-github-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.4.0...vcs-github-v0.5.0

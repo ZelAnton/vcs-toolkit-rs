@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-07-03
+
+### Added
 - **Public builder constructors for the return DTOs** `RepoSnapshot`, `WorktreeInfo`,
   `FileChange`, and `UpstreamTracking` (e.g. `RepoSnapshot::new().head(id).dirty(n)`,
   `FileChange::new(path, kind).old_path(old)`, `WorktreeInfo::new(path).branch(b)`,
@@ -317,7 +328,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.5.0...vcs-core-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.4.0...vcs-core-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.3.0...vcs-core-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.2.0...vcs-core-v0.3.0

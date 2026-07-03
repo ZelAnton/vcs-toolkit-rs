@@ -18,6 +18,64 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ### Fixed
 -
 
+## [0.4.0] - 2026-07-03
+
+### Added
+
+- feat(wrappers): re-export ProcessRunner + JobRunner so consumers needn't depend on processkit directly
+
+
+### Changed
+
+- refactor(cli-support): share one at_forwarders! macro across the 5 wrappers
+- refactor(cli-support): hoist forge JSON helpers (null_to_empty, from_json) behind a serde feature
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(forge+gitea+mcp): correct argv-safety docs for pr_comment body (per-backend)
+- fix(wave2): gitea pr_view paginates past the server page cap; list caps documented (H8)
+
+
+### Added
+
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+- feat(credentials): CredentialProvider abstraction + forge (gh/glab) token injection (Phase 1)
+- feat(mcp): forge PR comment/edit + capability map + forge_info tool (#2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- refactor: adopt processkit 0.10 direct-arg-list verbs (drop self.core.command double-mention) + envs() for env sets
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(forge): gitea pr_view page-miss signal + release key aliases; gh pr_checks case-insensitive; forge pr_comment empty-body guard
+- fix(forges): tolerate JSON null in optional string fields; jj self-rename guard
+
+
+### Added
+
+- feat(forge): vcs-gitlab + vcs-gitea + vcs-forge facade (Wave D)
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+- fix(gitea): re-model tea --output json parsers to tea's table/detail shape (not REST)
+
 ## [0.3.0] - 2026-07-03
 
 ### Added
@@ -177,7 +235,8 @@ crates; tag releases as `vcs-gitea-v<version>`.
   `--limit 999`, so a PR beyond the first page is no longer a false "not found"
   (PRs beyond 999 still are; documented).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.3.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.3.0...vcs-gitea-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.2.0...vcs-gitea-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.1.0...vcs-gitea-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-gitea-v0.1.0

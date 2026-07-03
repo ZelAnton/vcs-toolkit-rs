@@ -13,6 +13,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-07-03
+
+### Added
+-
+
+### Changed
 - **Every data-carrying `RepoEvent` variant is now individually `#[non_exhaustive]`
   (breaking).** A `match`/`matches!` arm that binds a variant's fields must add `..`
   (e.g. `RepoEvent::BranchCreated { name, .. }`). The enum was already
@@ -150,7 +161,8 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.3.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.3.0...vcs-watch-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.2.0...vcs-watch-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.1.0...vcs-watch-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-watch-v0.1.0

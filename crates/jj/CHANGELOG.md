@@ -16,6 +16,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.8.0] - 2026-07-03
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **`Operation::time` (the `op_log` timestamp) is now valid RFC 3339.** The op-log
   template formatted the offset with jj's `%z` (`+0200`) — which a **strict** RFC-3339
   parser rejects (it requires the colon, `+02:00`). It now uses `%:z`, matching
@@ -418,7 +429,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.7.0...vcs-jj-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.6.0...vcs-jj-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.5.0...vcs-jj-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.4.0...vcs-jj-v0.5.0

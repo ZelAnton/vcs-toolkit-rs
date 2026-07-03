@@ -1,6 +1,6 @@
 [package]
 name = "vcs-github"
-version = "0.7.0"
+version = "0.8.0"
 description = "Automate GitHub from Rust: a typed, async wrapper for the GitHub CLI (gh) — pull requests, issues, releases, and CI checks."
 edition.workspace = true
 rust-version.workspace = true
@@ -18,7 +18,7 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 processkit.workspace = true
 # Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`).
 # features=["serde"]: shared JSON helpers (json::null_to_empty/from_json) live in cli-support behind that feature — added after cli-support 0.2.0, so its NEXT release must be >= minor and this floor raised to match.
-vcs-cli-support = { path = "../cli-support", version = "0.3", features = ["serde"] }
+vcs-cli-support = { path = "../cli-support", version = "0.4", features = ["serde"] }
 # Deserialize `gh … --json` output into typed structs (PullRequest/Issue/RepoView).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-07-03
+
+### Added
 - **Public builder constructors for the return DTOs** `ForgePr`, `ForgeIssue`,
   `ForgeRelease`, and `ForgeRepo` (e.g. `ForgePr::new(number, title, state).source_branch(s)
   .target_branch(t).url(u)`, `ForgeRelease::new(tag).title(t).body(notes)`), plus
@@ -241,7 +252,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.3.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.3.0...vcs-forge-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.2.0...vcs-forge-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.1.0...vcs-forge-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-forge-v0.1.0

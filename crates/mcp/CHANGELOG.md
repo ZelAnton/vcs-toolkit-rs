@@ -13,6 +13,17 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.4.0] - 2026-07-03
+
+### Added
+-
+
+### Changed
 - Rebuilt against the `vcs-core` / `vcs-forge` spec reshapes: the `repo_create_worktree`
   and `forge_issue_create` handlers now build a `vcs_core::WorktreeCreate` /
   `vcs_forge::IssueCreate` and call the facades' new spec-taking signatures. **The MCP
@@ -173,7 +184,8 @@ crates; tag releases as `vcs-mcp-v<version>`.
   Read-only by default. The wrappers' argv injection guards apply under every
   tool.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.3.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.4.0...HEAD
+[0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.3.0...vcs-mcp-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.2.0...vcs-mcp-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.1.0...vcs-mcp-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-mcp-v0.1.0

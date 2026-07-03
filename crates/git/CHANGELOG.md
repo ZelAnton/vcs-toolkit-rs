@@ -10,6 +10,17 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-07-03
+
+### Added
 - `MergeCheck` (+ its partial builder `MergeCheckPartial`) — the spec that `is_merged`
   now takes.
 
@@ -543,7 +554,8 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.7.0...vcs-git-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.6.0...vcs-git-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.5.0...vcs-git-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.4.0...vcs-git-v0.5.0
