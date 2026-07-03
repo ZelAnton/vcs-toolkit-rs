@@ -43,6 +43,14 @@ crates; tag releases as `vcs-core-v<version>`.
   (`docs/audit-2026-07.md` H11.)
 
 ### Fixed
+- **`abort_in_progress` no longer aborts an in-progress `git am` with `rebase --abort`.**
+  A `git am` and an apply-backend rebase share git's `rebase-apply/` dir, so the state
+  probe mistook an am for a rebase and ran the wrong abort. A new
+  `OperationState::ApplyMailbox` variant now reports a `git am` distinctly (via
+  `is_am_in_progress`), and `abort_in_progress` routes it to `am --abort`. (Detecting
+  cherry-pick/revert/bisect is a separate, deferred follow-up; they read `Clear` and
+  `abort_in_progress` safely no-ops on them.) `OperationState` is `#[non_exhaustive]`,
+  so the new variant is additive. (`docs/audit-2026-07.md` M20.)
 - **A gone upstream is no longer reported as "in sync" (breaking: `UpstreamTracking`
   `ahead`/`behind` are now `Option<usize>`).** git's porcelain omits the ahead/behind
   line when the upstream is set but doesn't resolve (deleted on the remote, or not yet

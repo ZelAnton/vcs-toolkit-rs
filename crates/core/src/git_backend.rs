@@ -262,6 +262,7 @@ pub(crate) async fn abort_in_progress<R: ProcessRunner>(
     match in_progress_state(git, dir).await? {
         OperationState::Merge => git.merge_abort(dir).await?,
         OperationState::Rebase => git.rebase_abort(dir).await?,
+        OperationState::ApplyMailbox => git.am_abort(dir).await?,
         _ => {}
     }
     // Recompute rather than assume `Clear` — the return is the *post-call* state.
@@ -302,10 +303,14 @@ pub(crate) async fn in_progress_state<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
 ) -> Result<OperationState> {
-    // git surfaces an interrupted operation as on-disk state; a merge and a rebase
-    // can't both be live, so report whichever is present.
+    // git surfaces an interrupted operation as on-disk state; at most one of these is
+    // live, so report whichever is present. `git am` is checked distinctly from rebase
+    // (both use `rebase-apply/`, but am marks it `applying`) so an am isn't mis-aborted
+    // with `rebase --abort` (M20).
     if git.is_merge_in_progress(dir).await? {
         Ok(OperationState::Merge)
+    } else if git.is_am_in_progress(dir).await? {
+        Ok(OperationState::ApplyMailbox)
     } else if git.is_rebase_in_progress(dir).await? {
         Ok(OperationState::Rebase)
     } else {

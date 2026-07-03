@@ -79,6 +79,9 @@ pub enum OperationState {
     Merge,
     /// A git rebase is in progress (a `rebase-merge`/`rebase-apply` dir present).
     Rebase,
+    /// A git `am` (mailbox patch apply) is in progress. Distinct from `Rebase`
+    /// because it aborts with `am --abort`, not `rebase --abort` (M20).
+    ApplyMailbox,
     /// The working copy has an unresolved conflict (chiefly jj, which records
     /// conflicts on the change rather than pausing an operation).
     Conflict,

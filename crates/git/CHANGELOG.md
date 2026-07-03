@@ -14,6 +14,10 @@ crates; tag releases as `vcs-git-v<version>`.
   JobRunner}`) — so a consumer naming the client's runner type parameter (for
   `with_runner`, or to write a custom `ProcessRunner`) needn't add a direct `processkit`
   dependency. Joins the existing `Error`/`Result`/`ProcessResult` re-exports.
+- **`is_am_in_progress`** (a `git am` mailbox-apply is paused — `rebase-apply/applying`)
+  and **`am_abort`** (`git am --abort`). A `git am` shares the `rebase-apply/` dir with
+  an apply-backend rebase but marks it `applying`; these let a caller detect and abort
+  it distinctly. (`docs/audit-2026-07.md` M20.)
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
@@ -90,6 +94,11 @@ crates; tag releases as `vcs-git-v<version>`.
   hatches) execute in the **process's current directory** — the `at(dir)` bound view
   does *not* re-bind them, unlike every modelled `GitAt` method. Pass `-C <dir>` to
   target the bound repo. (`docs/audit-2026-07.md` M15.)
+- **`is_rebase_in_progress` no longer reports a `git am` as a rebase.** `git am` uses
+  the same `rebase-apply/` dir as an apply-backend rebase but adds an `applying` marker;
+  `is_rebase_in_progress` now excludes that case (it's an am — see `is_am_in_progress`),
+  so a facade won't abort an in-progress `git am` with `rebase --abort`.
+  (`docs/audit-2026-07.md` M20.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

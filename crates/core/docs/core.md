@@ -318,10 +318,10 @@ paused multi-step operations at all — it records a conflict directly on the
 working-copy change.
 
 `in_progress_state` reports whether the working copy is mid-operation. On git it
-returns `Merge`/`Rebase` and **never `Conflict`** — a git conflict *is* that
-paused state, and the conflict itself surfaces on the failed op (via
-`Error::is_merge_conflict`) or via `continue_in_progress`. On jj, which has no paused
-op, it reports `Conflict` directly.
+returns `Merge`/`Rebase`/`ApplyMailbox` (a `git am`) and **never `Conflict`** — a git
+conflict *is* that paused state, and the conflict itself surfaces on the failed op
+(via `Error::is_merge_conflict`) or via `continue_in_progress`. On jj, which has no
+paused op, it reports `Conflict` directly.
 
 `continue_in_progress` continues after conflict resolution (git:
 `commit --no-edit` for a merge / `rebase --continue`; jj: a **no-op** —
@@ -444,7 +444,8 @@ Unifies the backends' different models of "mid-operation":
 | ---------- | -------------- |
 | `Clear`    | No operation in progress and no conflict. |
 | `Merge`    | A git merge is in progress (`MERGE_HEAD` present). git only. |
-| `Rebase`   | A git rebase is in progress (a `rebase-merge`/`rebase-apply` dir present). git only. |
+| `Rebase`   | A git rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir *not* left by `git am`). git only. |
+| `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts with `am --abort`. git only. |
 | `Conflict` | The working copy has an unresolved conflict — chiefly jj, which records conflicts on the change rather than pausing an operation. On git this surfaces from `continue_in_progress`, not `in_progress_state`. |
 
 ### `RepoSnapshot`

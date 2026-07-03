@@ -712,11 +712,15 @@ pub trait GitApi: Send + Sync {
 
     /// Whether the index has no staged changes (`diff --cached --quiet`).
     async fn staged_is_empty(&self, dir: &Path) -> Result<bool>;
-    /// Whether a rebase is in progress (a `rebase-merge`/`rebase-apply` dir exists
-    /// under the git dir).
+    /// Whether a rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir
+    /// **not** left by `git am`, exists under the git dir).
     async fn is_rebase_in_progress(&self, dir: &Path) -> Result<bool>;
     /// Whether a merge is in progress (a `MERGE_HEAD` exists under the git dir).
     async fn is_merge_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a `git am` (mailbox apply) is in progress (`rebase-apply/applying`).
+    /// Distinct from a rebase, which shares the `rebase-apply` dir but without the
+    /// `applying` marker — aborting an am needs `am --abort`, not `rebase --abort`.
+    async fn is_am_in_progress(&self, dir: &Path) -> Result<bool>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -765,6 +769,8 @@ pub trait GitApi: Send + Sync {
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
     /// Abort an in-progress rebase (`rebase --abort`).
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
+    /// Abort an in-progress `git am` (`am --abort`), restoring the pre-`am` HEAD.
+    async fn am_abort(&self, dir: &Path) -> Result<()>;
     /// Continue a rebase after resolving conflicts (`rebase --continue`); the
     /// editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never hangs.
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
@@ -1480,7 +1486,24 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn is_rebase_in_progress(&self, dir: &Path) -> Result<bool> {
         let git_dir = self.resolved_git_dir(dir).await?;
-        Ok(git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists())
+        // `rebase-merge/` is a merge-backend rebase. `rebase-apply/` is shared by an
+        // apply-backend rebase AND `git am` — but `git am` marks it with an `applying`
+        // file, so exclude that (it's an am, aborted with `am --abort`, not
+        // `rebase --abort`; see `is_am_in_progress`). M20.
+        let rebase_apply = git_dir.join("rebase-apply");
+        let is_rebase_apply = rebase_apply.exists() && !rebase_apply.join("applying").exists();
+        Ok(git_dir.join("rebase-merge").exists() || is_rebase_apply)
+    }
+
+    async fn is_am_in_progress(&self, dir: &Path) -> Result<bool> {
+        // `git am` uses `rebase-apply/` with an `applying` marker file (an
+        // apply-backend rebase uses the same dir *without* it).
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("rebase-apply")
+            .join("applying")
+            .exists())
     }
 
     async fn is_merge_in_progress(&self, dir: &Path) -> Result<bool> {
@@ -1692,6 +1715,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn rebase_abort(&self, dir: &Path) -> Result<()> {
         self.core
             .run_unit(c_locale(self.core.command_in(dir, ["rebase", "--abort"])))
+            .await
+    }
+
+    async fn am_abort(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(self.core.command_in(dir, ["am", "--abort"])))
             .await
     }
 
@@ -2328,6 +2357,7 @@ vcs_cli_support::at_forwarders! {
         fn staged_is_empty() -> Result<bool>;
         fn is_rebase_in_progress() -> Result<bool>;
         fn is_merge_in_progress() -> Result<bool>;
+        fn is_am_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_branch(branch: &str) -> Result<()>;
@@ -2341,6 +2371,7 @@ vcs_cli_support::at_forwarders! {
         fn reset_hard(rev: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
         fn rebase_abort() -> Result<()>;
+        fn am_abort() -> Result<()>;
         fn rebase_continue() -> Result<()>;
         fn stash_push(include_untracked: bool) -> Result<()>;
         fn stash_pop() -> Result<()>;
@@ -2553,6 +2584,40 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             ["rev-parse", "--verify", "HEAD"]
+        );
+    }
+
+    // M20: `git am` and an apply-backend rebase share the `rebase-apply/` dir, but am
+    // marks it with an `applying` file. `is_am_in_progress` must fire only for the am,
+    // and `is_rebase_in_progress` must NOT (so an am isn't aborted with `rebase --abort`).
+    #[tokio::test]
+    async fn distinguishes_git_am_from_an_apply_backend_rebase() {
+        use vcs_testkit::TempDir;
+        let gd = TempDir::new("m20-am");
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "rev-parse", "--git-dir"],
+            Reply::ok(gd.path().to_str().unwrap()),
+        ));
+        let apply = gd.path().join("rebase-apply");
+        std::fs::create_dir_all(&apply).unwrap();
+
+        // With the `applying` marker → a `git am`.
+        std::fs::write(apply.join("applying"), b"").unwrap();
+        assert!(
+            git.is_am_in_progress(Path::new("/r")).await.unwrap(),
+            "am detected"
+        );
+        assert!(
+            !git.is_rebase_in_progress(Path::new("/r")).await.unwrap(),
+            "a git am is NOT reported as a rebase"
+        );
+
+        // Without it → an apply-backend rebase.
+        std::fs::remove_file(apply.join("applying")).unwrap();
+        assert!(!git.is_am_in_progress(Path::new("/r")).await.unwrap());
+        assert!(
+            git.is_rebase_in_progress(Path::new("/r")).await.unwrap(),
+            "a bare rebase-apply dir is a rebase"
         );
     }
 
