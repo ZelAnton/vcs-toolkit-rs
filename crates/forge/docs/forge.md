@@ -67,7 +67,7 @@ pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.d
 pub async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
-pub async fn issue_create(&self, title: &str, body: &str) -> Result<String>;
+pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
 pub async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
 pub async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
 ```

@@ -10,10 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `IssueCreate` — the open-an-issue spec (`IssueCreate::new(title, body)`), mirroring
+  `PrCreate`'s shape and `#[non_exhaustive]` so labels/assignees can be added later
+  without a breaking signature change.
 
 ### Changed
--
+- **`Forge::issue_create` / `ForgeApi::issue_create` take an `IssueCreate` spec, not
+  bare `(title, body)` args (breaking).** `issue_create("T", "B")` →
+  `issue_create(IssueCreate::new("T", "B"))`. Consistent with `pr_create(PrCreate)`,
+  and the spec is the extension point for issue labels/assignees (which a bare-`&str`
+  signature couldn't grow without breaking) — the reason to reshape it before 1.0.
+  Behavior unchanged. (`docs/audit-2026-07.md` A5.)
 
 ### Fixed
 -

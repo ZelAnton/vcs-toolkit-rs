@@ -741,7 +741,7 @@ impl VcsMcpServer {
         self.require_write("forge_issue_create")?;
         let out = self
             .forge()?
-            .issue_create(&p.title, &p.body)
+            .issue_create(vcs_forge::IssueCreate::new(p.title, p.body))
             .await
             .map_err(forge_err)?;
         ok_json(&serde_json::json!({ "output": out }))

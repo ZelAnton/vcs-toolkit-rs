@@ -369,6 +369,32 @@ impl PrCreate {
     }
 }
 
+/// Options for [`issue_create`](crate::Forge::issue_create) — the unified open-an-issue
+/// spec, mirroring [`PrCreate`]'s shape.
+///
+/// `#[non_exhaustive]`, so build it through [`IssueCreate::new`] rather than a struct
+/// literal — which also leaves room to grow (labels, assignees) without a breaking
+/// signature change, the reason `issue_create` takes a spec rather than bare strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct IssueCreate {
+    /// Title.
+    pub title: String,
+    /// Body / description (may be empty).
+    pub body: String,
+}
+
+impl IssueCreate {
+    /// An issue with `title` and `body`.
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+        }
+    }
+}
+
 /// How [`pr_merge`](crate::ForgeApi::pr_merge) merges — mapped to each CLI's own
 /// merge-strategy flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

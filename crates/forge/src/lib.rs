@@ -137,7 +137,7 @@ mod gitlab_forge;
 
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrClose, PrCreate, PrEdit,
+    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeStrategy, PrClose, PrCreate, PrEdit,
 };
 pub use error::{Error, Result};
 
@@ -543,10 +543,11 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Open an issue, returning the CLI's success output — a URL on
-    /// GitHub/GitLab; `tea` prints a textual summary whose final line is the
-    /// URL. (The same honest-output contract as [`pr_create`](Forge::pr_create).)
-    pub async fn issue_create(&self, title: &str, body: &str) -> Result<String> {
+    /// Open an issue (see [`IssueCreate`]), returning the CLI's success output — a URL
+    /// on GitHub/GitLab; `tea` prints a textual summary whose final line is the URL.
+    /// (The same honest-output contract as [`pr_create`](Forge::pr_create).)
+    pub async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
+        let IssueCreate { title, body } = &spec;
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_create(c, &self.cwd, title, body).await,
             Backend::GitLab(c) => gitlab_forge::issue_create(c, &self.cwd, title, body).await,
@@ -742,7 +743,7 @@ pub trait ForgeApi: Send + Sync {
     /// See [`Forge::issue_view`](crate::Forge::issue_view).
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
     /// See [`Forge::issue_create`](crate::Forge::issue_create).
-    async fn issue_create(&self, title: &str, body: &str) -> Result<String>;
+    async fn issue_create(&self, spec: IssueCreate) -> Result<String>;
     /// See [`Forge::release_list`](crate::Forge::release_list).
     async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
     /// See [`Forge::release_view`](crate::Forge::release_view).
@@ -805,8 +806,8 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue> {
         self.issue_view(number).await
     }
-    async fn issue_create(&self, title: &str, body: &str) -> Result<String> {
-        self.issue_create(title, body).await
+    async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
+        self.issue_create(spec).await
     }
     async fn release_list(&self) -> Result<Vec<ForgeRelease>> {
         self.release_list().await
@@ -949,7 +950,10 @@ mod tests {
             forge.pr_checks(1).await.unwrap_err(),
             forge.issue_list().await.unwrap_err(),
             forge.issue_view(1).await.unwrap_err(),
-            forge.issue_create("T", "B").await.unwrap_err(),
+            forge
+                .issue_create(IssueCreate::new("T", "B"))
+                .await
+                .unwrap_err(),
             forge.release_list().await.unwrap_err(),
             forge.release_view("v1").await.unwrap_err(),
             forge.pr_comment(1, "x").await.unwrap_err(),
@@ -1253,7 +1257,10 @@ mod tests {
         // Exercise a reference-argument async method through `&dyn` — pins the
         // async_trait lifetime capture the macro relies on (no-arg calls don't).
         assert_eq!(
-            dynamic.issue_create("T", "B").await.unwrap(),
+            dynamic
+                .issue_create(IssueCreate::new("T", "B"))
+                .await
+                .unwrap(),
             "https://gl/i/9"
         );
     }
