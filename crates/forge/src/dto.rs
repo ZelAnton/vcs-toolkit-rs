@@ -171,6 +171,47 @@ pub struct ForgePr {
     pub draft: bool,
 }
 
+impl ForgePr {
+    /// A PR/MR with the given number, title, and state; empty branches/url, not a
+    /// draft — chain the setters. Lets a custom [`ForgeApi`](crate::ForgeApi) backend
+    /// or a test build one despite the `#[non_exhaustive]`.
+    pub fn new(number: u64, title: impl Into<String>, state: ForgePrState) -> Self {
+        Self {
+            number,
+            title: title.into(),
+            state,
+            source_branch: String::new(),
+            target_branch: String::new(),
+            url: String::new(),
+            draft: false,
+        }
+    }
+
+    /// Set the source (head) branch.
+    pub fn source_branch(mut self, branch: impl Into<String>) -> Self {
+        self.source_branch = branch.into();
+        self
+    }
+
+    /// Set the target (base) branch.
+    pub fn target_branch(mut self, branch: impl Into<String>) -> Self {
+        self.target_branch = branch.into();
+        self
+    }
+
+    /// Set the web URL.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
+
+    /// Mark it a draft.
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+}
+
 /// The normalised state of a [`ForgePr`], unifying GitHub's `OPEN`/`CLOSED`/
 /// `MERGED`, GitLab's `opened`/`closed`/`locked`/`merged`, and Gitea's
 /// `open`/`closed` (+ a `merged` flag).
@@ -208,6 +249,38 @@ pub struct ForgeRepo {
     pub private: bool,
 }
 
+impl ForgeRepo {
+    /// A repo/project with the given name and owner; empty default-branch/url, public
+    /// — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    pub fn new(name: impl Into<String>, owner: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            owner: owner.into(),
+            default_branch: String::new(),
+            url: String::new(),
+            private: false,
+        }
+    }
+
+    /// Set the default branch name.
+    pub fn default_branch(mut self, branch: impl Into<String>) -> Self {
+        self.default_branch = branch.into();
+        self
+    }
+
+    /// Set the web URL.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
+
+    /// Mark the repository private/non-public.
+    pub fn private(mut self) -> Self {
+        self.private = true;
+        self
+    }
+}
+
 /// An issue, unified across the three forges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -227,6 +300,32 @@ pub struct ForgeIssue {
     /// Web URL. Populated by both [`issue_list`](crate::Forge::issue_list) and
     /// [`issue_view`](crate::Forge::issue_view) on every forge.
     pub url: String,
+}
+
+impl ForgeIssue {
+    /// An issue with the given number, title, and state; empty body/url — chain the
+    /// setters. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    pub fn new(number: u64, title: impl Into<String>, state: ForgeIssueState) -> Self {
+        Self {
+            number,
+            title: title.into(),
+            state,
+            body: String::new(),
+            url: String::new(),
+        }
+    }
+
+    /// Set the issue body (markdown).
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = body.into();
+        self
+    }
+
+    /// Set the web URL.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
 }
 
 /// The normalised state of a [`ForgeIssue`], unifying GitHub's `OPEN`/`CLOSED`,
@@ -259,7 +358,7 @@ pub struct ForgeRelease {
     /// Web URL. **Best-effort:** empty from GitHub's lean `release_list`;
     /// `release_view` fills it where supported.
     pub url: String,
-    /// Publication timestamp (ISO 8601); `None` for an unpublished draft or
+    /// Publication timestamp (RFC 3339); `None` for an unpublished draft or
     /// when the backend doesn't report one.
     pub published_at: Option<String>,
     /// Release notes (markdown). `None` when the backend doesn't carry them —
@@ -272,6 +371,59 @@ pub struct ForgeRelease {
     /// Whether this is a pre-release. **Best-effort:** GitHub and Gitea report it;
     /// GitLab has no pre-release concept, so it is always `false` there.
     pub prerelease: bool,
+}
+
+impl ForgeRelease {
+    /// A release on `tag`; empty title/url, no timestamp/body, not a draft or
+    /// pre-release — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi)
+    /// backend or test.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            title: String::new(),
+            url: String::new(),
+            published_at: None,
+            body: None,
+            draft: false,
+            prerelease: false,
+        }
+    }
+
+    /// Set the release title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    /// Set the web URL.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self
+    }
+
+    /// Set the publication timestamp (RFC 3339).
+    pub fn published_at(mut self, ts: impl Into<String>) -> Self {
+        self.published_at = Some(ts.into());
+        self
+    }
+
+    /// Set the release notes (markdown) body.
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+
+    /// Mark it an unpublished draft.
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+
+    /// Mark it a pre-release.
+    pub fn prerelease(mut self) -> Self {
+        self.prerelease = true;
+        self
+    }
 }
 
 /// The coarse CI status for a PR/MR, bucketed into the four states a caller acts
@@ -517,6 +669,51 @@ impl ForgeCapabilities {
             authed: false,
         }
     }
+
+    /// Mark `pr_create` available. Chain from [`all_false`](Self::all_false) to
+    /// report what a custom `ForgeApi` backend's `capabilities()` override supports
+    /// (the struct is `#[non_exhaustive]`, so this is the way to build a non-all-false
+    /// map): `ForgeCapabilities::all_false().pr_create().pr_merge().authed()`.
+    pub fn pr_create(mut self) -> Self {
+        self.pr_create = true;
+        self
+    }
+
+    /// Mark `pr_comment` available.
+    pub fn pr_comment(mut self) -> Self {
+        self.pr_comment = true;
+        self
+    }
+
+    /// Mark `pr_edit` available.
+    pub fn pr_edit(mut self) -> Self {
+        self.pr_edit = true;
+        self
+    }
+
+    /// Mark `pr_checks` available.
+    pub fn pr_checks(mut self) -> Self {
+        self.pr_checks = true;
+        self
+    }
+
+    /// Mark `pr_merge` available.
+    pub fn pr_merge(mut self) -> Self {
+        self.pr_merge = true;
+        self
+    }
+
+    /// Mark `issue_create` available.
+    pub fn issue_create(mut self) -> Self {
+        self.issue_create = true;
+        self
+    }
+
+    /// Mark the CLI authenticated.
+    pub fn authed(mut self) -> Self {
+        self.authed = true;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -636,6 +833,77 @@ mod tests {
         assert!(!c.pr_merge);
         assert!(!c.issue_create);
         assert!(!c.authed);
+    }
+
+    // A4: the public builders let a custom `ForgeApi` backend / test build the
+    // `#[non_exhaustive]` return DTOs, landing fields where expected.
+    #[test]
+    fn forge_dto_constructors_populate_fields() {
+        let pr = ForgePr::new(7, "Add widget", ForgePrState::Open)
+            .source_branch("feature")
+            .target_branch("main")
+            .url("https://x/pr/7")
+            .draft();
+        assert_eq!(pr.number, 7);
+        assert_eq!(pr.title, "Add widget");
+        assert_eq!(pr.state, ForgePrState::Open);
+        assert_eq!(pr.source_branch, "feature");
+        assert_eq!(pr.target_branch, "main");
+        assert_eq!(pr.url, "https://x/pr/7");
+        assert!(pr.draft);
+
+        let repo = ForgeRepo::new("proj", "acme")
+            .default_branch("main")
+            .url("https://x/proj")
+            .private();
+        assert_eq!(repo.name, "proj");
+        assert_eq!(repo.owner, "acme");
+        assert_eq!(repo.default_branch, "main");
+        assert_eq!(repo.url, "https://x/proj");
+        assert!(repo.private);
+
+        let issue = ForgeIssue::new(3, "Bug", ForgeIssueState::Closed)
+            .body("desc")
+            .url("https://x/i/3");
+        assert_eq!(issue.number, 3);
+        assert_eq!(issue.title, "Bug");
+        assert_eq!(issue.state, ForgeIssueState::Closed);
+        assert_eq!(issue.body, "desc");
+        assert_eq!(issue.url, "https://x/i/3");
+
+        let rel = ForgeRelease::new("v1.0")
+            .title("First")
+            .url("https://x/rel/v1.0")
+            .published_at("2026-07-03T10:00:00+02:00")
+            .body("notes")
+            .draft()
+            .prerelease();
+        assert_eq!(rel.url, "https://x/rel/v1.0");
+        assert!(rel.draft);
+        assert_eq!(rel.tag, "v1.0");
+        assert_eq!(rel.title, "First");
+        assert_eq!(
+            rel.published_at.as_deref(),
+            Some("2026-07-03T10:00:00+02:00")
+        );
+        assert_eq!(rel.body.as_deref(), Some("notes"));
+        assert!(rel.prerelease);
+
+        // ForgeCapabilities builds a non-all-false map for a custom backend.
+        let caps = ForgeCapabilities::all_false()
+            .pr_create()
+            .pr_merge()
+            .authed();
+        assert!(caps.pr_create && caps.pr_merge && caps.authed);
+        assert!(!caps.pr_comment && !caps.pr_edit && !caps.pr_checks && !caps.issue_create);
+        // The remaining four setters land their own fields too.
+        let rest = ForgeCapabilities::all_false()
+            .pr_comment()
+            .pr_edit()
+            .pr_checks()
+            .issue_create();
+        assert!(rest.pr_comment && rest.pr_edit && rest.pr_checks && rest.issue_create);
+        assert!(!rest.pr_create && !rest.pr_merge && !rest.authed);
     }
 }
 

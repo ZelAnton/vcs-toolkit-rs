@@ -10,6 +10,16 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Public builder constructors for the return DTOs** `ForgePr`, `ForgeIssue`,
+  `ForgeRelease`, and `ForgeRepo` (e.g. `ForgePr::new(number, title, state).source_branch(s)
+  .target_branch(t).url(u)`, `ForgeRelease::new(tag).title(t).body(notes)`), plus
+  chainable presence-only setters on **`ForgeCapabilities`**
+  (`ForgeCapabilities::all_false().pr_create().pr_merge().authed()`). They're
+  `#[non_exhaustive]`, so a consumer writing a custom `ForgeApi` backend (a new forge)
+  or a test double previously couldn't build one to return — including a `capabilities()`
+  override reporting anything but all-`false`. The builders make them constructible
+  outside `vcs-forge`. Mirrors `vcs-core`'s return-DTO builders. Additive.
+  (`docs/audit-2026-07.md` A4.)
 - `Error::unsupported(forge, operation)` — the public constructor for the now-
   `#[non_exhaustive]` `Error::Unsupported` variant (see Changed).
 - `IssueCreate` — the open-an-issue spec (`IssueCreate::new(title, body)`), mirroring
