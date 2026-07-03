@@ -86,6 +86,10 @@ crates; tag releases as `vcs-git-v<version>`.
   `"Makefile"` back; `rev_parse` now requires `rev` to name exactly one object (a valid
   revision still resolves to the same full hash). Matches `rev_parse_short` /
   `resolve_commit`, which already verify. (`docs/audit-2026-07.md` M13.)
+- **Docs:** `GitApi::run` now documents that it (and the `run*`/`run_args` escape
+  hatches) execute in the **process's current directory** — the `at(dir)` bound view
+  does *not* re-bind them, unlike every modelled `GitAt` method. Pass `-C <dir>` to
+  target the bound repo. (`docs/audit-2026-07.md` M15.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

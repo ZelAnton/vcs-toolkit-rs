@@ -464,6 +464,13 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// Local branch (git) / bookmark (jj) names.
+    ///
+    /// Backend divergence: on **jj**, a bookmark deleted locally but still **tracked**
+    /// on a remote lingers as a *tombstone* row (jj keeps it so the deletion can be
+    /// propagated) until the deletion is pushed — so this can list a name a
+    /// `delete_branch` just removed, unlike git. (The tombstone is not filtered here
+    /// because jj renders it and a *conflicted* bookmark identically — filtering would
+    /// also hide a real, conflicted bookmark; M21.)
     pub async fn local_branches(&self) -> Result<Vec<String>> {
         match &self.backend {
             Backend::Git(g) => git_backend::local_branches(g, &self.cwd).await,
@@ -471,7 +478,10 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
-    /// Whether a local branch/bookmark named `name` exists.
+    /// Whether a local branch/bookmark named `name` exists. See
+    /// [`local_branches`](Repo::local_branches) for the jj deleted-but-tracked
+    /// *tombstone* divergence (a just-deleted tracked bookmark can still read as
+    /// existing until the deletion is pushed).
     pub async fn branch_exists(&self, name: &str) -> Result<bool> {
         match &self.backend {
             Backend::Git(g) => git_backend::branch_exists(g, &self.cwd, name).await,

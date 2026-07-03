@@ -43,6 +43,11 @@ crates; tag releases as `vcs-core-v<version>`.
   (`docs/audit-2026-07.md` H11.)
 
 ### Fixed
+- **Docs:** `local_branches` / `branch_exists` now document the jj *tombstone*
+  divergence — a bookmark deleted locally but still tracked on a remote lingers in the
+  list until the deletion is pushed, so a just-deleted tracked bookmark can still read
+  as existing (unlike git). Not filtered, because jj renders a tombstone and a
+  *conflicted* bookmark identically. (`docs/audit-2026-07.md` M21.)
 - **`detect` no longer lets a stray `.jj` directory shadow a healthy `.git` repo.** It
   checked only that `.jj` `is_dir()`, so an empty/leftover `mkdir .jj` beat a real git
   repository in the same or a parent directory. It now requires a real jj marker (a

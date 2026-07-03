@@ -570,8 +570,12 @@ impl GitCapabilities {
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitApi: Send + Sync {
-    /// Run `git <args>` in the current directory, returning trimmed stdout
-    /// (throws on a non-zero exit). A raw escape hatch for unmodelled commands.
+    /// Run `git <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit). A raw escape hatch for unmodelled commands
+    /// — you supply the whole argv, so target a specific repo with `-C <dir>` in the
+    /// args. The `at(dir)` bound view does **not** re-bind `run`/`run_args` (they and
+    /// the other `run*` hatches stay process-cwd, unlike every modelled `GitAt`
+    /// method); pass `-C dir` explicitly if you need the bound repo (M15).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
