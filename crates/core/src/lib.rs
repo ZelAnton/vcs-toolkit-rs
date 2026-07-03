@@ -671,8 +671,11 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
-    /// Rebase the current work onto `onto` (git `rebase` / jj `rebase -d`). The
-    /// `onto` is a branch/bookmark name or revision the backend understands.
+    /// Rebase the current branch onto `onto` — the commits unique to the current
+    /// line (git `rebase <onto>` = `merge-base..HEAD`; jj `rebase -d <onto>` =
+    /// `-b @`, `@`'s fork-point-to-`@` history). A sibling branch sharing only the
+    /// fork point is not moved. `onto` is a branch/bookmark name or revision the
+    /// backend understands.
     pub async fn rebase(&self, onto: &str) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::rebase(g, &self.cwd, onto).await,

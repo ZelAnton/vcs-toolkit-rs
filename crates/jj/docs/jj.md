@@ -326,9 +326,11 @@ async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()
 async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
 ```
 
-`rebase` moves the working copy onto a destination (`rebase -d <onto>`);
-`rebase_branch` a whole branch (`rebase -b <branch> -d <dest>`); `edit` moves
-the working copy to a revision (`edit <rev>`). `edit`'s revset is guarded
+`rebase` moves the current branch — `@`'s fork-point-to-`@` history, jj's default
+`-b @`, matching git's `rebase <onto>` — onto a destination (`rebase -d <onto>`), NOT
+a sibling that only shares the fork point; `rebase_branch` rebases an explicitly-named
+branch (`rebase -b <branch> -d <dest>`); `edit` moves the working copy to a revision
+(`edit <rev>`). `edit`'s revset is guarded
 against a leading-`-` value.
 
 ```rust,ignore

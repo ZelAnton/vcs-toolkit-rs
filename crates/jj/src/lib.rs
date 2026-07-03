@@ -580,7 +580,12 @@ pub trait JjApi: Send + Sync {
 
     // --- Mutations -----------------------------------------------------------
 
-    /// Rebase the working copy onto a destination (`rebase -d <onto>`).
+    /// Rebase the current branch onto a destination (`rebase -d <onto>`, i.e. jj's
+    /// default `-b @`): the commits that are ancestors of `@` but **not** of `<onto>`
+    /// — the fork-point-to-`@` line, plus anything stacked on `@` (jj's branch set is
+    /// `(onto..@)::`) — move onto `<onto>`, matching git's `rebase <onto>`
+    /// (`merge-base(@,onto)..@`). A **sibling** branch that only shares the fork point
+    /// is *not* moved (only `@`'s own line is).
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
     /// Rebase a whole branch onto a destination (`rebase -b <branch> -d <dest>`).
     async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()>;

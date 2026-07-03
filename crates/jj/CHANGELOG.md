@@ -16,6 +16,12 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **Docs:** `rebase` is clarified to move the **current branch** — `@`'s
+  fork-point-to-`@` history (jj's default `-b @`, matching git's `rebase <onto>` =
+  `merge-base..HEAD`), NOT literally "the working copy" alone, and NOT a sibling branch
+  that only shares the fork point. (Verified on jj 0.42: `rebase -d` moves only `@`'s
+  own line, leaving siblings put — the audit's "moves siblings" concern doesn't
+  reproduce.) No behavior change. (`docs/audit-2026-07.md` M6.)
 - **Docs:** `Jj::transaction` now documents two rollback caveats it left implicit — it
   is **single-actor** (the `op_restore <pre>` rollback restores the *whole* repo view,
   so a change another jj process landed between the capture and the restore is reverted

@@ -16,7 +16,10 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
--
+- **Docs:** `Repo::rebase` is clarified to move the **current branch** — the commits
+  unique to the current line (git `rebase` = `merge-base..HEAD`; jj `rebase -d` = `-b @`)
+  — not literally "the working copy" alone; a sibling sharing only the fork point is not
+  moved. No behavior change. (`docs/audit-2026-07.md` M6.)
 
 ## [0.6.0] - 2026-07-03
 

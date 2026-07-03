@@ -279,8 +279,10 @@ git-like append-on-top on both backends, start a new child change explicitly (on
 `jj new <reference>` through the raw [`Repo::jj`] client — a first-class `new_child`
 facade primitive is planned; on git, `checkout` already appends).
 
-`rebase` rebases the current work onto `onto` (git `rebase` / jj `rebase -d`).
-`onto` is a branch/bookmark name or revision the backend understands.
+`rebase` rebases the current branch — the commits unique to the current line
+(git `rebase <onto>` = `merge-base..HEAD`; jj `rebase -d <onto>` = `-b @`) — onto
+`onto`; a sibling sharing only the fork point is not moved. `onto` is a branch/bookmark
+name or revision the backend understands.
 
 ## Merge probe & operation state
 
