@@ -32,7 +32,19 @@ crates; tag releases as `vcs-jj-v<version>`.
   internally. No API change; the imperative path already existed.
 
 ### Fixed
--
+- **Glob-scoped bookmark/remote operations no longer fan out.** `bookmark_delete`,
+  `bookmark_move`, `bookmark_track`, `git_push` (`-b`), `git_fetch_from`
+  (`--remote`), and `git_fetch_branch` (`-b`) now wrap the caller's name as jj's
+  `exact:` string pattern. Previously a name containing a glob metacharacter — or a
+  hostile `"*"` from a UI/bot — was treated as a **pattern**, so e.g.
+  `bookmark_delete("*")` deleted *every* bookmark and `git_push(Some("*"))` pushed
+  them all. Now each mutates exactly the named ref. (`docs/audit-2026-07.md` H1.)
+- **Conflict resolution honors a missing terminating newline.**
+  `conflict::{sides, base, resolve}` reconstruct a side's/base's bytes correctly
+  when a side lacks a final newline (jj's explicit trailing-newline representation),
+  including CRLF files — previously the phantom trailing/context line became a
+  spurious extra blank line (or a stray `\r`), silently corrupting the written-back
+  content. (`docs/audit-2026-07.md` C3.)
 
 ## [0.6.0] - 2026-06-27
 

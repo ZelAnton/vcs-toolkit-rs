@@ -76,7 +76,7 @@ use processkit::{
 pub mod credentials;
 pub use credentials::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
-    GitCredentialHelper, Secret, StaticCredential, git_credential_helper, provider_fn,
+    GitCredentialHelper, Secret, StaticCredential, git_credential_helper, https_host, provider_fn,
 };
 
 /// JSON helpers shared by the forge wrappers, behind the `serde` feature — so the

@@ -17,6 +17,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   output into `T`, mapping a parse failure to `Error::Parse` tagged with the
   binary name). Off by default — only the forge wrappers enable it, so the
   ambient-auth backends (`vcs-git`/`vcs-jj`) never pull in `serde`/`serde_json`.
+- `https_host(url)` — extract the `host[:port]` (verbatim from an `https://` URL)
+  to scope a credential helper to the host an operation targets.
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
@@ -31,9 +33,16 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 - **`ManagedClient::parse`/`try_parse` now require `T: Send` and the parser `+ Send`
   (breaking).** Matches processkit 1.x's tightened bounds; a real parser closure is
   already `Send`, so callers are unaffected in practice.
+- **`git_credential_helper(cred)` → `git_credential_helper(cred, expect_host)`
+  (breaking).** The new `expect_host: Option<&str>` scopes the helper to a host
+  (see Security below); pass `None` for the previous ungated behavior.
 
-### Fixed
--
+### Security
+- **The inline git credential helper can be scoped to a host.** When
+  `git_credential_helper` is given `Some(host)`, the emitted snippet reads git's
+  credential request and releases the secret only for a matching host — so an HTTP
+  redirect or a submodule fetch to a *different* host can't extract the token.
+  `None` keeps the prior ungated behavior. (`docs/audit-2026-07.md` H5.)
 
 ## [0.2.0] - 2026-06-27
 

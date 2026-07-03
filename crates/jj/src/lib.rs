@@ -318,6 +318,19 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
+/// Wrap a caller-supplied bookmark/branch/remote name as jj's `exact:` string
+/// pattern. jj treats a bare `<NAMES>` / `-b <BOOKMARK>` / `--remote <REMOTE>`
+/// argument as a **glob** pattern (verified on 0.42: `bookmark delete '*'`
+/// deletes every bookmark; `git push -b '*'` pushes them all), so a name that
+/// happens to contain `*`/`?` — or a hostile `"*"` from a UI/bot — would fan the
+/// operation out across every matching ref. `exact:` forces a literal match of
+/// exactly this name (verified: `exact:foo1` deletes only `foo1`, and a literal
+/// `*` in a name is matched verbatim under `exact:`), so these typed methods
+/// mutate exactly the one ref the caller named.
+fn exact(name: &str) -> String {
+    format!("exact:{name}")
+}
+
 /// A pre-validated revset expression, for callers that accept revsets from
 /// untrusted input (UIs, bots, agents) and want to fail early. Deliberately
 /// *minimal* — jj's revset grammar is too rich to validate here — it only
@@ -794,10 +807,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()> {
-        // A leading-`-` name makes the whole `{name}@{remote}` token start with
-        // `-`, which jj parses as a global flag (e.g. `--config`); guard it.
+        // A leading-`-` name makes the whole token start with `-`, which jj
+        // parses as a global flag (e.g. `--config`); guard it. `exact:` also
+        // stops a `*`/pattern name from tracking every remote bookmark at once.
         reject_flag_like("bookmark name", name)?;
-        let target = format!("{name}@{remote}");
+        let target = format!("exact:{name}@{remote}");
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
             .await
@@ -822,9 +836,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
-        // Idempotent → `retry` replays it on a transient (network) failure.
+        // `--remote` is glob-matched too, so `exact:` keeps a `*` remote from
+        // fetching from every configured remote. Idempotent → `retry` replays it
+        // on a transient (network) failure.
+        let remote_pat = exact(remote);
         let cmd = self
-            .cmd_in(dir, ["git", "fetch", "--remote", remote])
+            .cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()])
             .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
@@ -832,7 +849,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()> {
         let mut args = vec!["git", "push"];
-        if let Some(name) = bookmark.as_deref() {
+        // `-b` is glob-matched, so `exact:` keeps a `*` bookmark from pushing
+        // every local bookmark at once (a UI/bot-supplied `"*"`).
+        let bookmark_pat = bookmark.as_deref().map(exact);
+        if let Some(name) = bookmark_pat.as_deref() {
             args.push("-b");
             args.push(name);
         }
@@ -906,8 +926,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()> {
         reject_flag_like("bookmark name", name)?;
+        let name_pat = exact(name);
         self.core
-            .run_unit(self.cmd_in(dir, ["bookmark", "delete", name]))
+            .run_unit(self.cmd_in(dir, ["bookmark", "delete", name_pat.as_str()]))
             .await
     }
 
@@ -919,7 +940,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         allow_backwards: bool,
     ) -> Result<()> {
         reject_flag_like("bookmark name", name)?;
-        let mut args = vec!["bookmark", "move", name, "--to", to];
+        // `<NAMES>` is glob-matched, so `exact:` keeps a `*` name from moving
+        // every bookmark. `to` is a revision, not a pattern — left as-is.
+        let name_pat = exact(name);
+        let mut args = vec!["bookmark", "move", name_pat.as_str(), "--to", to];
         if allow_backwards {
             args.push("--allow-backwards");
         }
@@ -1205,8 +1229,21 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
+        // `-b` is glob-matched, so `exact:` keeps a `*` branch from fetching
+        // every branch instead of erroring on a bogus name.
+        let branch_pat = exact(branch);
         let cmd = self
-            .cmd_in(dir, ["git", "fetch", "--remote", "origin", "-b", branch])
+            .cmd_in(
+                dir,
+                [
+                    "git",
+                    "fetch",
+                    "--remote",
+                    "origin",
+                    "-b",
+                    branch_pat.as_str(),
+                ],
+            )
             .timeout_grace(FETCH_TIMEOUT_GRACE)
             .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
         self.core.run_unit(cmd).await
@@ -1956,7 +1993,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
-            ["bookmark", "track", "feat@origin", "--color", "never"]
+            ["bookmark", "track", "exact:feat@origin", "--color", "never"]
         );
     }
 
@@ -2063,7 +2100,7 @@ mod tests {
             [
                 "bookmark",
                 "move",
-                "main",
+                "exact:main",
                 "--to",
                 "@",
                 "--allow-backwards",
@@ -2178,17 +2215,18 @@ mod tests {
         assert_eq!(change.description, "hello jj");
     }
 
-    // With a bookmark, the run must build `git push -b <name>`. Only that 4-token
-    // command is scripted (no fallback), so a regression that dropped the flag
-    // would match no rule and error.
+    // With a bookmark, the run must build `git push -b exact:<name>` (the `exact:`
+    // prefix disables jj's glob so a `*` can't push every bookmark — H1). Only that
+    // command is scripted (no fallback), so a regression that dropped the flag or
+    // the `exact:` prefix would match no rule and error.
     #[tokio::test]
     async fn git_push_appends_bookmark_flag() {
         let jj = Jj::with_runner(
-            ScriptedRunner::new().on(["jj", "git", "push", "-b", "feature"], Reply::ok("")),
+            ScriptedRunner::new().on(["jj", "git", "push", "-b", "exact:feature"], Reply::ok("")),
         );
         jj.git_push(Path::new("."), Some("feature".to_string()))
             .await
-            .expect("should build `git push -b feature`");
+            .expect("should build `git push -b exact:feature`");
     }
 
     // Without a bookmark, the run is a bare `git push`.
@@ -2196,6 +2234,28 @@ mod tests {
     async fn git_push_without_bookmark_is_bare() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "git", "push"], Reply::ok("")));
         jj.git_push(Path::new("."), None).await.expect("bare push");
+    }
+
+    // H1: `bookmark delete` and `git fetch -b` pass the name through `exact:` so a
+    // `*` can't mass-delete/fetch. (The other exact: methods are covered by
+    // git_push/bookmark_move/bookmark_track/git_fetch_from tests.)
+    #[tokio::test]
+    async fn bookmark_delete_and_fetch_branch_use_exact() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.bookmark_delete(Path::new("."), "foo").await.unwrap();
+        assert_eq!(
+            &rec.only_call().args_str()[..3],
+            &["bookmark", "delete", "exact:foo"]
+        );
+
+        let rec2 = RecordingRunner::replying(Reply::ok(""));
+        let jj2 = Jj::with_runner(&rec2);
+        jj2.git_fetch_branch(Path::new("."), "foo").await.unwrap();
+        assert_eq!(
+            &rec2.only_call().args_str()[..6],
+            &["git", "fetch", "--remote", "origin", "-b", "exact:foo"]
+        );
     }
 
     // `git_fetch` retries a transient (network) failure up to FETCH_ATTEMPTS times.
@@ -2248,7 +2308,14 @@ mod tests {
             .expect("git_fetch_from");
         assert_eq!(
             rec.only_call().args_str(),
-            ["git", "fetch", "--remote", "upstream", "--color", "never"]
+            [
+                "git",
+                "fetch",
+                "--remote",
+                "exact:upstream",
+                "--color",
+                "never"
+            ]
         );
 
         let failing = RecordingRunner::replying(Reply::fail(1, "Error: Connection timed out"));

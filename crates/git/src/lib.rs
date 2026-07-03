@@ -887,14 +887,22 @@ impl<R: ProcessRunner> Git<R> {
     /// (an inline `credential.helper`) and the secret env to set on the command.
     /// Both are empty when no provider is configured — ambient git auth, unchanged.
     /// The secret lives only in the returned env, never in the args.
-    async fn remote_credentials(&self) -> Result<(Vec<String>, Vec<(String, Secret)>)> {
+    ///
+    /// `expect_host` scopes the helper to a host (the secret is released only for
+    /// that host, so a redirect/submodule to another host can't extract it).
+    /// Callers that know the operation's target host — e.g. `clone` from its URL —
+    /// pass it; the others pass `None` (the helper is ungated, as before).
+    async fn remote_credentials(
+        &self,
+        expect_host: Option<&str>,
+    ) -> Result<(Vec<String>, Vec<(String, Secret)>)> {
         match self
             .core
             .resolve_credential(CredentialService::Git, None)
             .await?
         {
             Some(cred) => {
-                let helper = git_credential_helper(&cred);
+                let helper = git_credential_helper(&cred, expect_host);
                 Ok((helper.config_args, helper.env))
             }
             None => Ok((Vec::new(), Vec::new())),
@@ -1094,8 +1102,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn checkout(&self, dir: &Path, reference: &str) -> Result<()> {
         reject_flag_like("reference", reference)?;
+        // The trailing `--` marks the end of revisions with no pathspecs
+        // following, so git resolves `reference` as a ref *only*. Without it a
+        // `reference` that doesn't name a ref but names a tracked path silently
+        // falls into pathspec mode and restores that path from the index,
+        // discarding unstaged edits (verified: `git checkout notes.txt` →
+        // "Updated 1 path", exit 0; `git checkout notes.txt --` → hard error).
         self.core
-            .run_unit(self.core.command_in(dir, ["checkout", reference]))
+            .run_unit(self.core.command_in(dir, ["checkout", reference, "--"]))
             .await
     }
 
@@ -1230,7 +1244,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // path components, so a bare `foo` would also match `refs/heads/bar/foo`.
         // `refs/heads/<name>` matches only the exact branch.
         let refname = format!("refs/heads/{name}");
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["ls-remote", "origin", refname.as_str()].map(String::from));
         let cmd = apply_secret_env(
@@ -1284,7 +1298,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `GIT_TERMINAL_PROMPT=0`: a remote needing credentials must fail fast,
         // never block on an interactive auth prompt. A provider, if set, supplies
         // the credential via an inline helper (token kept out of argv).
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["ls-remote", "--heads", remote].map(String::from));
         let cmd = apply_secret_env(
@@ -1453,7 +1467,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (DNS/timeout/dropped connection); a non-transient error fails at once.
         // C locale: the retry decision classifies the failure's message.
         // Leading `-c` credential.helper (+ secret env) when a provider is set.
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet"].map(String::from));
         let cmd = apply_secret_env(
@@ -1475,7 +1489,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         reject_flag_like("remote", remote)?;
         // Same containment as `fetch` (prompt off, C locale, transient retry,
         // optional credential helper), with the remote named explicitly.
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", remote].map(String::from));
         let cmd = apply_secret_env(
@@ -1490,7 +1504,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", "origin", refspec.as_str()].map(String::from));
         let cmd = apply_secret_env(
@@ -1506,7 +1520,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()> {
         reject_flag_like("remote", &spec.remote)?;
         reject_flag_like("refspec", &spec.refspec)?;
-        let (pre, envs) = self.remote_credentials().await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.push("push".to_string());
         if spec.set_upstream {
@@ -1713,8 +1727,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         reject_flag_like("url", url)?;
         // No working directory: clone creates `dest` itself, so `dest` should
         // be absolute (a relative path would resolve against this process' cwd).
-        // Leading `-c` credential.helper (+ secret env) when a provider is set.
-        let (pre, envs) = self.remote_credentials().await?;
+        // Leading `-c` credential.helper (+ secret env) when a provider is set,
+        // scoped to the clone URL's host so a cross-host redirect/submodule during
+        // the clone can't extract the token (the URL is often externally supplied).
+        let (pre, envs) = self
+            .remote_credentials(vcs_cli_support::https_host(url).as_deref())
+            .await?;
         let mut initial: Vec<String> = pre;
         initial.push("clone".to_string());
         let mut command = self.core.command(&initial);
@@ -2999,6 +3017,26 @@ mod tests {
             !args.iter().any(|a| a.contains("s3cr3t")),
             "secret not in argv"
         );
+        // H5: clone scopes the helper to the URL's host (in env, never argv), so a
+        // cross-host redirect/submodule during the clone can't extract the token.
+        let host = call
+            .envs
+            .iter()
+            .find(|(k, _)| k.to_str() == Some("VCS_TOOLKIT_GIT_HOST"))
+            .and_then(|(_, v)| v.as_ref())
+            .and_then(|v| v.to_str());
+        assert_eq!(
+            host,
+            Some("example.com"),
+            "the clone URL's host scopes the credential helper"
+        );
+        // The host scoping travels in env; the credential `-c` flags that precede
+        // `clone` must not bake the host into the helper config.
+        assert!(
+            args[..clone_at].iter().all(|a| !a.contains("example.com")),
+            "host stays in env, not the credential config args: {:?}",
+            &args[..clone_at]
+        );
     }
 
     // A `Credential::userpass` username threads through to the helper's env on a
@@ -3396,9 +3434,10 @@ mod tests {
             rec.calls()
         );
 
-        // …and legitimate values still pass through unchanged.
+        // …and legitimate values still pass through unchanged (with the trailing
+        // `--` that keeps a path-like ref out of pathspec mode — C2).
         git.checkout(dir, "feature/x").await.expect("checkout");
-        assert_eq!(rec.only_call().args_str(), ["checkout", "feature/x"]);
+        assert_eq!(rec.only_call().args_str(), ["checkout", "feature/x", "--"]);
     }
 
     // The hardened profile lands its env pairs/removals on EVERY command, and
@@ -3808,7 +3847,7 @@ mod tests {
             calls[1].args_str(),
             ["stash", "push", "--include-untracked"]
         );
-        assert_eq!(calls[2].args_str(), ["checkout", "feature"]);
+        assert_eq!(calls[2].args_str(), ["checkout", "feature", "--"]);
         assert_eq!(calls[3].args_str(), ["stash", "pop"]);
     }
 

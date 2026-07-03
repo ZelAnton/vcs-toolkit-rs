@@ -738,6 +738,16 @@ impl<R: ProcessRunner> Repo<R> {
     /// a `path` that matches no attached jj workspace returns
     /// [`Error::WorktreeNotFound`]. (For the best-effort, never-erroring variant,
     /// see [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
+    ///
+    /// `force` mirrors git's `worktree remove`: with `force = false` a worktree
+    /// that still has **uncommitted changes** is refused (`Err`) rather than
+    /// deleted, so a stray edit isn't silently lost — pass `force = true` to
+    /// remove it anyway. On **jj** the changes are snapshotted into the op log
+    /// before the check, so a refusal keeps them recoverable; note that checking
+    /// spawns a jj command in the target workspace, so a genuinely stale working
+    /// copy can surface an error under `force = false` (use `force = true` there).
+    /// The repository's **main** workspace is always refused (it can't be removed
+    /// without destroying the repo), regardless of `force`.
     pub async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::remove_worktree(g, &self.cwd, path, force).await,
@@ -1188,6 +1198,132 @@ mod tests {
         assert!(res.is_err(), "a forget failure is surfaced, not swallowed");
     }
 
+    // C1: the default workspace resolves at the repo root; removing it would wipe
+    // the whole repository, so it is refused even with force = true and WITHOUT
+    // running `workspace forget` (no such cassette rule — a miss would also error,
+    // so we assert the *refusal* message to prove the guard, not a fallthrough).
+    #[tokio::test]
+    async fn jj_remove_worktree_refuses_the_main_workspace() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("default\tc0ffee\t\n"),
+                )
+                .on(
+                    ["jj", "workspace", "root", "--name", "default"],
+                    Reply::ok("/repo\n"),
+                ),
+        );
+        let err = repo
+            .remove_worktree(Path::new("/repo"), true)
+            .await
+            .expect_err("the main workspace must be refused");
+        assert!(
+            err.to_string().contains("main workspace"),
+            "refusal message, not a cassette miss: {err}"
+        );
+    }
+
+    // C1: a secondary workspace with un-snapshotted edits (`current_change` reports
+    // non-empty) is refused under force = false, and its directory is NOT deleted.
+    #[tokio::test]
+    async fn jj_remove_worktree_refuses_dirty_workspace_without_force() {
+        let tmp = TempDir::new("rmw-dirty");
+        let root = tmp.path().to_string_lossy().into_owned();
+        let repo = Repo::from_jj(
+            &root,
+            &root,
+            Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "root", "--name", "ws1"],
+                        Reply::ok(format!("{root}\n")),
+                    )
+                    // `current_change` → 3rd field `false` = not empty = dirty.
+                    .on(["jj", "log"], Reply::ok("aaa\tbbb\tfalse\twork\n")),
+            ),
+        );
+        let err = repo
+            .remove_worktree(tmp.path(), false)
+            .await
+            .expect_err("a dirty workspace must be refused without force");
+        assert!(
+            err.to_string().contains("uncommitted changes"),
+            "refusal message: {err}"
+        );
+        assert!(
+            tmp.path().exists(),
+            "the workspace directory must survive a refusal"
+        );
+    }
+
+    // C1: force = true skips the dirty check and removes the directory (no
+    // `current_change` rule is scripted, proving the check is bypassed).
+    #[tokio::test]
+    async fn jj_remove_worktree_with_force_removes_the_dir() {
+        let tmp = TempDir::new("rmw-force");
+        let ws = tmp.path().join("ws1");
+        std::fs::create_dir_all(&ws).expect("mkdir ws");
+        let root = tmp.path().to_string_lossy().into_owned();
+        let ws_str = ws.to_string_lossy().into_owned();
+        let repo = Repo::from_jj(
+            &root,
+            &root,
+            Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "root", "--name", "ws1"],
+                        Reply::ok(format!("{ws_str}\n")),
+                    )
+                    .on(["jj", "workspace", "forget"], Reply::ok("")),
+            ),
+        );
+        repo.remove_worktree(&ws, true)
+            .await
+            .expect("force removes a dirty worktree");
+        assert!(!ws.exists(), "the worktree directory was removed");
+    }
+
+    // C1: the main-workspace guard's store-directory branch — a workspace whose
+    // name was changed away from `default` (via `jj workspace rename`) still owns
+    // the object store (`.jj/repo` is a *directory*, not a secondary's file
+    // pointer), so removal is refused even with force = true, and the dir survives.
+    // Exercises the `|| .jj/repo.is_dir()` half of the guard (the name is not
+    // `default`), which the name-based test can't reach.
+    #[tokio::test]
+    async fn jj_remove_worktree_refuses_renamed_store_owning_workspace() {
+        let tmp = TempDir::new("rmw-store");
+        std::fs::create_dir_all(tmp.path().join(".jj").join("repo")).expect("mk .jj/repo dir");
+        let root = tmp.path().to_string_lossy().into_owned();
+        let repo = Repo::from_jj(
+            &root,
+            &root,
+            Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(["jj", "workspace", "list"], Reply::ok("mainws\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "root", "--name", "mainws"],
+                        Reply::ok(format!("{root}\n")),
+                    ),
+            ),
+        );
+        let err = repo
+            .remove_worktree(tmp.path(), true)
+            .await
+            .expect_err("a renamed store-owning workspace is still refused");
+        assert!(
+            err.to_string().contains("main workspace"),
+            "refusal message: {err}"
+        );
+        assert!(
+            tmp.path().exists(),
+            "the store-owning directory must not be deleted"
+        );
+    }
+
     #[tokio::test]
     async fn kind_and_escape_hatches_reflect_backend() {
         let repo = git_repo(ScriptedRunner::new());
@@ -1425,7 +1561,8 @@ mod tests {
             .checkout("feat")
             .await
             .unwrap();
-        assert_eq!(grec.only_call().args_str(), ["checkout", "feat"]);
+        // Trailing `--` so a path-like ref can't fall into pathspec mode (C2).
+        assert_eq!(grec.only_call().args_str(), ["checkout", "feat", "--"]);
 
         let jrec = RecordingRunner::replying(Reply::ok(""));
         Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
@@ -1482,7 +1619,8 @@ mod tests {
             .await
             .unwrap();
         let args = jrec.only_call().args_str();
-        assert_eq!(&args[..4], &["git", "push", "-b", "feature"]);
+        // `exact:` disables jj's glob matching so a `*` can't push every bookmark (H1).
+        assert_eq!(&args[..4], &["git", "push", "-b", "exact:feature"]);
     }
 
     // The two backends handle a flag-like branch per the documented guard
@@ -1512,7 +1650,7 @@ mod tests {
             .expect("jj path spawns; the value rides -b verbatim");
         assert_eq!(
             &jrec.only_call().args_str()[..4],
-            &["git", "push", "-b", "--force"],
+            &["git", "push", "-b", "exact:--force"],
             "the flag-like value must ride the -b flag-VALUE slot, not become argv"
         );
     }
@@ -1536,7 +1674,8 @@ mod tests {
             .await
             .unwrap();
         let args = jrec.only_call().args_str();
-        assert_eq!(&args[..4], &["git", "fetch", "--remote", "upstream"]);
+        // `exact:` disables jj's glob matching on the remote name (H1).
+        assert_eq!(&args[..4], &["git", "fetch", "--remote", "exact:upstream"]);
     }
 
     // git: untracked files count as uncommitted but not as *tracked* changes.

@@ -310,6 +310,42 @@ const DEFAULT_GIT_USERNAME: &str = "x-access-token";
 const GIT_USERNAME_VAR: &str = "VCS_TOOLKIT_GIT_USERNAME";
 /// Environment-variable name carrying the secret for [`git_credential_helper`].
 const GIT_PASSWORD_VAR: &str = "VCS_TOOLKIT_GIT_PASSWORD";
+/// Environment-variable name carrying the *expected host* for
+/// [`git_credential_helper`]. When set (non-empty), the helper releases the
+/// credential only for a request whose `host` matches — so an HTTP redirect or a
+/// submodule fetch to a **different** host never receives the token. Empty →
+/// ungated (the helper answers for any host, the pre-host-scoping behavior).
+const GIT_HOST_VAR: &str = "VCS_TOOLKIT_GIT_HOST";
+
+/// Extract the `host[:port]` from an HTTPS git URL
+/// (`https://[user[:pass]@]host[:port]/…`), **verbatim** — original case and port
+/// preserved — to scope a credential helper to the host an operation targets. git
+/// carries the same `host[:port]` in its credential request and compares it
+/// byte-for-byte, so normalizing here would withhold a legitimate credential.
+/// Returns `None` for a non-HTTPS URL (an SSH remote never invokes the HTTPS
+/// credential helper, so gating it is moot), an IPv6-literal authority, or an
+/// unparseable one — in which case the helper stays **ungated**, no worse than
+/// before host scoping existed.
+#[must_use]
+pub fn https_host(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    // The authority ends at the first `/`, `?`, or `#`. Drop any `user:pass@`
+    // userinfo, but keep the host **and its port**, with the **original case**:
+    // git's credential request carries `host=` verbatim from the URL — it
+    // includes the port when one was given (`example.com:8443`) and does not
+    // lower-case the host — and the snippet compares it byte-for-byte, so what
+    // we scope to must match exactly (stripping the port or normalizing case
+    // would withhold a legitimate credential and break auth).
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    // An IPv6 literal (`[::1]:443`) — git formats `host=` for these idiosyncratically;
+    // rather than risk withholding a valid credential, stay ungated (return `None`)
+    // so auth still works, just without host scoping for that rare case.
+    if host_port.is_empty() || host_port.starts_with('[') {
+        return None;
+    }
+    Some(host_port.to_string())
+}
 
 /// The pieces needed to authenticate a `git` HTTPS operation with a [`Credential`]
 /// **without putting the secret in `argv`**. See [`git_credential_helper`].
@@ -348,17 +384,30 @@ pub struct GitCredentialHelper {
 /// The username/secret must not contain a newline: git's credential protocol is
 /// line-based, so an embedded `\n` is read as the end of the value (git truncates
 /// there). Real tokens and usernames never contain one.
+///
+/// `expect_host` scopes the credential to a host: when `Some`, the helper reads
+/// git's request (which names the host git is about to authenticate to) and
+/// releases the secret only if that host matches — so a cross-host redirect or a
+/// submodule fetch to another host can't extract the token. `None` (or an
+/// unknown host) leaves the helper ungated. Callers that know the operation's
+/// target (e.g. `clone` from its URL) pass [`https_host`] of it.
 #[must_use]
-pub fn git_credential_helper(cred: &Credential) -> GitCredentialHelper {
+pub fn git_credential_helper(cred: &Credential, expect_host: Option<&str>) -> GitCredentialHelper {
     let username = cred.username().unwrap_or(DEFAULT_GIT_USERNAME).to_string();
     // Reference the values by env-var NAME inside the snippet, so `argv` never
     // carries the secret. Respond only to git's `get` action; ignore store/erase.
-    // Guard on the password var being non-empty (`test -n`): if `config_args` is
-    // applied without `env` (the two fields must travel together), the helper emits
-    // nothing and git falls through to ambient auth — never an empty credential that
-    // would override the ambient login with nothing and fail.
+    // Read git's request from stdin (key=value lines, terminated by a blank line)
+    // to learn the host, then release the credential only when:
+    //   - the password var is non-empty (`test -n`): if `config_args` is applied
+    //     without `env`, the helper emits nothing and git falls through to ambient
+    //     auth, rather than overriding it with an empty credential that fails; and
+    //   - the host is unscoped (`$…_HOST` empty) or matches the request's host, so
+    //     a redirect/submodule to a different host never receives the secret.
     let helper = format!(
-        "!f() {{ test \"$1\" = get && test -n \"${GIT_PASSWORD_VAR}\" && \
+        "!f() {{ test \"$1\" = get || return; h=; \
+         while IFS= read -r l; do case \"$l\" in \"\") break ;; host=*) h=${{l#host=}} ;; esac; done; \
+         test -n \"${GIT_PASSWORD_VAR}\" || return; \
+         test -z \"${GIT_HOST_VAR}\" || test \"$h\" = \"${GIT_HOST_VAR}\" || return; \
          printf 'username=%s\\npassword=%s\\n' \
          \"${GIT_USERNAME_VAR}\" \"${GIT_PASSWORD_VAR}\"; }}; f"
     );
@@ -372,6 +421,10 @@ pub fn git_credential_helper(cred: &Credential) -> GitCredentialHelper {
         env: vec![
             (GIT_USERNAME_VAR.to_string(), Secret::new(username)),
             (GIT_PASSWORD_VAR.to_string(), cred.secret().clone()),
+            (
+                GIT_HOST_VAR.to_string(),
+                Secret::new(expect_host.unwrap_or_default()),
+            ),
         ],
     }
 }
@@ -449,7 +502,7 @@ mod tests {
     #[test]
     fn git_credential_helper_keeps_secret_out_of_argv() {
         let cred = Credential::userpass("alice", "s3cr3t");
-        let h = git_credential_helper(&cred);
+        let h = git_credential_helper(&cred, None);
         // The secret value must NOT appear in any config arg (only the env-var name).
         for a in &h.config_args {
             assert!(!a.contains("s3cr3t"), "secret leaked into argv: {a}");
@@ -478,7 +531,7 @@ mod tests {
 
     #[test]
     fn git_credential_helper_defaults_username() {
-        let h = git_credential_helper(&Credential::token("t"));
+        let h = git_credential_helper(&Credential::token("t"), None);
         let user = h
             .env
             .iter()
@@ -488,12 +541,81 @@ mod tests {
     }
 
     #[test]
+    fn git_credential_helper_scopes_to_expected_host() {
+        // Ungated: the host env is present but empty, and the snippet's host
+        // check is skipped — the credential is released for any host.
+        let ungated = git_credential_helper(&Credential::token("t"), None);
+        let host_env = ungated
+            .env
+            .iter()
+            .find(|(k, _)| k == "VCS_TOOLKIT_GIT_HOST")
+            .expect("host env var is always set");
+        assert_eq!(host_env.1.expose(), "", "None => empty (ungated) host");
+
+        // Gated: the expected host travels in the env (never argv), and the
+        // snippet gates on it — the host value is not baked into the shell text.
+        let gated = git_credential_helper(&Credential::token("t"), Some("github.com"));
+        assert_eq!(
+            gated
+                .env
+                .iter()
+                .find(|(k, _)| k == "VCS_TOOLKIT_GIT_HOST")
+                .unwrap()
+                .1
+                .expose(),
+            "github.com"
+        );
+        assert!(
+            gated.config_args.iter().all(|a| !a.contains("github.com")),
+            "the expected host stays in env, out of argv: {:?}",
+            gated.config_args
+        );
+        // The snippet references the host var by name and reads git's request.
+        assert!(
+            gated
+                .config_args
+                .iter()
+                .any(|a| a.contains("VCS_TOOLKIT_GIT_HOST") && a.contains("host=")),
+            "snippet gates on the request host: {:?}",
+            gated.config_args
+        );
+    }
+
+    #[test]
+    fn https_host_extracts_hostname() {
+        assert_eq!(
+            https_host("https://github.com/o/r.git").as_deref(),
+            Some("github.com")
+        );
+        // Userinfo is stripped, but the port and case are PRESERVED — git's
+        // `host=` request carries `host[:port]` verbatim from the URL and matches
+        // it case-sensitively, so scoping to a normalized host would withhold the
+        // credential and break auth for a non-default port / uppercase host.
+        assert_eq!(
+            https_host("https://x-access-token:tok@Git.Example.COM:8443/g/p").as_deref(),
+            Some("Git.Example.COM:8443"),
+            "userinfo dropped; port + case kept"
+        );
+        assert_eq!(
+            https_host("https://host.io?x=1").as_deref(),
+            Some("host.io"),
+            "authority ends at ? or #"
+        );
+        // Non-HTTPS (SSH) never invokes the helper → no host to scope.
+        assert_eq!(https_host("git@github.com:o/r.git"), None);
+        assert_eq!(https_host("ssh://git@github.com/o/r"), None);
+        assert_eq!(https_host("https://"), None);
+        // IPv6 literal → ungated (None) rather than a wrong match that breaks auth.
+        assert_eq!(https_host("https://[::1]:8443/x"), None);
+    }
+
+    #[test]
     fn git_credential_helper_is_immune_to_shell_metacharacters() {
         // A hostile username/secret must stay inert: they're carried as env
         // VALUES, and the helper snippet references them only by env-var NAME
         // (double-quoted), so the user-controlled bytes never enter the argv.
         let cred = Credential::userpass("$(rm -rf /); x", "tok'; echo pwned");
-        let h = git_credential_helper(&cred);
+        let h = git_credential_helper(&cred, Some("github.com"));
         for a in &h.config_args {
             assert!(
                 !a.contains("rm -rf"),

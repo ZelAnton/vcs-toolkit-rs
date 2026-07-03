@@ -32,7 +32,12 @@ crates; tag releases as `vcs-watch-v<version>`.
   change. processkit is semver-stable from 1.0, so future 1.x updates are non-breaking.
 
 ### Fixed
--
+- **A huge `Builder::max_wait` no longer panics (and silently kills) the watcher.**
+  The re-query ceiling is clamped before it is added to an `Instant`, so
+  `max_wait(Duration::MAX)` (a natural "disable the ceiling" idiom) no longer
+  overflows `Instant + Duration` and aborts the background loop — which would drop
+  the event channel and leave the watcher permanently, silently deaf.
+  (`docs/audit-2026-07.md` P1.)
 
 ## [0.2.0] - 2026-06-27
 

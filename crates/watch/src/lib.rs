@@ -135,6 +135,14 @@ const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
 /// Default ceiling: even under a continuous stream of events, re-query at least
 /// this often (so a long bulk operation still reports progress).
 const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(1);
+/// Upper clamp for [`max_wait`](Builder::max_wait) when it is turned into an
+/// `Instant` deadline. `Instant + Duration` *panics* on overflow, and `max_wait`
+/// is caller-settable with no bound (`.max_wait(Duration::MAX)` is a natural
+/// "disable the ceiling" idiom), so cap the addend at an effectively-unbounded
+/// one year — a huge value then disables the ceiling instead of panicking the
+/// spawned watch loop, which would drop the output channel and kill the watcher
+/// silently.
+const MAX_WAIT_CEILING: Duration = Duration::from_secs(60 * 60 * 24 * 365);
 /// Default deadline on a single re-query (`snapshot` + branch list): a wedged
 /// command (e.g. a held `index.lock` with no client timeout configured) is
 /// killed and skipped instead of stalling the watch loop forever.
@@ -469,7 +477,10 @@ async fn watch_loop(
         // the in-arm deadline check guards against a signal stream so dense that
         // the `biased` select never polls the timer arms.
         drain(&mut raw_rx);
-        let deadline = tokio::time::Instant::now() + config.max_wait;
+        // Clamp the addend: `Instant + Duration` panics on overflow, and a huge
+        // caller `max_wait` (e.g. `Duration::MAX`) must disable the ceiling, not
+        // crash the loop. See [`MAX_WAIT_CEILING`].
+        let deadline = tokio::time::Instant::now() + config.max_wait.min(MAX_WAIT_CEILING);
         loop {
             tokio::select! {
                 biased;
@@ -948,6 +959,29 @@ mod pipeline_tests {
             change.events
         );
         pump.abort();
+    }
+
+    // P1: a caller "disabling the ceiling" with `Duration::MAX` must not overflow
+    // the `Instant + max_wait` deadline and panic the spawned loop (which would
+    // drop the output channel and kill the watcher silently). The clamp keeps it
+    // running; the debounce timer still fires normally.
+    #[tokio::test(start_paused = true)]
+    async fn max_wait_duration_max_does_not_panic_the_loop() {
+        let scratch = Scratch::new();
+        let prev = baseline(&scratch.0, "aaa").await;
+        let config = LoopConfig {
+            max_wait: Duration::MAX,
+            ..defaults()
+        };
+        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, config);
+        h.sig.send(()).expect("send");
+        tokio::time::advance(Duration::from_millis(300)).await; // past the 250 ms debounce
+        let change = h
+            .out
+            .recv()
+            .await
+            .expect("the loop survives a Duration::MAX max_wait and still re-queries");
+        assert!(!change.events.is_empty(), "got {:?}", change.events);
     }
 
     // The base case: one signal, a quiet gap, one re-query.

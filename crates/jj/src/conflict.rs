@@ -78,27 +78,112 @@ pub struct JjConflictRegion {
 
 impl JjConflictRegion {
     /// The materialized content of each *side*, in file order (a diff section
-    /// contributes its new text; base sections are not sides).
+    /// contributes its new text; base sections are not sides). Each side is a
+    /// list of newline-terminated lines whose concatenation is the side's exact
+    /// bytes — including a **missing** terminating newline, which jj encodes and
+    /// this reconstruction honors (see [`join_sublines`]).
     pub fn sides(&self) -> Vec<Vec<String>> {
+        let mixed = self.mixed_eol();
         self.sections
             .iter()
             .filter_map(|section| match section {
-                JjConflictSection::Diff { lines, .. } => Some(apply_diff(lines, false)),
-                JjConflictSection::Snapshot { lines, .. } => Some(lines.clone()),
+                JjConflictSection::Diff {
+                    to_label, lines, ..
+                } => Some(join_sublines(
+                    &apply_diff(lines, false),
+                    labeled_no_eol(to_label),
+                    mixed,
+                )),
+                JjConflictSection::Snapshot { label, lines } => {
+                    Some(join_sublines(lines, labeled_no_eol(label), mixed))
+                }
                 JjConflictSection::Base { .. } => None,
             })
             .collect()
     }
 
     /// The base content, when the region records one (a diff section's old
-    /// text, or a snapshot-style `-------` section).
+    /// text, or a snapshot-style `-------` section). Honors a missing
+    /// terminating newline the same way [`sides`](Self::sides) does.
     pub fn base(&self) -> Option<Vec<String>> {
+        let mixed = self.mixed_eol();
         self.sections.iter().find_map(|section| match section {
-            JjConflictSection::Diff { lines, .. } => Some(apply_diff(lines, true)),
-            JjConflictSection::Base { lines, .. } => Some(lines.clone()),
+            JjConflictSection::Diff {
+                from_label, lines, ..
+            } => Some(join_sublines(
+                &apply_diff(lines, true),
+                labeled_no_eol(from_label),
+                mixed,
+            )),
+            JjConflictSection::Base { label, lines } => {
+                Some(join_sublines(lines, labeled_no_eol(label), mixed))
+            }
             JjConflictSection::Snapshot { .. } => None,
         })
     }
+
+    /// Whether jj rendered this region in its explicit trailing-newline mode.
+    ///
+    /// When every side (and the base) ends in a newline, jj renders each side's
+    /// lines verbatim. But as soon as **any** side lacks a terminating newline,
+    /// jj switches representation for the *whole* region: the newline-less side
+    /// gets a `(no terminating newline)` label marker and its content with no
+    /// trailing line, while every newline-terminated side gets an extra trailing
+    /// empty line (a bare `\n`, or a ` `/`+`/`-` context line inside a diff) to
+    /// mark "this one *does* end in a newline". Detecting the mode lets
+    /// [`join_sublines`] undo that extra line so the materialized bytes are exact
+    /// (verified against jj 0.42 across all four newline permutations).
+    fn mixed_eol(&self) -> bool {
+        self.sections.iter().any(|section| match section {
+            JjConflictSection::Snapshot { label, .. } | JjConflictSection::Base { label, .. } => {
+                labeled_no_eol(label)
+            }
+            JjConflictSection::Diff {
+                from_label,
+                to_label,
+                ..
+            } => labeled_no_eol(from_label) || labeled_no_eol(to_label),
+        })
+    }
+}
+
+/// jj's marker for a side whose content does not end in a newline. It is
+/// appended to the section's label, e.g. `… "side-a" (no terminating newline)`.
+const NO_EOL_MARKER: &str = "(no terminating newline)";
+
+/// Whether a section label carries jj's [`NO_EOL_MARKER`].
+fn labeled_no_eol(label: &str) -> bool {
+    label.trim_end().ends_with(NO_EOL_MARKER)
+}
+
+/// Re-join a section's rendered sub-lines (already prefix-stripped for a diff)
+/// into the side/base's true bytes, undoing jj's trailing-newline encoding.
+///
+/// - `no_eol` — this role's label carries [`NO_EOL_MARKER`]: the last sub-line's
+///   `\n` is jj's display artifact for a side that has no terminating newline;
+///   drop it, so the content ends without a newline.
+/// - `mixed` — the region is in the explicit trailing-newline mode
+///   ([`JjConflictRegion::mixed_eol`]): a newline-terminated side carries one
+///   extra trailing empty sub-line marking "has newline"; drop that one `\n`.
+///
+/// The two are mutually exclusive per section (a no-newline side is annotated,
+/// not padded), so at most one correction applies. The result is re-split into
+/// newline-terminated lines so callers and [`resolve`] reproduce the bytes by
+/// plain concatenation.
+fn join_sublines(sublines: &[String], no_eol: bool, mixed: bool) -> Vec<String> {
+    let mut content: String = sublines.concat();
+    if no_eol || mixed {
+        // Remove the trailing line terminator jj added — its display newline
+        // (no_eol) or the trailing-empty pad line (mixed). jj emits it with the
+        // file's own ending, so strip a full `\r\n` on a CRLF file (else a bare
+        // `\n` would leave a stray `\r` and silently corrupt the resolved bytes).
+        if content.ends_with("\r\n") {
+            content.truncate(content.len() - 2);
+        } else if content.ends_with('\n') {
+            content.pop();
+        }
+    }
+    content.split_inclusive('\n').map(str::to_string).collect()
 }
 
 /// A conflicted file as a sequence of plain-text runs and conflict regions.
@@ -488,6 +573,138 @@ mod tests {
             "line 1\nline 2\nline 3\n"
         );
         assert!(resolve(&segments, JjResolution::Side(2)).is_err());
+    }
+
+    // jj switches to an explicit trailing-newline representation the moment ANY
+    // side lacks a terminating newline (structures captured verbatim from jj
+    // 0.42 across all four permutations). `resolve` must reproduce each side's
+    // and the base's exact bytes — including a *missing* final newline — and
+    // `render` must still round-trip. Regression for the silent corruption where
+    // the phantom trailing/context line became a spurious extra blank line.
+    fn check_eol(input: &str, side0: &str, side1: &str, base: &str) {
+        let segments = parse_conflicts(input).expect("parse");
+        assert_eq!(
+            render(&segments),
+            input,
+            "render must round-trip byte-exact"
+        );
+        assert_eq!(
+            resolve(&segments, JjResolution::Side(0)).unwrap(),
+            side0,
+            "side 0"
+        );
+        assert_eq!(
+            resolve(&segments, JjResolution::Side(1)).unwrap(),
+            side1,
+            "side 1"
+        );
+        assert_eq!(
+            resolve(&segments, JjResolution::Base).unwrap(),
+            base,
+            "base"
+        );
+    }
+
+    #[test]
+    fn resolve_honors_missing_terminating_newline() {
+        // side-a (snapshot) lacks the terminating newline; side-b via diff.
+        check_eol(
+            concat!(
+                "line 1\n",
+                "<<<<<<< conflict 1 of 1\n",
+                "+++++++ aaa 111 \"side-a\" (no terminating newline)\n",
+                "main 2\n",
+                "%%%%%%% diff from: bbb 222 \"base\"\n",
+                "\\\\\\\\\\\\\\        to: ccc 333 \"side-b\"\n",
+                "-line 2\n",
+                "+feat 2\n",
+                " \n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\nmain 2", // side-a: no trailing newline (was corrupted to `main 2\n`)
+            "line 1\nfeat 2\n", // side-b: keeps its newline, no phantom blank line
+            "line 1\nline 2\n", // base
+        );
+        // side-b (via diff) lacks the terminating newline; side-a via diff.
+        check_eol(
+            concat!(
+                "line 1\n",
+                "<<<<<<< conflict 1 of 1\n",
+                "%%%%%%% diff from: bbb 222 \"base\"\n",
+                "\\\\\\\\\\\\\\        to: aaa 111 \"side-a\"\n",
+                "-line 2\n",
+                "+main 2\n",
+                " \n",
+                "+++++++ ccc 333 \"side-b\" (no terminating newline)\n",
+                "feat 2\n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\nmain 2\n",
+            "line 1\nfeat 2",
+            "line 1\nline 2\n",
+        );
+        // base lacks the terminating newline (both sides keep theirs).
+        check_eol(
+            concat!(
+                "line 1\n",
+                "<<<<<<< conflict 1 of 1\n",
+                "%%%%%%% diff from: bbb 222 \"base\" (no terminating newline)\n",
+                "\\\\\\\\\\\\\\        to: aaa 111 \"side-a\"\n",
+                "-line 2\n",
+                "+main 2\n",
+                "+\n",
+                "+++++++ ccc 333 \"side-b\"\n",
+                "feat 2\n",
+                "\n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\nmain 2\n",
+            "line 1\nfeat 2\n",
+            "line 1\nline 2", // base: no trailing newline
+        );
+        // both sides lack a terminating newline (base keeps one).
+        check_eol(
+            concat!(
+                "line 1\n",
+                "<<<<<<< conflict 1 of 1\n",
+                "%%%%%%% diff from: bbb 222 \"base\"\n",
+                "\\\\\\\\\\\\\\        to: aaa 111 \"side-a\" (no terminating newline)\n",
+                "-line 2\n",
+                "-\n",
+                "+main 2\n",
+                "+++++++ ccc 333 \"side-b\" (no terminating newline)\n",
+                "feat 2\n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\nmain 2",
+            "line 1\nfeat 2",
+            "line 1\nline 2\n",
+        );
+    }
+
+    // CRLF variant (captured byte-for-byte from jj 0.42): every marker and pad
+    // line ends in `\r\n`. side-a lacks the terminating newline. The materializer
+    // must strip a full `\r\n` terminator — a bare-`\n` pop would leave a stray
+    // `\r` and corrupt every resolution on Windows files.
+    #[test]
+    fn resolve_honors_missing_newline_with_crlf() {
+        check_eol(
+            concat!(
+                "line 1\r\n",
+                "<<<<<<< conflict 1 of 1\r\n",
+                "+++++++ aaa 111 \"side-a\" (no terminating newline)\r\n",
+                "main 2\r\n",
+                "%%%%%%% diff from: bbb 222 \"base\"\r\n",
+                "\\\\\\\\\\\\\\        to: ccc 333 \"side-b\"\r\n",
+                "-line 2\r\n",
+                "+feat 2\r\n",
+                " \r\n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\r\nmain 2",     // side-a: no trailing newline, no stray \r
+            "line 1\r\nfeat 2\r\n", // side-b: full CRLF terminator preserved
+            "line 1\r\nline 2\r\n", // base
+        );
     }
 
     #[test]

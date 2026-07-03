@@ -25,7 +25,15 @@ crates; tag releases as `vcs-core-v<version>`.
   to `fetch_branch`.
 
 ### Fixed
--
+- **`remove_worktree` no longer risks wiping the repository or silently losing
+  edits on jj.** It now (a) refuses to remove the repository's **main** workspace —
+  whose directory is the main working copy, so deleting it destroyed the whole
+  checkout (reachable as `remove_worktree(".", …)`); the guard checks both the
+  `default` name and the store-owning `.jj/repo` directory, so a `jj workspace
+  rename` can't bypass it — and (b) honors `force`: with `force = false` a workspace
+  with uncommitted changes is refused (the changes are first snapshotted into jj's
+  op log, so they're recoverable), instead of being deleted unconditionally as
+  before. Pass `force = true` for the old always-remove behavior. (`docs/audit-2026-07.md` C1.)
 
 ## [0.4.0] - 2026-06-27
 

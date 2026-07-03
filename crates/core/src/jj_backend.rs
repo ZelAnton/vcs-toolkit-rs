@@ -405,18 +405,60 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     Ok(CreateOutcome::Plain)
 }
 
+/// jj's initial workspace — its directory is the repository's main working copy,
+/// so it must never be deleted by a worktree-removal call.
+const DEFAULT_WORKSPACE: &str = "default";
+
 pub(crate) async fn remove_worktree<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
     path: &Path,
-    _force: bool,
+    force: bool,
 ) -> Result<()> {
     // Resolve `path` against `dir` (jj's cwd) so the workspace lookup and the dir
     // removal target the location jj used, even when the process cwd differs.
     let abs_path = dir.join(path);
     let name = workspace_name_for_path(jj, dir, &abs_path).await?;
+
+    // Never remove the repository's **main** workspace: its directory *is* the
+    // main working copy, so `remove_dir_all` on it wipes the whole checkout
+    // (`.jj`/`.git` and every file). git refuses to remove the main worktree; jj
+    // has no such guard and we delete the directory ourselves, so guard it here.
+    // Two signals, because either alone is bypassable:
+    //   - the name is `default` (the initial workspace's name); but
+    //     `jj workspace rename` can move the main workspace off that name, so
+    //   - the workspace directory owns the object store: a *main* workspace's
+    //     `.jj/repo` is a directory (the store), a *secondary* workspace's is a
+    //     file (a pointer to the store) — verified on jj 0.42, and stable across
+    //     a rename. If either holds, this is the repository, not a stray worktree.
+    if name == DEFAULT_WORKSPACE || abs_path.join(".jj").join("repo").is_dir() {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to remove the repository's main workspace (its directory is \
+             the main working copy and owns the object store)",
+        )));
+    }
+
+    // Honor `force` like git's `worktree remove`: unless forced, refuse a
+    // workspace that still has uncommitted changes. Querying `current_change`
+    // there snapshots the working copy first (jj only records it when a command
+    // runs in that workspace), so a refusal leaves the edits captured in jj's op
+    // log rather than only on disk — and the check sees edits made since the last
+    // jj command ran there, exactly the state git's `worktree remove` refuses on.
+    // (Skip when the directory is already gone: nothing to lose, just re-forget.)
+    if !force && abs_path.exists() && !jj.current_change(&abs_path).await?.empty {
+        return Err(Error::Io(std::io::Error::other(
+            "worktree has uncommitted changes; pass force = true to remove it \
+             (the changes are snapshotted in jj's op log and recoverable)",
+        )));
+    }
+
     // Delete the on-disk dir first: an orphan dir jj has forgotten is worse than
-    // a still-attached workspace.
+    // a still-attached workspace. (This is a blocking `remove_dir_all` on the
+    // async worker; vcs-core is deliberately runtime-agnostic — no tokio — so a
+    // multi-GB worktree delete can briefly stall the caller's task. Offloading
+    // it would couple the facade to one runtime, a worse trade for a library
+    // meant to run under any executor; see docs/audit-2026-07.md P2.)
     if abs_path.exists() {
         std::fs::remove_dir_all(&abs_path)?;
     }

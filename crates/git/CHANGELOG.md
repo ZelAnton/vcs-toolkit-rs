@@ -32,7 +32,18 @@ crates; tag releases as `vcs-git-v<version>`.
   `fetch_remote_branch` to `fetch_branch`.
 
 ### Fixed
--
+- **`checkout` can no longer silently discard unstaged edits.** It now passes a
+  trailing `--`, so a `reference` that doesn't resolve as a ref but names a tracked
+  path errors instead of falling into git's *pathspec* mode and restoring that path
+  from the index (which reverted unstaged edits and returned `Ok`).
+  (`docs/audit-2026-07.md` C2.)
+
+### Security
+- **Per-operation credentials are scoped to the clone URL's host.** With a
+  credential provider set, `clone_repo` now binds the inline `credential.helper` to
+  the target URL's host, so an HTTP redirect or a submodule fetch to a *different*
+  host during the clone can't extract the token. Other remote ops (fetch/push)
+  remain host-ungated for now (they target a configured remote). (`docs/audit-2026-07.md` H5.)
 
 ## [0.6.0] - 2026-06-27
 
