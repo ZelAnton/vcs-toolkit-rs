@@ -33,6 +33,12 @@ crates; tag releases as `vcs-forge-v<version>`.
   (documented on [`Forge::gitea`]).
 
 ### Changed
+- **`Forge::pr_close` / `ForgeApi::pr_close` take a `PrClose` spec, not a bare
+  `delete_branch` bool (breaking).** `pr_close(number, true)` didn't say what `true`
+  meant — and the flag is **GitHub-only** (GitLab/Gitea have no `--delete-branch` and
+  silently ignored it). It's now `pr_close(PrClose::new(number).delete_branch())`, whose
+  doc states the per-backend honesty, and `#[non_exhaustive]` leaves room to grow.
+  Behavior unchanged. (`docs/audit-2026-07.md` A1.)
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
   processkit's 1.0 makes the re-exported `processkit` (`vcs_forge::processkit`, incl.
   `Error`/`ProcessResult`) 1.x — **breaking** for a downstream that pins `processkit`

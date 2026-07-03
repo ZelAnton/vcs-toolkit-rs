@@ -137,7 +137,7 @@ mod gitlab_forge;
 
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrCreate, PrEdit,
+    ForgePrState, ForgeRelease, ForgeRepo, MergeStrategy, PrClose, PrCreate, PrEdit,
 };
 pub use error::{Error, Result};
 
@@ -496,13 +496,16 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Close a PR/MR without merging. `delete_branch` applies to GitHub only
-    /// (`gh pr close --delete-branch`); GitLab and Gitea ignore it.
-    pub async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()> {
+    /// Close a PR/MR without merging. The [`PrClose`] spec's
+    /// [`delete_branch`](PrClose::delete_branch) applies to GitHub only
+    /// (`gh pr close --delete-branch`); GitLab and Gitea have no such flag and ignore it.
+    pub async fn pr_close(&self, spec: PrClose) -> Result<()> {
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_close(c, &self.cwd, number, delete_branch).await,
-            Backend::GitLab(c) => gitlab_forge::pr_close(c, &self.cwd, number).await,
-            Backend::Gitea(c) => gitea_forge::pr_close(c, &self.cwd, number).await,
+            Backend::GitHub(c) => {
+                github_forge::pr_close(c, &self.cwd, spec.number, spec.delete_branch).await
+            }
+            Backend::GitLab(c) => gitlab_forge::pr_close(c, &self.cwd, spec.number).await,
+            Backend::Gitea(c) => gitea_forge::pr_close(c, &self.cwd, spec.number).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_close")),
         }
     }
@@ -731,7 +734,7 @@ pub trait ForgeApi: Send + Sync {
     /// See [`Forge::pr_mark_ready`](crate::Forge::pr_mark_ready).
     async fn pr_mark_ready(&self, number: u64) -> Result<()>;
     /// See [`Forge::pr_close`](crate::Forge::pr_close).
-    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()>;
+    async fn pr_close(&self, spec: PrClose) -> Result<()>;
     /// See [`Forge::pr_checks`](crate::Forge::pr_checks).
     async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
     /// See [`Forge::issue_list`](crate::Forge::issue_list).
@@ -790,8 +793,8 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn pr_mark_ready(&self, number: u64) -> Result<()> {
         self.pr_mark_ready(number).await
     }
-    async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()> {
-        self.pr_close(number, delete_branch).await
+    async fn pr_close(&self, spec: PrClose) -> Result<()> {
+        self.pr_close(spec).await
     }
     async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
         self.pr_checks(number).await
@@ -942,7 +945,7 @@ mod tests {
             forge.pr_create(PrCreate::new("T", "B")).await.unwrap_err(),
             forge.pr_merge(1, MergeStrategy::Merge).await.unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
-            forge.pr_close(1, false).await.unwrap_err(),
+            forge.pr_close(PrClose::new(1)).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
             forge.issue_list().await.unwrap_err(),
             forge.issue_view(1).await.unwrap_err(),

@@ -293,6 +293,38 @@ pub enum CiStatus {
     None,
 }
 
+/// Options for [`pr_close`](crate::Forge::pr_close).
+///
+/// `#[non_exhaustive]`, so build it through [`PrClose::new`] and the chained
+/// [`delete_branch`](PrClose::delete_branch) setter rather than a struct literal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PrClose {
+    /// The PR/MR number to close.
+    pub number: u64,
+    /// Also delete the source branch. **GitHub only** (`gh pr close --delete-branch`):
+    /// GitLab's `glab mr close` and Gitea's `tea pr close` have no such flag, so this
+    /// is **ignored** on those backends.
+    pub delete_branch: bool,
+}
+
+impl PrClose {
+    /// Close PR/MR `number`, leaving the source branch in place.
+    pub fn new(number: u64) -> Self {
+        Self {
+            number,
+            delete_branch: false,
+        }
+    }
+
+    /// Also delete the source branch (GitHub only; ignored on GitLab/Gitea).
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
 /// Options for [`pr_create`](crate::ForgeApi::pr_create) — the unified
 /// open-a-PR/MR spec, mapped to each CLI's own flags (gh `--head`/`--base`,
 /// glab `--source-branch`/`--target-branch`, tea `--head`/`--base`).

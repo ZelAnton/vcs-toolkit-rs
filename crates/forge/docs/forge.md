@@ -63,7 +63,7 @@ pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String>;
 pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()>;
 pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
 pub async fn pr_mark_ready(&self, number: u64) -> Result<()>;
-pub async fn pr_close(&self, number: u64, delete_branch: bool) -> Result<()>;
+pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.delete_branch()] — delete_branch is GitHub-only
 pub async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;

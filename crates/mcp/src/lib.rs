@@ -795,10 +795,11 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrCloseParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_close")?;
-        self.forge()?
-            .pr_close(p.number, p.delete_branch)
-            .await
-            .map_err(forge_err)?;
+        let mut spec = vcs_forge::PrClose::new(p.number);
+        if p.delete_branch {
+            spec = spec.delete_branch();
+        }
+        self.forge()?.pr_close(spec).await.map_err(forge_err)?;
         ok_json(&serde_json::json!({ "closed": p.number }))
     }
 
