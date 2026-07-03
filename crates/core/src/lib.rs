@@ -622,6 +622,21 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// Switch the working copy to `reference` (git `checkout` / jj `edit`).
+    ///
+    /// ⚠ **Backend divergence — this is not "detach and build on top" on jj.** On
+    /// **git**, a subsequent commit *appends* on top of `reference` (its tip is
+    /// untouched). On **jj**, `checkout` maps to `jj edit`, which makes `reference`'s
+    /// commit *itself* the working-copy change — so a following
+    /// [`commit_paths`](Repo::commit_paths) (or any edit) **rewrites that commit in
+    /// place** (a new change-id, a replaced
+    /// description), silently amending a possibly-already-pushed commit rather than
+    /// adding a new one.
+    ///
+    /// So backend-agnostic "start fresh work on top of `main`" code must **not** rely
+    /// on `checkout` alone. If you want git-like append-on-top semantics on both
+    /// backends, start a new child change explicitly — on jj that is `jj new
+    /// <reference>` via the raw [`jj`](Repo::jj) client (a first-class `new_child`
+    /// facade primitive is planned); on git, `checkout` already appends.
     pub async fn checkout(&self, reference: &str) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::checkout(g, &self.cwd, reference).await,

@@ -35,6 +35,12 @@ crates; tag releases as `vcs-core-v<version>`.
   default client. So a `Repo::open`ed inside a git hook (which exports `GIT_DIR`)
   now targets the *discovered* repository rather than the hook's — commands can no
   longer be silently redirected at a different repo. (`docs/audit-2026-07.md` H4.)
+- **Docs:** `Repo::checkout` now warns prominently that it diverges by *consequence*,
+  not just verb: on jj it maps to `jj edit`, so a following `commit_paths` **rewrites
+  the checked-out commit in place** (a silent amend of a possibly-pushed commit),
+  whereas git appends on top. Backend-agnostic "start work on top of `main`" code
+  should start a new child change explicitly (`jj new <ref>`). No behavior change.
+  (`docs/audit-2026-07.md` H11.)
 
 ### Fixed
 - **`remove_worktree` no longer risks wiping the repository or silently losing

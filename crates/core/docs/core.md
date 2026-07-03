@@ -268,8 +268,15 @@ pub async fn rebase(&self, onto: &str)        -> Result<()>;
 ```
 
 `checkout` switches the working copy to `reference` — and this is where the two
-tools genuinely differ in verb: **git `checkout`, jj `edit`.** The facade
-dispatches to whichever the backend uses.
+tools genuinely differ, not just in verb (**git `checkout`, jj `edit`**) but in
+*consequence*. ⚠ On **git**, your next commit *appends* on top of `reference`. On
+**jj**, `edit` makes `reference`'s commit **itself** the working-copy change, so a
+following `commit_paths` (or any edit) **rewrites that commit in place** — a silent
+amend of a possibly-pushed commit, not a new commit on top. Backend-agnostic "start
+fresh work on top of `main`" code must therefore not rely on `checkout` alone: for
+git-like append-on-top on both backends, start a new child change explicitly (on jj,
+`jj new <reference>` through the raw [`Repo::jj`] client — a first-class `new_child`
+facade primitive is planned; on git, `checkout` already appends).
 
 `rebase` rebases the current work onto `onto` (git `rebase` / jj `rebase -d`).
 `onto` is a branch/bookmark name or revision the backend understands.
