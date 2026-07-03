@@ -653,9 +653,14 @@ impl<R: ProcessRunner> Jj<R> {
     /// Retry **lock-contention** failures (another process holds jj's working-copy
     /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
     /// a lock-acquisition failure is pre-execution (jj never ran). See [`RetryPolicy`]
-    /// and [`is_lock_contention`]. Note jj's
-    /// operation log already auto-resolves most concurrency, so hard lock failures
-    /// are rarer than with git.
+    /// and [`is_lock_contention`]. Note jj's operation log already auto-resolves most
+    /// concurrency, so hard lock failures are rarer than with git.
+    ///
+    /// **Caveat:** modern jj generally *blocks* on the working-copy / operation-heads
+    /// lock until it is free, rather than failing — so contention usually surfaces as
+    /// a wait (bounded by the client's `default_timeout`), not a retryable error. This
+    /// retry therefore catches only the residual cases where jj surfaces a lock error;
+    /// for most jj concurrency the blocking behavior is what serializes access.
     pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
         self.core = self.core.with_retry(policy);
         self
@@ -2275,7 +2280,7 @@ mod tests {
         let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
             ["jj", "abandon"],
             [
-                Reply::fail(1, "Error: Failed to lock the working copy"),
+                Reply::fail(1, "Error: Failed to lock working copy"),
                 Reply::ok(""),
             ],
         ));
@@ -2289,7 +2294,7 @@ mod tests {
         let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
             ["jj", "abandon"],
             [
-                Reply::fail(1, "Error: Failed to lock the working copy"),
+                Reply::fail(1, "Error: Failed to lock working copy"),
                 Reply::ok(""),
             ],
         ));

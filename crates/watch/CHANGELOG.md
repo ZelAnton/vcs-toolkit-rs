@@ -24,6 +24,11 @@ crates; tag releases as `vcs-watch-v<version>`.
 - Re-export of `processkit` (`vcs_watch::processkit`) so a `vcs-watch`-only consumer
   can name the `processkit_error()` return type without a direct dependency (mirrors
   `vcs_core::processkit` / `vcs_forge::processkit`).
+- **`WatcherStats::watch_errors`** — a counter of OS-watch errors reported by the
+  `notify` backend. A non-zero/climbing count means the underlying watch is failing
+  (most often the watched `.git`/`.jj` dir was removed and re-created, e.g. a
+  re-clone — which on Windows fails the watch), so the watcher may have gone silently
+  deaf; treat it as "rebuild the watcher". (`docs/audit-2026-07.md` R3.)
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing

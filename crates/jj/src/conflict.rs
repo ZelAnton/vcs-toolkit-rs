@@ -258,11 +258,39 @@ pub fn has_conflict_markers(content: &str) -> bool {
     })
 }
 
+/// Whether `content` carries git's `<<<`/`===`/`>>>` conflict triad — used only to
+/// steer a caller who passed a **git-style** file (jj's `git` marker style, or a
+/// plain git conflict) to `vcs_git::conflict`. Requires all three marker runs, so a
+/// jj file that merely contains a marker-*like* content line (a single `<<<` run,
+/// no `===`/`>>>` structure) is not mistaken for one.
+fn looks_git_style(content: &str) -> bool {
+    let has_run = |ch: char| {
+        content
+            .split_inclusive('\n')
+            .any(|l| marker_run(l, ch).is_some())
+    };
+    has_run('<') && has_run('=') && has_run('>')
+}
+
 /// Parse a jj-materialized conflicted file (native `diff`/`snapshot` styles)
-/// into text/conflict segments. Errors with [`Error::Parse`] on malformed
-/// input (unterminated region, content before the first section marker, a
-/// `git`-style file — use `vcs_git::conflict` for those).
+/// into text/conflict segments. Errors with [`Error::Parse`] on malformed input
+/// (unterminated region, content before the first section marker). A **git-style**
+/// file (the `<<<`/`===`/`>>>` triad with no jj `conflict N of M` header) is
+/// redirected to `vcs_git::conflict`. A jj file whose *content* merely contains a
+/// `<<<<<<<`-like line (jj lengthens its own markers past such content) parses
+/// fine — the marker-like line is kept as text.
 pub fn parse_conflicts(content: &str) -> Result<Vec<JjConflictSegment>> {
+    // Only steer to the git parser when the file is genuinely git-style (the full
+    // triad) AND has no jj header — never for a jj file that just happens to carry a
+    // marker-like content line alongside its real (longer) markers.
+    if !has_conflict_markers(content) && looks_git_style(content) {
+        return Err(parse_error(
+            "git-style conflict markers — parse this file with vcs_git::conflict \
+             (jj's `git` marker style uses git's grammar)"
+                .to_string(),
+        ));
+    }
+
     let mut segments = Vec::new();
     let mut text: Vec<String> = Vec::new();
     let mut lines = content.split_inclusive('\n');
@@ -272,13 +300,9 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<JjConflictSegment>> {
             .map(|n| (n, marker_label(line, n)))
             .and_then(|(n, label)| parse_counter(&label).map(|c| (n, c)));
         let Some((n, (number, total))) = counter else {
-            if marker_run(line, '<').is_some() {
-                return Err(parse_error(format!(
-                    "git-style conflict marker {:?} — parse this file with \
-                     vcs_git::conflict (jj's `git` marker style uses git's grammar)",
-                    line.trim_end()
-                )));
-            }
+            // A `<<<` run that isn't a `conflict N of M` header is content, not an
+            // error: jj lengthens its real markers past any marker-like content, so
+            // a bare `<<<<<<<` line here is part of the file's text.
             text.push(line.to_string());
             continue;
         };
@@ -541,6 +565,35 @@ mod tests {
         assert!(
             err.to_string().contains("to:"),
             "error should point at the malformed `to:` line: {err}"
+        );
+    }
+
+    // H6: a line that *starts* with a `<<<<<<<` run but is not a `conflict N of M`
+    // header is content, not a "git-style file" error — jj lengthens its own markers
+    // past marker-like content, so such a line is text.
+    #[test]
+    fn marker_like_content_line_is_not_rejected() {
+        // No real conflict at all → parses as all text (was wrongly an error).
+        let plain = "<<<<<<< a line documenting git markers\nmore text\n";
+        let segs = parse_conflicts(plain).expect("marker-like content is text, not an error");
+        assert!(segs.iter().all(|s| matches!(s, JjConflictSegment::Text(_))));
+        assert_eq!(render(&segs), plain, "round-trips");
+
+        // A real jj conflict preceded by a marker-like content line: the content
+        // line is text, the real region parses.
+        let mixed = concat!(
+            "<<<<<<< documentation, not a header\n",
+            "<<<<<<< conflict 1 of 1\n",
+            "+++++++ aaa 111 \"side-a\"\n",
+            "X\n",
+            ">>>>>>> conflict 1 of 1 ends\n",
+        );
+        let segs = parse_conflicts(mixed).expect("parse");
+        assert_eq!(render(&segs), mixed, "round-trips");
+        assert!(
+            segs.iter()
+                .any(|s| matches!(s, JjConflictSegment::Conflict(_))),
+            "the real region still parses: {segs:?}"
         );
     }
 

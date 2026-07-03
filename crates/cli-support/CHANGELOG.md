@@ -19,6 +19,19 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   ambient-auth backends (`vcs-git`/`vcs-jj`) never pull in `serde`/`serde_json`.
 - `https_host(url)` — extract the `host[:port]` (verbatim from an `https://` URL)
   to scope a credential helper to the host an operation targets.
+- **`managed_client!` gained an optional `scrub_env = [ … ]`** clause: a client that
+  supplies it scrubs those inherited env vars (via `default_env_remove`) on every
+  instance it builds. `vcs-git` uses it to drop the repo-redirector vars (`GIT_DIR`,
+  …) so a value leaking from the parent process can't retarget commands.
+  (`docs/audit-2026-07.md` H4.)
+
+### Fixed
+- **Corrected the jj lock-contention markers and made the git one locale-stable.**
+  `is_lock_contention` matched jj strings that jj never emits; it now matches jj's
+  actual `"Failed to lock working copy"` / `"Failed to lock operation heads store"`,
+  and matches git's **locale-stable** `index.lock` path fragment (not the translated
+  `': File exists'` suffix), so lock-retry works on a non-English runner.
+  (`docs/audit-2026-07.md` H2.)
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing

@@ -233,11 +233,20 @@ impl Builder {
         // it. Build the watcher and register paths *before* the baseline snapshot,
         // so a change racing the baseline is queued, not lost.
         let (raw_tx, raw_rx) = mpsc::unbounded_channel::<()>();
-        let mut watcher = notify::recommended_watcher(move |_res| {
-            // Content is irrelevant — we re-query state, so any event (or watch
-            // error) just means "re-check". Send fails only after the loop ends.
-            let _ = raw_tx.send(());
-        })?;
+        let stats = Arc::new(StatsInner::default());
+        let cb_stats = Arc::clone(&stats);
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                // A backend **error** (e.g. the watched dir was removed — on Windows
+                // `ReadDirectoryChangesW` fails the watch) is counted so a consumer can
+                // notice via `stats().watch_errors` and rebuild; we can't auto-re-register
+                // from here. Either way, re-query: content is irrelevant, any event (or
+                // error) just means "re-check". `send` fails only after the loop ends.
+                if res.is_err() {
+                    cb_stats.note_watch_error();
+                }
+                let _ = raw_tx.send(());
+            })?;
         if self.working_tree {
             watcher.watch(&root, RecursiveMode::Recursive)?;
             // A worktree gitlink puts the real (private and shared) git dirs
@@ -264,7 +273,6 @@ impl Builder {
             requery_timeout: self.requery_timeout,
             output_capacity: OUTPUT_CAPACITY,
         };
-        let stats = Arc::new(StatsInner::default());
         let (out_tx, out_rx) = mpsc::channel::<RepoChange>(config.output_capacity);
         let task = tokio::spawn(watch_loop(
             self.repo,
@@ -314,6 +322,21 @@ pub struct WatcherStats {
     pub skipped: u64,
     /// What the most recent skip failed on; `None` when nothing was ever skipped.
     pub last_error: Option<WatcherErrorKind>,
+    /// Filesystem-watch **errors** reported by the OS backend (via `notify`). A
+    /// non-zero — especially *climbing* — count means the underlying watch is
+    /// failing: most often the watched `.git`/`.jj` directory was **removed and
+    /// re-created** (a re-clone / `jj git init`), which invalidates the OS watch on
+    /// the old directory. The watcher does **not** auto-re-register in that case, so
+    /// it can silently stop delivering changes; treat a rising `watch_errors` as
+    /// "rebuild the watcher" (drop it and call [`RepoWatcher::watch`] again).
+    ///
+    /// **Best-effort, platform-dependent.** It is reliable on **Windows**, where
+    /// removing the watched directory fails `ReadDirectoryChangesW` and `notify`
+    /// reports an error. On **Linux** (`inotify`) a removed/re-created directory may
+    /// surface as an ordinary event or a silent watch teardown rather than an error,
+    /// so `watch_errors` can stay `0` even as the watcher goes deaf — don't rely on
+    /// it as the sole liveness signal there.
+    pub watch_errors: u64,
 }
 
 /// Lock-free counter cell shared between the loop and `stats()` readers. Relaxed
@@ -326,6 +349,7 @@ struct StatsInner {
     skipped: AtomicU64,
     /// 0 = none, else `WatcherErrorKind as u8 + 1`.
     last_error: AtomicU8,
+    watch_errors: AtomicU64,
 }
 
 impl StatsInner {
@@ -335,6 +359,10 @@ impl StatsInner {
 
     fn note_change(&self) {
         self.changes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn note_watch_error(&self) {
+        self.watch_errors.fetch_add(1, Ordering::Relaxed);
     }
 
     fn note_skip(&self, kind: WatcherErrorKind) {
@@ -359,6 +387,7 @@ impl StatsInner {
             changes: self.changes.load(Ordering::Relaxed),
             skipped: self.skipped.load(Ordering::Relaxed),
             last_error,
+            watch_errors: self.watch_errors.load(Ordering::Relaxed),
         }
     }
 }
@@ -408,10 +437,12 @@ impl RepoWatcher {
     }
 
     /// The watcher's health counters (re-queries run / changes emitted / skips,
-    /// and what the last skip failed on). Cheap relaxed-atomic reads — poll it
-    /// from a health check or log it periodically; a climbing
+    /// what the last skip failed on, and OS-watch errors). Cheap relaxed-atomic
+    /// reads — poll it from a health check or log it periodically; a climbing
     /// [`skipped`](WatcherStats::skipped) with flat
-    /// [`changes`](WatcherStats::changes) means the repository is wedged.
+    /// [`changes`](WatcherStats::changes) means the repository is wedged, and a
+    /// non-zero [`watch_errors`](WatcherStats::watch_errors) means the OS watch is
+    /// failing (e.g. the watched dir was re-created) — rebuild the watcher.
     pub fn stats(&self) -> WatcherStats {
         self.stats.snapshot()
     }
@@ -791,6 +822,25 @@ mod tests {
 
         let dirs = state_dirs(BackendKind::Git, &root).expect("state_dirs");
         assert_eq!(dirs.len(), 1, "self-reference deduped, got {dirs:?}");
+    }
+
+    // R3: verify the `watch_errors` counter→`snapshot()` plumbing (the notify
+    // callback that calls `note_watch_error` on a backend `Err` can't be driven from
+    // a unit test, so this pins the counter is wired in and stays independent).
+    #[test]
+    fn stats_counts_watch_errors_independently() {
+        let stats = StatsInner::default();
+        assert_eq!(stats.snapshot().watch_errors, 0);
+        stats.note_watch_error();
+        stats.note_watch_error();
+        let snap = stats.snapshot();
+        assert_eq!(snap.watch_errors, 2, "watch errors counted");
+        assert_eq!(
+            (snap.requeries, snap.changes, snap.skipped),
+            (0, 0, 0),
+            "other counters unaffected"
+        );
+        assert!(snap.last_error.is_none());
     }
 }
 

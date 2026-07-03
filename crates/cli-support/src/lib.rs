@@ -190,11 +190,21 @@ macro_rules! at_forwarders {
 ///   chain [`ManagedClient::with_token_env`] so a resolved credential is injected
 ///   into the `$var` environment variable for service `$svc` (the forge case:
 ///   `GH_TOKEN`, `GITLAB_TOKEN`). Omit it for the ambient-auth backends (git, jj).
+/// - `scrub_env = [ $var, … ]` — *optional*. When given, `new`/`with_runner`
+///   chain [`ManagedClient::default_env_remove`] for each var, so **every** client
+///   the macro generates drops those inherited environment variables by default
+///   (`vcs-git` uses it to scrub the repo-redirector vars — `GIT_DIR`, … — so a
+///   value leaking from the parent process can't retarget commands). Must come
+///   *after* `token_env` when both are present.
 ///
 /// ```ignore
 /// vcs_cli_support::managed_client! {
 ///     /// The real GitHub client.
 ///     pub struct GitHub => BINARY, token_env = (CredentialService::GitHub, "GH_TOKEN")
+/// }
+/// vcs_cli_support::managed_client! {
+///     /// The real Git client — scrubs the repo-redirector env vars by default.
+///     pub struct Git => BINARY, scrub_env = ["GIT_DIR", "GIT_WORK_TREE"]
 /// }
 /// ```
 #[macro_export]
@@ -203,6 +213,7 @@ macro_rules! managed_client {
         $(#[$meta:meta])*
         $vis:vis struct $name:ident => $binary:expr
         $(, token_env = ($svc:expr, $var:expr) )?
+        $(, scrub_env = [ $($scrub:expr),* $(,)? ] )?
         $(,)?
     ) => {
         $(#[$meta])*
@@ -213,7 +224,10 @@ macro_rules! managed_client {
         impl $name<::processkit::JobRunner> {
             /// Create a client driving the real job-backed runner.
             pub fn new() -> Self {
-                Self { core: $crate::ManagedClient::new($binary) $(.with_token_env($svc, $var))? }
+                Self { core: $crate::ManagedClient::new($binary)
+                    $(.with_token_env($svc, $var))?
+                    $($(.default_env_remove($scrub))*)?
+                }
             }
         }
 
@@ -228,7 +242,8 @@ macro_rules! managed_client {
             pub fn with_runner(runner: R) -> Self {
                 Self {
                     core: $crate::ManagedClient::with_runner($binary, runner)
-                        $(.with_token_env($svc, $var))?,
+                        $(.with_token_env($svc, $var))?
+                        $($(.default_env_remove($scrub))*)?,
                 }
             }
 
@@ -382,10 +397,21 @@ pub fn is_transient_fetch_error(err: &Error) -> bool {
 /// markers
 /// ([`TRANSIENT_FETCH_MARKERS`]) and conflict/exit failures are likewise absent.
 const LOCK_CONTENTION_MARKERS: &[&str] = &[
-    "index.lock': file exists", // git: the whole-repo index lock (pre-write)
-    "another git process seems to be running", // git's index-lock hint
-    "failed to lock the working copy", // jj: the working-copy lock (pre-snapshot)
-    "failed to lock op heads",  // jj: the operation-log lock (pre-commit of the op)
+    // git: the whole-repo index lock (pre-write). Match the **locale-stable path
+    // fragment** `index.lock`, not the translated `': File exists'` suffix — git
+    // localizes its messages, so a `LANG=de_DE` runner would never match the full
+    // English phrase. `index.lock` names the index lock specifically; per-ref locks
+    // (`<ref>.lock`, `packed-refs.lock`) are ruled out by the `refs/` guard in
+    // `is_lock_contention`. (This matches any `index.lock` *create* failure — a
+    // held lock, or e.g. `Permission denied` — all pre-write, so retrying is safe.)
+    "index.lock",
+    // jj: the working-copy lock and the operation-heads lock (both pre-mutation).
+    // These are jj's exact wordings (lower-cased for the classifier). NOTE: modern
+    // jj generally **blocks** on these locks until they're free rather than failing,
+    // so contention usually surfaces as a wait, not a classifiable error — these
+    // markers catch only the residual cases where jj does surface a lock error.
+    "failed to lock working copy",
+    "failed to lock operation heads store",
 ];
 
 /// Whether `err` is a **whole-repository lock-contention** failure — another
@@ -398,6 +424,18 @@ const LOCK_CONTENTION_MARKERS: &[&str] = &[
 /// non-zero exit, a timeout, a signal, or a missing binary are also **not** lock
 /// contention and must not be retried this way.
 pub fn is_lock_contention(err: &Error) -> bool {
+    // Rule out a **per-ref** lock first: it is *not* safely retryable (a multi-ref
+    // push/fetch can fail one ref's lock after earlier refs already moved). git's
+    // per-ref lock lives under `refs/` (`…/refs/heads/<name>.lock`) and its message
+    // names `refs/…`, whereas the whole-repo `index.lock` (`<gitdir>/index.lock`)
+    // never does — so a `refs/` mention excludes it, locale-independently. This also
+    // stops a branch literally named `index`/`reindex` (whose `…/reindex.lock`
+    // contains the substring `index.lock`) from matching the bare `index.lock`
+    // marker. (A repo whose *path* contains `refs/` then misses the index-lock retry
+    // — a benign false-negative, safer than a wrong retry.)
+    if exit_output_matches(err, &["refs/"]) {
+        return false;
+    }
     exit_output_matches(err, LOCK_CONTENTION_MARKERS)
 }
 
@@ -1019,18 +1057,23 @@ mod tests {
     #[test]
     fn classifies_lock_contention() {
         let lock_failures = [
+            // git always names `index.lock` (locale-stable) in the lock-contention
+            // message, even on a non-English runner where the surrounding prose is
+            // translated.
             exit(
                 "git",
                 128,
                 "fatal: Unable to create '/r/.git/index.lock': File exists.",
             ),
+            // A German runner: the path fragment `index.lock` still matches.
             exit(
                 "git",
                 128,
-                "Another git process seems to be running in this repository",
+                "fatal: Konnte '/r/.git/index.lock' nicht erstellen: Datei existiert bereits",
             ),
-            exit("jj", 1, "Error: Failed to lock the working copy"),
-            exit("jj", 1, "Error: Failed to lock op heads"),
+            // jj's *actual* wordings (verified against jj source) — note no "the".
+            exit("jj", 1, "Error: Failed to lock working copy"),
+            exit("jj", 1, "Error: Failed to lock operation heads store"),
         ];
         for e in &lock_failures {
             assert!(is_lock_contention(e), "should be lock contention: {e:?}");
@@ -1052,6 +1095,15 @@ mod tests {
                 "git",
                 128,
                 "Unable to create '/r/.git/packed-refs.lock': File exists.",
+            ),
+            // A per-ref lock for a branch literally named `index`: its
+            // `…/refs/heads/index.lock` path contains the substring `index.lock`,
+            // but the `refs/` mention correctly rules it out (not a whole-repo lock).
+            exit(
+                "git",
+                128,
+                "error: cannot lock ref 'refs/heads/index': Unable to create \
+                 '/r/.git/refs/heads/index.lock': File exists.",
             ),
             Error::Timeout {
                 program: "git".into(),

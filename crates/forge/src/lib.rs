@@ -300,12 +300,20 @@ impl<R: ProcessRunner> Forge<R> {
     /// Whether this handle's backend supports `op`. The capability-varying
     /// operations ([`ForgeOp`]) are all present on GitHub and GitLab; Gitea
     /// (`tea`) supports **none** of them — it has no current-repo view, draft
-    /// toggle, PR-checks command, or single-release view. Every other facade
-    /// operation works on all three. Branch on this to hide an unavailable
-    /// operation up front instead of calling it and handling
+    /// toggle, PR-checks command, or single-release view; and an
+    /// [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
+    /// nothing at all (every operation returns `Unsupported`). Every other facade
+    /// operation works on all three real backends. Branch on this to hide an
+    /// unavailable operation up front instead of calling it and handling
     /// [`Unsupported`](Error::Unsupported).
     pub fn supports(&self, op: ForgeOp) -> bool {
         match (self.kind(), op) {
+            // An `Unknown` backend (no classified CLI) supports **nothing** — every
+            // operation returns `Unsupported` — so `supports` must report `false`
+            // for all ops, matching `capabilities()`'s all-`false` map. (Returning
+            // `true` here made a UI render every op as available, each click then
+            // failing with `Unsupported`.)
+            (ForgeKind::Unknown, _) => false,
             // The four operations `tea` can't do; GitHub/GitLab do everything.
             (
                 ForgeKind::Gitea,
@@ -1045,6 +1053,12 @@ mod tests {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
             assert!(!gitea.supports(op), "gitea should not support {op:?}");
+        }
+        // An Unknown backend supports nothing — every op returns Unsupported, so
+        // `supports` must be `false` for all of them (matches `capabilities()`).
+        let unknown: Forge = Forge::from_unknown("/repo");
+        for &op in ForgeOp::ALL {
+            assert!(!unknown.supports(op), "unknown should not support {op:?}");
         }
         for forge in [
             Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new())),

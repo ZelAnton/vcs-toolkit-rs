@@ -45,6 +45,18 @@ crates; tag releases as `vcs-jj-v<version>`.
   including CRLF files — previously the phantom trailing/context line became a
   spurious extra blank line (or a stray `\r`), silently corrupting the written-back
   content. (`docs/audit-2026-07.md` C3.)
+- **`conflict::parse_conflicts` no longer misreads marker-like content as a
+  git-style file.** A line that starts with a `<<<<<<<` run but isn't a
+  `conflict N of M` header is kept as text (jj lengthens its own markers past such
+  content), so a real jj conflict alongside a marker-like content line parses
+  instead of erroring. A genuinely git-style file (the `<<<`/`===`/`>>>` triad with
+  no jj header) is still redirected to `vcs_git::conflict`. (`docs/audit-2026-07.md` H6.)
+- **Corrected the `is_lock_contention` markers for jj.** They matched strings jj
+  never emits (`"failed to lock the working copy"` / `"failed to lock op heads"`);
+  they now match jj's actual `"Failed to lock working copy"` /
+  `"Failed to lock operation heads store"`. `Jj::with_retry`'s doc also notes that
+  modern jj generally *blocks* on these locks rather than failing, so the retry
+  catches only residual lock errors. (`docs/audit-2026-07.md` H2.)
 
 ## [0.6.0] - 2026-06-27
 

@@ -23,7 +23,8 @@ vcs-forge = { path = "../forge", version = "0.2", features = ["serde"] }
 # Async runtime for the server loop + rmcp's async handler dispatch (like
 # `vcs-watch`, this is a runtime dependency, not just dev). `io-std` backs the
 # stdio transport.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+# `sync` backs the per-repo write mutex that serializes concurrent mutating tools.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
 # Deserialize the tool parameter structs; encode tool results as JSON.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

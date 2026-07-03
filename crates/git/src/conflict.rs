@@ -103,25 +103,27 @@ fn parse_error(message: String) -> Error {
 
 /// Parse a conflicted file's content into text/conflict segments.
 ///
-/// Errors with [`Error::Parse`] on a malformed file: a region missing its
-/// `=======` separator or `>>>>>>>` terminator, or a stray separator/end
-/// marker outside a region.
+/// Errors with [`Error::Parse`] only on a genuinely malformed *region*: a
+/// `<<<<<<<`-opened region missing its `=======` separator or `>>>>>>>`
+/// terminator. A `=======`/`>>>>>>>` run **outside** any region is treated as
+/// ordinary content (a Markdown/RST underline, a divider, a quoted email), so a
+/// file with no real conflict — or a real conflict alongside marker-like content
+/// — parses cleanly.
 pub fn parse_conflicts(content: &str) -> Result<Vec<ConflictSegment>> {
     let mut segments = Vec::new();
     let mut text: Vec<String> = Vec::new();
     let mut lines = content.split_inclusive('\n').peekable();
 
     while let Some(line) = lines.next() {
-        // A region starts at a `<<<<<<<`-run of length ≥ 7.
+        // A region starts at a `<<<<<<<`-run of length ≥ 7. A `=======` / `>>>>>>>`
+        // run *outside* a region is ordinary content — a Markdown/RST setext
+        // underline (`=========`), a `=======` divider banner, a deep `>>>>>>>`
+        // email quote — NOT a malformed conflict, so it is kept verbatim as text
+        // (a real conflict is delimited by a `<<<<<<<` opener; the region loops
+        // below consume the `=`/`>` markers that belong to it). A genuinely broken
+        // region (an opener with no separator/terminator) is still caught inside
+        // those loops.
         let Some(n) = marker_run(line, '<').filter(|&n| n >= 7) else {
-            if marker_run(line, '=').is_some_and(|m| m >= 7)
-                || marker_run(line, '>').is_some_and(|m| m >= 7)
-            {
-                return Err(parse_error(format!(
-                    "conflict marker outside a region: {:?}",
-                    line.trim_end()
-                )));
-            }
             text.push(line.to_string());
             continue;
         };
@@ -360,16 +362,38 @@ mod tests {
 
     #[test]
     fn malformed_files_are_parse_errors() {
+        // Only a genuinely broken *region* (an opener with no separator/terminator)
+        // is an error.
         for bad in [
             "<<<<<<< HEAD\nours\n",                  // no separator
             "<<<<<<< HEAD\nours\n=======\ntheirs\n", // no terminator
-            "=======\n",                             // stray separator
-            ">>>>>>> b\n",                           // stray end
         ] {
             assert!(
                 matches!(parse_conflicts(bad), Err(Error::Parse { .. })),
                 "{bad:?} must fail"
             );
+        }
+    }
+
+    // A `=======`/`>>>>>>>` run outside any region is ordinary content (Markdown
+    // underline, divider, quoted email), not a malformed conflict — parsed as text,
+    // never an error, and round-trips byte-exact. (H6)
+    #[test]
+    fn marker_like_content_outside_a_region_is_text() {
+        for content in [
+            "Heading\n=======\nbody\n",          // RST/Markdown setext underline
+            "a\n=======================\nb\n",   // divider banner
+            ">>>>>>> deep email quote\nreply\n", // quoted email
+            "code: a <<<<<<< b\n",               // marker run not at line start
+        ] {
+            let segments = parse_conflicts(content).expect("parses as text, no error");
+            assert!(
+                segments
+                    .iter()
+                    .all(|s| matches!(s, ConflictSegment::Text(_))),
+                "{content:?} must be all text, got {segments:?}"
+            );
+            assert_eq!(render(&segments), content, "round-trips byte-exact");
         }
     }
 }

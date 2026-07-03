@@ -38,6 +38,10 @@ crates; tag releases as `vcs-forge-v<version>`.
   Update callers of `Forge::for_*` to `Forge::from_*`.
 
 ### Fixed
+- **`Forge::supports()` reports `false` for every op on an `Unknown` backend.** It
+  wrongly returned `true`, so a UI listing `ForgeOp::ALL` rendered every operation as
+  available even though each one returns `Unsupported` on an unclassified handle. Now
+  it agrees with `capabilities()`'s all-`false` map. (`docs/audit-2026-07.md` H10.)
 - **Docs:** `Forge::pr_comment` now documents that comment-body handling differs by
   backend — GitHub/GitLab take the body in a flag-value slot (a `-`-leading body is
   fine), while Gitea's `tea comment` takes it positionally and rejects a flag-like

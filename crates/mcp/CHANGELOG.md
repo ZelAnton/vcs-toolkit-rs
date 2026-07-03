@@ -29,6 +29,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
 - **`repo_checkout` no longer risks discarding unstaged edits** — the underlying git
   `checkout` now passes a trailing `--`, so a path-like reference errors instead of
   reverting that path from the index. (`docs/audit-2026-07.md` C2.)
+- **The repo-mutating tools are serialized.** rmcp dispatches a task per request, so
+  two concurrent mutations (e.g. `repo_try_merge`'s materialize-then-rollback racing
+  `repo_commit`) could interleave and lose one's work. A per-server write mutex now
+  runs the `repo_*` mutating tools one at a time. (`docs/audit-2026-07.md` R1.)
 
 ## [0.2.0] - 2026-06-27
 

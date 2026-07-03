@@ -37,6 +37,24 @@ crates; tag releases as `vcs-git-v<version>`.
   path errors instead of falling into git's *pathspec* mode and restoring that path
   from the index (which reverted unstaged edits and returned `Ok`).
   (`docs/audit-2026-07.md` C2.)
+- **`conflict::parse_conflicts` no longer rejects marker-like content.** A
+  `=======`/`>>>>>>>` run *outside* a conflict region (a Markdown/RST setext
+  underline, a divider banner, a quoted email) is kept as text instead of erroring,
+  so programmatic conflict resolution works on files that merely contain
+  marker-like lines. Only a genuinely broken region (an opener with no
+  separator/terminator) still errors. (`docs/audit-2026-07.md` H6.)
+
+### Changed
+- **Every git client now scrubs the inherited repo-redirector env vars**
+  (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`), not
+  just [`harden()`](Git::harden). A `GIT_DIR` leaking from the parent process (e.g.
+  running inside a git hook) can no longer silently retarget commands at a
+  *different* repository than the bound `dir`. (`docs/audit-2026-07.md` H4.)
+- **`harden()` now documents its git ≥ 2.31 requirement prominently.** On older git
+  the hook/`fsmonitor`/`sshCommand` config-pins silently no-op (they ride
+  `GIT_CONFIG_COUNT`, added in 2.31); the doc now says so and points at
+  `capabilities().ensure_supported()`. (`docs/audit-2026-07.md` H3.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

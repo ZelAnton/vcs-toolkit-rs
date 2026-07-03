@@ -321,6 +321,14 @@ pub struct VcsMcpServer {
     forge: Option<Arc<dyn ForgeApi>>,
     writes: WriteGate,
     tool_router: ToolRouter<Self>,
+    /// Serializes the **repo**-mutating tools. rmcp dispatches a task per request,
+    /// so without this two concurrent mutations (e.g. `repo_try_merge`'s materialize-
+    /// then-rollback racing a `repo_commit`) could interleave and lose one's work,
+    /// or collide on the repo lock. Forge tools are *predominantly* remote calls to
+    /// a server that serializes on its side (and MCP clients typically issue tool
+    /// calls sequentially), so they aren't gated by this — this closes the local
+    /// repo-state race, the one R1 targets.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl VcsMcpServer {
@@ -346,6 +354,7 @@ impl VcsMcpServer {
             forge,
             writes,
             tool_router: Self::tool_router(),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -366,6 +375,18 @@ impl VcsMcpServer {
                 None,
             ))
         }
+    }
+
+    /// Gate a **repo**-mutating tool: check the write gate, then acquire the
+    /// per-repo write lock. Hold the returned guard for the tool's duration so
+    /// concurrent repo mutations run one at a time (rmcp dispatches a task per
+    /// request). Returns the gate error without taking the lock when disabled.
+    async fn begin_repo_write(
+        &self,
+        tool: &str,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>, ErrorData> {
+        self.require_write(tool)?;
+        Ok(self.write_lock.lock().await)
     }
 
     /// The configured forge, or a clear error when none was resolved.
@@ -520,7 +541,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<TryMergeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_try_merge")?;
+        let _write = self.begin_repo_write("repo_try_merge").await?;
         ok_json(&self.repo.try_merge(&p.source).await.map_err(core_err)?)
     }
 
@@ -534,7 +555,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<CommitParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_commit")?;
+        let _write = self.begin_repo_write("repo_commit").await?;
         self.repo
             .commit_paths(&p.paths, &p.message)
             .await
@@ -550,7 +571,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<CheckoutParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_checkout")?;
+        let _write = self.begin_repo_write("repo_checkout").await?;
         self.repo.checkout(&p.reference).await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "checked_out": p.reference }))
     }
@@ -560,7 +581,7 @@ impl VcsMcpServer {
         annotations(destructive_hint = true)
     )]
     pub async fn repo_fetch(&self) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_fetch")?;
+        let _write = self.begin_repo_write("repo_fetch").await?;
         self.repo.fetch().await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "fetched": true }))
     }
@@ -573,7 +594,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PushParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_push")?;
+        let _write = self.begin_repo_write("repo_push").await?;
         self.repo.push(&p.branch).await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "pushed": p.branch }))
     }
@@ -586,7 +607,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<CreateWorktreeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_create_worktree")?;
+        let _write = self.begin_repo_write("repo_create_worktree").await?;
         let outcome = self
             .repo
             .create_worktree(Path::new(&p.path), &p.branch, &p.base)
@@ -603,7 +624,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<RemoveWorktreeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("repo_remove_worktree")?;
+        let _write = self.begin_repo_write("repo_remove_worktree").await?;
         self.repo
             .remove_worktree(Path::new(&p.path), p.force)
             .await
@@ -912,6 +933,38 @@ mod tests {
         );
         let out = server.repo_current_branch().await.expect("tool ok");
         assert!(result_json(&out).contains("main"), "{}", result_json(&out));
+    }
+
+    // R1: `begin_repo_write` checks the gate and, when allowed, *holds* the per-repo
+    // write lock for the caller's duration — so concurrent repo mutations serialize.
+    // A disabled write returns the gate error without taking the lock.
+    #[tokio::test]
+    async fn begin_repo_write_gates_then_holds_the_lock() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::All);
+        let guard = server
+            .begin_repo_write("repo_commit")
+            .await
+            .expect("allowed → guard");
+        assert!(
+            server.write_lock.try_lock().is_err(),
+            "the write lock is held while a guard is outstanding"
+        );
+        drop(guard);
+        assert!(
+            server.write_lock.try_lock().is_ok(),
+            "the lock is released once the guard drops"
+        );
+
+        // Read-only server: the gate rejects before any lock is taken.
+        let ro = git_server(ScriptedRunner::new(), WriteGate::None);
+        assert!(
+            ro.begin_repo_write("repo_commit").await.is_err(),
+            "a gated write is rejected"
+        );
+        assert!(
+            ro.write_lock.try_lock().is_ok(),
+            "no lock is taken on the rejected path"
+        );
     }
 
     // Read tools work even when writes are disabled (the default).

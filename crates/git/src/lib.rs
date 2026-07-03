@@ -836,7 +836,22 @@ vcs_cli_support::managed_client! {
     ///
     /// Wraps a [`ManagedClient`](vcs_cli_support::ManagedClient): enable lock-contention retry with
     /// [`with_retry`](Git::with_retry) (opt-in; off by default).
-    pub struct Git => BINARY
+    ///
+    /// **Every** client (not just [`hardened`](Git::hardened)) scrubs the inherited
+    /// repo-**redirector** environment variables below, so a `GIT_DIR` (etc.) leaking
+    /// from the parent process — e.g. running inside a git hook, which exports
+    /// `GIT_DIR`/`GIT_INDEX_FILE` — can't silently redirect commands at a *different*
+    /// repository than the bound `dir`. (`harden()` additionally scrubs the
+    /// command-hook vars and pins hooks/fsmonitor/sshCommand off.)
+    pub struct Git => BINARY, scrub_env = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ]
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -1979,6 +1994,19 @@ impl<R: ProcessRunner> Git<R> {
     /// honours its config — arbitrary code execution by default. The profile
     /// (applied to **every** command this client runs):
     ///
+    /// **⚠ Requires git ≥ 2.31.** The hook / `fsmonitor` / `sshCommand` pins ride
+    /// git's env-based config (`GIT_CONFIG_COUNT`), which older git **silently
+    /// ignores** — so on git < 2.31 `harden()` still scrubs the environment and
+    /// turns prompts off, but repo-local hooks/fsmonitor/sshCommand are **not**
+    /// disabled (no error is raised). There is **no built-in 2.31 gate yet**
+    /// ([`capabilities().ensure_supported()`](GitCapabilities::ensure_supported)
+    /// only checks the major version, so it passes on 2.0–2.30). Before relying on
+    /// `harden()` against a fully untrusted repo on a host you don't control, check
+    /// the version yourself — `Git::new().capabilities().await?.version` exposes
+    /// `major`/`minor` — and require ≥ 2.31, or add an OS-level sandbox. (A
+    /// machine-checked minor-version floor is tracked for a future release; see
+    /// `docs/audit-2026-07.md` H3.)
+    ///
     /// - **Disables hooks** — `core.hooksPath=/dev/null` pinned via git's
     ///   env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, git ≥ 2.31;
     ///   verified to suppress hooks on Windows too) — and `core.fsmonitor`
@@ -1991,10 +2019,11 @@ impl<R: ProcessRunner> Git<R> {
     ///   `~/.ssh/config`/agent) still works; only the repo's override is dropped.
     /// - **Removes inherited repo redirectors** so a poisoned parent
     ///   environment can't point commands at another repository: `GIT_DIR`,
-    ///   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
-    ///   `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`,
-    ///   `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`,
-    ///   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`.
+    ///   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+    ///   `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+    ///   `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`,
+    ///   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`. (The first seven are also
+    ///   scrubbed by *every* client — see the type-level doc — not just here.)
     /// - **Removes inherited command hooks** that make git spawn an arbitrary
     ///   program from the *environment* (a second code-execution path besides
     ///   repo hooks): `GIT_SSH_COMMAND`/`GIT_SSH` (transport), `GIT_ASKPASS`
@@ -2030,9 +2059,13 @@ impl<R: ProcessRunner> Git<R> {
     pub fn harden(self) -> Self {
         let removed = [
             // Repo redirectors — point git at another repo/index/object store.
+            // (`GIT_DIR`…`GIT_NAMESPACE` are also scrubbed by *every* client via the
+            // `managed_client!` `scrub_env`; re-listed here so the hardened profile is
+            // self-contained and its double-removal is harmless.)
             "GIT_DIR",
             "GIT_WORK_TREE",
             "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
             "GIT_OBJECT_DIRECTORY",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES",
             "GIT_NAMESPACE",
@@ -3477,6 +3510,45 @@ mod tests {
             assert!(removed("GIT_EXTERNAL_DIFF"), "GIT_EXTERNAL_DIFF scrubbed");
             assert!(removed("GIT_PAGER"), "GIT_PAGER scrubbed");
         }
+    }
+
+    // H4: EVERY git client (not just `harden()`) scrubs the repo-**redirector** env
+    // vars, so a `GIT_DIR`/`GIT_INDEX_FILE` leaking from the parent (e.g. running
+    // inside a git hook, which exports them) can't silently retarget a command at a
+    // different repository than the bound `dir`. The command-hook scrubs and config
+    // pins stay `harden()`-only.
+    #[tokio::test]
+    async fn default_client_scrubs_repo_redirector_env() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec); // NOT hardened
+        git.status(Path::new("/r")).await.expect("status");
+        let call = rec.only_call();
+        let removed = |k: &str| {
+            call.envs
+                .iter()
+                .any(|(key, val)| key.to_str() == Some(k) && val.is_none())
+        };
+        let has_key = |k: &str| call.envs.iter().any(|(key, _)| key.to_str() == Some(k));
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_NAMESPACE",
+        ] {
+            assert!(removed(var), "{var} must be scrubbed on the default client");
+        }
+        // `harden()`-only surface is absent on a plain client.
+        assert!(
+            !has_key("GIT_SSH_COMMAND"),
+            "command-hook scrub is harden()-only"
+        );
+        assert!(
+            !has_key("GIT_CONFIG_NOSYSTEM"),
+            "config pins are harden()-only"
+        );
     }
 
     // RefName/RevSpec accept/reject tables.
