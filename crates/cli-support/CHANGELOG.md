@@ -45,8 +45,9 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   spent the caller's full deadline; retrying it up to `FETCH_ATTEMPTS` times multiplied
   the wall-clock (a black-holed remote under a 120 s deadline blocked ≈ 6 min, 3× the
   advertised ceiling). Fast transient failures (DNS, dropped connection, io-level
-  interrupted/would-block) still retry. Inherited by `vcs-git`/`vcs-jj`/`vcs-forge`'s
-  fetch retry and by `vcs_forge::Error::is_transient_fetch_error`. (`docs/audit-2026-07.md` R6.)
+  interrupted/would-block) still retry. Inherited by `vcs-git`/`vcs-jj`'s fetch retry
+  and by the `is_transient_fetch_error` classifier on both facades
+  (`vcs_core::Error` and `vcs_forge::Error`). (`docs/audit-2026-07.md` R6.)
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing

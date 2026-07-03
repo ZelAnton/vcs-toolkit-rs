@@ -63,6 +63,11 @@ crates; tag releases as `vcs-jj-v<version>`.
   with its `@@` count, and a template that ends in `\n\n`/spaces is preserved.
   `description` trims explicitly to keep its scalar contract. (Behavior change: a
   caller that relied on the old trimming should trim itself.) (`docs/audit-2026-07.md` H7.)
+- **A `git_fetch` that times out is no longer retried** (inherited from cli-support's
+  `is_transient_fetch_error` change). A timeout already spent the per-client deadline,
+  so the old 3× fetch-retry tripled the wall-clock against a black-holed remote; a
+  timeout now surfaces immediately. Fast transient failures (DNS, dropped connection)
+  still retry. (`docs/audit-2026-07.md` R6.)
 - **A failed `git_clone` cleans up its partial `dest`.** A clone that fails midway
   (timeout, network, auth) left a partial, non-empty `dest` that blocked a retry with
   "destination already exists". It now removes a `dest` it could have created (absent,

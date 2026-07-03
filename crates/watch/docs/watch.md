@@ -93,7 +93,10 @@ a continuous event stream may *defer* a re-query (cadence under load);
 `requery_timeout` bounds how long one re-query may *run* — a wedged command
 (say, a held `index.lock` on a client with no timeout of its own) is killed and
 skipped as transient instead of stalling the watch forever
-(`requery_timeout(None)` disables it).
+(`requery_timeout(None)` disables it). `requery_timeout` **also bounds the startup
+baseline**: if capturing it exceeds the deadline, `build()` returns a *transient*
+`Io` `TimedOut` (`err.is_transient()`) instead of hanging — so a wedged repo can't
+stall startup any more than it can stall the loop.
 
 - **`recv().await -> Option<RepoChange>`** — the next settled change; `None` once
   the watcher is dropped. `current() -> &RepoSnapshot` is the last known state —

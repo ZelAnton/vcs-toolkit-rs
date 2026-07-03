@@ -432,8 +432,9 @@ async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
 ```
 
 - `git_fetch` — `jj git fetch`. Transient (network) failures are retried: 3
-  attempts, 500 ms backoff (DNS, timeout, dropped connection — see
-  `is_transient_fetch_error`).
+  attempts, 500 ms backoff (DNS, a dropped connection — see
+  `is_transient_fetch_error`). A **timeout is not** retried (it already spent the full
+  deadline; retrying would triple the wall-clock).
 - `git_fetch_from` — fetch a named remote (`git fetch --remote <remote>`); same
   retry policy.
 - `git_fetch_branch` — fetch a single bookmark from origin (`git fetch --remote

@@ -1071,11 +1071,13 @@ of re-implementing the string-scraping yourself.
 ```rust,ignore
 pub fn is_merge_conflict(err: &Error) -> bool;        // a merge/cherry-pick stopped on conflicts
 pub fn is_nothing_to_commit(err: &Error) -> bool;     // a commit found a clean tree
-pub fn is_transient_fetch_error(err: &Error) -> bool; // DNS/timeout/dropped connection — retryable
+pub fn is_transient_fetch_error(err: &Error) -> bool; // DNS / dropped connection — retryable
 ```
 
-`is_transient_fetch_error` also treats a processkit-level `Error::Timeout` as
-retryable. See [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) for the `Error` shape.
+`is_transient_fetch_error` deliberately does **not** treat a processkit-level
+`Error::Timeout` as retryable: a timeout already spent the caller's full deadline, so
+retrying it would multiply the wall-clock (a fetch is tried up to 3×). Raise the
+timeout rather than have it silently tripled. See [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) for the `Error` shape.
 
 ## See also
 

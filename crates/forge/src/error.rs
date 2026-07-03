@@ -107,10 +107,11 @@ impl Error {
             .is_some_and(|out| RATE_LIMIT_MARKERS.iter().any(|m| out.contains(m)))
     }
 
-    /// Whether this is a **transient** network failure worth retrying (DNS,
-    /// connection reset, timeout) — forge commands are network-bound, so a higher
-    /// flow may want to retry. Named to match the wrapper classifiers
-    /// ([`vcs_cli_support::is_transient_fetch_error`]).
+    /// Whether this is a **transient** network failure worth retrying — DNS, a
+    /// dropped connection, a fast blip — so a network-bound forge command can be
+    /// retried. A **timeout is not** classified transient (it already spent the full
+    /// deadline; retrying would multiply the wall-clock — see
+    /// [`vcs_cli_support::is_transient_fetch_error`], which this delegates to).
     pub fn is_transient_fetch_error(&self) -> bool {
         matches!(self, Error::Forge(e) if vcs_cli_support::is_transient_fetch_error(e))
     }
@@ -119,7 +120,7 @@ impl Error {
     /// (interrupted / would-block / resource-busy) — delegates to
     /// [`processkit::Error::is_transient`]. Narrower than
     /// [`is_transient_fetch_error`](Error::is_transient_fetch_error) (which also
-    /// treats a timeout and the network markers as retryable). Mirrors
+    /// treats the network markers as retryable — but not a timeout). Mirrors
     /// [`vcs_core::Error::is_transient`](https://docs.rs/vcs-core/latest/vcs_core/enum.Error.html#method.is_transient)
     /// so the classifier family is the same on both facades.
     pub fn is_transient(&self) -> bool {

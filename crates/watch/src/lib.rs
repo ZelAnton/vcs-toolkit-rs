@@ -207,6 +207,11 @@ impl Builder {
     /// spawned commands are killed (kill-on-drop) and the re-query is skipped as
     /// transient — the next filesystem event re-checks.
     ///
+    /// It **also bounds the startup baseline** captured by [`build`](Self::build): a
+    /// baseline that overruns fails `build()` with a transient `Io` `TimedOut`
+    /// (`Error::is_transient()`), rather than hanging the caller — so a wedged repo
+    /// can't stall `build()` any more than it can stall the loop.
+    ///
     /// Note: on a very large repository a *cold-cache* `git status` (first run
     /// after a `gc`, or on a slow disk) can legitimately exceed the 30 s default
     /// — raise it (or pass `None`) there; a watcher whose every re-query is
@@ -220,6 +225,11 @@ impl Builder {
     /// Start watching. Captures the baseline state, registers the filesystem
     /// watch, and spawns the background re-query task on the current tokio
     /// runtime.
+    ///
+    /// The baseline capture is bounded by [`requery_timeout`](Self::requery_timeout),
+    /// so on a wedged repo `build()` returns a transient `Io` `TimedOut`
+    /// (`Error::is_transient()`) instead of hanging at startup — retry, or raise the
+    /// timeout.
     pub async fn build(self) -> Result<RepoWatcher> {
         let root = self.repo.root().to_path_buf();
         // The dirs whose writes mean "re-check": the `.git`/`.jj` state dir, plus

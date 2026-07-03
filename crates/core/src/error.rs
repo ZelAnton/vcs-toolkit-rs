@@ -46,9 +46,11 @@ impl Error {
         matches!(self, Error::Vcs(e) if vcs_cli_support::is_nothing_to_commit(e))
     }
 
-    /// Whether this is a **transient** fetch/network failure worth retrying
-    /// (DNS, connection reset, timeout). The underlying clients already retry
-    /// their own fetches; this is for retrying higher-level flows.
+    /// Whether this is a **transient** fetch/network failure worth retrying — DNS, a
+    /// dropped connection, a fast blip. A **timeout is not** transient (it already
+    /// spent the full deadline; retrying would multiply the wall-clock — see
+    /// [`vcs_cli_support::is_transient_fetch_error`]). The underlying clients already
+    /// retry their own fetches; this is for retrying higher-level flows.
     pub fn is_transient_fetch_error(&self) -> bool {
         matches!(self, Error::Vcs(e) if vcs_cli_support::is_transient_fetch_error(e))
     }
@@ -57,7 +59,7 @@ impl Error {
     /// (interrupted / would-block / resource-busy) — delegates to
     /// [`processkit::Error::is_transient`]. Narrower than
     /// [`is_transient_fetch_error`](Error::is_transient_fetch_error) (which also
-    /// treats a timeout and the network markers as retryable); use this to retry
+    /// treats the network markers as retryable — but not a timeout); use this to retry
     /// *any* operation past a momentary io hiccup. The facade's own
     /// [`Io`](Error::Io)/[`NotARepository`](Error::NotARepository)/
     /// [`WorktreeNotFound`](Error::WorktreeNotFound) variants are never transient.

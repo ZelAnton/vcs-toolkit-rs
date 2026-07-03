@@ -124,12 +124,20 @@ mod tests {
         assert!(!missing.is_transient());
         assert!(missing.processkit_error().is_some());
 
-        // A filesystem (`Io`) failure is neither, and carries no process error.
+        // A generic filesystem (`Io`) failure is neither, and carries no process error.
         let io = Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert!(!io.is_transient() && !io.is_not_found());
         assert!(
             io.processkit_error().is_none(),
             "no subprocess behind an Io error"
+        );
+
+        // ...but a baseline-snapshot timeout (`Io` `TimedOut`, R4) IS transient — a
+        // wedged repo may un-wedge, so `build()` is worth retrying.
+        let baseline_timeout = Error::Io(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert!(
+            baseline_timeout.is_transient(),
+            "a baseline TimedOut is transient (retryable)"
         );
     }
 }
