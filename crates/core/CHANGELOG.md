@@ -21,8 +21,9 @@ crates; tag releases as `vcs-core-v<version>`.
   `Repo::create_worktree` now takes.
 
 ### Changed
-- **`Repo::create_worktree` takes a `WorktreeCreate` spec, not `(path, branch, base)`
-  positional args (breaking).** The new-branch name and the fork-point `base` were two
+- **`Repo::create_worktree` (and the `VcsRepo` trait method) takes a `WorktreeCreate`
+  spec, not `(path, branch, base)` positional args (breaking).** The new-branch name and
+  the fork-point `base` were two
   adjacent plain strings that compiled when transposed — `create_worktree(p, "main",
   "feature")` silently created a branch *named* `main` off `feature`. It's now
   `create_worktree(WorktreeCreate::new(path, "feature").base("main"))`: `path`+`branch`

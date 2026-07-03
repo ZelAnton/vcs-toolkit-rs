@@ -321,13 +321,13 @@ impl CommitPaths {
 }
 
 /// Partial [`MergeCheck`] — names the branch being tested; chain
-/// [`into_base`](MergeCheckBranch::into_base) to name the base it must be merged into.
+/// [`into_base`](MergeCheckPartial::into_base) to name the base it must be merged into.
 #[derive(Debug, Clone)]
-pub struct MergeCheckBranch {
+pub struct MergeCheckPartial {
     branch: String,
 }
 
-impl MergeCheckBranch {
+impl MergeCheckPartial {
     /// The base branch/ref `branch` should be fully merged **into**.
     pub fn into_base(self, base: impl Into<String>) -> MergeCheck {
         MergeCheck {
@@ -352,9 +352,9 @@ pub struct MergeCheck {
 }
 
 impl MergeCheck {
-    /// Name the `branch` to test; chain [`into_base`](MergeCheckBranch::into_base).
-    pub fn branch(name: impl Into<String>) -> MergeCheckBranch {
-        MergeCheckBranch {
+    /// Name the `branch` to test; chain [`into_base`](MergeCheckPartial::into_base).
+    pub fn branch(name: impl Into<String>) -> MergeCheckPartial {
+        MergeCheckPartial {
             branch: name.into(),
         }
     }
@@ -3546,13 +3546,16 @@ mod tests {
         assert_eq!(spec.base, "main");
 
         let rec = RecordingRunner::replying(Reply::ok("  feature\n* main\n"));
-        Git::with_runner(&rec)
+        let merged = Git::with_runner(&rec)
             .is_merged(
                 Path::new("/repo"),
                 MergeCheck::branch("feature").into_base("main"),
             )
             .await
             .unwrap();
+        // `feature` appears under `branch --merged main`, so it reports merged — and
+        // the emitted args put `base` (main) in the `--merged` slot, not `branch`.
+        assert!(merged, "feature is listed as merged into main");
         assert_eq!(
             rec.only_call().args_str(),
             ["branch", "--merged", "main", "--no-column", "--no-color"]

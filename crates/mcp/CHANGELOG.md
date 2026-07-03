@@ -13,7 +13,13 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Changed
--
+- Rebuilt against the `vcs-core` / `vcs-forge` spec reshapes: the `repo_create_worktree`
+  and `forge_issue_create` handlers now build a `vcs_core::WorktreeCreate` /
+  `vcs_forge::IssueCreate` and call the facades' new spec-taking signatures. **The MCP
+  wire API is unchanged** — the JSON tool params (`{path, branch, base}`,
+  `{title, body}`, `{number, delete_branch?}`, `{path, force?}`) are identical, so no MCP
+  client is affected. (Transitive over `vcs-core` / `vcs-forge`; `docs/audit-2026-07.md`
+  A5.)
 
 ### Fixed
 -

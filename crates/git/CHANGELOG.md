@@ -10,7 +10,7 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
-- `MergeCheck` (+ its partial builder `MergeCheckBranch`) — the spec that `is_merged`
+- `MergeCheck` (+ its partial builder `MergeCheckPartial`) — the spec that `is_merged`
   now takes.
 
 ### Changed

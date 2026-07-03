@@ -863,8 +863,8 @@ type-state builder (`#[non_exhaustive]`), so the two same-typed refs are named a
 separate steps and can't be silently transposed (a swap would *invert* the answer):
 
 ```rust,ignore
-pub fn branch(name: impl Into<String>) -> MergeCheckBranch; // entry: names the branch tested
-pub fn into_base(self, base: impl Into<String>) -> MergeCheck; // on MergeCheckBranch: names the base
+pub fn branch(name: impl Into<String>) -> MergeCheckPartial; // entry: names the branch tested
+pub fn into_base(self, base: impl Into<String>) -> MergeCheck; // on MergeCheckPartial: names the base
 // fields: pub branch: String, pub base: String
 ```
 
