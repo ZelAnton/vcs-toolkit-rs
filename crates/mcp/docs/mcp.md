@@ -164,6 +164,12 @@ The `vcs-mcp` binary applies, in order:
 5. **A per-command timeout.** Every git/forge command runs under the `--timeout`
    deadline (default 120s), so a stalled network call (`repo_fetch`, the `forge_*`
    tools) can't hang a request indefinitely.
+6. **Serialized repo mutations.** rmcp dispatches a task per request, so the
+   `repo_*` mutating tools are run **one at a time** behind a per-server write lock —
+   two concurrent mutations (e.g. `repo_try_merge`'s materialize-then-rollback racing
+   `repo_commit`) can't interleave and lose one's work. Read tools are **not**
+   serialized, so a read can still observe transient mid-mutation state; the `forge_*`
+   tools are remote calls and aren't behind this lock.
 
 > Note the hardening and timeout are how the **binary** constructs the `Repo`/`Forge`.
 > A library embedder that builds a `VcsMcpServer` from `Repo::open(".")` gets a

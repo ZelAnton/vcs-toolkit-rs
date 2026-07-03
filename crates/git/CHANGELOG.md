@@ -30,6 +30,17 @@ crates; tag releases as `vcs-git-v<version>`.
   git exposes a consistent `fetch`/`fetch_from`/`fetch_branch` family; the emitted
   `git fetch --quiet origin <refspec>` command is unchanged. Update callers of
   `fetch_remote_branch` to `fetch_branch`.
+- **Every git client now scrubs the inherited repo-redirector env vars**
+  (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`), not
+  just [`harden()`](Git::harden). A `GIT_DIR` leaking from the parent process (e.g.
+  running inside a git hook) can no longer silently retarget commands at a
+  *different* repository than the bound `dir`. (`docs/audit-2026-07.md` H4.)
+- **`harden()` now documents its git ≥ 2.31 requirement prominently.** On older git
+  the hook/`fsmonitor`/`sshCommand` config-pins silently no-op (they ride
+  `GIT_CONFIG_COUNT`, added in 2.31); the doc now says so and tells you to check
+  `capabilities().version` (major/minor) yourself, since there is no built-in 2.31
+  gate yet. (`docs/audit-2026-07.md` H3.)
 
 ### Fixed
 - **`checkout` can no longer silently discard unstaged edits.** It now passes a
@@ -43,18 +54,11 @@ crates; tag releases as `vcs-git-v<version>`.
   so programmatic conflict resolution works on files that merely contain
   marker-like lines. Only a genuinely broken region (an opener with no
   separator/terminator) still errors. (`docs/audit-2026-07.md` H6.)
-
-### Changed
-- **Every git client now scrubs the inherited repo-redirector env vars**
-  (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
-  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`), not
-  just [`harden()`](Git::harden). A `GIT_DIR` leaking from the parent process (e.g.
-  running inside a git hook) can no longer silently retarget commands at a
-  *different* repository than the bound `dir`. (`docs/audit-2026-07.md` H4.)
-- **`harden()` now documents its git ≥ 2.31 requirement prominently.** On older git
-  the hook/`fsmonitor`/`sshCommand` config-pins silently no-op (they ride
-  `GIT_CONFIG_COUNT`, added in 2.31); the doc now says so and points at
-  `capabilities().ensure_supported()`. (`docs/audit-2026-07.md` H3.)
+- **`with_retry` lock-contention retry now fires on a non-English runner.** The git
+  `is_lock_contention` marker is the locale-stable `index.lock` path fragment (not
+  the translated `': File exists'` suffix), with a `refs/` guard that still excludes
+  per-ref locks (unsafe to retry mid-way through a multi-ref push/fetch).
+  (`docs/audit-2026-07.md` H2.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

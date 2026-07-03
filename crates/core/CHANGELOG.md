@@ -23,6 +23,11 @@ crates; tag releases as `vcs-core-v<version>`.
   `fetch_branch`, aligning with `vcs-git`'s renamed `fetch_branch`; backend
   dispatch and behaviour are unchanged. Update callers of `fetch_remote_branch`
   to `fetch_branch`.
+- **A git-backed `Repo` now scrubs the inherited repo-redirector env vars**
+  (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, …), transitively via `vcs-git`'s
+  default client. So a `Repo::open`ed inside a git hook (which exports `GIT_DIR`)
+  now targets the *discovered* repository rather than the hook's — commands can no
+  longer be silently redirected at a different repo. (`docs/audit-2026-07.md` H4.)
 
 ### Fixed
 - **`remove_worktree` no longer risks wiping the repository or silently losing

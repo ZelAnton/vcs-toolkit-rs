@@ -90,9 +90,12 @@ pub fn resolve(segments: &[ConflictSegment], side: ResolutionSide) -> Result<Str
 
 `has_conflict_markers` is a cheap pre-check (any line that looks like a
 `<<<<<<<` start) before committing to a full parse. `parse_conflicts` errors
-with `Error::Parse` on a malformed file — a region missing its `=======` or
-`>>>>>>>`, or a stray separator/end marker outside a region. `resolve` errors
-when you ask for `Base` on a 2-way `merge`-style conflict that records none.
+with `Error::Parse` only on a genuinely malformed **region** — a `<<<<<<<`-opened
+region missing its `=======` separator or `>>>>>>>` terminator. A `=======` /
+`>>>>>>>` run *outside* any region (a Markdown/RST underline, a divider, a quoted
+email) is kept as ordinary text, not an error, so a file with marker-like content
+parses cleanly. `resolve` errors when you ask for `Base` on a 2-way `merge`-style
+conflict that records none.
 
 ### Worked examples
 
