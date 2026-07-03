@@ -80,6 +80,13 @@ crates; tag releases as `vcs-git-v<version>`.
   removes a `dest` it could have created (absent, or an empty directory) on failure,
   but **never** a non-empty pre-existing directory (git refuses to clone into one, so
   the caller's data is untouched). (`docs/audit-2026-07.md` R7.)
+- **`switch_with_stash` no longer pops an unrelated stash or flattens the index.** If
+  `stash push` exited 0 having saved **nothing** (e.g. a submodule-only change that
+  `status` still reports as dirty), the following bare `stash pop` splatted an older,
+  unrelated pre-existing stash — data loss. It now checks the stash-list depth around
+  the push and pops only when the push actually saved, and pops with **`--index`** so
+  the staged/unstaged split is restored faithfully (a bare `pop` returned everything
+  unstaged). Documents the single-actor contract. (`docs/audit-2026-07.md` M12.)
 - **`status` no longer emits a phantom entry for a worktree rename.** `parse_porcelain`
   only consumed a rename/copy's source record when `R`/`C` sat in the **index** column
   (`R `); git also emits it in the **worktree** column (` R`, ` C`), whose source path

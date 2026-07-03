@@ -159,8 +159,10 @@ client** rather than assuming the interrupted call tidied up after itself.
 
 Carry a dirty working tree across a checkout without losing it.
 [`switch_with_stash`](https://docs.rs/vcs-git/latest/vcs_git/guide/) is an inherent helper on `Git` (not the `GitApi`
-trait): it does `stash push -u` → `checkout` → `stash pop`, popping back to restore
-the original branch if the checkout fails.
+trait): it does `stash push -u` → `checkout` → `stash pop --index` (preserving the
+staged/unstaged split), popping back to restore the original branch if the checkout
+fails. It checks the stash-list depth around the push so a no-op push (dirt git can't
+stash, e.g. a submodule) doesn't pop an unrelated stash; single-actor assumed.
 
 ```rust,ignore
 # use std::path::Path;

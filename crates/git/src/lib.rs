@@ -2223,9 +2223,14 @@ impl<R: ProcessRunner> Git<R> {
 
     /// Switch to `branch`, carrying uncommitted changes (tracked *and*
     /// untracked) across via the stash: `stash push -u` → `checkout` →
-    /// `stash pop`. A clean tree skips the stash round-trip entirely — a
-    /// `stash push` there would save nothing and the later pop would pop an
-    /// older, unrelated stash.
+    /// `stash pop --index`. `--index` restores the staged/unstaged split faithfully
+    /// (a bare `pop` returns everything unstaged). A clean tree skips the round-trip;
+    /// and because `stash push` can exit 0 having saved **nothing** (e.g. a
+    /// submodule-only change), the stash-list depth is checked around the push so a
+    /// no-op push doesn't leave the later pop grabbing an older, unrelated stash.
+    ///
+    /// **Single-actor contract:** this assumes no other process pushes or pops a
+    /// stash in the same repository between this call's own `stash push` and `pop`.
     ///
     /// Failure behaviour:
     /// - `checkout` fails (atomic — the working copy stays on the original
@@ -2240,21 +2245,56 @@ impl<R: ProcessRunner> Git<R> {
     /// CLI verb — mock the underlying `status`/`stash_*`/`checkout` instead.
     pub async fn switch_with_stash(&self, dir: &Path, branch: &str) -> Result<()> {
         // Untracked-inclusive guard to match `stash push -u`: "dirty" must mean
-        // the same thing to the guard and to the stash.
+        // the same thing to the guard and to the stash. Fast path for a clean tree.
         if self.status(dir).await?.is_empty() {
             return self.checkout(dir, branch).await;
         }
+        // `stash push` exits 0 having saved **nothing** when the only dirt is
+        // unstashable (e.g. a submodule-only change that `status` still reports), so a
+        // bare `stash pop` afterwards would splat an UNRELATED pre-existing stash — data
+        // loss. Bracket the push with the stash-list depth to learn whether it actually
+        // saved, and only pop when it did. (Single-actor contract: a concurrent
+        // `stash push`/`pop` by another process between our two calls is out of scope.)
+        let depth_before = self.stash_depth(dir).await?;
         self.stash_push(dir, true).await?;
+        if self.stash_depth(dir).await? <= depth_before {
+            // Nothing was stashed — switch as-is rather than pop someone else's entry.
+            return self.checkout(dir, branch).await;
+        }
+        // `--index` restores the staged/unstaged split faithfully; a bare `pop` would
+        // bring everything back UNSTAGED, silently flattening the index.
         match self.checkout(dir, branch).await {
-            Ok(()) => self.stash_pop(dir).await,
+            Ok(()) => self.stash_pop_index(dir).await,
             Err(err) => {
-                // A failed checkout is atomic — we are still on the original
-                // branch, so popping restores the exact pre-call state. If the
-                // pop fails too, the stash entry is preserved for the caller.
-                let _ = self.stash_pop(dir).await;
+                // A failed checkout is atomic — we are still on the original branch, so
+                // popping restores the exact pre-call state. If the pop fails too, the
+                // stash entry is preserved for the caller.
+                let _ = self.stash_pop_index(dir).await;
                 Err(err)
             }
         }
+    }
+
+    /// The number of entries in the stash list (`git stash list`) — used by
+    /// [`switch_with_stash`](Git::switch_with_stash) to tell whether a `stash push`
+    /// actually saved anything.
+    async fn stash_depth(&self, dir: &Path) -> Result<usize> {
+        let out = self
+            .core
+            .run(self.core.command_in(dir, ["stash", "list"]))
+            .await?;
+        Ok(out.lines().filter(|l| !l.is_empty()).count())
+    }
+
+    /// `git stash pop --index` — restore the top stash *preserving* the staged/unstaged
+    /// split (a bare `pop` returns everything unstaged). C locale so a conflicting pop's
+    /// `CONFLICT (...)` output still feeds `is_merge_conflict`.
+    async fn stash_pop_index(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(
+                self.core.command_in(dir, ["stash", "pop", "--index"]),
+            ))
+            .await
     }
 
     /// `git_dir` resolved to an absolute path — `rev-parse --git-dir` may report
@@ -4211,12 +4251,18 @@ mod tests {
         );
     }
 
-    // Dirty tree: stash -u → checkout → pop, in that order.
+    // Dirty tree that stashes: status → list(before) → push → list(after, deeper) →
+    // checkout → pop --index, in that order.
     #[tokio::test]
     async fn switch_with_stash_round_trips_dirty_tree() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(["git", "status"], Reply::ok(" M a.rs\0"))
+                // Stash-list depth goes 0 → 1, so the push is known to have saved.
+                .on_sequence(
+                    ["git", "stash", "list"],
+                    [Reply::ok(""), Reply::ok("stash@{0}: WIP on main\n")],
+                )
                 .on(["git", "stash", "push"], Reply::ok(""))
                 .on(["git", "checkout"], Reply::ok(""))
                 .on(["git", "stash", "pop"], Reply::ok("")),
@@ -4226,13 +4272,46 @@ mod tests {
             .await
             .expect("switch");
         let calls = rec.calls();
-        assert_eq!(calls.len(), 4);
+        assert_eq!(calls.len(), 6);
         assert_eq!(
-            calls[1].args_str(),
+            calls[2].args_str(),
             ["stash", "push", "--include-untracked"]
         );
-        assert_eq!(calls[2].args_str(), ["checkout", "feature", "--"]);
-        assert_eq!(calls[3].args_str(), ["stash", "pop"]);
+        assert_eq!(calls[4].args_str(), ["checkout", "feature", "--"]);
+        // `--index` restores the staged/unstaged split (M12).
+        assert_eq!(calls[5].args_str(), ["stash", "pop", "--index"]);
+    }
+
+    // M12: a dirty tree whose dirt `stash push` can't save (e.g. a submodule-only
+    // change) — the stash-list depth is unchanged, so we must NOT pop an unrelated
+    // pre-existing stash. Switch as-is.
+    #[tokio::test]
+    async fn switch_with_stash_does_not_pop_when_push_saved_nothing() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "status"], Reply::ok(" M sub\0"))
+                // Depth stays 1 across the push → nothing was actually stashed.
+                .on(
+                    ["git", "stash", "list"],
+                    Reply::ok("stash@{0}: someone else's WIP\n"),
+                )
+                .on(
+                    ["git", "stash", "push"],
+                    Reply::ok("No local changes to save\n"),
+                )
+                .on(["git", "checkout"], Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec);
+        git.switch_with_stash(Path::new("/r"), "feature")
+            .await
+            .expect("switch");
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str() != ["stash", "pop", "--index"]
+                    && c.args_str() != ["stash", "pop"]),
+            "must not pop an unrelated stash when the push saved nothing"
+        );
     }
 
     // A clean tree skips the stash round-trip — a no-op `stash push` would make
@@ -4260,6 +4339,10 @@ mod tests {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(["git", "status"], Reply::ok(" M a.rs\0"))
+                .on_sequence(
+                    ["git", "stash", "list"],
+                    [Reply::ok(""), Reply::ok("stash@{0}: WIP on main\n")],
+                )
                 .on(["git", "stash", "push"], Reply::ok(""))
                 .on(
                     ["git", "checkout"],
@@ -4274,8 +4357,11 @@ mod tests {
             .expect_err("checkout error must surface");
         assert!(matches!(err, Error::Exit { .. }));
         let calls = rec.calls();
-        assert_eq!(calls.len(), 4);
-        assert_eq!(calls[3].args_str(), ["stash", "pop"], "restoring pop ran");
+        assert_eq!(
+            calls.last().unwrap().args_str(),
+            ["stash", "pop", "--index"],
+            "restoring pop ran with --index"
+        );
     }
 
     // `fetch_from` names the remote, keeps the prompt off, and shares the
