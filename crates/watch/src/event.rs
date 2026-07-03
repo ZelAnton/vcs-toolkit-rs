@@ -16,6 +16,7 @@ use vcs_core::{OperationState, RepoSnapshot};
 pub enum RepoEvent {
     /// The working-copy commit moved (a commit, checkout, reset, `jj` op, …).
     /// `from`/`to` are the full object ids; `None` on an unborn git repo.
+    #[non_exhaustive]
     HeadMoved {
         /// The previous HEAD/`@` object id.
         from: Option<String>,
@@ -24,6 +25,7 @@ pub enum RepoEvent {
     },
     /// The *current* branch (git) / bookmark (jj) changed — a switch/checkout, or
     /// going (in)to a detached/unset state (`None`).
+    #[non_exhaustive]
     BranchSwitched {
         /// The previously checked-out branch/bookmark.
         from: Option<String>,
@@ -31,17 +33,20 @@ pub enum RepoEvent {
         to: Option<String>,
     },
     /// A local branch/bookmark appeared.
+    #[non_exhaustive]
     BranchCreated {
         /// The new branch/bookmark name.
         name: String,
     },
     /// A local branch/bookmark was removed.
+    #[non_exhaustive]
     BranchDeleted {
         /// The removed branch/bookmark name.
         name: String,
     },
     /// The working-copy dirtiness or change count changed (an edit was staged,
     /// committed, stashed, snapshotted, …).
+    #[non_exhaustive]
     WorkingCopyChanged {
         /// Whether the working copy now has uncommitted changes.
         dirty: bool,
@@ -49,11 +54,13 @@ pub enum RepoEvent {
         change_count: usize,
     },
     /// The upstream tracking branch changed (git only; always absent on jj).
+    #[non_exhaustive]
     UpstreamChanged {
         /// The new upstream tracking branch, or `None` when unset.
         upstream: Option<String>,
     },
     /// The ahead/behind counts versus the upstream changed (git only).
+    #[non_exhaustive]
     AheadBehindChanged {
         /// Commits ahead of the upstream now; `None` when there's no upstream **or**
         /// the upstream is set but uncountable (gone/unfetched).
@@ -67,6 +74,7 @@ pub enum RepoEvent {
     /// `conflicted` from the same bit, so [`ConflictChanged`](RepoEvent::ConflictChanged)
     /// already signals it on both backends. So this event fires only on git, and
     /// `from`/`to` are `Clear`/`Merge`/`Rebase`/`ApplyMailbox`.
+    #[non_exhaustive]
     OperationChanged {
         /// The previous operation state.
         from: OperationState,
@@ -74,6 +82,7 @@ pub enum RepoEvent {
         to: OperationState,
     },
     /// Whether the working copy has an unresolved conflict changed.
+    #[non_exhaustive]
     ConflictChanged {
         /// Whether the working copy is now conflicted.
         conflicted: bool,

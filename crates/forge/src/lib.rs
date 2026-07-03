@@ -582,7 +582,7 @@ impl<R: ProcessRunner> Forge<R> {
 }
 
 fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
-    Error::Unsupported { forge, operation }
+    Error::unsupported(forge, operation)
 }
 
 /// The "what the CLI ships" map for GitHub. `authed` is left `false`; the
@@ -710,20 +710,14 @@ pub trait ForgeApi: Send + Sync {
     /// when the crate bumps.
     #[allow(unused_variables)]
     async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
-            forge: self.kind(),
-            operation: "pr_comment",
-        })
+        Err(Error::unsupported(self.kind(), "pr_comment"))
     }
     /// See [`Forge::pr_edit`](crate::Forge::pr_edit). **Defaulted** to
     /// `Error::Unsupported` (the real impl rejects both-`None` with
     /// `Error::InvalidInput` before any spawn).
     #[allow(unused_variables)]
     async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
-        Err(Error::Unsupported {
-            forge: self.kind(),
-            operation: "pr_edit",
-        })
+        Err(Error::unsupported(self.kind(), "pr_edit"))
     }
     /// See [`Forge::capabilities`](crate::Forge::capabilities).
     /// **Defaulted** to the all-`false` shape.

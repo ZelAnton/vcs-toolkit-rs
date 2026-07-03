@@ -59,7 +59,7 @@ async fn git_branch_create_emits_branch_created() {
 
     assert!(
         wait_for(&mut watcher, Duration::from_secs(10), |e| {
-            matches!(e, RepoEvent::BranchCreated { name } if name == "feature")
+            matches!(e, RepoEvent::BranchCreated { name, .. } if name == "feature")
         })
         .await,
         "expected a BranchCreated(feature) event"
@@ -108,7 +108,7 @@ async fn git_worktree_sees_branch_created_from_main() {
 
     assert!(
         wait_for(&mut watcher, Duration::from_secs(10), |e| {
-            matches!(e, RepoEvent::BranchCreated { name } if name == "feature")
+            matches!(e, RepoEvent::BranchCreated { name, .. } if name == "feature")
         })
         .await,
         "worktree watcher must see a branch created in the shared git dir"
@@ -153,7 +153,7 @@ async fn jj_bookmark_create_emits_branch_created() {
 
     assert!(
         wait_for(&mut watcher, Duration::from_secs(10), |e| {
-            matches!(e, RepoEvent::BranchCreated { name } if name == "feature")
+            matches!(e, RepoEvent::BranchCreated { name, .. } if name == "feature")
         })
         .await,
         "expected a BranchCreated(feature) event on jj"

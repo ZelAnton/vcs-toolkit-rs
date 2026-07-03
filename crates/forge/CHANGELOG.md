@@ -10,11 +10,20 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `Error::unsupported(forge, operation)` — the public constructor for the now-
+  `#[non_exhaustive]` `Error::Unsupported` variant (see Changed).
 - `IssueCreate` — the open-an-issue spec (`IssueCreate::new(title, body)`), mirroring
   `PrCreate`'s shape and `#[non_exhaustive]` so labels/assignees can be added later
   without a breaking signature change.
 
 ### Changed
+- **`Error::Unsupported { forge, operation }` is now `#[non_exhaustive]` (breaking).** A
+  `match` arm binding its fields must add `..` (`Error::Unsupported { forge, .. }`), and
+  the variant can no longer be built by struct literal outside the crate — construct it
+  through the new **`Error::unsupported(forge, operation)`** instead (which an external
+  `ForgeApi` impl needs to return it). Both changes let the variant gain context (e.g. a
+  hint) after 1.0 without a breaking bump. Most callers use `is_*` classifiers, not
+  field-matching, so are unaffected. (`docs/audit-2026-07.md` A7.)
 - **`Forge::issue_create` / `ForgeApi::issue_create` take an `IssueCreate` spec, not
   bare `(title, body)` args (breaking).** `issue_create("T", "B")` →
   `issue_create(IssueCreate::new("T", "B"))`. Consistent with `pr_create(PrCreate)`,

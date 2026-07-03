@@ -14,6 +14,7 @@ pub enum Error {
     /// The operation isn't available on this forge's CLI — e.g. `repo_view`,
     /// `pr_mark_ready`, and `pr_checks` on Gitea, whose `tea` has no command for
     /// them. The `operation` is the [`ForgeApi`](crate::ForgeApi) method name.
+    #[non_exhaustive]
     Unsupported {
         /// Which forge lacks the operation.
         forge: ForgeKind,
@@ -71,6 +72,14 @@ const RESOURCE_NOT_FOUND_MARKERS: &[&str] = &[
 ];
 
 impl Error {
+    /// Build an [`Unsupported`](Error::Unsupported) error naming the `forge` and the
+    /// `operation` it lacks. The stable construction path — the variant is
+    /// `#[non_exhaustive]`, so an external [`ForgeApi`](crate::ForgeApi) impl (a custom
+    /// backend) must build it through this rather than a struct literal.
+    pub fn unsupported(forge: ForgeKind, operation: &'static str) -> Self {
+        Error::Unsupported { forge, operation }
+    }
+
     /// Lowercased `stdout`+`stderr` of an underlying non-zero `Exit` — the CLI's
     /// message body, for marker classification. `None` for non-`Exit` errors
     /// (spawn/timeout/signal/not-found) and the facade's own variants, which carry

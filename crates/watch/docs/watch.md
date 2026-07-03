@@ -17,7 +17,7 @@ while let Some(change) = watcher.recv().await {
     for event in &change.events {
         match event {
             RepoEvent::HeadMoved { to, .. }      => println!("head → {to:?}"),
-            RepoEvent::BranchCreated { name }    => println!("+branch {name}"),
+            RepoEvent::BranchCreated { name, .. } => println!("+branch {name}"),
             RepoEvent::WorkingCopyChanged { dirty, .. } => println!("dirty={dirty}"),
             other => println!("{other:?}"),
         }

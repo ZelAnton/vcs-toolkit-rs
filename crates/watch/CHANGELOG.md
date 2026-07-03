@@ -13,7 +13,12 @@ crates; tag releases as `vcs-watch-v<version>`.
 -
 
 ### Changed
--
+- **Every data-carrying `RepoEvent` variant is now individually `#[non_exhaustive]`
+  (breaking).** A `match`/`matches!` arm that binds a variant's fields must add `..`
+  (e.g. `RepoEvent::BranchCreated { name, .. }`). The enum was already
+  `#[non_exhaustive]` (new *variants* were safe); this makes new *fields* on an
+  existing event safe too, so an event can gain context (a timestamp, an id) after 1.0
+  without a breaking bump. (`docs/audit-2026-07.md` A7.)
 
 ### Fixed
 -
