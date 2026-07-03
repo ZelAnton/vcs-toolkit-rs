@@ -93,6 +93,19 @@ crates; tag releases as `vcs-git-v<version>`.
   the target URL's host, so an HTTP redirect or a submodule fetch to a *different*
   host during the clone can't extract the token. Other remote ops (fetch/push)
   remain host-ungated for now (they target a configured remote). (`docs/audit-2026-07.md` H5.)
+- **`harden()` scrubs more env code-execution vectors.** Added `GIT_PROXY_COMMAND`
+  (runs an arbitrary program for a `git://` connection), `GIT_EXEC_PATH` (relocates
+  where git finds its own sub-commands), and `GIT_TEMPLATE_DIR` (seeds hooks/config
+  into a repo on `init`/`clone`) to the scrub list, plus the pathspec-mode vars
+  (`GIT_LITERAL_PATHSPECS` / `GIT_GLOB_PATHSPECS` / `GIT_NOGLOB_PATHSPECS` /
+  `GIT_ICASE_PATHSPECS`), which silently change which paths a command matches.
+  (`docs/audit-2026-07.md` M14.)
+- **`push` refuses a force (`+`) or multi-ref (`:`) metacharacter smuggled into a
+  branch name.** `GitPush::branch("+main")` (or `"a:b:c"`) previously rode through the
+  argv guard and became a **force-push** / a push to an unexpected ref. `push` now
+  rejects a leading `+` and more than one `:` before spawning; a legitimate
+  `local:remote` refspec still works, and a real force-push must be explicit via
+  `run(["push", "--force", …])`. (`docs/audit-2026-07.md` M16.)
 
 ## [0.6.0] - 2026-06-27
 

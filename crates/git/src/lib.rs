@@ -1548,6 +1548,29 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()> {
         reject_flag_like("remote", &spec.remote)?;
         reject_flag_like("refspec", &spec.refspec)?;
+        // M16: `reject_flag_like` catches a leading `-`/empty/NUL, but not the refspec
+        // metacharacters that silently change what a push *does* — a leading `+`
+        // (force-push, overwriting the remote non-fast-forward) or an extra `:` (push
+        // to an unexpected remote ref). A valid refspec here is `branch` or
+        // `local:remote_branch` (the single `:` is API-constructed by
+        // `GitPush::refspec`), so allow at most one `:` and no leading `+` on either
+        // side. A caller who genuinely needs a force-push must do it explicitly via
+        // `run(["push", "--force", …])`, not smuggle a `+` through a branch name.
+        let sides: Vec<&str> = spec.refspec.split(':').collect();
+        if sides.len() > 2 || sides.iter().any(|s| s.starts_with('+')) {
+            return Err(processkit::Error::Spawn {
+                program: BINARY.to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "push refspec {:?} contains a force (`+`) or multi-ref (`:`) \
+                         metacharacter — pass a plain branch or `local:remote`, or use \
+                         `run([\"push\", …])` for a force-push",
+                        spec.refspec
+                    ),
+                ),
+            });
+        }
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.push("push".to_string());
@@ -2062,7 +2085,12 @@ impl<R: ProcessRunner> Git<R> {
     ///   program from the *environment* (a second code-execution path besides
     ///   repo hooks): `GIT_SSH_COMMAND`/`GIT_SSH` (transport), `GIT_ASKPASS`
     ///   (credential prompt), `GIT_EXTERNAL_DIFF` (diff driver), `GIT_PAGER`,
-    ///   `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR`. The library's own auth seam
+    ///   `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR`, `GIT_PROXY_COMMAND` (a program for a
+    ///   `git://` connection), `GIT_EXEC_PATH` (relocates git's own sub-commands),
+    ///   and `GIT_TEMPLATE_DIR` (seeds hooks/config on `init`/`clone`). It also drops
+    ///   the pathspec-mode vars (`GIT_LITERAL_PATHSPECS` / `GIT_GLOB_PATHSPECS` /
+    ///   `GIT_NOGLOB_PATHSPECS` / `GIT_ICASE_PATHSPECS`), which silently change which
+    ///   paths a command matches. The library's own auth seam
     ///   ([`with_credentials`](Git::with_credentials)) injects credentials via a
     ///   git `credential.helper` / token env, **not** these variables, so it keeps
     ///   working through a hardened client; an operator who deliberately relies on
@@ -2115,6 +2143,19 @@ impl<R: ProcessRunner> Git<R> {
             "GIT_PAGER",
             "GIT_EDITOR",
             "GIT_SEQUENCE_EDITOR",
+            // More env command-hooks (M14): `GIT_PROXY_COMMAND` runs an arbitrary
+            // program for a `git://` connection; `GIT_EXEC_PATH` relocates where git
+            // finds its own sub-commands (so `git-<x>` becomes attacker-chosen);
+            // `GIT_TEMPLATE_DIR` seeds hooks/config into a repo on `init`/`clone`.
+            "GIT_PROXY_COMMAND",
+            "GIT_EXEC_PATH",
+            "GIT_TEMPLATE_DIR",
+            // Pathspec interpretation (M14) — not code-execution, but they silently
+            // change which paths a command matches, so pin deterministic behavior.
+            "GIT_LITERAL_PATHSPECS",
+            "GIT_GLOB_PATHSPECS",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_ICASE_PATHSPECS",
         ];
         let mut hardened = self;
         for key in removed {
@@ -2979,6 +3020,33 @@ mod tests {
         }));
     }
 
+    // M16: a `+` (force-push) or an extra `:` (multi-ref) smuggled into a branch name
+    // is refused before spawning — force-pushing must be explicit via `run`.
+    #[tokio::test]
+    async fn push_rejects_force_and_multiref_metacharacters() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        for bad in ["+main", "+main:main", "a:b:c"] {
+            assert!(
+                git.push(Path::new("/r"), GitPush::branch(bad))
+                    .await
+                    .is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+        // A legitimate `local:remote` refspec still works (one `:`, no `+`).
+        assert!(
+            git.push(Path::new("/r"), GitPush::refspec("main", "prod"))
+                .await
+                .is_ok()
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str().last().unwrap() != "+main")
+        );
+    }
+
     // `.remote()` swaps the remote token in place.
     #[tokio::test]
     async fn push_remote_override_swaps_remote() {
@@ -3566,6 +3634,14 @@ mod tests {
             assert!(removed("GIT_ASKPASS"), "GIT_ASKPASS scrubbed");
             assert!(removed("GIT_EXTERNAL_DIFF"), "GIT_EXTERNAL_DIFF scrubbed");
             assert!(removed("GIT_PAGER"), "GIT_PAGER scrubbed");
+            // M14: the additional code-execution vectors + pathspec-mode vars.
+            assert!(removed("GIT_PROXY_COMMAND"), "GIT_PROXY_COMMAND scrubbed");
+            assert!(removed("GIT_EXEC_PATH"), "GIT_EXEC_PATH scrubbed");
+            assert!(removed("GIT_TEMPLATE_DIR"), "GIT_TEMPLATE_DIR scrubbed");
+            assert!(
+                removed("GIT_ICASE_PATHSPECS"),
+                "GIT_ICASE_PATHSPECS scrubbed"
+            );
         }
     }
 
