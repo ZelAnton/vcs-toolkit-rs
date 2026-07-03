@@ -168,6 +168,7 @@
 //! errors, cancellation), [`positioning`](guide::positioning) (facade-vs-raw-client
 //! and the three call shapes), and the [`stability`](guide::stability) contract.
 
+use std::fmt::{self, Debug, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -282,6 +283,16 @@ enum Backend<R: ProcessRunner> {
     Jj(Arc<Jj<R>>),
 }
 
+impl<R: ProcessRunner> Debug for Backend<R> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let variant_name = match self {
+            Backend::Git(_) => "Git",
+            Backend::Jj(_) => "Jj",
+        };
+        f.debug_tuple(variant_name).finish_non_exhaustive()
+    }
+}
+
 impl<R: ProcessRunner> Backend<R> {
     fn shared(&self) -> Self {
         match self {
@@ -298,6 +309,17 @@ pub struct Repo<R: ProcessRunner = JobRunner> {
     root: PathBuf,
     cwd: PathBuf,
     backend: Backend<R>,
+}
+// need a manual impl to avoid `R: Debug` bound.
+impl<R: ProcessRunner> Debug for Repo<R> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let Repo { root, cwd, backend } = self;
+        f.debug_struct("Repo")
+            .field("root", root)
+            .field("cwd", cwd)
+            .field("backend", backend)
+            .finish()
+    }
 }
 
 impl Repo<JobRunner> {
