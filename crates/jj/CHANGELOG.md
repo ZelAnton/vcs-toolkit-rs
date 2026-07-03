@@ -16,6 +16,15 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **Workspace root-path probes (`workspace_root`, `workspace_roots`, the Drop-cleanup
+  `workspace_name_for_path`) run `--ignore-working-copy`, so a read no longer snapshots
+  the working copy.** All resolve *static* workspace root paths, but ran plain `jj
+  workspace list`/`root`, which take the working-copy lock and write a snapshot op —
+  mutating the very repo a `remove_worktree`/Drop cleanup is tearing down, and failing
+  (→ leaked workspace) under lock contention. They're now read-only. (The audit's paired
+  suggestion to *surface* a probe error rather than collapse to `None` is obviated: a
+  read-only probe no longer takes the working-copy lock, so the contention path that
+  drove the silent leak is gone.) (`docs/audit-2026-07.md` M10.)
 - **`commit_paths` refuses an empty fileset slice instead of committing the whole
   working copy.** `commit_paths(dir, &[], msg)` degraded to a bare `jj commit -m msg`,
   which finalises *every* pending change — the opposite of its "exactly these filesets"

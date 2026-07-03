@@ -1437,7 +1437,13 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn workspace_root(&self, dir: &Path, name: Option<String>) -> Result<PathBuf> {
-        let mut args: Vec<String> = vec!["workspace".into(), "root".into()];
+        // Read-only: the root is static creation-time metadata, so this must not
+        // snapshot the working copy — consistent with the batch `workspace_roots` (M10).
+        let mut args: Vec<String> = vec![
+            "--ignore-working-copy".into(),
+            "workspace".into(),
+            "root".into(),
+        ];
         if let Some(n) = name.as_deref() {
             args.push("--name".into());
             args.push(n.to_string());
@@ -1500,9 +1506,20 @@ impl<R: ProcessRunner> Jj<R> {
     /// throughput shape over the trait method, and the batch primitive isn't a
     /// mockable per-call seam.
     pub async fn workspace_roots(&self, dir: &Path, names: &[String]) -> Vec<Result<PathBuf>> {
-        let commands = names
-            .iter()
-            .map(|n| self.cmd_in(dir, ["workspace", "root", "--name", n.as_str()]));
+        // `--ignore-working-copy`: read-only metadata probe (often on the Drop-cleanup
+        // path), so it must not snapshot/lock the working copy (M10).
+        let commands = names.iter().map(|n| {
+            self.cmd_in(
+                dir,
+                [
+                    "--ignore-working-copy",
+                    "workspace",
+                    "root",
+                    "--name",
+                    n.as_str(),
+                ],
+            )
+        });
         processkit::output_all(commands, WORKSPACE_ROOTS_CONCURRENCY, self.core.runner())
             .await
             .into_iter()
@@ -1722,10 +1739,16 @@ pub mod blocking {
         let target = normalize(path);
         let out = Command::new(super::BINARY)
             .current_dir(dir)
+            // `--ignore-working-copy`: this is a **read-only** probe run from a Drop
+            // guard, so it must NOT snapshot the working copy — a plain `workspace
+            // list` takes the working-copy lock and writes a snapshot op (M10),
+            // mutating the very repo being cleaned up and failing (→ leak) under lock
+            // contention. The workspace list/root are static metadata, unaffected.
             // `--color never`: this raw probe bypasses `cmd_in`, so pin it here too
             // — `ui.color = "always"` would otherwise wrap names in ANSI escapes
             // and break the name->root match below (leaking the workspace on Drop).
             .args([
+                "--ignore-working-copy",
                 "workspace",
                 "list",
                 "-T",
@@ -1745,7 +1768,15 @@ pub mod blocking {
             }
             let root = Command::new(super::BINARY)
                 .current_dir(dir)
-                .args(["workspace", "root", "--name", name, "--color", "never"])
+                .args([
+                    "--ignore-working-copy",
+                    "workspace",
+                    "root",
+                    "--name",
+                    name,
+                    "--color",
+                    "never",
+                ])
                 .output();
             if let Ok(r) = root
                 && r.status.success()
@@ -1841,15 +1872,36 @@ mod tests {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(
-                    ["jj", "workspace", "root", "--name", "default"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
                     Reply::ok("/repo\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "ws1"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
                     Reply::ok("/repo/ws1\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "gone"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "gone",
+                    ],
                     Reply::fail(1, "Error: No such workspace"),
                 ),
         );
@@ -1865,13 +1917,14 @@ mod tests {
         assert_eq!(roots[0].as_deref().unwrap(), Path::new("/repo"));
         assert!(roots[1].is_err(), "a non-zero `workspace root` is Err");
         assert_eq!(roots[2].as_deref().unwrap(), Path::new("/repo/ws1"));
-        // Exactly one `workspace root --name <n>` command per name.
+        // Exactly one read-only `--ignore-working-copy workspace root --name <n>`
+        // command per name (M10: the metadata probe must not snapshot the copy).
         let calls = rec.calls();
         assert_eq!(calls.len(), 3);
         assert!(
             calls
                 .iter()
-                .all(|c| c.args_str()[..2] == ["workspace", "root"])
+                .all(|c| c.args_str()[..3] == ["--ignore-working-copy", "workspace", "root"])
         );
     }
 
