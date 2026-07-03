@@ -102,7 +102,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_fetch` | — | Fetch from the default remote (`git fetch` / `jj git fetch`). |
 | `repo_push` | `{ branch }` | Push an existing branch/bookmark to `origin` (`git push -u origin <branch>` / `jj git push -b <branch>`). |
 | `repo_create_worktree` | `{ path, branch, base }` | Create a worktree/workspace at `path` on a new `branch` from `base`. |
-| `repo_remove_worktree` | `{ path, force? }` | Remove the worktree/workspace at `path` (`force` overrides local changes, git only). |
+| `repo_remove_worktree` | `{ path, force? }` | Remove the worktree/workspace at `path`. Without `force`, a worktree with uncommitted changes is refused (both backends); the main worktree/workspace is always refused. |
 | `forge_pr_create` | `{ title, body, source?, target? }` | Open a PR/MR (omit `source` for the current branch, `target` for the repo default); returns the CLI output (the URL on success). |
 | `forge_pr_comment` | `{ number, body }` | Post a markdown comment to an existing PR/MR; returns the CLI output (the comment URL on success). On **Gitea**, PRs and issues share one `index` space and `tea comment` targets either — so a `number` that is actually an issue comments on that issue. |
 | `forge_pr_edit` | `{ number, title?, body? }` | Edit a PR/MR's title and/or body. At least one of `title` or `body` must be set (both absent is rejected up front as `invalid_params`); an empty string is a real value (clears the field). |

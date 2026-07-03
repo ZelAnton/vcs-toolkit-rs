@@ -139,7 +139,10 @@ pub struct CreateWorktreeParams {
 pub struct RemoveWorktreeParams {
     /// Filesystem path of the worktree/workspace to remove.
     pub path: String,
-    /// Force removal even with local changes (git only).
+    /// Force removal even when the worktree has uncommitted changes. Without it,
+    /// a worktree with local changes is refused on **both** git and jj. The
+    /// repository's main worktree/workspace is always refused (deleting it would
+    /// destroy the repo), regardless of this flag.
     #[serde(default)]
     pub force: bool,
 }
@@ -593,7 +596,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Remove the worktree/workspace at `path`. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        description = "Remove the worktree/workspace at `path`. Without `force`, a worktree with uncommitted changes is refused; the repository's main worktree/workspace is always refused. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
     pub async fn repo_remove_worktree(

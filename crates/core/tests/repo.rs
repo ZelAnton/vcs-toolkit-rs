@@ -178,6 +178,25 @@ async fn jj_create_then_blocking_cleanup() {
     assert!(!ws.exists(), "workspace dir removed");
 }
 
+// The blocking Drop-path must refuse the repository's MAIN workspace, same as the
+// async `remove_worktree` — deleting its directory would wipe the whole repo.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn jj_blocking_cleanup_refuses_the_main_workspace() {
+    let sandbox = JjSandbox::init("jj-cleanup-main");
+    let dir = sandbox.path();
+    let repo = Repo::open(dir).expect("open");
+
+    let err = repo
+        .cleanup_worktree_blocking(dir)
+        .expect_err("the main workspace must be refused, not wiped");
+    assert!(
+        err.to_string().contains("main workspace"),
+        "refusal message: {err}"
+    );
+    assert!(dir.join(".jj").exists(), "the repository must survive");
+}
+
 // `try_merge` probes both outcomes against a real git repo without leaving any
 // trace, and the abort/continue cycle drives a real conflicted merge to ground.
 #[tokio::test]

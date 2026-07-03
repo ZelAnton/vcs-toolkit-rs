@@ -222,6 +222,13 @@ The security properties that make this safe:
   environment-variable *names* only, never values.
 - **HTTPS only.** git invokes a credential helper for HTTP(S) auth only, so an SSH
   remote ignores it and falls through to the ambient SSH agent, as before.
+- **`clone` is host-scoped.** When cloning with a provider, the helper is bound to the
+  clone URL's host, so an HTTP redirect or a submodule fetch to a *different* host
+  during the clone can't extract the token (the clone URL is often externally
+  supplied). `fetch`/`push`/`ls-remote` stay host-ungated — they target a *configured*
+  remote (a URL you set up), so the helper answers for whatever host that remote
+  resolves to; supply an SSH remote or an ambient-only credential if you need to
+  withhold there.
 
 `vcs-gitea` and `vcs-jj` stay ambient-only: `tea` has no per-invocation token
 mechanism, and jj's in-process git backend offers no per-operation override.

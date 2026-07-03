@@ -707,6 +707,74 @@ mod tests {
         );
     }
 
+    // A 3-sided (octopus) conflict with one no-terminating-newline side, captured
+    // from jj 0.42: jj pads EVERY newline-terminated side uniformly (the ` \n`
+    // context lines) and annotates only the no-eol one — so the region-wide
+    // `mixed_eol` + per-section strip generalizes past two sides.
+    #[test]
+    fn resolve_handles_three_sided_conflict_with_missing_newline() {
+        let input = concat!(
+            "line 1\n",
+            "<<<<<<< conflict 1 of 1\n",
+            "%%%%%%% diff from: aaa 111 \"base\"\n",
+            "\\\\\\\\\\\\\\        to: bbb 222 \"sa\"\n",
+            "-line 2\n",
+            "+AAA\n",
+            " \n",
+            "%%%%%%% diff from: aaa 111 \"base\"\n",
+            "\\\\\\\\\\\\\\        to: ccc 333 \"sb\"\n",
+            "-line 2\n",
+            "+BBB\n",
+            " \n",
+            "+++++++ ddd 444 \"sc\" (no terminating newline)\n",
+            "CCC\n",
+            ">>>>>>> conflict 1 of 1 ends",
+        );
+        let segs = parse_conflicts(input).expect("parse");
+        assert_eq!(render(&segs), input, "render round-trips");
+        assert_eq!(
+            resolve(&segs, JjResolution::Side(0)).unwrap(),
+            "line 1\nAAA\n"
+        );
+        assert_eq!(
+            resolve(&segs, JjResolution::Side(1)).unwrap(),
+            "line 1\nBBB\n"
+        );
+        assert_eq!(
+            resolve(&segs, JjResolution::Side(2)).unwrap(),
+            "line 1\nCCC", // the no-eol side, no trailing newline
+        );
+        assert_eq!(
+            resolve(&segs, JjResolution::Base).unwrap(),
+            "line 1\nline 2\n"
+        );
+    }
+
+    // Snapshot-style (`ui.conflict-marker-style = snapshot`) with an explicit
+    // `------- base` section and a no-eol side, captured from jj 0.42 — exercises
+    // the Base-section role and mixed-mode padding on `-------`/`+++++++` sections.
+    #[test]
+    fn resolve_handles_snapshot_style_with_missing_newline_and_base() {
+        check_eol(
+            concat!(
+                "line 1\n",
+                "<<<<<<< conflict 1 of 1\n",
+                "+++++++ aaa 111 \"sa\" (no terminating newline)\n",
+                "AAA\n",
+                "------- bbb 222 \"base\"\n",
+                "line 2\n",
+                "\n",
+                "+++++++ ccc 333 \"sb\"\n",
+                "BBB\n",
+                "\n",
+                ">>>>>>> conflict 1 of 1 ends",
+            ),
+            "line 1\nAAA",      // sa: no trailing newline
+            "line 1\nBBB\n",    // sb
+            "line 1\nline 2\n", // base (from the `-------` section)
+        );
+    }
+
     #[test]
     fn multi_region_counters_parse() {
         let two = format!(

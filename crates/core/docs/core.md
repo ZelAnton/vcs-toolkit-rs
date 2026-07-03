@@ -355,13 +355,19 @@ surfaced — so a failed call doesn't leak a half-made worktree.
 the workspace name by matching `path`, deletes the directory, then forgets it; a
 jj `path` that matches no attached workspace returns `Error::WorktreeNotFound`
 (contrast `cleanup_worktree_blocking` below, where no-match is a `Ok` no-op).
+`force` mirrors git's `worktree remove`: with `force = false` a worktree that
+still has **uncommitted changes** is refused rather than deleted (on jj the
+changes are snapshotted into the op log first, so a refusal keeps them
+recoverable); pass `force = true` to remove it anyway. The repository's **main**
+workspace is always refused — deleting its directory would destroy the repo.
 
 `cleanup_worktree_blocking` is the **synchronous** counterpart — for a context
 that cannot `.await`, chiefly a `Drop` guard. It force-removes the worktree at
 `path` (git: `worktree remove --force`; jj: resolve the workspace name by
 `path`, delete the directory, then `workspace forget`). It is best-effort and
 short-lived: it **shells out directly with no job-containment**, unlike the async
-methods. A jj `path` that matches no workspace is a no-op (`Ok`).
+methods. A jj `path` that matches no workspace is a no-op (`Ok`); like the async
+method it still **refuses the main workspace** (a repo-wipe is never intended).
 
 ```rust,no_run
 # use std::path::Path;

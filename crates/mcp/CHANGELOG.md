@@ -20,7 +20,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
   updates are non-breaking.
 
 ### Fixed
--
+- **`repo_remove_worktree` inherits the `vcs-core` C1 safety fix.** Without `force`,
+  removing a worktree with uncommitted changes is now refused (both backends), and the
+  repository's main worktree/workspace is **always** refused — previously the jj path
+  ignored `force` and could delete the main workspace, wiping the repo. The tool's
+  `force` param doc (which wrongly said "git only") and description are corrected.
+  (`docs/audit-2026-07.md` C1.)
+- **`repo_checkout` no longer risks discarding unstaged edits** — the underlying git
+  `checkout` now passes a trailing `--`, so a path-like reference errors instead of
+  reverting that path from the index. (`docs/audit-2026-07.md` C2.)
 
 ## [0.2.0] - 2026-06-27
 

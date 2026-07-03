@@ -33,7 +33,9 @@ crates; tag releases as `vcs-core-v<version>`.
   rename` can't bypass it — and (b) honors `force`: with `force = false` a workspace
   with uncommitted changes is refused (the changes are first snapshotted into jj's
   op log, so they're recoverable), instead of being deleted unconditionally as
-  before. Pass `force = true` for the old always-remove behavior. (`docs/audit-2026-07.md` C1.)
+  before. Pass `force = true` to remove a *dirty* worktree anyway (the main-workspace
+  refusal holds regardless of `force`). The same main-workspace guard was added to the
+  blocking Drop-path `cleanup_worktree_blocking`. (`docs/audit-2026-07.md` C1.)
 
 ## [0.4.0] - 2026-06-27
 

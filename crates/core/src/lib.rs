@@ -760,7 +760,10 @@ impl<R: ProcessRunner> Repo<R> {
     /// `worktree remove --force`; jj: resolve the workspace name by `path`, delete
     /// the directory, then `workspace forget`). Best-effort and short-lived: it
     /// shells out directly (no job-containment); a jj `path` that matches no
-    /// workspace is a no-op (`Ok`).
+    /// workspace is a no-op (`Ok`). Like the async
+    /// [`remove_worktree`](Self::remove_worktree), it **refuses the repository's
+    /// main workspace** (whose directory is the main working copy) — deleting it
+    /// would wipe the repo — even on this force-by-contract path.
     pub fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()> {
         match &self.backend {
             Backend::Git(_) => {
@@ -774,6 +777,20 @@ impl<R: ProcessRunner> Repo<R> {
                 let abs_path = self.cwd.join(path);
                 match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path) {
                     Some(name) => {
+                        // Same main-workspace guard as the async `remove_worktree`
+                        // (jj_backend.rs): never `remove_dir_all` the repository's
+                        // main working copy — its directory owns the object store, so
+                        // deleting it wipes the whole repo. The `default` name and the
+                        // store-owning `.jj/repo` *directory* (a secondary's is a file
+                        // pointer) both flag it, so a `jj workspace rename` can't
+                        // bypass it. Force is implied on this Drop path, but this guard
+                        // is unconditional — a repo-wipe is never the intent.
+                        if name == "default" || abs_path.join(".jj").join("repo").is_dir() {
+                            return Err(Error::Io(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "refusing to remove the repository's main workspace",
+                            )));
+                        }
                         // Delete the on-disk dir first (jj `forget` leaves it), then
                         // drop jj's record of the workspace.
                         let _ = std::fs::remove_dir_all(&abs_path);
