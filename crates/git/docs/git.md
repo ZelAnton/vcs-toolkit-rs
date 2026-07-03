@@ -632,7 +632,7 @@ async fn init(&self, dir: &Path) -> Result<()>;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 let caps = git.capabilities().await?;                       // GitCapabilities
-caps.ensure_supported()?;                                    // clear error if git < 2
+caps.ensure_supported()?;                                    // clear error if git < 2.31
 println!("git {}", caps.version);
 let common = git.common_dir(repo).await?;                    // PathBuf
 let _ = common;
@@ -841,8 +841,9 @@ Displays as `major.minor.patch`.
 |-------|------|---------|
 | `version` | `GitVersion` | the binary's parsed version |
 
-Methods: `is_supported(&self) -> bool` (major ≥ 2) and `ensure_supported(&self) ->
-Result<()>` (a clear "needs git ≥ 2" error otherwise).
+Methods: `is_supported(&self) -> bool` (git ≥ 2.31 — the highest version the crate's own
+argv requires) and `ensure_supported(&self) -> Result<()>` (a clear "needs git ≥ 2.31"
+error otherwise, instead of a cryptic argv failure later).
 
 ## Config & builder types
 

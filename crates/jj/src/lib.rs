@@ -392,8 +392,9 @@ pub struct JjCapabilities {
 }
 
 /// The validated jj floor: every parser and flag in this crate was verified
-/// empirically against this release. jj's CLI moves fast, so unlike vcs-git's
-/// major-only gate the jj floor is precise.
+/// empirically against this release. jj's CLI moves fast, so the floor is a full
+/// version pinned to a validated release; vcs-git instead gates on the highest
+/// version its own argv requires (`2.31`).
 const MIN_SUPPORTED: JjVersion = JjVersion {
     major: 0,
     minor: 38,

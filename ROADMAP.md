@@ -269,10 +269,9 @@ colocates by default depends on the jj version *and* `git.colocate` config, so
 - **5.3 ✅ Capability detection.** `capabilities()` on both clients →
   `GitCapabilities`/`JjCapabilities` (parsed version + `is_supported()` /
   `ensure_supported()` with a clear "needs jj ≥ 0.38, found 0.35.0"). jj's
-  floor is precise (0.38, the empirically validated release); git gates the
-  major only (validated on 2.54, expected ≥ 2.30 — an untested minor isn't
-  hard-gated). Value types: callers cache the probe; the client holds no
-  state.
+  floor is precise (0.38, the empirically validated release); git gates
+  `(2, 31)` — the highest version its own argv requires (validated on 2.54).
+  Value types: callers cache the probe; the client holds no state.
 - **5.4 ✅ Command observation** — satisfied by existing seams, documented in
   the README ("Observing commands"): wrap-the-runner argv observation
   (`RecordingRunner::new(JobRunner::new())`), live per-line streaming

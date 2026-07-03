@@ -563,21 +563,26 @@ pub struct GitCapabilities {
     pub version: GitVersion,
 }
 
-/// The oldest git major this crate is written against. Validated on 2.54;
-/// expected to work from ≥ 2.30 — but only the *major* is hard-gated, because
-/// a false "unsupported" on an untested-but-fine 2.2x would be worse than the
-/// argv error git itself would give. (Contrast vcs-jj, whose floor is precise:
-/// its parsers were empirically validated against one jj release.)
+/// The oldest git this crate is written against — **2.31**, the highest version its
+/// own argv actually requires (validated on 2.54). `harden()` pins config through
+/// `GIT_CONFIG_COUNT`/`_KEY_n`/`_VALUE_n` (added in **2.31**); `branch_status`/`snapshot`
+/// read `status --porcelain=v2` (2.11) and `switch_with_stash` uses `stash push` (2.13),
+/// all below 2.31. Gating on the real minor floor makes [`ensure_supported`] catch a
+/// too-old git with a clear message rather than letting it pass and then fail later with
+/// a cryptic argv error — the M29 fix (the previous gate was major-only, so 2.7 "passed"
+/// then broke). (Contrast vcs-jj, whose floor is precise per its empirically-validated
+/// parser release.)
 const MIN_SUPPORTED_MAJOR: u64 = 2;
+const MIN_SUPPORTED_MINOR: u64 = 31;
 
 impl GitCapabilities {
-    /// Whether the binary meets the supported floor (major ≥ 2).
+    /// Whether the binary meets the supported floor (git ≥ 2.31).
     pub fn is_supported(&self) -> bool {
-        self.version.major >= MIN_SUPPORTED_MAJOR
+        (self.version.major, self.version.minor) >= (MIN_SUPPORTED_MAJOR, MIN_SUPPORTED_MINOR)
     }
 
     /// Error unless [`is_supported`](Self::is_supported) — a clear "needs git
-    /// ≥ 2, found 1.9.5" instead of a cryptic argv failure later.
+    /// ≥ 2.31, found 2.7.4" instead of a cryptic argv failure later.
     pub fn ensure_supported(&self) -> Result<()> {
         if self.is_supported() {
             return Ok(());
@@ -587,8 +592,8 @@ impl GitCapabilities {
             source: std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 format!(
-                    "vcs-git requires git >= {MIN_SUPPORTED_MAJOR} (validated on 2.54), \
-                     found {}",
+                    "vcs-git requires git >= {MIN_SUPPORTED_MAJOR}.{MIN_SUPPORTED_MINOR} \
+                     (validated on 2.54), found {}",
                     self.version
                 ),
             ),
@@ -2137,14 +2142,11 @@ impl<R: ProcessRunner> Git<R> {
     /// git's env-based config (`GIT_CONFIG_COUNT`), which older git **silently
     /// ignores** — so on git < 2.31 `harden()` still scrubs the environment and
     /// turns prompts off, but repo-local hooks/fsmonitor/sshCommand are **not**
-    /// disabled (no error is raised). There is **no built-in 2.31 gate yet**
-    /// ([`capabilities().ensure_supported()`](GitCapabilities::ensure_supported)
-    /// only checks the major version, so it passes on 2.0–2.30). Before relying on
-    /// `harden()` against a fully untrusted repo on a host you don't control, check
-    /// the version yourself — `Git::new().capabilities().await?.version` exposes
-    /// `major`/`minor` — and require ≥ 2.31, or add an OS-level sandbox. (A
-    /// machine-checked minor-version floor is tracked for a future release; see
-    /// `docs/audit-2026-07.md` H3.)
+    /// disabled (no error is raised). [`capabilities().ensure_supported()`](GitCapabilities::ensure_supported)
+    /// now enforces the **≥ 2.31 floor** (major.minor), so a too-old git is rejected
+    /// up front with a clear message instead of silently no-op-ing the pins — call it
+    /// before relying on `harden()` against a fully untrusted repo on a host you don't
+    /// control, or add an OS-level sandbox. (`docs/audit-2026-07.md` H3, M29.)
     ///
     /// - **Disables hooks** — `core.hooksPath=/dev/null` pinned via git's
     ///   env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, git ≥ 2.31;
@@ -3897,7 +3899,7 @@ mod tests {
     }
 
     // capabilities parses real-world version shapes (incl. the Windows build
-    // trailer) and gates on the major floor only.
+    // trailer) and gates on the real (2, 31) major.minor floor.
     #[tokio::test]
     async fn capabilities_parse_and_gate_versions() {
         let gh = Git::with_runner(ScriptedRunner::new().on(
@@ -3933,6 +3935,23 @@ mod tests {
         assert!(
             message.contains("1.9.0"),
             "names the found version: {message}"
+        );
+
+        // M29: a 2.x git BELOW the 2.31 minor floor is now rejected too — the crate's
+        // argv (harden's GIT_CONFIG_COUNT, porcelain=v2, stash push) needs ≥ 2.31, so a
+        // major-only gate that passed 2.7 then failed later with a cryptic argv error.
+        let mid = Git::with_runner(
+            ScriptedRunner::new().on(["git", "--version"], Reply::ok("git version 2.7.4\n")),
+        );
+        let caps = mid.capabilities().await.expect("capabilities");
+        assert!(!caps.is_supported(), "2.7.4 is below the 2.31 floor");
+        let err = caps.ensure_supported().expect_err("2.7.4 unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        assert!(
+            source.to_string().contains(">= 2.31"),
+            "names the 2.31 floor"
         );
 
         // Garbage output is a parse error, not a silent zero version.

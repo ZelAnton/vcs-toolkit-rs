@@ -16,7 +16,13 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
--
+- **`GitCapabilities::ensure_supported`/`is_supported` now enforce the real `2.31`
+  floor (major.minor), not just the major.** The gate is documented to turn a too-old
+  git into a clear "needs git ≥ X" error instead of a cryptic argv failure — but it
+  only checked `major >= 2`, so git 2.7 *passed* and then broke on `branch_status`/
+  `snapshot` (`status --porcelain=v2`, 2.11), `switch_with_stash` (`stash push`, 2.13),
+  and `harden()` (`GIT_CONFIG_COUNT`, 2.31). It now gates on `(major, minor) >= (2, 31)`
+  — the highest version the crate's own argv requires. (`docs/audit-2026-07.md` M29.)
 
 ## [0.8.0] - 2026-07-03
 
