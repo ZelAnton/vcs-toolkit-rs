@@ -864,11 +864,17 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // `ensure_success` is what surfaces a killed watch as `Error::Timeout`
         // instead of reading a half-finished run below.
         let id_str = id.to_string();
-        let _ = self
+        // `gh run watch` re-prints the full job table every ~3 s until the run ends,
+        // so over a multi-hour run its stdout grows to tens of MB — all of which we
+        // discard (only the exit status matters; the result comes from `run_view`).
+        // Bound the retained buffer (drop-oldest) so a long watch can't accumulate
+        // unboundedly; the last 256 lines / 256 KiB are plenty for a failure message.
+        // (`docs/audit-2026-07.md` R5.)
+        let cmd = self
             .core
-            .output_string(self.core.command_in(dir, ["run", "watch", id_str.as_str()]))
-            .await?
-            .ensure_success()?;
+            .command_in(dir, ["run", "watch", id_str.as_str()])
+            .output_buffer(processkit::OutputBufferPolicy::bounded(256).with_max_bytes(256 * 1024));
+        let _ = self.core.output_string(cmd).await?.ensure_success()?;
         self.run_view(dir, id).await
     }
 

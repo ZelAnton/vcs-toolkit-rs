@@ -36,6 +36,12 @@ crates; tag releases as `vcs-github-v<version>`.
   via the dependency). No public API or behaviour change.
 
 ### Fixed
+- **`run_watch` no longer accumulates `gh run watch`'s output unboundedly.** `gh run
+  watch` re-prints the full job table every ~3 s until the run ends, so a multi-hour
+  watch grew its (entirely discarded — only the exit status matters) stdout to tens of
+  MB. The retained buffer is now bounded (drop-oldest, last 256 lines / 256 KiB), so a
+  long watch runs in constant memory; failure messages are unaffected.
+  (`docs/audit-2026-07.md` R5.)
 - **`api` now targets the bound repository, not the process's current directory
   (breaking: `api(endpoint)` → `api(dir, endpoint)`).** It builds `gh api` with the
   repo dir as its working directory, so a relative endpoint's `{owner}/{repo}`
