@@ -10,7 +10,14 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Error::is_invalid_input()`** and **`Error::is_resource_not_found()`** classifiers,
+  completing the `is_*` family. `is_invalid_input` recognizes a caller bug — a value
+  the facade refused before spawning (a flag-like/empty guarded positional, an empty
+  file set, removing the main workspace) — distinct from a real IO/backend failure.
+  `is_resource_not_found` covers a worktree/workspace lookup that matched nothing
+  (`WorktreeNotFound`), distinct from the `git`/`jj` *binary* being missing
+  (`is_not_found`). A binding maps them to `ValueError` / `NotFoundError`.
+  (`docs/audit-2026-07.md` A2, A3.)
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing

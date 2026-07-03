@@ -57,6 +57,19 @@ const RATE_LIMIT_MARKERS: &[&str] = &[
     "abuse detection",
 ];
 
+/// Lowercase markers identifying **a named resource that doesn't exist** (a PR/MR,
+/// issue, repository, or release the operation referenced). Deliberately narrow and
+/// high-precision — the forge CLIs report this inconsistently, so these are the
+/// specific phrasings `gh`/`glab` emit and the facade's own Gitea "no such PR"
+/// message; a miss degrades to a generic error rather than a false positive.
+const RESOURCE_NOT_FOUND_MARKERS: &[&str] = &[
+    "could not resolve to", // gh: "Could not resolve to a PullRequest/Issue/Repository …"
+    "404 not found",        // glab (note: GitLab also returns 404 for a *hidden* resource
+    // the caller can't access, so a hit can mean "forbidden" as well as "absent")
+    "no pull request", // the Gitea `pr_view` miss (surfaced as a facade parse error)
+    "release not found", // gh: `release view <missing-tag>`
+];
+
 impl Error {
     /// Lowercased `stdout`+`stderr` of an underlying non-zero `Exit` — the CLI's
     /// message body, for marker classification. `None` for non-`Exit` errors
@@ -126,6 +139,41 @@ impl Error {
     /// than a forge/network failure).
     pub fn is_unsupported(&self) -> bool {
         matches!(self, Error::Unsupported { .. })
+    }
+
+    /// Whether this is an **input rejection** — a bad argument the facade refused
+    /// before/without a useful CLI call: the facade's own
+    /// [`InvalidInput`](Error::InvalidInput) (e.g. `pr_edit` with nothing to change),
+    /// or a wrapper argument guard (`reject_flag_like`, e.g. a flag-like Gitea
+    /// comment body). A caller bug, distinct from a forge/network failure; a binding
+    /// maps it to a `ValueError`.
+    pub fn is_invalid_input(&self) -> bool {
+        match self {
+            Error::InvalidInput(_) => true,
+            Error::Forge(e) => vcs_cli_support::is_invalid_input(e),
+            _ => false,
+        }
+    }
+
+    /// Whether a **named resource doesn't exist** — the PR/MR, issue, repository, or
+    /// release the call referenced (`pr_view(9999)`, etc.). Distinct from
+    /// [`is_not_found`](Error::is_not_found), which means the `gh`/`glab`/`tea`
+    /// **binary** wasn't found. Best-effort and high-precision (a small marker set):
+    /// the CLIs phrase this inconsistently, so a miss degrades to a generic error. A
+    /// binding maps a hit to a `NotFoundError`. Caveat: GitLab returns HTTP 404 for a
+    /// resource the caller *can't access* as well as one that's absent, so a `glab`
+    /// hit can mean "forbidden" — indistinguishable from the CLI text.
+    pub fn is_resource_not_found(&self) -> bool {
+        let hay = match self {
+            Error::Forge(processkit::Error::Exit { stdout, stderr, .. }) => {
+                format!("{stdout}\n{stderr}").to_ascii_lowercase()
+            }
+            // The Gitea `pr_view` miss is a facade *parse* error (an absent list row),
+            // not a non-zero exit — check its message too.
+            Error::Forge(processkit::Error::Parse { message, .. }) => message.to_ascii_lowercase(),
+            _ => return false,
+        };
+        RESOURCE_NOT_FOUND_MARKERS.iter().any(|m| hay.contains(m))
     }
 }
 
@@ -265,5 +313,51 @@ mod tests {
             }
             .is_rate_limited()
         );
+    }
+
+    #[test]
+    fn classifies_invalid_input_and_resource_not_found() {
+        let exit = |stderr: &str| {
+            Error::Forge(processkit::Error::Exit {
+                program: "gh".into(),
+                code: 1,
+                stdout: String::new(),
+                stderr: stderr.into(),
+            })
+        };
+        // Invalid input: the facade's own variant + a wrapper guard rejection.
+        assert!(Error::InvalidInput("nothing to edit".into()).is_invalid_input());
+        assert!(
+            Error::Forge(processkit::Error::Spawn {
+                program: "tea".into(),
+                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like body"),
+            })
+            .is_invalid_input()
+        );
+        assert!(!exit("boom").is_invalid_input());
+
+        // Resource not found: gh/glab exit phrasings + the Gitea parse-miss.
+        assert!(
+            exit("GraphQL: Could not resolve to a PullRequest with the number of 9999")
+                .is_resource_not_found()
+        );
+        assert!(exit("404 Not Found").is_resource_not_found());
+        assert!(exit("release not found").is_resource_not_found()); // gh release miss
+        assert!(
+            Error::Forge(processkit::Error::Parse {
+                program: "tea".into(),
+                message: "no pull request #9999 in `tea pr list`".into(),
+            })
+            .is_resource_not_found()
+        );
+        // A missing binary is `is_not_found`, NOT resource-not-found; and neither
+        // classifies a generic error.
+        let missing = Error::Forge(processkit::Error::NotFound {
+            program: "gh".into(),
+            searched: None,
+        });
+        assert!(missing.is_not_found() && !missing.is_resource_not_found());
+        assert!(!exit("some other error").is_resource_not_found());
+        assert!(!exit("some other error").is_invalid_input());
     }
 }

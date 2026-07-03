@@ -16,6 +16,13 @@ crates; tag releases as `vcs-forge-v<version>`.
   CLI's output, so a caller (or a language binding) can map them to dedicated
   errors instead of string-matching `stderr`. Conservative/phrase-based: a miss
   degrades to a generic forge error.
+- **`Error::is_invalid_input()`** and **`Error::is_resource_not_found()`** classifiers.
+  `is_invalid_input` recognizes a bad argument the facade refused (the facade's
+  `InvalidInput`, or a wrapper guard like a flag-like Gitea comment body).
+  `is_resource_not_found` recognizes a referenced PR/MR/issue/repo/release that
+  doesn't exist (high-precision `gh`/`glab` phrasings + the Gitea `pr_view` miss),
+  distinct from the `gh`/`glab`/`tea` *binary* being missing (`is_not_found`). A
+  binding maps them to `ValueError` / `NotFoundError`. (`docs/audit-2026-07.md` A2, A3.)
 - `Forge::github_with_token(cwd, token)` and `Forge::gitlab_with_token(cwd, token)`
   convenience constructors — a real-runner handle that authenticates with an explicit
   token (injected as `GH_TOKEN` / `GITLAB_TOKEN`) instead of the CLI's ambient login,

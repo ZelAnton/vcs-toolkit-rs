@@ -439,6 +439,23 @@ pub fn is_lock_contention(err: &Error) -> bool {
     exit_output_matches(err, LOCK_CONTENTION_MARKERS)
 }
 
+/// Whether `err` is an **input rejection** — a bad caller argument, encoded as an
+/// [`Error::Spawn`] whose source is `io::ErrorKind::InvalidInput`. This is the
+/// pattern the toolkit's own argument guards raise ([`reject_flag_like`] and the
+/// validating newtypes `RefName`/`RevSpec`/`RevsetExpr`) for a value that would be
+/// misparsed as a flag, is empty, or contains a NUL — and it also covers the
+/// spawn-time `InvalidInput` the OS raises for an un-spawnable argument (an interior
+/// NUL in a flag-value, or Windows' batch-arg-escaping refusal). All are genuine
+/// bad input, distinct from a real spawn failure (missing binary → `NotFound`, no
+/// perms → `PermissionDenied`) or a non-zero exit. A binding maps this to a
+/// `ValueError`; the facades re-expose it as `Error::is_invalid_input()`.
+pub fn is_invalid_input(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput
+    )
+}
+
 /// A bounded retry strategy: how many attempts, the (exponential) backoff between
 /// them, and whether to add full jitter. Used by [`ManagedClient`] to retry
 /// [`is_lock_contention`] failures. The [`Default`] is [`none`](RetryPolicy::none)
@@ -1117,6 +1134,38 @@ mod tests {
                 !is_lock_contention(e),
                 "should NOT be lock contention: {e:?}"
             );
+        }
+    }
+
+    #[test]
+    fn classifies_invalid_input_from_the_guards() {
+        // What `reject_flag_like` / the newtypes actually produce.
+        let rejected = reject_flag_like("git", "reference", "-x").unwrap_err();
+        assert!(
+            is_invalid_input(&rejected),
+            "guard rejection is invalid input"
+        );
+        assert!(is_invalid_input(
+            &reject_flag_like("git", "x", "").unwrap_err()
+        ));
+
+        // A real spawn failure (missing binary), a non-zero exit, and a timeout are
+        // NOT invalid input — they're environment/usage failures, not a bad argument.
+        let not_input = [
+            Error::Spawn {
+                program: "git".into(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            },
+            exit("git", 1, "fatal: not a git repository"),
+            Error::Timeout {
+                program: "git".into(),
+                timeout: Duration::from_secs(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        ];
+        for e in &not_input {
+            assert!(!is_invalid_input(e), "should NOT be invalid input: {e:?}");
         }
     }
 

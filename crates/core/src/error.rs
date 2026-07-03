@@ -72,6 +72,37 @@ impl Error {
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::Vcs(e) if e.is_not_found())
     }
+
+    /// Whether this is an **input rejection** — a value the facade refused *before*
+    /// spawning, because it was a bad argument: a flag-like/empty/NUL-containing
+    /// value in a guarded positional slot (via the wrapper guards), or a facade-level
+    /// precondition on the arguments (an empty file set for `commit_paths`, removing
+    /// the main workspace). This is a **caller bug**, distinct from a real IO or
+    /// backend failure — a language binding maps it to a `ValueError`. Completes the
+    /// `is_*` classifier family alongside [`is_not_found`](Error::is_not_found).
+    pub fn is_invalid_input(&self) -> bool {
+        match self {
+            Error::Io(e) => e.kind() == std::io::ErrorKind::InvalidInput,
+            Error::Vcs(e) => vcs_cli_support::is_invalid_input(e),
+            _ => false,
+        }
+    }
+
+    /// Whether a **resource the operation named doesn't exist** — currently a
+    /// worktree/workspace lookup by path that matched no attached worktree
+    /// ([`WorktreeNotFound`](Error::WorktreeNotFound)). Distinct from
+    /// [`is_not_found`](Error::is_not_found), which means the `git`/`jj` **binary**
+    /// wasn't found (a setup problem), and from [`is_invalid_input`](Error::is_invalid_input)
+    /// (a bad argument). A binding maps this to a `NotFoundError`.
+    ///
+    /// Note the backend asymmetry: only the **jj** backend raises the typed
+    /// `WorktreeNotFound`; git's missing-worktree removal surfaces as a generic
+    /// backend `Exit`, which this does not classify. (Likewise the main-workspace
+    /// refusal that [`is_invalid_input`](Error::is_invalid_input) recognizes is a
+    /// typed error only on jj.)
+    pub fn is_resource_not_found(&self) -> bool {
+        matches!(self, Error::WorktreeNotFound(_))
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -157,5 +188,42 @@ mod tests {
         });
         assert!(!exit.is_not_found());
         assert!(!Error::NotARepository("/x".into()).is_not_found());
+    }
+
+    #[test]
+    fn is_invalid_input_for_guard_rejections_and_facade_input_errors() {
+        // A wrapper guard rejection (flag-like positional) surfaces as invalid input.
+        let guarded = Error::Vcs(processkit::Error::Spawn {
+            program: "git".into(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like"),
+        });
+        assert!(guarded.is_invalid_input());
+        // The facade's own `Io(InvalidInput)` guard (e.g. an empty commit set) too.
+        assert!(
+            Error::Io(std::io::Error::from(std::io::ErrorKind::InvalidInput)).is_invalid_input()
+        );
+        // A real spawn failure, a detection error, and a generic io error are NOT.
+        assert!(
+            !Error::Vcs(processkit::Error::Spawn {
+                program: "git".into(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            })
+            .is_invalid_input()
+        );
+        assert!(!Error::NotARepository("/x".into()).is_invalid_input());
+        assert!(!Error::Io(std::io::Error::other("disk full")).is_invalid_input());
+    }
+
+    #[test]
+    fn is_resource_not_found_only_for_a_worktree_lookup() {
+        assert!(Error::WorktreeNotFound("/wt".into()).is_resource_not_found());
+        // The *binary* missing is a different classifier (is_not_found), and a bad
+        // repo path is neither.
+        let missing_bin = Error::Vcs(processkit::Error::NotFound {
+            program: "jj".into(),
+            searched: None,
+        });
+        assert!(missing_bin.is_not_found() && !missing_bin.is_resource_not_found());
+        assert!(!Error::NotARepository("/x".into()).is_resource_not_found());
     }
 }

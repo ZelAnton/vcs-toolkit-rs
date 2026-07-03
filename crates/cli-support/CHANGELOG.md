@@ -24,6 +24,11 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   instance it builds. `vcs-git` uses it to drop the repo-redirector vars (`GIT_DIR`,
   …) so a value leaking from the parent process can't retarget commands.
   (`docs/audit-2026-07.md` H4.)
+- **`is_invalid_input(err)`** classifier — recognizes an input rejection from the
+  argument guards (`reject_flag_like` / the validating newtypes), encoded as an
+  `Error::Spawn` with `io::ErrorKind::InvalidInput`. Lets a caller/binding surface a
+  bad argument as a `ValueError`, distinct from a real spawn/OS failure.
+  (`docs/audit-2026-07.md` A2.)
 
 ### Fixed
 - **Corrected the jj lock-contention markers and made the git one locale-stable.**
