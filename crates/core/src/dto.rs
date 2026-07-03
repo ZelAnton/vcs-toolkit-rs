@@ -37,6 +37,36 @@ impl WorktreeRemove {
     }
 }
 
+/// Options for [`Repo::delete_branch`](crate::Repo::delete_branch).
+///
+/// `#[non_exhaustive]`, so build it through [`BranchDelete::new`] and the chained
+/// [`force`](BranchDelete::force) setter rather than a struct literal.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct BranchDelete {
+    /// The local branch (git) / bookmark (jj) name to delete.
+    pub name: String,
+    /// Delete even if not fully merged — git `branch -D` vs `-d`. **git only**: jj has
+    /// no force flag for `bookmark delete` and ignores it.
+    pub force: bool,
+}
+
+impl BranchDelete {
+    /// Delete branch/bookmark `name`; not forced (git refuses an unmerged branch).
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            force: false,
+        }
+    }
+
+    /// Delete even if not fully merged (git only).
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
 /// Which version-control tool backs a [`Repo`](crate::Repo).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

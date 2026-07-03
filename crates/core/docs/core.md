@@ -219,7 +219,7 @@ files, so it has no untracked concept and this is identical to
 ## Branch mutations
 
 ```rust,ignore
-pub async fn delete_branch(&self, name: &str, force: bool) -> Result<()>;
+pub async fn delete_branch(&self, spec: BranchDelete) -> Result<()>; // BranchDelete::new(name)[.force()]
 pub async fn rename_branch(&self, old: &str, new: &str)     -> Result<()>;
 ```
 

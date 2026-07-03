@@ -181,8 +181,8 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
-    RepoSnapshot, UpstreamTracking, WorktreeInfo, WorktreeRemove,
+    BackendKind, BranchDelete, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe,
+    OperationState, RepoSnapshot, UpstreamTracking, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 
@@ -521,12 +521,15 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
-    /// Delete a local branch (git) / bookmark (jj). `force` applies to git only
-    /// (`branch -D` vs `-d`); jj has no force and ignores it.
-    pub async fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
+    /// Delete a local branch (git) / bookmark (jj). The [`BranchDelete`] spec's
+    /// [`force`](BranchDelete::force) applies to git only (`branch -D` vs `-d`); jj
+    /// has no force and ignores it.
+    pub async fn delete_branch(&self, spec: BranchDelete) -> Result<()> {
         match &self.backend {
-            Backend::Git(g) => git_backend::delete_branch(g, &self.cwd, name, force).await,
-            Backend::Jj(j) => jj_backend::delete_branch(j, &self.cwd, name).await,
+            Backend::Git(g) => {
+                git_backend::delete_branch(g, &self.cwd, &spec.name, spec.force).await
+            }
+            Backend::Jj(j) => jj_backend::delete_branch(j, &self.cwd, &spec.name).await,
         }
     }
 
@@ -936,7 +939,7 @@ facade_trait! {
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
         fn conflicted_files() -> Result<Vec<String>>;
-        fn delete_branch(name: &str, force: bool) -> Result<()>;
+        fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
@@ -1728,6 +1731,45 @@ mod tests {
         assert_eq!(
             jrec.only_call().args_str(),
             ["edit", "feat", "--color", "never"]
+        );
+    }
+
+    // A1: `delete_branch` takes a `BranchDelete` spec; `.force()` threads through to
+    // git's `-D` (vs `-d`), and jj ignores it (its `bookmark delete` has no force).
+    #[tokio::test]
+    async fn delete_branch_spec_threads_force_to_git_only() {
+        use processkit::testing::RecordingRunner;
+        let forced = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&forced))
+            .delete_branch(BranchDelete::new("feat").force())
+            .await
+            .unwrap();
+        assert!(
+            forced.only_call().args_str().iter().any(|a| a == "-D"),
+            "force → branch -D"
+        );
+
+        let unforced = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&unforced))
+            .delete_branch(BranchDelete::new("feat"))
+            .await
+            .unwrap();
+        assert!(
+            unforced.only_call().args_str().iter().any(|a| a == "-d"),
+            "no force → branch -d"
+        );
+
+        let jj = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jj))
+            .delete_branch(BranchDelete::new("feat").force())
+            .await
+            .unwrap();
+        assert!(
+            !jj.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "-D" || a == "--force"),
+            "jj bookmark delete has no force flag"
         );
     }
 

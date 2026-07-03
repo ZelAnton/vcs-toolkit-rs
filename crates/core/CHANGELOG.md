@@ -26,6 +26,10 @@ crates; tag releases as `vcs-core-v<version>`.
   site, and `#[non_exhaustive]` so future options don't re-break the signature. Behavior
   is unchanged (the main-workspace refusal and the dirty-guard still apply). First of
   the pre-1.0 bare-bool→spec conversions. (`docs/audit-2026-07.md` A1.)
+- **`Repo::delete_branch` takes a `BranchDelete` spec, not a bare `force` bool
+  (breaking).** `delete_branch(name, true)` → `delete_branch(BranchDelete::new(name).force())`.
+  `force` is git-only (`branch -D` vs `-d`); jj has no force and ignores it. Behavior
+  unchanged. (`docs/audit-2026-07.md` A1.)
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). Crossing
   processkit's 1.0 makes the re-exported `processkit` (`vcs_core::processkit`, incl.
   `Error`/`ProcessResult`) 1.x — **breaking** for a downstream that pins `processkit`
