@@ -76,6 +76,16 @@ crates; tag releases as `vcs-git-v<version>`.
   removes a `dest` it could have created (absent, or an empty directory) on failure,
   but **never** a non-empty pre-existing directory (git refuses to clone into one, so
   the caller's data is untouched). (`docs/audit-2026-07.md` R7.)
+- **`status` no longer emits a phantom entry for a worktree rename.** `parse_porcelain`
+  only consumed a rename/copy's source record when `R`/`C` sat in the **index** column
+  (`R `); git also emits it in the **worktree** column (` R`, ` C`), whose source path
+  then leaked out as a bogus `StatusEntry` with a garbage code/path. Both columns are
+  now checked. (`docs/audit-2026-07.md` M11.)
+- **`rev_parse` now passes `--verify`, so a non-revision errors instead of resolving
+  to a fake id.** `git rev-parse Makefile` (a filename, not a rev) exited 0 echoing
+  `"Makefile"` back; `rev_parse` now requires `rev` to name exactly one object (a valid
+  revision still resolves to the same full hash). Matches `rev_parse_short` /
+  `resolve_commit`, which already verify. (`docs/audit-2026-07.md` M13.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

@@ -115,9 +115,12 @@ pub(crate) fn parse_porcelain(output: &str) -> Vec<StatusEntry> {
         let (Some(code), Some(path)) = (rec.get(..2), rec.get(3..)) else {
             continue;
         };
-        // A rename/copy (R/C in the index column) carries its source path as the
-        // immediately following NUL record; consume it.
-        let old_path = if matches!(rec.as_bytes().first(), Some(b'R' | b'C')) {
+        // A rename/copy carries its source path as the immediately following NUL
+        // record; consume it. The `R`/`C` can sit in EITHER status column — the index
+        // column (`R ` staged rename) or the worktree column (` R` worktree rename) —
+        // so check both. Missing the ` R`/` C` case left the source record as a
+        // phantom entry with a garbage `code`/`path` (M11).
+        let old_path = if matches!(code.as_bytes(), [b'R' | b'C', _] | [_, b'R' | b'C']) {
             records.next().map(str::to_string)
         } else {
             None
@@ -466,6 +469,31 @@ mod tests {
                     old_path: None,
                 },
             ]
+        );
+    }
+
+    // M11: a rename/copy in the WORKTREE column (` R`/` C`, not just the index `R `)
+    // must also consume its source record — otherwise the source became a phantom
+    // entry with a garbage code/path.
+    #[test]
+    fn porcelain_parses_worktree_rename_in_the_y_column() {
+        // ` R new\0old\0` — space in X, R in Y (a worktree rename).
+        let got = parse_porcelain(" R new.rs\0old.rs\0 M other.rs\0");
+        assert_eq!(
+            got,
+            vec![
+                StatusEntry {
+                    code: " R".into(),
+                    path: "new.rs".into(),
+                    old_path: Some("old.rs".into()),
+                },
+                StatusEntry {
+                    code: " M".into(),
+                    path: "other.rs".into(),
+                    old_path: None,
+                },
+            ],
+            "the source record must be consumed, not left as a phantom entry"
         );
     }
 

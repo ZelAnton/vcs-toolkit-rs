@@ -616,7 +616,9 @@ pub trait GitApi: Send + Sync {
     /// so cross-backend code uses one signature. The `revspec` is guarded against
     /// being parsed as a flag.
     async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>>;
-    /// Resolve a revision to a full hash (`git rev-parse <rev>`).
+    /// Resolve a revision to a full hash (`git rev-parse --verify <rev>`). `--verify`
+    /// requires `rev` to name exactly one object, so a non-revision (e.g. a filename)
+    /// errors instead of being echoed back as a fake id.
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
     /// Resolve a revision to its abbreviated hash (`git rev-parse --short <rev>`) —
     /// e.g. to label a detached HEAD.
@@ -1075,8 +1077,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
         reject_flag_like("revision", rev)?;
+        // `--verify`: without it, `git rev-parse Makefile` echoes the *filename* back
+        // as a fake object id (exit 0), so a caller resolving an untrusted revision
+        // could get a non-hash. `--verify` requires `rev` to name exactly one object,
+        // erroring otherwise — a valid revision still resolves to the same full hash
+        // (M13; matches `rev_parse_short`/`resolve_commit`, which already `--verify`).
         self.core
-            .run(self.core.command_in(dir, ["rev-parse", rev]))
+            .run(self.core.command_in(dir, ["rev-parse", "--verify", rev]))
             .await
     }
 
@@ -2488,6 +2495,20 @@ mod tests {
         let out = git.rev_parse_short(Path::new("/r"), "HEAD").await.unwrap();
         assert_eq!(out, "a1b2c3d");
         assert_eq!(rec.only_call().args_str(), ["rev-parse", "--short", "HEAD"]);
+    }
+
+    // M13: `rev_parse` passes `--verify` so a non-revision (a filename) errors
+    // instead of being echoed back as a fake object id.
+    #[tokio::test]
+    async fn rev_parse_verifies_the_revision() {
+        let rec = RecordingRunner::replying(Reply::ok("deadbeef\n"));
+        let git = Git::with_runner(&rec);
+        let out = git.rev_parse(Path::new("/r"), "HEAD").await.unwrap();
+        assert_eq!(out, "deadbeef");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["rev-parse", "--verify", "HEAD"]
+        );
     }
 
     // A non-zero exit surfaces as a structured `Error::Exit`.
