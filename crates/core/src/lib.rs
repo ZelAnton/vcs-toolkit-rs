@@ -182,7 +182,7 @@ mod jj_backend;
 
 pub use dto::{
     BackendKind, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
-    RepoSnapshot, UpstreamTracking, WorktreeInfo,
+    RepoSnapshot, UpstreamTracking, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 
@@ -775,19 +775,23 @@ impl<R: ProcessRunner> Repo<R> {
     /// [`Error::WorktreeNotFound`]. (For the best-effort, never-erroring variant,
     /// see [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
     ///
-    /// `force` mirrors git's `worktree remove`: with `force = false` a worktree
-    /// that still has **uncommitted changes** is refused (`Err`) rather than
-    /// deleted, so a stray edit isn't silently lost — pass `force = true` to
-    /// remove it anyway. On **jj** the changes are snapshotted into the op log
-    /// before the check, so a refusal keeps them recoverable; note that checking
-    /// spawns a jj command in the target workspace, so a genuinely stale working
-    /// copy can surface an error under `force = false` (use `force = true` there).
-    /// The repository's **main** workspace is always refused (it can't be removed
-    /// without destroying the repo), regardless of `force`.
-    pub async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()> {
+    /// The [`WorktreeRemove`] spec's [`force`](WorktreeRemove::force) mirrors git's
+    /// `worktree remove`: without it a worktree that still has **uncommitted changes**
+    /// is refused (`Err`) rather than deleted, so a stray edit isn't silently lost —
+    /// build `WorktreeRemove::new(path).force()` to remove it anyway. On **jj** the
+    /// changes are snapshotted into the op log before the check, so a refusal keeps
+    /// them recoverable; note that checking spawns a jj command in the target
+    /// workspace, so a genuinely stale working copy can surface an error without
+    /// `force` (use `.force()` there). The repository's **main** workspace is always
+    /// refused (it can't be removed without destroying the repo), regardless of `force`.
+    pub async fn remove_worktree(&self, spec: WorktreeRemove) -> Result<()> {
         match &self.backend {
-            Backend::Git(g) => git_backend::remove_worktree(g, &self.cwd, path, force).await,
-            Backend::Jj(j) => jj_backend::remove_worktree(j, &self.cwd, path, force).await,
+            Backend::Git(g) => {
+                git_backend::remove_worktree(g, &self.cwd, &spec.path, spec.force).await
+            }
+            Backend::Jj(j) => {
+                jj_backend::remove_worktree(j, &self.cwd, &spec.path, spec.force).await
+            }
         }
     }
 
@@ -950,7 +954,7 @@ facade_trait! {
         fn in_progress_state() -> Result<OperationState>;
         fn list_worktrees() -> Result<Vec<WorktreeInfo>>;
         fn create_worktree(path: &Path, branch: &str, base: &str) -> Result<CreateOutcome>;
-        fn remove_worktree(path: &Path, force: bool) -> Result<()>;
+        fn remove_worktree(spec: WorktreeRemove) -> Result<()>;
     }
 }
 
@@ -1327,7 +1331,7 @@ mod tests {
         );
         // `/repo/ws1` does not exist on disk, so the dir-removal step is skipped and
         // the forget error is the sole outcome.
-        let res = repo.remove_worktree(Path::new("/repo/ws1"), false).await;
+        let res = repo.remove_worktree(WorktreeRemove::new("/repo/ws1")).await;
         assert!(res.is_err(), "a forget failure is surfaced, not swallowed");
     }
 
@@ -1349,7 +1353,7 @@ mod tests {
                 ),
         );
         let err = repo
-            .remove_worktree(Path::new("/repo"), true)
+            .remove_worktree(WorktreeRemove::new("/repo").force())
             .await
             .expect_err("the main workspace must be refused");
         assert!(
@@ -1379,7 +1383,7 @@ mod tests {
             ),
         );
         let err = repo
-            .remove_worktree(tmp.path(), false)
+            .remove_worktree(WorktreeRemove::new(tmp.path()))
             .await
             .expect_err("a dirty workspace must be refused without force");
         assert!(
@@ -1414,7 +1418,7 @@ mod tests {
                     .on(["jj", "workspace", "forget"], Reply::ok("")),
             ),
         );
-        repo.remove_worktree(&ws, true)
+        repo.remove_worktree(WorktreeRemove::new(ws.clone()).force())
             .await
             .expect("force removes a dirty worktree");
         assert!(!ws.exists(), "the worktree directory was removed");
@@ -1444,7 +1448,7 @@ mod tests {
             ),
         );
         let err = repo
-            .remove_worktree(tmp.path(), true)
+            .remove_worktree(WorktreeRemove::new(tmp.path()).force())
             .await
             .expect_err("a renamed store-owning workspace is still refused");
         assert!(

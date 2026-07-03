@@ -344,7 +344,7 @@ progress.
 ```rust,ignore
 pub async fn list_worktrees(&self)  -> Result<Vec<WorktreeInfo>>;
 pub async fn create_worktree(&self, path: &Path, branch: &str, base: &str) -> Result<CreateOutcome>;
-pub async fn remove_worktree(&self, path: &Path, force: bool) -> Result<()>;
+pub async fn remove_worktree(&self, spec: WorktreeRemove) -> Result<()>; // WorktreeRemove::new(path)[.force()]
 pub fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()>;
 ```
 
@@ -379,11 +379,11 @@ method it still **refuses the main workspace** (a repo-wipe is never intended).
 
 ```rust,no_run
 # use std::path::Path;
-# use vcs_core::CreateOutcome;
+# use vcs_core::{CreateOutcome, WorktreeRemove};
 # async fn f(repo: vcs_core::Repo) -> vcs_core::Result<()> {
 let out = repo.create_worktree(Path::new("/tmp/feat"), "feature", "main").await?;
 assert_eq!(out, CreateOutcome::Plain);
-repo.remove_worktree(Path::new("/tmp/feat"), false).await?;
+repo.remove_worktree(WorktreeRemove::new("/tmp/feat")).await?; // add `.force()` to remove a dirty one
 # Ok(()) }
 ```
 

@@ -1,8 +1,41 @@
-//! Backend-agnostic data types the facade returns, generalising the per-tool
-//! shapes of `vcs-git` and `vcs-jj` into one set a consumer can use without
-//! knowing which backend is in play.
+//! Backend-agnostic data types the facade returns — plus the option **specs** it
+//! accepts — generalising the per-tool shapes of `vcs-git` and `vcs-jj` into one set
+//! a consumer can use without knowing which backend is in play.
 
 use std::path::PathBuf;
+
+/// Options for [`Repo::remove_worktree`](crate::Repo::remove_worktree).
+///
+/// `#[non_exhaustive]`, so build it through [`WorktreeRemove::new`] and the chained
+/// [`force`](WorktreeRemove::force) setter rather than a struct literal — a bare
+/// `bool` at the call site (`remove_worktree(path, true)`) doesn't say what `true`
+/// means, and this leaves room to add options without a breaking signature change.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct WorktreeRemove {
+    /// The attached worktree (git) / secondary workspace (jj) path to remove.
+    pub path: PathBuf,
+    /// Remove even when the worktree has uncommitted changes — git `worktree remove
+    /// --force`; on jj, the snapshot-and-refuse-if-dirty guard is bypassed. The
+    /// repository's **main** worktree/workspace is refused regardless of this flag.
+    pub force: bool,
+}
+
+impl WorktreeRemove {
+    /// Remove the worktree/workspace at `path`; not forced (refuses a dirty one).
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            force: false,
+        }
+    }
+
+    /// Remove even when the worktree has uncommitted changes.
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
 
 /// Which version-control tool backs a [`Repo`](crate::Repo).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

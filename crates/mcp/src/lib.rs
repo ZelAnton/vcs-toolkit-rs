@@ -625,10 +625,11 @@ impl VcsMcpServer {
         Parameters(p): Parameters<RemoveWorktreeParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_remove_worktree").await?;
-        self.repo
-            .remove_worktree(Path::new(&p.path), p.force)
-            .await
-            .map_err(core_err)?;
+        let mut spec = vcs_core::WorktreeRemove::new(Path::new(&p.path));
+        if p.force {
+            spec = spec.force();
+        }
+        self.repo.remove_worktree(spec).await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "removed": p.path }))
     }
 
