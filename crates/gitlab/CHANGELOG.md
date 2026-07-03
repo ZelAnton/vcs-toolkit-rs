@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.3.0] - 2026-07-03
+
+### Added
 - Re-export of `processkit::ProcessRunner` and `JobRunner` (`vcs_gitlab::{ProcessRunner,
   JobRunner}`) — so a consumer naming the client's runner type parameter (for
   `with_runner`, or to write a custom `ProcessRunner`) needn't add a direct `processkit`
@@ -159,6 +170,7 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `mr_list` passes `--per-page 100` — glab's default of 30 silently truncated
   larger result sets. The cap is now explicit and documented.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.3.0...HEAD
+[0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.2.0...vcs-gitlab-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.1.0...vcs-gitlab-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-gitlab-v0.1.0

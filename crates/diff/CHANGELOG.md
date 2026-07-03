@@ -10,6 +10,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.3.0] - 2026-07-03
+
+### Added
 - **`DiffSpec`** — the diff-request enum (`WorkingTree` / `Rev(String)`) that a
   wrapper's `diff`/`diff_text` takes, hoisted here from `vcs-git`/`vcs-jj` so both
   backends share one definition (re-exported as `vcs_git::DiffSpec` /
@@ -68,6 +79,7 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.3.0...HEAD
+[0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.2.0...vcs-diff-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.1.0...vcs-diff-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-diff-v0.1.0

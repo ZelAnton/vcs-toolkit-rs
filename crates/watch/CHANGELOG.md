@@ -10,6 +10,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.3.0] - 2026-07-03
+
+### Added
 - `Error::is_transient()` and `Error::is_not_found()` classifiers — delegate through
   the wrapped `vcs-core` error so a caller can branch on a transient io/spawn hiccup
   or a missing `git`/`jj` binary without hand-walking the nesting. Mirrors the
@@ -134,6 +145,7 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.3.0...HEAD
+[0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.2.0...vcs-watch-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.1.0...vcs-watch-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-watch-v0.1.0

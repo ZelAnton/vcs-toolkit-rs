@@ -1,6 +1,6 @@
 [package]
 name = "vcs-core"
-version = "0.4.0"
+version = "0.5.0"
 description = "One async Rust API over Git and Jujutsu: repo auto-detection plus a unified, backend-agnostic VCS handle (status, branches, worktrees, snapshots)."
 edition.workspace = true
 rust-version.workspace = true
@@ -17,12 +17,12 @@ categories = ["command-line-utilities","api-bindings","asynchronous","developmen
 processkit.workspace = true
 # The typed per-tool clients this crate dispatches between. Path within the
 # workspace; `version` is used when published independently.
-vcs-git = { path = "../git", version = "0.6" }
-vcs-jj = { path = "../jj", version = "0.6" }
+vcs-git = { path = "../git", version = "0.7" }
+vcs-jj = { path = "../jj", version = "0.7" }
 # Shared diff DTOs (`ChangeKind`/`DiffStat` re-exported here, so the facade and
 # the backends use one type, no remap) and the error classifiers.
-vcs-diff = { path = "../diff", version = "0.2" }
-vcs-cli-support = { path = "../cli-support", version = "0.2" }
+vcs-diff = { path = "../diff", version = "0.3" }
+vcs-cli-support = { path = "../cli-support", version = "0.3" }
 # `async fn` in the object-safe `VcsRepo` trait, so a consumer can hold a
 # `Box<dyn VcsRepo>` / `&dyn VcsRepo` instead of threading the runner generic.
 async-trait = "0.1"

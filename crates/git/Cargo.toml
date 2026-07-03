@@ -1,6 +1,6 @@
 [package]
 name = "vcs-git"
-version = "0.6.0"
+version = "0.7.0"
 description = "Automate Git from Rust: a typed, async wrapper that drives the real git CLI with its exact behavior, config, and credentials."
 edition.workspace = true
 rust-version.workspace = true
@@ -20,10 +20,10 @@ processkit.workspace = true
 # and `jj diff --git` are byte-identical, so the parser is shared not duplicated).
 # Re-exports `vcs_diff::DiffSpec` (added after 0.2.0): vcs-diff's NEXT release must
 # be >= minor so `cargo set-version` widens this floor past 0.2.0 at release time.
-vcs-diff = { path = "../diff", version = "0.2" }
+vcs-diff = { path = "../diff", version = "0.3" }
 # Shared processkit-coupled plumbing: the argv injection guard, fetch-retry
 # policy, and the error classifiers (re-exported below).
-vcs-cli-support = { path = "../cli-support", version = "0.2" }
+vcs-cli-support = { path = "../cli-support", version = "0.3" }
 # `async fn` in the object-safe `GitApi` trait (dyn + mockall friendly).
 async-trait = "0.1"
 # Auto-generated `MockGitApi` for consumers' tests. Test-only — enabled only via

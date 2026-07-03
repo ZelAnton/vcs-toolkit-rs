@@ -13,6 +13,17 @@ crates; tag releases as `vcs-testkit-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.3.0] - 2026-07-03
+
+### Added
+-
+
+### Changed
 - **Docs:** the testing guide gained a "Testing through a language binding (FFI)"
   section — the runner seam (`with_runner` + `processkit`'s `ScriptedRunner`) is the
   one that crosses an FFI boundary, so a binding (e.g. `vcs-toolkit-py`) wraps it
@@ -62,6 +73,7 @@ crates; tag releases as `vcs-testkit-v<version>`.
   hooks a test installs on purpose still run (`core.hooksPath` is deliberately
   not touched).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.2.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.3.0...HEAD
+[0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.2.0...vcs-testkit-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.1.0...vcs-testkit-v0.2.0
 [0.1.0]: https://github.com/ZelAnton/vcs-toolkit-rs/releases/tag/vcs-testkit-v0.1.0
