@@ -1274,11 +1274,25 @@ mod tests {
                     Reply::ok("default\tc0ffee\tmain\nws1\tdecaf0\t\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "default"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
                     Reply::ok("/repo\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "ws1"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
                     Reply::ok("/repo/ws1\n"),
                 ),
         );
@@ -1301,11 +1315,25 @@ mod tests {
                     Reply::ok("default\tc0ffee\tmain\ngone\tdecaf0\t\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "default"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
                     Reply::ok("/repo\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "gone"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "gone",
+                    ],
                     Reply::fail(1, "Error: No such workspace"),
                 ),
         );
@@ -1323,7 +1351,14 @@ mod tests {
             ScriptedRunner::new()
                 .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
                 .on(
-                    ["jj", "workspace", "root", "--name", "ws1"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
                     Reply::ok("/repo/ws1\n"),
                 )
                 .on(
@@ -1350,7 +1385,14 @@ mod tests {
                     Reply::ok("default\tc0ffee\t\n"),
                 )
                 .on(
-                    ["jj", "workspace", "root", "--name", "default"],
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
                     Reply::ok("/repo\n"),
                 ),
         );
@@ -1377,7 +1419,14 @@ mod tests {
                 ScriptedRunner::new()
                     .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
                     .on(
-                        ["jj", "workspace", "root", "--name", "ws1"],
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "ws1",
+                        ],
                         Reply::ok(format!("{root}\n")),
                     )
                     // `current_change` → 3rd field `false` = not empty = dirty.
@@ -1414,7 +1463,14 @@ mod tests {
                 ScriptedRunner::new()
                     .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
                     .on(
-                        ["jj", "workspace", "root", "--name", "ws1"],
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "ws1",
+                        ],
                         Reply::ok(format!("{ws_str}\n")),
                     )
                     .on(["jj", "workspace", "forget"], Reply::ok("")),
@@ -1444,7 +1500,14 @@ mod tests {
                 ScriptedRunner::new()
                     .on(["jj", "workspace", "list"], Reply::ok("mainws\tc0ffee\t\n"))
                     .on(
-                        ["jj", "workspace", "root", "--name", "mainws"],
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "mainws",
+                        ],
                         Reply::ok(format!("{root}\n")),
                     ),
             ),
