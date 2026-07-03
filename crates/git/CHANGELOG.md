@@ -59,6 +59,11 @@ crates; tag releases as `vcs-git-v<version>`.
   the translated `': File exists'` suffix), with a `refs/` guard that still excludes
   per-ref locks (unsafe to retry mid-way through a multi-ref push/fetch).
   (`docs/audit-2026-07.md` H2.)
+- **`show_file` and `diff_text` no longer strip trailing bytes.** They return git's
+  output **verbatim** (via `run_untrimmed`) instead of `trim_end`, so a blob's
+  trailing newline(s) survive a read-modify-write round-trip and a diff's last hunk
+  stays in sync with its `@@` line count. (Behavior change: a caller that relied on
+  the old trimming should trim itself.) (`docs/audit-2026-07.md` H7.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a

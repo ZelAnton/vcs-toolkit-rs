@@ -29,6 +29,9 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   `Error::Spawn` with `io::ErrorKind::InvalidInput`. Lets a caller/binding surface a
   bad argument as a `ValueError`, distinct from a real spawn/OS failure.
   (`docs/audit-2026-07.md` A2.)
+- **`ManagedClient::run_untrimmed`** — like `run`, but returns stdout **verbatim**
+  (no `trim_end`), for content-returning verbs where a trailing newline is part of
+  the value. Exit-checked; no lock-retry. (`docs/audit-2026-07.md` H7.)
 
 ### Fixed
 - **Corrected the jj lock-contention markers and made the git one locale-stable.**

@@ -820,6 +820,20 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self.inner.output_string(cmd).await
     }
 
+    /// Like [`run`](Self::run), but returns stdout **verbatim** — no `trim_end`.
+    /// For **content**-returning verbs (a file's bytes at a rev, a diff, a raw
+    /// template render) where the trailing newline(s) are part of the value, not
+    /// noise: trimming them corrupts a read-modify-write round-trip and desyncs a
+    /// diff's last hunk from its `@@` line count. Exit-checked like `run`; no
+    /// lock-retry (a content read is not a mutation).
+    pub async fn run_untrimmed(&self, call: impl IntoCommand<R>) -> Result<String> {
+        Ok(self
+            .output_string(call)
+            .await?
+            .ensure_success()?
+            .into_stdout())
+    }
+
     /// Like [`CliClient::probe`] (zero-or-nonzero exit → `bool`), with credential
     /// injection and lock-retry.
     pub async fn probe(&self, call: impl IntoCommand<R>) -> Result<bool> {

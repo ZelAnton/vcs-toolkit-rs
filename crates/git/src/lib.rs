@@ -1433,8 +1433,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // paths from — a user's `diff.noprefix` / `diff.mnemonicPrefix` config
         // would otherwise change the headers and make every file silently vanish
         // from the parse. (Command-line prefixes override both config options.)
+        // `run_untrimmed`: trimming the diff would drop a trailing blank context
+        // line, desyncing the last hunk from its `@@` line count for a consumer
+        // that re-applies or re-parses it (H7).
         self.core
-            .run(self.core.command_in(
+            .run_untrimmed(self.core.command_in(
                 dir,
                 [
                     "diff",
@@ -1826,8 +1829,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         #[cfg(windows)]
         let path = path.replace('\\', "/");
         let spec = format!("{rev}:{path}");
+        // `run_untrimmed`: a blob's trailing newline(s) are part of its content —
+        // trimming them corrupts a read-modify-write round-trip (H7).
         self.core
-            .run(self.core.command_in(dir, ["show", spec.as_str()]))
+            .run_untrimmed(self.core.command_in(dir, ["show", spec.as_str()]))
             .await
     }
 
@@ -3742,8 +3747,35 @@ mod tests {
             .show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
             .await
             .expect("show_file");
-        assert_eq!(out, "content");
+        // The blob's trailing newline is preserved verbatim (H7) — not trimmed.
+        assert_eq!(out, "content\n");
         assert_eq!(rec.only_call().args_str(), ["show", "HEAD:sub/dir/f.txt"]);
+    }
+
+    // H7: content verbs return git's output byte-for-byte — the round-trip-corrupting
+    // cases are multiple trailing newlines and a missing final newline.
+    #[tokio::test]
+    async fn content_verbs_preserve_exact_trailing_bytes() {
+        for raw in ["a\nb\n\n", "no-final-newline", "trailing spaces   \n"] {
+            let rec = RecordingRunner::replying(Reply::ok(raw));
+            let git = Git::with_runner(&rec);
+            let out = git
+                .show_file(Path::new("/r"), "HEAD", "f.txt")
+                .await
+                .expect("show_file");
+            assert_eq!(out, raw, "show_file returns bytes verbatim");
+        }
+        // diff_text is verbatim too (its trailing blank context line must survive so
+        // the last hunk stays in sync with its `@@` count).
+        let diff = "diff --git a/f b/f\n@@ -1,2 +1,2 @@\n-x\n+y\n \n";
+        let rec = RecordingRunner::replying(Reply::ok(diff));
+        let git = Git::with_runner(&rec);
+        assert_eq!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await
+                .expect("diff_text"),
+            diff
+        );
     }
 
     // On Unix a backslash is a legal filename byte — the spec must pass through

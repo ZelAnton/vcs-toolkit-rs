@@ -57,6 +57,12 @@ crates; tag releases as `vcs-jj-v<version>`.
   `"Failed to lock operation heads store"`. `Jj::with_retry`'s doc also notes that
   modern jj generally *blocks* on these locks rather than failing, so the retry
   catches only residual lock errors. (`docs/audit-2026-07.md` H2.)
+- **`file_show`, `diff_text`, and `template_query` no longer strip trailing bytes.**
+  They return jj's output **verbatim** (via `run_untrimmed`), so a file's trailing
+  newline(s) survive a read-modify-write round-trip, a diff's last hunk stays in sync
+  with its `@@` count, and a template that ends in `\n\n`/spaces is preserved.
+  `description` trims explicitly to keep its scalar contract. (Behavior change: a
+  caller that relied on the old trimming should trim itself.) (`docs/audit-2026-07.md` H7.)
 
 ## [0.6.0] - 2026-06-27
 

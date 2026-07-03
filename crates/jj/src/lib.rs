@@ -983,8 +983,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             DiffSpec::WorkingTree => "@".to_string(),
             DiffSpec::Rev(rev) => rev,
         };
+        // `run_untrimmed`: trimming the diff would drop a trailing blank context
+        // line, desyncing the last hunk from its `@@` line count for a consumer
+        // that re-parses/re-applies it — same as git's `diff_text` (H7).
         self.core
-            .run(self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]))
+            .run_untrimmed(self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]))
             .await
     }
 
@@ -1080,12 +1083,21 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         }
         args.push("-T".into());
         args.push(template.into());
-        self.core.run(self.cmd_in(dir, args)).await
+        // `run_untrimmed`: `template_query` is documented to return the template's
+        // **raw** stdout, so a template that deliberately ends in `\n\n` or trailing
+        // spaces (e.g. fixed-width joins) is preserved, not silently stripped (H7).
+        // Callers that want a scalar trim it themselves (see `description`).
+        self.core.run_untrimmed(self.cmd_in(dir, args)).await
     }
 
     async fn description(&self, dir: &Path, revset: &str) -> Result<String> {
-        self.template_query(dir, revset, "description", Some(1))
-            .await
+        // `template_query` is raw now (H7); `description` is a scalar, so strip the
+        // trailing newline jj appends to the `description` keyword (preserving the
+        // pre-H7 contract that this returns the description without a trailing EOL).
+        let out = self
+            .template_query(dir, revset, "description", Some(1))
+            .await?;
+        Ok(out.trim_end().to_string())
     }
 
     async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
@@ -1148,8 +1160,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // wrap it in the exact-path form. (`file annotate` is the opposite: it
         // takes a plain PATH and rejects the `file:"…"` form.)
         let fileset = JjFileset::path(path);
+        // `run_untrimmed`: a file's trailing newline(s) are part of its content;
+        // trimming corrupts a read-modify-write round-trip (H7).
         self.core
-            .run(self.cmd_in(dir, ["file", "show", "-r", revset, fileset.as_str()]))
+            .run_untrimmed(self.cmd_in(dir, ["file", "show", "-r", revset, fileset.as_str()]))
             .await
     }
 
@@ -2637,11 +2651,12 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].change_id, "kz");
         assert_eq!(lines[1].line, 2);
+        // H7: the file's trailing newline is preserved verbatim, not trimmed.
         assert_eq!(
             jj.file_show(Path::new("."), "@-", "src/a.rs")
                 .await
                 .unwrap(),
-            "content"
+            "content\n"
         );
         let calls = rec.calls();
         // The path follows a `--` separator (a leading-`-` filename stays safe);
@@ -2702,6 +2717,32 @@ mod tests {
                 "--color",
                 "never"
             ]
+        );
+    }
+
+    // H7: content verbs return jj's output byte-for-byte — the round-trip-corrupting
+    // cases are multiple trailing newlines, a missing final newline, and a diff whose
+    // last hunk ends in a blank context line.
+    #[tokio::test]
+    async fn content_verbs_preserve_exact_trailing_bytes() {
+        for raw in ["a\nb\n\n", "no-final-newline", "trailing   \n"] {
+            let rec = RecordingRunner::replying(Reply::ok(raw));
+            let jj = Jj::with_runner(&rec);
+            assert_eq!(
+                jj.file_show(Path::new("."), "@", "f.txt")
+                    .await
+                    .expect("file_show"),
+                raw
+            );
+        }
+        let diff = "diff --git a/f b/f\n@@ -1,2 +1,2 @@\n-x\n+y\n \n";
+        let rec = RecordingRunner::replying(Reply::ok(diff));
+        let jj = Jj::with_runner(&rec);
+        assert_eq!(
+            jj.diff_text(Path::new("."), DiffSpec::Rev("@".into()))
+                .await
+                .expect("diff_text"),
+            diff
         );
     }
 
