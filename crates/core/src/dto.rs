@@ -10,7 +10,7 @@ use std::path::PathBuf;
 /// [`force`](WorktreeRemove::force) setter rather than a struct literal — a bare
 /// `bool` at the call site (`remove_worktree(path, true)`) doesn't say what `true`
 /// means, and this leaves room to add options without a breaking signature change.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct WorktreeRemove {
     /// The attached worktree (git) / secondary workspace (jj) path to remove.
@@ -41,7 +41,7 @@ impl WorktreeRemove {
 ///
 /// `#[non_exhaustive]`, so build it through [`BranchDelete::new`] and the chained
 /// [`force`](BranchDelete::force) setter rather than a struct literal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct BranchDelete {
     /// The local branch (git) / bookmark (jj) name to delete.
