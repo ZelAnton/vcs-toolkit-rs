@@ -361,6 +361,12 @@ async fn op_log_evolog_and_annotate_cycle() {
     let ops = jj.op_log(dir, 5).await.expect("op_log");
     assert!(ops.len() >= 3, "init + snapshots/describes, got {ops:?}");
     assert!(ops.iter().all(|op| !op.id.is_empty()));
+    // A10: each op time is RFC-3339 with a colon offset — the HH:MM:SS time has two
+    // colons and the `%:z` offset adds a third (a `%z` `+0200` offset would have none).
+    assert!(
+        ops.iter().all(|op| op.time.matches(':').count() >= 3),
+        "op time carries an RFC-3339 colon offset: {ops:?}"
+    );
     assert!(
         ops.iter().any(|op| op.description.contains("describe")),
         "a describe op is listed: {ops:?}"

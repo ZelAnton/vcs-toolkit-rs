@@ -667,7 +667,7 @@ One `jj op log` row.
 | --- | --- | --- |
 | `id` | `String` | Short operation id — what `op restore`/`op undo` take. |
 | `user` | `String` | OS-level `user@host` that ran the operation (not the jj author). |
-| `time` | `String` | Start timestamp, ISO 8601 with offset. |
+| `time` | `String` | Start timestamp, RFC 3339 (colon offset, e.g. `…+02:00`). |
 | `description` | `String` | First line of the operation description (e.g. `new empty commit`). |
 
 ### `AnnotationLine`

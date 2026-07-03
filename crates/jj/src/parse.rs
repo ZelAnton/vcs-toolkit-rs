@@ -122,7 +122,7 @@ pub(crate) const EVOLOG_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\" 
 
 /// `jj op log -T` template: `id\tuser\tstart-time\tdescription`, one row per
 /// operation.
-pub(crate) const OP_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ user ++ \"\\t\" ++ time.start().format(\"%Y-%m-%dT%H:%M:%S%z\") ++ \"\\t\" ++ description.first_line() ++ \"\\n\"";
+pub(crate) const OP_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ user ++ \"\\t\" ++ time.start().format(\"%Y-%m-%dT%H:%M:%S%:z\") ++ \"\\t\" ++ description.first_line() ++ \"\\n\"";
 
 /// `jj file annotate -T` template: `change-id\tcontent`. Annotate emits one row
 /// per source line and separates them itself — no trailing `\n` here, or every
@@ -138,7 +138,10 @@ pub struct Operation {
     /// The OS-level `user@host` that ran the operation (not the configured
     /// jj author).
     pub user: String,
-    /// Start timestamp, ISO 8601 with offset.
+    /// Start timestamp, RFC 3339 (`%Y-%m-%dT%H:%M:%S` with a **colon** offset, e.g.
+    /// `2026-06-05T10:00:00+02:00`) — parseable by a strict RFC-3339 reader, matching
+    /// `vcs-git`'s `%aI` dates (jj's `%z` would emit `+0200`, which strict parsers
+    /// reject).
     pub time: String,
     /// First line of the operation description, e.g. `new empty commit`.
     pub description: String,
@@ -443,13 +446,14 @@ mod tests {
 
     #[test]
     fn operations_split_tab_fields() {
-        let out = "abc123\tuser@host\t2026-06-05T10:00:00+0200\tnew empty commit\n\
-                   def456\tuser@host\t2026-06-05T09:59:00+0200\tdescribe commit\twith tab\n";
+        // RFC-3339 colon offset, as the `%:z` template now emits (A10).
+        let out = "abc123\tuser@host\t2026-06-05T10:00:00+02:00\tnew empty commit\n\
+                   def456\tuser@host\t2026-06-05T09:59:00+02:00\tdescribe commit\twith tab\n";
         let ops = parse_operations(out);
         assert_eq!(ops.len(), 2);
         assert_eq!(ops[0].id, "abc123");
         assert_eq!(ops[0].user, "user@host");
-        assert_eq!(ops[0].time, "2026-06-05T10:00:00+0200");
+        assert_eq!(ops[0].time, "2026-06-05T10:00:00+02:00");
         assert_eq!(ops[0].description, "new empty commit");
         // A literal tab in the description survives (splitn keeps the tail).
         assert_eq!(ops[1].description, "describe commit\twith tab");

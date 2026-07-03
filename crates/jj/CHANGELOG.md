@@ -16,7 +16,13 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
--
+- **`Operation::time` (the `op_log` timestamp) is now valid RFC 3339.** The op-log
+  template formatted the offset with jj's `%z` (`+0200`) — which a **strict** RFC-3339
+  parser rejects (it requires the colon, `+02:00`). It now uses `%:z`, matching
+  `vcs-git`'s `%aI` dates, so both backends' timestamps parse uniformly. The string
+  shape changes (`+0200` → `+02:00`); a consumer doing an exact-string compare on the
+  raw timestamp should re-check, but any date parser is unaffected or fixed.
+  (`docs/audit-2026-07.md` A10.)
 
 ## [0.7.0] - 2026-07-03
 
