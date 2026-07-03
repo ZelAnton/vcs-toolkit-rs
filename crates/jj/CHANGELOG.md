@@ -16,6 +16,13 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **Docs:** `Jj::transaction` now documents two rollback caveats it left implicit — it
+  is **single-actor** (the `op_restore <pre>` rollback restores the *whole* repo view,
+  so a change another jj process landed between the capture and the restore is reverted
+  too), and a **cancelled `f` also cancels the rollback** (a fired `default_cancel_on`
+  token skips the restore, leaving the repo mid-transaction — run the restore yourself
+  on a token-free client if you need it to survive cancellation). No behavior change.
+  (`docs/audit-2026-07.md` M8.)
 - **`git_fetch`/`git_fetch_from`/`git_fetch_branch` run under `LC_ALL=C`, so a transient
   network failure is retried on a non-English locale.** jj's `git fetch` surfaces
   libc/gai/curl errors ("Temporary failure in name resolution"); a localized

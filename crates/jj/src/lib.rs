@@ -1580,9 +1580,20 @@ impl<R: ProcessRunner> Jj<R> {
     /// generic, which `mockall` / trait objects can't express.
     ///
     /// Caveats:
+    /// - **Single-actor.** The rollback is `op_restore <pre>`, which restores the
+    ///   **entire** repo view to the captured operation — so a change *another* jj
+    ///   process landed (a `describe`, a `bookmark move`, a commit) between the
+    ///   `op_head` capture and the restore is **also reverted**, not just `f`'s own
+    ///   work. Use this only when one actor drives the repo for the transaction's span.
     /// - Rollback runs on `Err` only — **not** on panic or cancellation (a
     ///   dropped future); there is no async `Drop`. Convert panics to `Err`
     ///   inside `f` if you need that safety.
+    /// - **A cancelled `f` also cancels the rollback.** If `f`'s `Err` is a *fired*
+    ///   cancellation (on a client built with `default_cancel_on`), the restore is
+    ///   dispatched to that same still-cancelled client and short-circuits before it
+    ///   spawns — so it is skipped and the repo is left mid-transaction. If you need the
+    ///   rollback to survive cancellation, run it yourself (capture `op_head`, then
+    ///   `op_restore` on a client **without** the cancel token) instead of this helper.
     /// - If the restore itself fails, the *original* error from `f` is returned
     ///   and the repo may be left mid-transaction; re-probe
     ///   [`op_head`](JjApi::op_head) to detect that.
