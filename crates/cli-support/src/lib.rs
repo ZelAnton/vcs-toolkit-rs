@@ -25,8 +25,10 @@
 //!   *intent* ("conflict, resolve it"; "nothing to commit, no-op"; "transient,
 //!   retry"; "another process holds the lock, retry") instead of matching on error
 //!   internals. They inspect captured [`Error::Exit`] output against fixed marker
-//!   lists (and treat a [`processkit`] [`Error::Timeout`] as transient); any
-//!   unfamiliar `#[non_exhaustive]` variant falls through to "no".
+//!   lists; a [`processkit`] [`Error::Timeout`] is **not** treated as a transient
+//!   fetch error (it already spent the full deadline — see
+//!   [`is_transient_fetch_error`]); any unfamiliar `#[non_exhaustive]` variant falls
+//!   through to "no".
 //! - **[`RetryPolicy`] / [`retry_async`] / [`ManagedClient`]** — an opt-in retry
 //!   strategy (attempts + exponential, jittered backoff) for **lock-contention**
 //!   failures. `ManagedClient` wraps a [`processkit`] `CliClient` and applies the
@@ -54,7 +56,7 @@
 //!     match run() {
 //!         Ok(()) => break,
 //!         Err(e) if is_transient_fetch_error(&e) && attempt < FETCH_ATTEMPTS => {
-//!             std::thread::sleep(FETCH_BACKOFF); // DNS/timeout — worth a retry
+//!             std::thread::sleep(FETCH_BACKOFF); // DNS / dropped connection — worth a retry
 //!         }
 //!         Err(e) => return Err(e),               // anything else: give up
 //!     }
@@ -369,19 +371,22 @@ pub fn is_nothing_to_commit(err: &Error) -> bool {
 }
 
 /// Whether a failed `fetch`/`fetch_branch`/`remote_branch_exists` looks
-/// transient (DNS, timeout, dropped connection) and is worth retrying.
+/// transient (DNS, a dropped connection, a fast network blip) and is worth
+/// retrying.
+///
+/// A processkit-level **timeout** is deliberately **not** classified transient
+/// (R6). A `.timeout()`-bounded run that expired has already consumed the caller's
+/// full deadline — retrying it would multiply the wall-clock by [`FETCH_ATTEMPTS`]
+/// (e.g. a black-holed remote under a 120 s deadline would block ≈ 6 min, three
+/// times the advertised ceiling). The deadline *is* the patience budget; a caller
+/// who wants longer should raise the timeout, not have it silently tripled. Fast
+/// transient failures (the io-level and marker cases below) still retry, because
+/// they fail quickly and a retry is cheap.
 pub fn is_transient_fetch_error(err: &Error) -> bool {
-    // A processkit-level timeout (a `.timeout()`-bounded run that expired) is
-    // inherently transient; treat it as retryable too, regardless of any partial
-    // output it captured before the deadline (as of processkit 0.10 a `Timeout`
-    // carries the partial `stdout`/`stderr`, but the retry decision doesn't depend
-    // on it). So is an io-level transient from the spawn itself (interrupted /
-    // would-block / busy), which processkit classifies via `Error::is_transient()`
-    // (it covers `Spawn`/`Io`, not `Exit`, so it composes cleanly with the marker
-    // scan below).
-    matches!(err, Error::Timeout { .. })
-        || err.is_transient()
-        || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
+    // An io-level transient from the spawn itself (interrupted / would-block / busy),
+    // which processkit classifies via `Error::is_transient()` (it covers `Spawn`/`Io`,
+    // not `Exit`/`Timeout`, so it composes cleanly with the marker scan below).
+    err.is_transient() || exit_output_matches(err, TRANSIENT_FETCH_MARKERS)
 }
 
 /// Lower-case substrings marking a **whole-repository / working-copy lock**
@@ -953,16 +958,16 @@ mod tests {
         assert!(is_transient_fetch_error(&dns));
         assert!(!is_transient_fetch_error(&nothing));
 
-        // A processkit timeout is transient too. (As of processkit 0.10 a `Timeout`
-        // carries whatever partial `stdout`/`stderr` was captured before the
-        // deadline; we still treat it as unconditionally retryable regardless.)
+        // A processkit timeout is deliberately NOT retried (R6): it already consumed
+        // the caller's full deadline, so retrying would multiply the wall-clock by
+        // FETCH_ATTEMPTS. The deadline is the patience budget; raise it, don't triple it.
         let timeout = Error::Timeout {
             program: "git".into(),
             timeout: Duration::from_secs(10),
             stdout: String::new(),
             stderr: String::new(),
         };
-        assert!(is_transient_fetch_error(&timeout));
+        assert!(!is_transient_fetch_error(&timeout));
     }
 
     // R9: an io-level transient from the spawn (EINTR / EAGAIN / busy) is fetch-

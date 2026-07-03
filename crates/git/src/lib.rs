@@ -3291,6 +3291,15 @@ mod tests {
         assert_eq!(rec.calls().len(), FETCH_ATTEMPTS as usize);
     }
 
+    // R6 (a `fetch` timeout is NOT retried) is pinned at the unit level by
+    // `vcs_cli_support`'s `classifies_nothing_to_commit_and_transient_fetch`
+    // (`is_transient_fetch_error(&Timeout) == false`); together with
+    // `fetch_retries_transient_failures` above (the loop retries exactly what the
+    // predicate accepts) that proves the timeout is terminal for the fetch-retry. A
+    // faithful end-to-end timeout is awkward to simulate hermetically (a paused-clock
+    // `Reply::pending()` doesn't auto-fire the per-command deadline), so it isn't
+    // duplicated here.
+
     // Opt-in lock-contention retry: a mutation that fails because another process
     // holds `index.lock` is retried and succeeds — the command never ran, so the
     // retry is safe. `RetryPolicy::none().attempts(3)` keeps the backoff at zero so

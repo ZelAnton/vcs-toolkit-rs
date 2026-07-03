@@ -64,6 +64,11 @@ crates; tag releases as `vcs-git-v<version>`.
   trailing newline(s) survive a read-modify-write round-trip and a diff's last hunk
   stays in sync with its `@@` line count. (Behavior change: a caller that relied on
   the old trimming should trim itself.) (`docs/audit-2026-07.md` H7.)
+- **A `fetch` that times out is no longer retried** (inherited from cli-support's
+  `is_transient_fetch_error` change). A timeout already spent the per-client deadline,
+  so the old 3× fetch-retry blocked ≈ 3× the configured ceiling against a black-holed
+  remote; a timeout now surfaces immediately. Fast transient failures (DNS, dropped
+  connection) still retry. (`docs/audit-2026-07.md` R6.)
 
 ### Security
 - **Per-operation credentials are scoped to the clone URL's host.** With a
