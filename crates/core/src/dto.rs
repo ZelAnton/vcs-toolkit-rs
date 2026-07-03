@@ -162,6 +162,26 @@ pub struct FileChange {
     pub kind: ChangeKind,
 }
 
+impl FileChange {
+    /// A change to `path` of the given `kind`, with no original path. Chain the
+    /// `old_path` setter for a rename or copy. Lets an external `VcsRepo` impl or a
+    /// test build one despite the `#[non_exhaustive]`.
+    pub fn new(path: impl Into<String>, kind: ChangeKind) -> Self {
+        Self {
+            path: path.into(),
+            old_path: None,
+            kind,
+        }
+    }
+
+    /// Record the original path — a rename's or copy's source (sets the `old_path`
+    /// field, which both a rename and a copy populate).
+    pub fn old_path(mut self, old: impl Into<String>) -> Self {
+        self.old_path = Some(old.into());
+        self
+    }
+}
+
 /// Aggregate insertion/deletion counts for the working copy — the shared
 /// [`vcs_diff::DiffStat`], returned by the backends directly (no remapping).
 pub use vcs_diff::DiffStat;
@@ -179,6 +199,36 @@ pub struct WorktreeInfo {
     pub commit: Option<String>,
     /// A bare git worktree entry (always `false` for jj).
     pub is_bare: bool,
+}
+
+impl WorktreeInfo {
+    /// A worktree at `path` with no branch/commit and not bare; chain the setters.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            branch: None,
+            commit: None,
+            is_bare: false,
+        }
+    }
+
+    /// Set the branch (git) / first bookmark (jj) on the worktree.
+    pub fn branch(mut self, branch: impl Into<String>) -> Self {
+        self.branch = Some(branch.into());
+        self
+    }
+
+    /// Set the checked-out commit.
+    pub fn commit(mut self, commit: impl Into<String>) -> Self {
+        self.commit = Some(commit.into());
+        self
+    }
+
+    /// Mark it a bare git worktree entry.
+    pub fn bare(mut self) -> Self {
+        self.is_bare = true;
+        self
+    }
 }
 
 /// Whether the working copy is mid-operation, unified across the backends'
@@ -227,6 +277,31 @@ pub struct UpstreamTracking {
     pub behind: Option<usize>,
 }
 
+impl UpstreamTracking {
+    /// Tracking `branch` (e.g. `"origin/main"`) with **uncounted** ahead/behind
+    /// (both `None`); chain [`ahead`](UpstreamTracking::ahead) /
+    /// [`behind`](UpstreamTracking::behind) to set the counts.
+    pub fn new(branch: impl Into<String>) -> Self {
+        Self {
+            branch: branch.into(),
+            ahead: None,
+            behind: None,
+        }
+    }
+
+    /// Set the ahead count.
+    pub fn ahead(mut self, n: usize) -> Self {
+        self.ahead = Some(n);
+        self
+    }
+
+    /// Set the behind count.
+    pub fn behind(mut self, n: usize) -> Self {
+        self.behind = Some(n);
+        self
+    }
+}
+
 /// A one-shot snapshot of the common repository state — branch, upstream
 /// tracking, ahead/behind, dirtiness, and operation state — gathered in a
 /// **small fixed** number of process spawns instead of a call per field. The
@@ -261,6 +336,70 @@ pub struct RepoSnapshot {
     pub conflicted: bool,
     /// In-progress operation / conflict state (see [`OperationState`]).
     pub operation: OperationState,
+}
+
+impl RepoSnapshot {
+    /// A clean snapshot: detached (no `head`/`branch`), no upstream tracking, not
+    /// dirty or conflicted, change count 0, [`OperationState::Clear`]. Chain the
+    /// setters to fill it — for a test double or a custom `VcsRepo` backend that must
+    /// return a `RepoSnapshot` (the struct is `#[non_exhaustive]`, so it can't be
+    /// built with a literal outside this crate).
+    pub fn new() -> Self {
+        Self {
+            head: None,
+            branch: None,
+            tracking: None,
+            dirty: false,
+            change_count: 0,
+            conflicted: false,
+            operation: OperationState::Clear,
+        }
+    }
+
+    /// Set the working-copy commit's object id.
+    pub fn head(mut self, head: impl Into<String>) -> Self {
+        self.head = Some(head.into());
+        self
+    }
+
+    /// Set the current branch (git) / bookmark (jj).
+    pub fn branch(mut self, branch: impl Into<String>) -> Self {
+        self.branch = Some(branch.into());
+        self
+    }
+
+    /// Set the upstream tracking (see [`UpstreamTracking`]).
+    pub fn tracking(mut self, tracking: UpstreamTracking) -> Self {
+        self.tracking = Some(tracking);
+        self
+    }
+
+    /// Mark the working copy dirty and record how many paths changed (a real snapshot
+    /// has `change_count >= 1` when dirty — the two fields move together, so this
+    /// setter couples them). A clean copy is the [`new`](RepoSnapshot::new) default.
+    pub fn dirty(mut self, change_count: usize) -> Self {
+        self.dirty = true;
+        self.change_count = change_count;
+        self
+    }
+
+    /// Mark the working copy as having an unresolved conflict.
+    pub fn conflicted(mut self) -> Self {
+        self.conflicted = true;
+        self
+    }
+
+    /// Set the in-progress operation / conflict state.
+    pub fn operation(mut self, operation: OperationState) -> Self {
+        self.operation = operation;
+        self
+    }
+}
+
+impl Default for RepoSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The outcome of a [`try_merge`](crate::Repo::try_merge) probe. The probe
@@ -357,5 +496,58 @@ mod serde_tests {
         assert_eq!(conflicts["outcome"], "Conflicts");
         assert_eq!(conflicts["files"][0], "a.rs");
         assert_eq!(conflicts["files"][1], "b.rs");
+    }
+}
+
+#[cfg(test)]
+mod ctor_tests {
+    use super::*;
+
+    // A4: the public builder constructors let an external `VcsRepo` impl / test
+    // build the `#[non_exhaustive]` return DTOs, and land the fields where expected.
+    #[test]
+    fn dto_constructors_populate_fields() {
+        let fc = FileChange::new("new.rs", ChangeKind::Modified).old_path("old.rs");
+        assert_eq!(fc.path, "new.rs");
+        assert_eq!(fc.old_path.as_deref(), Some("old.rs"));
+        assert_eq!(fc.kind, ChangeKind::Modified);
+
+        let wt = WorktreeInfo::new("/wt")
+            .branch("feature")
+            .commit("abc123")
+            .bare();
+        assert_eq!(wt.path, PathBuf::from("/wt"));
+        assert_eq!(wt.branch.as_deref(), Some("feature"));
+        assert_eq!(wt.commit.as_deref(), Some("abc123"));
+        assert!(wt.is_bare);
+
+        let up = UpstreamTracking::new("origin/main").ahead(2).behind(3);
+        assert_eq!(up.branch, "origin/main");
+        assert_eq!(up.ahead, Some(2));
+        assert_eq!(up.behind, Some(3));
+        // Uncounted by default.
+        assert_eq!(UpstreamTracking::new("origin/x").ahead, None);
+
+        let snap = RepoSnapshot::new()
+            .head("deadbeef")
+            .branch("main")
+            .tracking(up)
+            .dirty(4)
+            .conflicted()
+            .operation(OperationState::Merge);
+        assert_eq!(snap.head.as_deref(), Some("deadbeef"));
+        assert_eq!(snap.branch.as_deref(), Some("main"));
+        assert_eq!(snap.tracking.as_ref().unwrap().branch, "origin/main");
+        assert_eq!(snap.tracking.as_ref().unwrap().ahead, Some(2));
+        assert!(snap.dirty);
+        assert_eq!(snap.change_count, 4);
+        assert!(snap.conflicted);
+        assert_eq!(snap.operation, OperationState::Merge);
+
+        // A default snapshot is clean.
+        let clean = RepoSnapshot::default();
+        assert!(!clean.dirty && !clean.conflicted && clean.head.is_none());
+        assert_eq!(clean.operation, OperationState::Clear);
+        assert_eq!(clean.change_count, 0);
     }
 }

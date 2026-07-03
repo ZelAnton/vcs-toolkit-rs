@@ -10,6 +10,13 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Public builder constructors for the return DTOs** `RepoSnapshot`, `WorktreeInfo`,
+  `FileChange`, and `UpstreamTracking` (e.g. `RepoSnapshot::new().head(id).dirty(n)`,
+  `FileChange::new(path, kind).old_path(old)`, `WorktreeInfo::new(path).branch(b)`,
+  `UpstreamTracking::new("origin/main").ahead(2)`). These are `#[non_exhaustive]`, so a
+  consumer writing a custom `VcsRepo` backend or a test double previously **could not
+  build one to return**; the builders make them constructible outside `vcs-core`
+  (`RepoSnapshot` also gains a `Default`). Additive. (`docs/audit-2026-07.md` A4.)
 - `WorktreeCreate` (+ its partial builder `WorktreeCreatePartial`) — the spec that
   `Repo::create_worktree` now takes.
 
