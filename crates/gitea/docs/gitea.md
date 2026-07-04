@@ -96,7 +96,10 @@ configured.
 `PullRequest` carries `number` (tea's `index` column), `title`, `state`, `merged`,
 `head_branch`, `base_branch`, and `url` — read from tea's table columns (we select
 them with `--fields`). tea folds the merge flag into the `state` column: a merged
-PR reads `state="merged"` (not `"closed"`), and `merged` is derived from that.
+PR reads `state="merged"` (not `"closed"`), and `merged` is derived from that. A
+**fork** PR's head is rendered `owner:branch` by tea; the parser strips the `owner:`
+prefix so `head_branch` is always the bare branch (matching GitHub/GitLab — the fork
+owner is not modelled).
 
 ```rust,ignore
 # use std::path::Path;

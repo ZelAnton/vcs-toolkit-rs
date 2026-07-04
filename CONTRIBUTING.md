@@ -37,7 +37,9 @@ trait, so tests need no real binary, temp repo, or network.
   `Cargo.lock` stays committed.
 - **Each crate has its own `CHANGELOG.md`** ([Keep a Changelog](https://keepachangelog.com/));
   curate the `[Unreleased]` section as you work when a change is user-facing.
-- **Multi-option commands take a builder/spec** rather than a long positional list.
+- **Multi-option commands take a builder/spec** rather than a long positional list —
+  the trigger is **≥2 options, or any bare `bool`** (a bare boolean at a call site is
+  ambiguous, so it becomes a presence-only setter or a spec field).
 - Keep new code in the style of the surrounding code; `cargo fmt` and the clippy gate
   above are the baseline.
 

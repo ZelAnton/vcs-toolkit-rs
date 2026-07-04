@@ -34,12 +34,18 @@ work resumes. Settled-against items live in [`decisions/`](decisions/).
 The [`docs/audit-2026-07.md`](docs/audit-2026-07.md) review drove a large remediation
 programme (see its "Remediation status"): the data-loss/security **Wave 0** (C1–C3, H1,
 H5, P1), the dead/degraded-safety **Wave 1**, error-model classifiers, the wrong-result
-**Wave 2** (H7–H11, the R- and M-clusters), and the first API-shape reshapes — released
-as **0.3.0** (vcs-core 0.5.0, vcs-git/jj/github 0.7.0, the rest 0.3.0). A **0.4.0 cycle**
-then landed the A-cluster (A4 return-DTO builders, A5 transposition specs, A7 variant
-field-safety, A10 RFC-3339 jj timestamps). processkit was bumped **1.0 → 1.1.0** (the
-re-exported types are now semver-stable 1.x). Lower-value/CLI-blind items (A6, A8, A9,
-A11–A16, release-workflow gates) are deferred to a later pre-1.0 cycle.
+**Wave 2** (H7–H11, the R-cluster, and the first M-cluster items M11–M21), and the first
+API-shape reshapes — released as **0.3.0** (vcs-core 0.5.0, vcs-git/jj/github 0.7.0, the
+rest 0.3.0). A **0.4.0 cycle** then landed the A-cluster (A4 return-DTO builders, A5
+transposition specs, A7 variant field-safety, A10 RFC-3339 jj timestamps). processkit was
+bumped **1.0 → 1.1.0** (the re-exported types are now semver-stable 1.x). A **Wave 2
+M-cluster continuation** has since landed **on `main` (unreleased)**, awaiting the next
+minor: jj path/name/semantics (M2 `root-file:` filesets, M4 Windows-only backslash + M7
+empty-fileset guard, M6 rebase-doc, M8 transaction caveats, M10 read-only workspace
+probes, M28 `LC_ALL=C` fetch), git M29 (`(2, 31)` support floor), gitea M26 (flat fork
+head), forge M27 (`is_unauthorized` marker). Lower-value/CLI-blind items (A6, A8, A9,
+A11–A16, M3/M9/M22–M25/M30–M34, release-workflow gates) are deferred to a later pre-1.0
+cycle (see the audit's Remediation status for per-item rationale).
 
 ### ✅ Shipped — processkit 0.11.0 bump (2026-06-15)
 
@@ -493,7 +499,7 @@ matrix + ≥2-pass adversarial review:
   releases unified end-to-end (`glab`/`tea` wrapper methods verified against
   the official docs → `ForgeIssue`/`ForgeRelease` DTOs → five `Forge`/`ForgeApi`
   methods → five MCP tools, `Unsupported` where `tea` can't); the **builder
-  rule** ("≥2 options or any bare bool → spec/builder", now in AGENTS.md)
+  rule** ("≥2 options or any bare bool → spec/builder", now in CONTRIBUTING.md)
   applied across both levels (`CommitPaths`, `MergeCommit`, `MergeNoCommit`,
   `AnnotatedTag`, `SquashPaths`, gh/forge `PrCreate`, glab `MrCreate`, tea
   `PrCreate`; `ReviewAction` → kind+body struct keeping

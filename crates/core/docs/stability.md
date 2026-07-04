@@ -21,7 +21,7 @@ Because the crates depend on each other (`vcs-core` → `vcs-git`/`vcs-jj`; the
 wrappers → the foundational `vcs-diff`/`vcs-cli-support`), each intra-workspace
 dependency carries a `^MAJOR.MINOR` requirement that must stay in range when a
 dependency crosses a boundary — see the release process in
-[AGENTS.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/AGENTS.md) and the publish ordering in `release.yml`.
+[CONTRIBUTING.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/CONTRIBUTING.md) and the publish ordering in `release.yml`.
 
 ## Stability tiers
 
@@ -109,7 +109,7 @@ a promise):
 
 ## See also
 
-- [AGENTS.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/AGENTS.md) — the release process, changelog curation, and
+- [CONTRIBUTING.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/CONTRIBUTING.md) — the release process, changelog curation, and
   dependency conventions.
 - [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — the error model the API review
   references.

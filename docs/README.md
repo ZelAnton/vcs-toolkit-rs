@@ -109,4 +109,4 @@ referenced from every per-crate guide's *See also* footer.
 - Per-crate API docs (rustdoc): build locally with `cargo doc --no-deps --open`.
 - Per-crate changelogs: `crates/<crate>/CHANGELOG.md`.
 - Project roadmap: [ROADMAP.md](../ROADMAP.md).
-- Contributing / build conventions: [AGENTS.md](../AGENTS.md).
+- Contributing / build conventions: [CONTRIBUTING.md](../CONTRIBUTING.md).

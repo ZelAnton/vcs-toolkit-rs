@@ -99,10 +99,16 @@ where
 Inherent (not on the object-safe trait): the closure parameter is generic, which
 `mockall`/trait objects can't express. `JjAt::transaction(f)` is the bound form.
 
-**Caveats** (verbatim from source): rollback runs on `Err` only — **not** on
-panic or a dropped future (no async `Drop`); convert panics to `Err` inside `f`
-if you need that. If the restore itself fails, the *original* error is returned
-and the repo may be left mid-transaction — re-probe [`op_head`] to detect that.
+**Caveats** (see the rustdoc for the full wording): it is **single-actor** — the
+rollback is `op_restore <pre>`, which restores the *whole* repo view, so a change
+another jj process landed between the `op_head` capture and the restore is reverted
+too. Rollback runs on `Err` only — **not** on panic or a dropped future (no async
+`Drop`); convert panics to `Err` inside `f` if you need that. A **cancelled `f` also
+cancels the rollback**: if `f`'s `Err` is a fired `default_cancel_on` token, the
+restore short-circuits before spawning and is skipped — run it yourself on a
+token-free client if it must survive cancellation. If the restore itself fails, the
+*original* error is returned and the repo may be left mid-transaction — re-probe
+[`op_head`] to detect that.
 
 ---
 
@@ -357,7 +363,8 @@ async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset])
   (`--use-destination-message`) instead of combining the two.
 - `commit_paths` — finalise a commit from exactly these [`JjFileset`]s
   (`commit -m <message> <filesets>`); the rest stay in the new working-copy
-  change.
+  change. Like `split_paths`, `filesets` must be **non-empty** — a fileset-less
+  `commit` would commit the whole working copy, so it is refused before spawning.
 - `squash_paths` — squash exactly the spec's filesets from one revision into
   another (`squash --from <from> --into <into> [--use-destination-message]
   <filesets>`); built through [`SquashPaths`](#squashpaths).

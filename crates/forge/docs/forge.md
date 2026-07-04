@@ -171,7 +171,8 @@ if forge.supports(ForgeOp::ReleaseView) { /* show a release detail link */ }
 
 `Error` is `Forge(processkit::Error)`, `Unsupported { forge, operation }`, or
 `InvalidInput(String)`, with `is_unsupported()`, `is_invalid_input()`,
-`is_resource_not_found()`, and `is_transient_fetch_error()` classifiers.
+`is_resource_not_found()`, `is_transient_fetch_error()`, `is_unauthorized()`,
+`is_rate_limited()`, `is_not_found()`, and `is_transient()` classifiers.
 
 ## When to drop to the wrapped client (the escape hatch)
 

@@ -127,8 +127,9 @@ foundational crates the wrappers share, and a dependency-free test-fixture crate
 | [`crates/testkit`](crates/testkit) | — (test fixtures: git/jj sandboxes, bare remote) | `vcs-testkit` |
 
 `vcs-diff` and `vcs-cli-support` are foundational: `vcs-git`/`vcs-jj`/`vcs-github`/
-`vcs-core` depend on them and re-export their types (so `vcs_git::FileDiff`,
-`vcs_git::is_merge_conflict`, … still resolve), since `git diff` and
+`vcs-core` depend on one or both and re-export their types (so `vcs_git::FileDiff`,
+`vcs_git::is_merge_conflict`, … still resolve — `vcs-github` uses only
+`vcs-cli-support`, as the `gh` wrapper does no diff parsing), since `git diff` and
 `jj diff --git` are byte-identical for ASCII paths (they differ only in
 non-ASCII filename rendering — git octal-C-quotes, jj writes raw UTF-8 — both of
 which the shared parser decodes), so the wrappers share one parser/guard.

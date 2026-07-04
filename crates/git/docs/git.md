@@ -73,6 +73,13 @@ blame reads do not). For a **fully untrusted** repo, don't materialize its worki
 tree or run diffs through a hardened client without an OS-level sandbox — `harden()`
 is hardening, not a sandbox.
 
+**Requires git ≥ 2.31.** The hook / `fsmonitor` / `sshCommand` pins ride
+`GIT_CONFIG_COUNT` (added in git 2.31); on **older git they silently no-op** — the
+`GIT_*` scrub and `GIT_TERMINAL_PROMPT=0` still apply, but repo-local hooks/fsmonitor/
+sshCommand are **not** disabled, with no error. `capabilities().ensure_supported()` now
+enforces the `≥ 2.31` floor — call it before relying on `harden()` against an untrusted
+repo, or add an OS-level sandbox.
+
 It does **not** sandbox the git binary or vet the repo's *content*. `harden()` is
 chainable on any runner — `Git::with_runner(rec).harden()` works in tests — but
 `Git::hardened()` is the shorthand for the common case. See

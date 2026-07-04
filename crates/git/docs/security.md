@@ -131,6 +131,10 @@ the end of this section for what it does *not* cover):
   verified to suppress hooks on Windows too) — and `core.fsmonitor=false` (a
   config-driven daemon launch). Env-config overrides even the *repo-local*
   `.git/config` for the keys it names, so these pins beat a poisoned `.git/config`.
+  **`GIT_CONFIG_COUNT` needs git ≥ 2.31** — on older git these hook/fsmonitor/sshCommand
+  pins **silently no-op** (the `GIT_*` scrub + prompt-off below still apply). Call
+  `capabilities().ensure_supported()` (now the `≥ 2.31` gate) before trusting `harden()`
+  against an untrusted repo, or add an OS-level sandbox.
 - **Neutralizes `core.sshCommand`** — pinned empty (the config-key twin of the
   scrubbed `GIT_SSH_COMMAND`), so a repo-local override can't run an arbitrary
   program for the SSH transport. Empty is falsy to git, so the default `ssh`
