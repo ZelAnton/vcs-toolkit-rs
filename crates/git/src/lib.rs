@@ -1147,8 +1147,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String> {
         reject_flag_like("revision", rev)?;
+        // `--verify` (matching `rev_parse`/`resolve_commit`): require `rev` to name
+        // exactly one object, erroring otherwise. Unlike bare `rev-parse` — which
+        // echoes a filename back as a fake id (the M13 bug) — `--short` already
+        // rejects a plain path (`Needed a single revision`), so this is
+        // consistency / defense-in-depth: it pins the single-object contract
+        // explicitly instead of leaning on `--short`'s incidental rejection. A real
+        // revision still abbreviates the same.
         self.core
-            .run(self.core.command_in(dir, ["rev-parse", "--short", rev]))
+            .run(
+                self.core
+                    .command_in(dir, ["rev-parse", "--verify", "--short", rev]),
+            )
             .await
     }
 
@@ -1464,8 +1474,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool> {
         reject_flag_like("range", range)?;
         // `diff --quiet <range>`: 0 = empty range, 1 = has changes.
+        // The trailing `--` forces `range` to be read as a revision/range, not a
+        // pathspec: without it `git diff --quiet Makefile` diffs the *working
+        // tree* limited to that path (exit 1 = "has changes"), so a caller string
+        // that names a file returns a plausible-but-wrong bool instead of erroring
+        // (the C2/M13 pathspec-collision class). With `--`, an unresolvable
+        // revision exits 128, which `probe` surfaces as an honest error.
         self.core
-            .probe(self.core.command_in(dir, ["diff", "--quiet", range]))
+            .probe(self.core.command_in(dir, ["diff", "--quiet", range, "--"]))
             .await
     }
 
@@ -1475,9 +1491,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // gettext-translated, but `parse_shortstat` keys on the English
         // "file"/"insertion"/"deletion" — without C locale a non-English git
         // returns an all-zero `DiffStat` rather than the real counts.
+        // Trailing `--`: force `range` to resolve as a revision/range, never a
+        // pathspec (see `diff_range_is_empty` — a path-named `range` would
+        // otherwise stat the working tree for that path instead of erroring).
         self.core
             .parse(
-                c_locale(self.core.command_in(dir, ["diff", "--shortstat", range])),
+                c_locale(
+                    self.core
+                        .command_in(dir, ["diff", "--shortstat", range, "--"]),
+                ),
                 parse::parse_shortstat,
             )
             .await
@@ -1510,6 +1532,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `run_untrimmed`: trimming the diff would drop a trailing blank context
         // line, desyncing the last hunk from its `@@` line count for a consumer
         // that re-applies or re-parses it (H7).
+        // Trailing `--`: pin `target` as a revision, never a pathspec — without it
+        // a `Rev` that happens to name a tracked path would diff the working tree
+        // for that path instead of the intended commit (the C2/M13 collision
+        // class). `reject_flag_like` already blocks a leading `-`; `--` closes the
+        // path-collision half.
         self.core
             .run_untrimmed(self.core.command_in(
                 dir,
@@ -1521,6 +1548,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     "-M",
                     "--src-prefix=a/",
                     "--dst-prefix=b/",
+                    "--",
                 ],
             ))
             .await
@@ -2661,7 +2689,10 @@ mod tests {
         let git = Git::with_runner(&rec);
         let out = git.rev_parse_short(Path::new("/r"), "HEAD").await.unwrap();
         assert_eq!(out, "a1b2c3d");
-        assert_eq!(rec.only_call().args_str(), ["rev-parse", "--short", "HEAD"]);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["rev-parse", "--verify", "--short", "HEAD"]
+        );
     }
 
     // M13: `rev_parse` passes `--verify` so a non-revision (a filename) errors
@@ -2959,6 +2990,8 @@ mod tests {
                 // `diff.noprefix`/`diff.mnemonicPrefix` config.
                 "--src-prefix=a/",
                 "--dst-prefix=b/",
+                // End-of-revisions: `HEAD` is a revision, never a pathspec.
+                "--",
             ]
         );
     }
@@ -3083,6 +3116,32 @@ mod tests {
         assert_eq!(
             (stat.files_changed, stat.insertions, stat.deletions),
             (2, 5, 1)
+        );
+    }
+
+    // The range-taking diff verbs terminate their argv with `--` so a `range`
+    // that names a tracked path resolves as a revision (and errors) rather than
+    // silently degrading into a pathspec-scoped working-tree diff (C2/M13).
+    #[tokio::test]
+    async fn diff_range_verbs_terminate_revisions_with_dashes() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.diff_range_is_empty(Path::new("/r"), "main..HEAD")
+            .await
+            .expect("diff_range_is_empty");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["diff", "--quiet", "main..HEAD", "--"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(" 0 files changed\n"));
+        let git = Git::with_runner(&rec);
+        git.diff_stat(Path::new("/r"), "main..HEAD")
+            .await
+            .expect("diff_stat");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["diff", "--shortstat", "main..HEAD", "--"]
         );
     }
 

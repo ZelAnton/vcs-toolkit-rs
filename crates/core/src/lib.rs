@@ -2242,7 +2242,7 @@ mod tests {
         assert!(
             rec.calls()
                 .iter()
-                .any(|c| c.args_str() == ["diff", "--shortstat", vcs_git::EMPTY_TREE]),
+                .any(|c| c.args_str() == ["diff", "--shortstat", vcs_git::EMPTY_TREE, "--"]),
             "diff_stat should target the empty tree on an unborn repo: {:?}",
             rec.calls()
         );

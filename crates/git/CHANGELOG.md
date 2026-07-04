@@ -16,6 +16,20 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
+- **`rev_parse_short` passes `--verify`, matching `rev_parse`/`resolve_commit`.**
+  It pins the single-object contract explicitly: `rev` must name exactly one
+  object or the call errors. (`--short` already rejects a plain path with `Needed
+  a single revision` — unlike the bare `rev-parse` that echoed a filename as a
+  fake id, M13 — so this is consistency / defense-in-depth, not an
+  observable-behavior fix.) (`docs/audit-2026-07.md` M13.)
+- **The range/rev-taking diff verbs terminate their argv with `--`.**
+  `diff_range_is_empty`, `diff_stat`, and `diff_text` passed the caller's
+  `range`/revision as a bare positional, so a value that named a tracked path fell
+  into git's *pathspec* mode — `diff_range_is_empty("Makefile")` reported the
+  working-tree state of that file instead of erroring, and `diff_text`/`diff` for
+  such a `Rev` diffed the working tree rather than the commit. The trailing `--`
+  forces a revision reading; an unresolvable one now errors honestly. (Same
+  pathspec-collision class as C2's `checkout` fix.)
 - **`GitCapabilities::ensure_supported`/`is_supported` now enforce the real `2.31`
   floor (major.minor), not just the major.** The gate is documented to turn a too-old
   git into a clear "needs git ≥ X" error instead of a cryptic argv failure — but it
