@@ -1183,7 +1183,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            discover(spaced.path()).expect("spaced gitlink detected").kind,
+            discover(spaced.path())
+                .expect("spaced gitlink detected")
+                .kind,
             BackendKind::Git
         );
     }
