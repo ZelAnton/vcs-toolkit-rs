@@ -18,6 +18,12 @@ use processkit::{Error, Result};
 use crate::BINARY;
 
 /// Which side of a conflict a resolution keeps.
+///
+/// Intentionally **exhaustive** (no `#[non_exhaustive]`): a git conflict has
+/// exactly these three sides — the domain is closed, so `#[non_exhaustive]` would
+/// buy no future variant while forcing a wildcard arm on any caller that matches
+/// this (callers usually *construct* it to pass to [`resolve`]) and wrongly
+/// signalling a fourth side could appear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionSide {
     /// The `<<<<<<<` side (typically `HEAD`).
@@ -59,6 +65,11 @@ pub struct ConflictRegion {
 
 /// A conflicted file as a sequence of plain-text runs and conflict regions —
 /// the shape that keeps [`render`] a byte-exact roundtrip.
+///
+/// Intentionally **exhaustive**: a file is text-or-conflict, and consumers match
+/// every segment in the resolve/render loop this crate exists to serve, so the
+/// closed enum stays ergonomic. Field-level evolution rides [`ConflictRegion`],
+/// which *is* `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictSegment {
     /// Lines outside any conflict (verbatim, endings included).

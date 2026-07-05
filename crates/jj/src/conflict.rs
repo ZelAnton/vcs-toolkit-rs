@@ -187,6 +187,10 @@ fn join_sublines(sublines: &[String], no_eol: bool, mixed: bool) -> Vec<String> 
 }
 
 /// A conflicted file as a sequence of plain-text runs and conflict regions.
+///
+/// Intentionally **exhaustive** (like `vcs_git::conflict::ConflictSegment`): a
+/// file is text-or-conflict and consumers match every segment; field evolution
+/// rides [`JjConflictRegion`], which *is* `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JjConflictSegment {
     /// Lines outside any conflict (verbatim).
@@ -196,6 +200,12 @@ pub enum JjConflictSegment {
 }
 
 /// What [`resolve`] keeps in place of each conflict region.
+///
+/// Intentionally **exhaustive** (no `#[non_exhaustive]`): the domain is closed —
+/// `Side(usize)` already spans any number of sides and `Base` is the only other
+/// choice — so `#[non_exhaustive]` would buy no future variant while forcing a
+/// wildcard arm on any caller that matches this (callers usually *construct* it to
+/// pass to [`resolve`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JjResolution {
     /// The N-th side (0-based, file order) — `Side(0)` is the first side.
