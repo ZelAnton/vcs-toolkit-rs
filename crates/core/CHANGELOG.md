@@ -10,7 +10,13 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Repo`/`Backend` now implement `Debug`.** The impl is hand-written rather
+  than derived, for two reasons: it avoids forcing an `R: Debug` bound onto the
+  generic runner type parameter (`R: ProcessRunner`), which callers would
+  otherwise have to satisfy even though `R` itself is never printed; and it
+  never formats the inner `Git`/`Jj` client — `Backend` prints only its
+  discriminant (`Git(..)`/`Jj(..)`) via `finish_non_exhaustive`, so a
+  credential token set via `with_token` can't leak through `{:?}`.
 
 ### Changed
 -
