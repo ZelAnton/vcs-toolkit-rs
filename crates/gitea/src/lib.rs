@@ -117,6 +117,7 @@
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
 //! from `docs/`. See the [`guide`] module.
 
+use std::fmt::{self, Debug, Formatter};
 use std::path::Path;
 
 // Re-export the processkit types in this crate's public API, so consumers needn't
@@ -389,6 +390,16 @@ processkit::cli_client!(
     /// support.)
     pub struct Gitea => BINARY
 );
+
+// Manual Debug: `processkit::cli_client!` (an external macro from the `processkit`
+// dependency, not ours to change) doesn't generate one. No `R: Debug` bound;
+// delegates straight to the wrapped `core` (a `processkit::CliClient<R>`, which
+// already has its own manual `Debug` redacting env values and never printing `R`).
+impl<R: ProcessRunner> Debug for Gitea<R> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Gitea").field("core", &self.core).finish()
+    }
+}
 
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GiteaApi for Gitea<R> {

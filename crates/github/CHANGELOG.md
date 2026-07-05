@@ -10,7 +10,9 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`GitHub<R>` now implements `Debug`**, via the shared `vcs_cli_support::managed_client!`
+  macro (no code change here). No `R: Debug` bound; a token configured via
+  `with_token` is never printed, only whether a credential provider is set.
 
 ### Changed
 -

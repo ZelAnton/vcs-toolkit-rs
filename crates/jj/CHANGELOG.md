@@ -10,7 +10,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Jj<R>` now implements `Debug`**, via the shared `vcs_cli_support::managed_client!`
+  macro (no code change here). No `R: Debug` bound.
 
 ### Changed
 -

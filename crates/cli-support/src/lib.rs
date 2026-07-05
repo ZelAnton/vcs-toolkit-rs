@@ -223,6 +223,18 @@ macro_rules! managed_client {
             core: $crate::ManagedClient<R>,
         }
 
+        // Manual Debug: no `R: Debug` bound (matches `ManagedClient`'s own impl),
+        // delegating straight to `core` — `ManagedClient::fmt` already redacts any
+        // configured credential provider / token-env binding, so nothing secret
+        // reaches `{:?}` here either.
+        impl<R: ::processkit::ProcessRunner> ::core::fmt::Debug for $name<R> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.debug_struct(stringify!($name))
+                    .field("core", &self.core)
+                    .finish()
+            }
+        }
+
         impl $name<::processkit::JobRunner> {
             /// Create a client driving the real job-backed runner.
             pub fn new() -> Self {

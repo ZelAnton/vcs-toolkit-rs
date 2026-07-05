@@ -10,7 +10,13 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Forge`/`Backend` now implement `Debug`**, symmetric with `vcs_core::Repo`'s.
+  Hand-written rather than derived: it avoids forcing an `R: Debug` bound onto
+  the generic runner type parameter, and it never formats the inner
+  `GitHub`/`GitLab`/`Gitea` client — `Backend` prints only its discriminant
+  (`GitHub(..)`/`GitLab(..)`/`Gitea(..)`, or plain `Unknown` for the no-client
+  backend) via `finish_non_exhaustive`, so a credential token set via
+  `with_token` can't leak through `{:?}`.
 
 ### Changed
 -

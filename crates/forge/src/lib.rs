@@ -121,6 +121,7 @@
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
 //! from `docs/`. See the [`guide`] module.
 
+use std::fmt::{self, Debug, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -181,12 +182,40 @@ impl<R: ProcessRunner> Backend<R> {
     }
 }
 
+// Manual Debug, mirroring `vcs_core::Repo`'s `Backend`: no `R: Debug` bound, and
+// the inner `GitHub`/`GitLab`/`Gitea` client is never formatted — only the
+// discriminant is printed — so a credential token set via `with_token` can't leak
+// through `{:?}`. `Unknown` carries no client, so it's printed as a plain unit
+// (`finish()`, not `finish_non_exhaustive()` — there's no elided field behind it).
+impl<R: ProcessRunner> Debug for Backend<R> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Backend::GitHub(_) => f.debug_tuple("GitHub").finish_non_exhaustive(),
+            Backend::GitLab(_) => f.debug_tuple("GitLab").finish_non_exhaustive(),
+            Backend::Gitea(_) => f.debug_tuple("Gitea").finish_non_exhaustive(),
+            Backend::Unknown => f.debug_tuple("Unknown").finish(),
+        }
+    }
+}
+
 /// A cwd-bound, forge-agnostic handle. Operations run against the bound directory
 /// ([`cwd`](Forge::cwd)); the CLI infers the repository from that directory's git
 /// remote. Use [`at`](Forge::at) for a sibling handle bound elsewhere.
 pub struct Forge<R: ProcessRunner = JobRunner> {
     cwd: PathBuf,
     backend: Backend<R>,
+}
+
+// Manual Debug (no `R: Debug` bound — the reason for hand-writing it rather than
+// deriving, matching `vcs_core::Repo`).
+impl<R: ProcessRunner> Debug for Forge<R> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let Forge { cwd, backend } = self;
+        f.debug_struct("Forge")
+            .field("cwd", cwd)
+            .field("backend", backend)
+            .finish()
+    }
 }
 
 impl Forge<JobRunner> {
@@ -831,6 +860,36 @@ mod tests {
         assert_eq!(github(ScriptedRunner::new()).kind(), ForgeKind::GitHub);
         assert_eq!(gitlab(ScriptedRunner::new()).kind(), ForgeKind::GitLab);
         assert_eq!(gitea(ScriptedRunner::new()).kind(), ForgeKind::Gitea);
+    }
+
+    // Smoke test for the `Forge`/`Backend` `Debug` impl: `{:?}` must not panic,
+    // must name the backend discriminant, and — the security-relevant part — must
+    // never print a token configured via `with_token`. (A fuller regression test
+    // covering every backend lives with T-003.)
+    #[test]
+    fn debug_output_does_not_leak_backend_token() {
+        let forge = Forge::from_github(
+            "/repo",
+            GitHub::with_runner(ScriptedRunner::new()).with_token("ghp_super_secret_token"),
+        );
+        let out = format!("{forge:?}");
+        assert!(out.contains("Forge"), "{out}");
+        assert!(out.contains("GitHub"), "{out}");
+        assert!(
+            !out.contains("ghp_super_secret_token"),
+            "token must not leak through Debug: {out}"
+        );
+    }
+
+    // The `Unknown` backend carries no client at all, so its `Debug` must render
+    // as a plain unit variant (not `Unknown(..)`, which would misleadingly imply
+    // an elided field) and must not panic.
+    #[test]
+    fn debug_output_renders_unknown_backend_plainly() {
+        let forge: Forge = Forge::from_unknown("/repo");
+        let out = format!("{forge:?}");
+        assert!(out.contains("Unknown"), "{out}");
+        assert!(!out.contains("Unknown("), "{out}");
     }
 
     // The token convenience constructors build a real-runner handle of the right

@@ -10,7 +10,11 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **The `managed_client!` macro now generates a `Debug` impl** for every wrapper
+  type it scaffolds (`Git`, `Jj`, `GitHub`, `GitLab`), delegating straight to the
+  wrapped `ManagedClient` field — which already redacts its configured
+  credential provider (`credentials.is_some()` only, never the secret) and
+  carries no `R: Debug` bound. No wrapper crate needs its own hand-written impl.
 
 ### Changed
 -

@@ -10,7 +10,9 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Git<R>` now implements `Debug`**, via the shared `vcs_cli_support::managed_client!`
+  macro (no code change here). No `R: Debug` bound; the wrapped client's
+  credentials are never printed, only whether one is configured.
 
 ### Changed
 -

@@ -10,7 +10,12 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Gitea<R>` now implements `Debug`.** Added by hand (not via
+  `vcs_cli_support::managed_client!` — `Gitea` is scaffolded by the external
+  `processkit::cli_client!` macro instead, which doesn't generate one), no
+  `R: Debug` bound, delegating to the wrapped `processkit::CliClient`'s own
+  Debug-safe impl. `tea` is ambient-auth-only, so there's no token to leak, but
+  the impl stays consistent with the other four CLI wrapper types.
 
 ### Changed
 -
