@@ -79,7 +79,9 @@ impl Repo<JobRunner> {
 `Repo::open` detects the repository at or above `dir` and opens a handle **bound
 to `dir`**, using the real job-backed process runner. It errors with
 `Error::NotARepository(dir)` when no `.git`/`.jj` is found from the start dir up
-to the filesystem root.
+to the filesystem root, or with `Error::BareRepository(path)` when the walk
+instead reaches a bare git repository (`git init --bare`) before finding a
+`.jj`/`.git` marker.
 
 For tests or a pre-configured client, build a handle from an explicit client —
 these are generic over the `ProcessRunner` so you can inject a fake:
@@ -501,8 +503,9 @@ copy-on-write strategy on top can reuse this type rather than inventing its own.
 ### `Error`
 
 The facade error wraps `processkit::Error` and adds detection failures:
-`NotARepository(PathBuf)`, `WorktreeNotFound(PathBuf)`, `Io(io::Error)`,
-`Vcs(processkit::Error)`. Classifiers let a caller branch without matching on
+`NotARepository(PathBuf)`, `BareRepository(PathBuf)` (a bare `git init --bare`
+repository — valid git, but no working tree for this facade to drive),
+`WorktreeNotFound(PathBuf)`, `Io(io::Error)`, `Vcs(processkit::Error)`. Classifiers let a caller branch without matching on
 internals: `is_merge_conflict()`, `is_nothing_to_commit()`,
 `is_transient_fetch_error()`, `is_transient()` (a transient io/spawn hiccup — narrower
 than the fetch classifier), and `is_not_found()` (the `git`/`jj` binary isn't

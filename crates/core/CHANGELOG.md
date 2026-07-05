@@ -17,6 +17,16 @@ crates; tag releases as `vcs-core-v<version>`.
   never formats the inner `Git`/`Jj` client — `Backend` prints only its
   discriminant (`Git(..)`/`Jj(..)`) via `finish_non_exhaustive`, so a
   credential token set via `with_token` can't leak through `{:?}`.
+- **`Error::BareRepository(PathBuf)`** — `Repo::open` now returns this instead
+  of the generic `Error::NotARepository` when the directory walk instead
+  reaches a **bare** git repository (`git init --bare`: `HEAD`/`config`/
+  `objects`/`refs` directly in the directory, no `.git` subdirectory, no
+  working tree). A bare repository *is* a valid git repository — just one this
+  facade doesn't drive, since there's no working tree for the CLI wrappers to
+  operate against — so it deserves its own, more precise error rather than
+  being folded into "not a repository". Opening a normal (non-bare) git
+  repository, a jj repository, or a genuinely non-repository directory is
+  unaffected. Fixes #6.
 
 ### Changed
 -

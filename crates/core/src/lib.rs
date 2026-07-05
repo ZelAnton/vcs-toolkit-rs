@@ -290,6 +290,39 @@ fn is_git_marker(path: &Path) -> bool {
     }
 }
 
+/// Whether `dir` (the candidate itself, not a `.git` beneath it) is a **bare**
+/// git repository — created with `git init --bare` (or an equivalent bare
+/// clone): `HEAD`/`config`/`objects`/`refs` sit directly in `dir`, with no
+/// `.git` subdirectory. Requires all four markers together (`HEAD` a file,
+/// `config` a file, `objects`/`refs` directories) so a directory that merely
+/// happens to contain one or two similarly-named entries isn't misdetected —
+/// symmetric with [`is_jj_marker`]/[`is_git_marker`]: a *valid* marker, not
+/// mere partial name overlap. Used to give bare repositories their own
+/// [`Error::BareRepository`](crate::Error::BareRepository) instead of the
+/// generic [`Error::NotARepository`](crate::Error::NotARepository) (issue #6).
+fn is_bare_git_repo_marker(dir: &Path) -> bool {
+    dir.join("HEAD").is_file()
+        && dir.join("config").is_file()
+        && dir.join("objects").is_dir()
+        && dir.join("refs").is_dir()
+}
+
+/// Walk up from `start` to the filesystem root looking for a **bare** git
+/// repository marker (see [`is_bare_git_repo_marker`]). Only called after
+/// [`detect`] has already walked the same chain and found no `.jj`/`.git`, so
+/// any hit here is unambiguous — no real (non-bare) repository intervenes
+/// between `start` and the bare repository root.
+fn find_bare_git_repo(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        if is_bare_git_repo_marker(dir) {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
 /// The per-tool client behind a [`Repo`]. Shared via `Arc` so [`Repo::at`] can
 /// re-anchor the cwd cheaply without rebuilding the client.
 enum Backend<R: ProcessRunner> {
@@ -339,13 +372,28 @@ impl<R: ProcessRunner> Debug for Repo<R> {
 impl Repo<JobRunner> {
     /// Detect the repository at or above `dir` and open a handle bound to `dir`,
     /// using the real job-backed runner. Errors with
-    /// [`Error::NotARepository`] when no `.git`/`.jj` is found.
+    /// [`Error::NotARepository`] when no `.git`/`.jj` is found, or with
+    /// [`Error::BareRepository`] when the walk instead reaches a **bare** git
+    /// repository (`git init --bare`) before any `.jj`/`.git` — a bare repo has
+    /// no working tree for this facade to drive (issue #6).
     pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
         // Absolutise first: `detect` walks parents, and a relative path like "."
         // has no real ancestor chain (`Path::new(".").parent()` is `""`, then
         // `None`), so a relative input would never find a repo above the cwd.
         let dir = std::path::absolute(dir.as_ref())?;
-        let located = detect(&dir).ok_or_else(|| Error::NotARepository(dir.clone()))?;
+        let located = match detect(&dir) {
+            Some(located) => located,
+            None => {
+                // `detect` already walked the full chain and found nothing — a
+                // second, cheap walk tells us whether the reason is "no
+                // repository at all" or "a bare git repository sits in the
+                // way", so the caller gets the more precise error.
+                return Err(match find_bare_git_repo(&dir) {
+                    Some(bare_root) => Error::BareRepository(bare_root),
+                    None => Error::NotARepository(dir),
+                });
+            }
+        };
         let backend = match located.kind {
             BackendKind::Git => Backend::Git(Arc::new(Git::new())),
             BackendKind::Jj => Backend::Jj(Arc::new(Jj::new())),
@@ -1099,6 +1147,100 @@ mod tests {
             detect(spaced.path()).expect("spaced gitlink detected").kind,
             BackendKind::Git
         );
+    }
+
+    // --- bare git repository (issue #6) -------------------------------------
+
+    // The issue #6 repro: a `git init --bare` directory (no `.git` subdir, just
+    // `HEAD`/`config`/`objects`/`refs` in the root) must open as
+    // `Error::BareRepository`, not the generic `Error::NotARepository` — matched
+    // by variant, not by message substring, so the distinction can't silently
+    // regress into the old generic error.
+    #[test]
+    fn open_reports_bare_repository_not_generic_not_a_repository() {
+        let tmp = TempDir::new("bare-repo");
+        let root = tmp.path();
+        std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
+        std::fs::create_dir_all(root.join("objects")).unwrap();
+        std::fs::create_dir_all(root.join("refs")).unwrap();
+
+        match Repo::open(root) {
+            Err(Error::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::BareRepository, got {other:?}"),
+        }
+    }
+
+    // A bare repository nested a few levels below `dir` is still found by
+    // walking up — mirrors `detect_walks_up_to_ancestor` for the bare case.
+    #[test]
+    fn open_finds_bare_repository_via_ancestor_walk() {
+        let tmp = TempDir::new("bare-walkup");
+        let root = tmp.path();
+        std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
+        std::fs::create_dir_all(root.join("objects")).unwrap();
+        std::fs::create_dir_all(root.join("refs")).unwrap();
+        let nested = root.join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        match Repo::open(&nested) {
+            Err(Error::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::BareRepository, got {other:?}"),
+        }
+    }
+
+    // A directory that merely happens to hold some, but not all four, of the
+    // bare-repo marker entries must NOT be misdetected as a bare repository —
+    // it's just an ordinary non-repository directory.
+    #[test]
+    fn open_does_not_misdetect_partial_bare_markers_as_bare_repository() {
+        let tmp = TempDir::new("bare-partial");
+        let root = tmp.path();
+        // Only `HEAD` and `config` — no `objects`/`refs` directories.
+        std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
+
+        match Repo::open(root) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
+        }
+    }
+
+    // A real (non-bare) git repository — `.git` subdirectory present — must
+    // keep opening as before, not get swept up by the new bare-detection path.
+    #[test]
+    fn open_still_opens_a_normal_git_repository() {
+        let tmp = TempDir::new("normal-git");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+
+        let repo = Repo::open(root).expect("normal git repo still opens");
+        assert_eq!(repo.kind(), BackendKind::Git);
+        assert_eq!(repo.root(), root);
+    }
+
+    // A real jj repository must also keep opening as before.
+    #[test]
+    fn open_still_opens_a_normal_jj_repository() {
+        let tmp = TempDir::new("normal-jj");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".jj").join("repo")).unwrap();
+
+        let repo = Repo::open(root).expect("normal jj repo still opens");
+        assert_eq!(repo.kind(), BackendKind::Jj);
+        assert_eq!(repo.root(), root);
+    }
+
+    // A directory that is neither a repo nor a bare repo still reports the
+    // generic `NotARepository`.
+    #[test]
+    fn open_reports_not_a_repository_when_nothing_found() {
+        let tmp = TempDir::new("norepo-open");
+        match Repo::open(tmp.path()) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, tmp.path()),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
+        }
     }
 
     // --- dispatch (hermetic, ScriptedRunner-backed) ------------------------

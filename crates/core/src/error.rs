@@ -18,6 +18,15 @@ pub enum Error {
     /// [`Repo::open`](crate::Repo::open) found no `.git`/`.jj` from the start dir
     /// up to the filesystem root.
     NotARepository(PathBuf),
+    /// [`Repo::open`](crate::Repo::open) walked up to a **bare** git repository
+    /// (created with `git init --bare`, or an equivalent bare clone) — a
+    /// directory holding `HEAD`/`config`/`objects`/`refs` directly, with no
+    /// `.git` subdirectory and no worktree. This is distinct from
+    /// [`NotARepository`](Error::NotARepository): a bare repository *is* a
+    /// valid git repository, just one this facade doesn't drive (it has no
+    /// working tree for the CLI wrappers to operate against). See
+    /// <https://github.com/ZelAnton/vcs-toolkit-rs/issues/6>.
+    BareRepository(PathBuf),
     /// A worktree/workspace lookup by path matched no attached worktree.
     WorktreeNotFound(PathBuf),
     /// A filesystem operation failed (e.g. removing a workspace directory).
@@ -62,6 +71,7 @@ impl Error {
     /// treats the network markers as retryable — but not a timeout); use this to retry
     /// *any* operation past a momentary io hiccup. The facade's own
     /// [`Io`](Error::Io)/[`NotARepository`](Error::NotARepository)/
+    /// [`BareRepository`](Error::BareRepository)/
     /// [`WorktreeNotFound`](Error::WorktreeNotFound) variants are never transient.
     pub fn is_transient(&self) -> bool {
         matches!(self, Error::Vcs(e) if e.is_transient())
@@ -116,6 +126,9 @@ impl std::fmt::Display for Error {
                     "no git or jj repository found at or above {}",
                     p.display()
                 )
+            }
+            Error::BareRepository(p) => {
+                write!(f, "bare git repositories are unsupported ({})", p.display())
             }
             Error::WorktreeNotFound(p) => {
                 write!(f, "no worktree found at {}", p.display())
