@@ -27,7 +27,7 @@ fn inner(r: &rmcp::model::CallToolResult) -> serde_json::Value {
 async fn read_tools_run_against_a_real_repo() {
     let sandbox = GitSandbox::init("mcp-real");
     sandbox.commit_file("seed.txt", "seed\n", "initial");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     let server = VcsMcpServer::new(repo, None, WriteGate::None);
 
     // The current branch is the seeded default (main or master).
@@ -59,7 +59,7 @@ async fn gated_mutation_does_not_run_against_a_real_repo() {
     let sandbox = GitSandbox::init("mcp-gate");
     sandbox.commit_file("seed.txt", "seed\n", "initial");
     sandbox.branch("feature");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     // Read-only server: checkout must be refused before touching git.
     let server = VcsMcpServer::new(repo, None, WriteGate::None);
     let err = server

@@ -23,7 +23,7 @@
 //! ```no_run
 //! use vcs_core::Repo;
 //! # async fn demo() -> vcs_core::Result<()> {
-//! let repo = Repo::open(".")?;            // detects git vs jj
+//! let repo = Repo::discover(".")?;        // walks up, detects git vs jj
 //! let s = repo.snapshot().await?;         // a few spawns, not a call per field
 //! let branch = s.branch.as_deref().unwrap_or("(detached)");
 //! println!("{branch} {}", if s.dirty { "*" } else { "" });
@@ -43,17 +43,18 @@
 //! The surface is three layers, narrowing from "which tool is this?" to "do the
 //! thing":
 //!
-//! - **[`detect`]** — walk up from a directory to the filesystem root for a
+//! - **[`discover`]** — walk up from a directory to the filesystem root for a
 //!   `.git`/`.jj` repo (jj wins when colocated — it's the tool driving the working
 //!   copy). Pure filesystem probing, no subprocess; yields a [`Located`]
 //!   ([`BackendKind`] + worktree root).
 //! - **[`Repo`]** — the cwd-bound facade handle, the thing you hold. Open one with
-//!   [`Repo::open`] (real job-backed runner) or build it over an explicit client
-//!   with [`Repo::from_git`] / [`Repo::from_jj`] (the test seam). Re-anchor it to
-//!   another directory cheaply with [`Repo::at`] — the backend is shared behind an
-//!   `Arc`, so threading work across worktrees never re-detects or rebuilds the
-//!   client. Inspect it with [`kind`](Repo::kind) / [`root`](Repo::root) /
-//!   [`cwd`](Repo::cwd).
+//!   [`Repo::discover`] (walks up to find the repo; real job-backed runner) or
+//!   [`Repo::open`] (strict — exactly `dir`, no walking up), or build it over an
+//!   explicit client with [`Repo::from_git`] / [`Repo::from_jj`] (the test seam).
+//!   Re-anchor it to another directory cheaply with [`Repo::at`] — the backend is
+//!   shared behind an `Arc`, so threading work across worktrees never re-detects
+//!   or rebuilds the client. Inspect it with [`kind`](Repo::kind) /
+//!   [`root`](Repo::root) / [`cwd`](Repo::cwd).
 //! - **[`VcsRepo`]** — the same common surface as an object-safe trait, so a
 //!   consumer can hold a `Box<dyn VcsRepo>` / `&dyn VcsRepo` without naming the
 //!   [`ProcessRunner`] generic. Every method mirrors the like-named inherent method
@@ -209,8 +210,8 @@ pub use processkit;
 // away. (Cancellation is core in processkit 0.10 — always available, no feature.)
 pub use processkit::CancellationToken;
 
-/// The result of [`detect`]: which backend, and the repository root it was found
-/// at.
+/// The result of [`discover`]: which backend, and the repository root it was
+/// found at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Located {
@@ -227,8 +228,10 @@ pub struct Located {
 ///
 /// `start` is walked exactly as given via [`Path::parent`], so pass an **absolute**
 /// path to search ancestors — a relative path like `"."` has no ancestor chain
-/// and only its own directory is checked. ([`Repo::open`] absolutises for you.)
-pub fn detect(start: &Path) -> Option<Located> {
+/// and only its own directory is checked. ([`Repo::discover`] absolutises for
+/// you.) See [`Repo::open`] for a strict, non-walking check of exactly one
+/// directory.
+pub fn discover(start: &Path) -> Option<Located> {
     let mut current = Some(start);
     while let Some(dir) = current {
         if is_jj_marker(&dir.join(".jj")) {
@@ -271,7 +274,7 @@ fn is_git_marker(path: &Path) -> bool {
         Ok(meta) if meta.is_dir() => true,
         Ok(meta) if meta.is_file() => {
             // A gitlink file is tiny (`gitdir: <path>\n`), so read only a small
-            // prefix: `detect` walks *up to the filesystem root*, so a huge/garbage
+            // prefix: `discover` walks *up to the filesystem root*, so a huge/garbage
             // file merely named `.git` in an ancestor we don't own must not force an
             // unbounded read. `read_to_end` loops over short reads (unlike a single
             // `read`, which the `Read` contract lets return fewer bytes), and
@@ -309,7 +312,7 @@ fn is_bare_git_repo_marker(dir: &Path) -> bool {
 
 /// Walk up from `start` to the filesystem root looking for a **bare** git
 /// repository marker (see [`is_bare_git_repo_marker`]). Only called after
-/// [`detect`] has already walked the same chain and found no `.jj`/`.git`, so
+/// [`discover`] has already walked the same chain and found no `.jj`/`.git`, so
 /// any hit here is unambiguous — no real (non-bare) repository intervenes
 /// between `start` and the bare repository root.
 fn find_bare_git_repo(start: &Path) -> Option<PathBuf> {
@@ -370,21 +373,25 @@ impl<R: ProcessRunner> Debug for Repo<R> {
 }
 
 impl Repo<JobRunner> {
-    /// Detect the repository at or above `dir` and open a handle bound to `dir`,
-    /// using the real job-backed runner. Errors with
-    /// [`Error::NotARepository`] when no `.git`/`.jj` is found, or with
-    /// [`Error::BareRepository`] when the walk instead reaches a **bare** git
-    /// repository (`git init --bare`) before any `.jj`/`.git` — a bare repo has
-    /// no working tree for this facade to drive (issue #6).
-    pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
-        // Absolutise first: `detect` walks parents, and a relative path like "."
+    /// Discover the repository at or above `dir` and open a handle bound to
+    /// `dir`, using the real job-backed runner. Walks up from `dir` toward the
+    /// filesystem root — see [`discover`] — so it finds a repository whose root
+    /// is `dir` itself or any ancestor. Errors with [`Error::NotARepository`]
+    /// when no `.git`/`.jj` is found, or with [`Error::BareRepository`] when the
+    /// walk instead reaches a **bare** git repository (`git init --bare`) before
+    /// any `.jj`/`.git` — a bare repo has no working tree for this facade to
+    /// drive (issue #6).
+    ///
+    /// For a strict check of exactly `dir` — no walking up — see [`Repo::open`].
+    pub fn discover(dir: impl AsRef<Path>) -> Result<Self> {
+        // Absolutise first: `discover` walks parents, and a relative path like "."
         // has no real ancestor chain (`Path::new(".").parent()` is `""`, then
         // `None`), so a relative input would never find a repo above the cwd.
         let dir = std::path::absolute(dir.as_ref())?;
-        let located = match detect(&dir) {
+        let located = match discover(&dir) {
             Some(located) => located,
             None => {
-                // `detect` already walked the full chain and found nothing — a
+                // `discover` already walked the full chain and found nothing — a
                 // second, cheap walk tells us whether the reason is "no
                 // repository at all" or "a bare git repository sits in the
                 // way", so the caller gets the more precise error.
@@ -400,6 +407,38 @@ impl Repo<JobRunner> {
         };
         Ok(Repo {
             root: located.root,
+            cwd: dir,
+            backend,
+        })
+    }
+
+    /// Open the repository at **exactly** `dir` — unlike [`Repo::discover`],
+    /// this does **not** walk up through parent directories: `dir` itself must
+    /// hold the `.jj`/`.git` marker (a `.jj` directory with a `repo` entry, or a
+    /// `.git` directory / gitlink file — the same validated markers [`discover`]
+    /// uses), or this errors with
+    /// [`Error::NotARepository(dir)`](Error::NotARepository)
+    /// even if a repository exists somewhere above `dir`. Mirrors the
+    /// discover-vs-open split in gitoxide (`gix::discover` vs `gix::open`) and
+    /// libgit2 (`git_repository_discover` vs `git_repository_open`) — see
+    /// issue #8.
+    pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
+        // Absolutise so the bound `cwd`/`root` are consistent with `discover`'s
+        // and so a relative "." names the actual directory, not an empty path.
+        let dir = std::path::absolute(dir.as_ref())?;
+        let kind = if is_jj_marker(&dir.join(".jj")) {
+            BackendKind::Jj
+        } else if is_git_marker(&dir.join(".git")) {
+            BackendKind::Git
+        } else {
+            return Err(Error::NotARepository(dir));
+        };
+        let backend = match kind {
+            BackendKind::Git => Backend::Git(Arc::new(Git::new())),
+            BackendKind::Jj => Backend::Jj(Arc::new(Jj::new())),
+        };
+        Ok(Repo {
+            root: dir.clone(),
             cwd: dir,
             backend,
         })
@@ -1049,35 +1088,35 @@ mod tests {
     // don't each carry a fixture that could drift.
     use vcs_testkit::TempDir;
 
-    // --- detect ------------------------------------------------------------
+    // --- discover ------------------------------------------------------------
 
     #[test]
-    fn detect_finds_git_and_jj_and_prefers_jj() {
-        let tmp = TempDir::new("detect");
+    fn discover_finds_git_and_jj_and_prefers_jj() {
+        let tmp = TempDir::new("discover");
         let root = tmp.path();
 
         // Plain git repo.
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        let located = detect(root).expect("git detected");
+        let located = discover(root).expect("git detected");
         assert_eq!(located.kind, BackendKind::Git);
         assert_eq!(located.root, root);
 
         // Colocated: adding a *valid* .jj (with its `repo` store) makes jj win.
         std::fs::create_dir_all(root.join(".jj").join("repo")).unwrap();
-        assert_eq!(detect(root).unwrap().kind, BackendKind::Jj);
+        assert_eq!(discover(root).unwrap().kind, BackendKind::Jj);
     }
 
     // M19: a stray/empty `.jj` directory (no `repo` store — e.g. a leftover
     // `mkdir .jj`) is NOT a jj marker and must not shadow a healthy `.git` repo in the
     // same directory. A valid `.jj` (with `repo`, dir or file) still wins.
     #[test]
-    fn detect_ignores_a_dotjj_without_a_repo_store() {
+    fn discover_ignores_a_dotjj_without_a_repo_store() {
         let tmp = TempDir::new("stray-jj");
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join(".jj")).unwrap(); // empty — no `repo`
         assert_eq!(
-            detect(root).expect("git still detected").kind,
+            discover(root).expect("git still detected").kind,
             BackendKind::Git,
             "an empty .jj must not shadow a real .git"
         );
@@ -1086,38 +1125,38 @@ mod tests {
         let sec = TempDir::new("jj-secondary");
         std::fs::create_dir_all(sec.path().join(".jj")).unwrap();
         std::fs::write(sec.path().join(".jj").join("repo"), b"/path/to/store\n").unwrap();
-        assert_eq!(detect(sec.path()).unwrap().kind, BackendKind::Jj);
+        assert_eq!(discover(sec.path()).unwrap().kind, BackendKind::Jj);
     }
 
     #[test]
-    fn detect_walks_up_to_ancestor() {
+    fn discover_walks_up_to_ancestor() {
         let tmp = TempDir::new("walkup");
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
-        let located = detect(&nested).expect("found via ancestor walk");
+        let located = discover(&nested).expect("found via ancestor walk");
         assert_eq!(located.kind, BackendKind::Git);
         assert_eq!(located.root, root);
     }
 
     #[test]
-    fn detect_returns_none_outside_repo() {
+    fn discover_returns_none_outside_repo() {
         let tmp = TempDir::new("norepo");
-        assert!(detect(tmp.path()).is_none());
+        assert!(discover(tmp.path()).is_none());
     }
 
     // A gitlink `.git` *file* (a linked worktree / submodule) is a valid git marker;
     // a stray file merely named `.git` is NOT — so it can't shadow a real repo above.
     #[test]
-    fn detect_validates_dotgit_file_is_a_gitlink() {
+    fn discover_validates_dotgit_file_is_a_gitlink() {
         let tmp = TempDir::new("gitlink");
         let root = tmp.path();
 
         // A gitlink file → detected as a git repo at this dir.
         std::fs::write(root.join(".git"), "gitdir: /somewhere/.git/worktrees/wt\n").unwrap();
         assert_eq!(
-            detect(root).expect("gitlink detected").kind,
+            discover(root).expect("gitlink detected").kind,
             BackendKind::Git
         );
 
@@ -1128,13 +1167,13 @@ mod tests {
         let child = parent.path().join("sub");
         std::fs::create_dir_all(&child).unwrap();
         std::fs::write(child.join(".git"), "not a gitlink, just noise\n").unwrap();
-        let located = detect(&child).expect("walks up past the bogus .git file");
+        let located = discover(&child).expect("walks up past the bogus .git file");
         assert_eq!(located.root, parent.path(), "the real repo is the parent");
 
         // An empty `.git` file is not a marker.
         let empty = TempDir::new("gitlink-empty");
         std::fs::write(empty.path().join(".git"), "").unwrap();
-        assert!(detect(empty.path()).is_none(), "empty .git is not a repo");
+        assert!(discover(empty.path()).is_none(), "empty .git is not a repo");
 
         // Leading whitespace before `gitdir:` is tolerated (the `trim_start`).
         let spaced = TempDir::new("gitlink-spaced");
@@ -1144,7 +1183,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            detect(spaced.path()).expect("spaced gitlink detected").kind,
+            discover(spaced.path()).expect("spaced gitlink detected").kind,
             BackendKind::Git
         );
     }
@@ -1157,7 +1196,7 @@ mod tests {
     // by variant, not by message substring, so the distinction can't silently
     // regress into the old generic error.
     #[test]
-    fn open_reports_bare_repository_not_generic_not_a_repository() {
+    fn discover_reports_bare_repository_not_generic_not_a_repository() {
         let tmp = TempDir::new("bare-repo");
         let root = tmp.path();
         std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
@@ -1165,16 +1204,25 @@ mod tests {
         std::fs::create_dir_all(root.join("objects")).unwrap();
         std::fs::create_dir_all(root.join("refs")).unwrap();
 
-        match Repo::open(root) {
+        match Repo::discover(root) {
             Err(Error::BareRepository(p)) => assert_eq!(p, root),
             other => panic!("expected Error::BareRepository, got {other:?}"),
+        }
+
+        // The strict, non-walking `open` doesn't special-case bare repos — a
+        // bare repo has no `.git`/`.jj` marker in itself, so it's just
+        // `NotARepository` there (only `discover`'s walk-then-classify path
+        // distinguishes it).
+        match Repo::open(root) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
 
     // A bare repository nested a few levels below `dir` is still found by
-    // walking up — mirrors `detect_walks_up_to_ancestor` for the bare case.
+    // walking up — mirrors `discover_walks_up_to_ancestor` for the bare case.
     #[test]
-    fn open_finds_bare_repository_via_ancestor_walk() {
+    fn discover_finds_bare_repository_via_ancestor_walk() {
         let tmp = TempDir::new("bare-walkup");
         let root = tmp.path();
         std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
@@ -1184,9 +1232,16 @@ mod tests {
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
 
-        match Repo::open(&nested) {
+        match Repo::discover(&nested) {
             Err(Error::BareRepository(p)) => assert_eq!(p, root),
             other => panic!("expected Error::BareRepository, got {other:?}"),
+        }
+
+        // The strict `open` never walks up, so it reports `NotARepository` on
+        // the nested dir regardless of what sits above it.
+        match Repo::open(&nested) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
 
@@ -1194,14 +1249,14 @@ mod tests {
     // bare-repo marker entries must NOT be misdetected as a bare repository —
     // it's just an ordinary non-repository directory.
     #[test]
-    fn open_does_not_misdetect_partial_bare_markers_as_bare_repository() {
+    fn discover_does_not_misdetect_partial_bare_markers_as_bare_repository() {
         let tmp = TempDir::new("bare-partial");
         let root = tmp.path();
         // Only `HEAD` and `config` — no `objects`/`refs` directories.
         std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
 
-        match Repo::open(root) {
+        match Repo::discover(root) {
             Err(Error::NotARepository(p)) => assert_eq!(p, root),
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
@@ -1241,6 +1296,28 @@ mod tests {
             Err(Error::NotARepository(p)) => assert_eq!(p, tmp.path()),
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
+    }
+
+    // Unlike `discover`, the strict `open` never walks up — a repository at an
+    // ancestor of `dir` must NOT make `open(dir)` succeed, even though
+    // `discover(dir)` would find it.
+    #[test]
+    fn open_does_not_walk_up_even_though_discover_would() {
+        let tmp = TempDir::new("open-no-walkup");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let nested = root.join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        match Repo::open(&nested) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
+        }
+        // `discover` from the same nested dir finds the repo at `root`.
+        assert_eq!(
+            Repo::discover(&nested).expect("discover walks up").root(),
+            root
+        );
     }
 
     // --- dispatch (hermetic, ScriptedRunner-backed) ------------------------

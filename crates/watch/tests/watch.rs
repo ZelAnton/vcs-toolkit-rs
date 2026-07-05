@@ -52,7 +52,7 @@ fn fast(repo: Repo) -> impl std::future::Future<Output = vcs_watch::Result<RepoW
 async fn git_branch_create_emits_branch_created() {
     let sandbox = GitSandbox::init("watch-git-branch");
     sandbox.commit_file("seed.txt", "seed\n", "initial");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     let mut watcher = fast(repo).await.expect("watcher");
 
     sandbox.git(&["branch", "feature"]);
@@ -100,7 +100,7 @@ async fn git_worktree_sees_branch_created_from_main() {
     ]);
 
     // Watch the *worktree*, not the main checkout.
-    let repo = Repo::open(&wt_path).expect("open worktree");
+    let repo = Repo::discover(&wt_path).expect("open worktree");
     let mut watcher = fast(repo).await.expect("watcher");
 
     // Create a branch from the MAIN checkout — it lands in the shared `.git`.
@@ -120,7 +120,7 @@ async fn git_worktree_sees_branch_created_from_main() {
 async fn git_working_tree_edit_emits_working_copy_changed() {
     let sandbox = GitSandbox::init("watch-git-wc");
     sandbox.commit_file("seed.txt", "seed\n", "initial");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     // Opt into working-tree watching so a bare untracked file is seen.
     let mut watcher = RepoWatcher::builder(repo)
         .working_tree(true)
@@ -146,7 +146,7 @@ async fn jj_bookmark_create_emits_branch_created() {
     let sandbox = JjSandbox::init("watch-jj-bm");
     sandbox.write("seed.txt", "seed\n");
     sandbox.describe("initial");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     let mut watcher = fast(repo).await.expect("watcher");
 
     sandbox.bookmark("feature");
@@ -166,7 +166,7 @@ async fn jj_bookmark_create_emits_branch_created() {
 async fn drop_stops_the_watch() {
     let sandbox = GitSandbox::init("watch-drop");
     sandbox.commit_file("seed.txt", "seed\n", "initial");
-    let repo = Repo::open(sandbox.path()).expect("open");
+    let repo = Repo::discover(sandbox.path()).expect("open");
     let mut watcher = fast(repo).await.expect("watcher");
 
     // Re-bind the receiver out of the watcher would keep it alive; instead drop

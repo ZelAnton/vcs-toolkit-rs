@@ -51,7 +51,7 @@ re-queries, and hands you the new [`RepoSnapshot`] plus the typed deltas.
 # use vcs_core::Repo;
 # use vcs_watch::RepoWatcher;
 # async fn demo() -> vcs_watch::Result<()> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 let mut watcher = RepoWatcher::watch(repo).await?;     // tokio runtime required
 render(watcher.current());                             // initial paint
 while let Some(change) = watcher.recv().await {
@@ -230,18 +230,18 @@ not `vcs_jj::conflict` (the module steers you there on a mismatch).
 
 ## Detect the backend and dispatch
 
-Write one code path that works on git *or* jj. [`detect`](https://docs.rs/vcs-core/latest/vcs_core/guide/) probes the
-filesystem (jj wins when colocated), and [`Repo::open`](https://docs.rs/vcs-core/latest/vcs_core/guide/) opens a handle
+Write one code path that works on git *or* jj. [`discover`](https://docs.rs/vcs-core/latest/vcs_core/guide/) probes the
+filesystem (jj wins when colocated), and [`Repo::discover`](https://docs.rs/vcs-core/latest/vcs_core/guide/) opens a handle
 bound to a directory; the common methods dispatch to whichever tool is present.
 
 ```rust,ignore
-# use vcs_core::{detect, Repo, BackendKind};
+# use vcs_core::{discover, Repo, BackendKind};
 # use std::path::Path;
 # async fn demo(start: &Path) -> vcs_core::Result<()> {
-if detect(start).is_none() {                       // Option<Located> — no spawn
+if discover(start).is_none() {                     // Option<Located> — no spawn
     return Ok(()); // not a repo
 }
-let repo = Repo::open(start)?;
+let repo = Repo::discover(start)?;
 println!("backend: {}", repo.kind().as_str());     // "git" / "jj"
 
 for change in repo.changed_files().await? { /* FileChange */ let _ = change; }

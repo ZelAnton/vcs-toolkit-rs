@@ -172,7 +172,7 @@ The `vcs-mcp` binary applies, in order:
    tools are remote calls and aren't behind this lock.
 
 > Note the hardening and timeout are how the **binary** constructs the `Repo`/`Forge`.
-> A library embedder that builds a `VcsMcpServer` from `Repo::open(".")` gets a
+> A library embedder that builds a `VcsMcpServer` from `Repo::discover(".")` gets a
 > plain, un-hardened client with no default timeout — harden and time-bound the
 > client yourself (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d))`)
 > if you serve untrusted repositories.
@@ -188,7 +188,7 @@ use vcs_mcp::{VcsMcpServer, WriteGate};
 use rmcp::{ServiceExt, transport::stdio};
 
 # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 let server = VcsMcpServer::new(repo, /* forge */ None, WriteGate::None);
 server.serve(stdio()).await?.waiting().await?;
 # Ok(()) }

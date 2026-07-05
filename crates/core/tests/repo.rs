@@ -23,7 +23,7 @@ fn seeded_git() -> GitSandbox {
 async fn snapshot_git_branch_upstream_ahead_and_dirty() {
     let sandbox = seeded_git();
     let dir = sandbox.path();
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
     let branch = repo
         .current_branch()
         .await
@@ -61,7 +61,7 @@ async fn snapshot_git_branch_upstream_ahead_and_dirty() {
 async fn snapshot_jj_dirty_bookmark_and_no_upstream() {
     let sandbox = JjSandbox::init("snap-jj");
     let dir = sandbox.path();
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
 
     // A fresh empty `@`: clean, no git-style upstream.
     let s = repo.snapshot().await.expect("snapshot");
@@ -89,7 +89,7 @@ async fn open_detects_git_and_reports_changes() {
     let dir = sandbox.path();
 
     // Detection + handle.
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
     assert_eq!(repo.kind(), BackendKind::Git);
     assert!(repo.git().is_some() && repo.jj().is_none());
 
@@ -126,7 +126,7 @@ async fn open_detects_jj_and_reports_changes() {
     let dir = sandbox.path();
 
     // Detection routes a jj repo to the jj backend.
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
     assert_eq!(repo.kind(), BackendKind::Jj);
     assert!(repo.jj().is_some() && repo.git().is_none());
 
@@ -146,7 +146,7 @@ async fn open_detects_jj_and_reports_changes() {
 async fn git_create_then_blocking_cleanup() {
     let sandbox = seeded_git();
     let dir = sandbox.path();
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
 
     let wt = dir.join("wt");
     repo.create_worktree(WorktreeCreate::new(wt.as_path(), "feat").base("HEAD"))
@@ -164,7 +164,7 @@ async fn git_create_then_blocking_cleanup() {
 async fn jj_create_then_blocking_cleanup() {
     let sandbox = JjSandbox::init("jj-cleanup");
     let dir = sandbox.path();
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
 
     let ws = dir.join("ws");
     repo.create_worktree(WorktreeCreate::new(ws.as_path(), "feat").base("@"))
@@ -185,7 +185,7 @@ async fn jj_create_then_blocking_cleanup() {
 async fn jj_blocking_cleanup_refuses_the_main_workspace() {
     let sandbox = JjSandbox::init("jj-cleanup-main");
     let dir = sandbox.path();
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
 
     let err = repo
         .cleanup_worktree_blocking(dir)
@@ -220,7 +220,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     sandbox.commit_file("side.txt", "side\n", "side");
     sandbox.git(&["checkout", "-q", "-"]);
 
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
     let head_before = repo
         .git()
         .expect("git backend")
@@ -311,7 +311,7 @@ async fn jj_try_merge_reports_conflicts_and_rolls_back() {
     jj(dir, &["new", "root()", "-m", "side-b"]);
     sandbox.write("c.txt", "bbb\n");
 
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
     let before = repo
         .jj()
         .expect("jj backend")
@@ -365,7 +365,7 @@ async fn git_continue_drives_rebase_through_two_conflicts() {
     sandbox.write("seed.txt", "s2\n");
     sandbox.git(&["commit", "-aqm", "s2"]);
 
-    let repo = Repo::open(dir).expect("open");
+    let repo = Repo::discover(dir).expect("open");
 
     // The rebase stops on the first commit's conflict.
     assert!(

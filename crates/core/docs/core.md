@@ -19,7 +19,7 @@ signature snippets are marked `ignore`.
 ```rust,no_run
 use vcs_core::Repo;
 # fn run() -> vcs_core::Result<()> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 println!("backend: {}", repo.kind().as_str()); // "git" / "jj"
 # Ok(()) }
 ```
@@ -27,10 +27,10 @@ println!("backend: {}", repo.kind().as_str()); // "git" / "jj"
 ## Detection
 
 ```rust,ignore
-pub fn detect(start: &Path) -> Option<Located>
+pub fn discover(start: &Path) -> Option<Located>
 ```
 
-`detect` walks up from `start` to the filesystem root, returning the first
+`discover` walks up from `start` to the filesystem root, returning the first
 repository it finds. A **valid** `.jj` **wins over `.git`** — colocated repos are
 driven through jj, since that's the tool actually managing the working copy. Both
 markers are **validated**, not merely present: a `.jj` must contain its `repo` store
@@ -42,7 +42,7 @@ a real one higher up. Pure filesystem probing — no subprocess is ever spawned.
 
 `start` is walked via `Path::parent`, so pass an **absolute** path to search
 ancestors. A relative path like `"."` has no ancestor chain — only its own
-directory is checked. (`Repo::open` absolutises for you; `detect` does not.)
+directory is checked. (`Repo::discover` absolutises for you; `discover` does not.)
 
 ```rust,ignore
 #[non_exhaustive]
@@ -57,9 +57,9 @@ pub struct Located {
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_core::{detect, BackendKind};
+# use vcs_core::{discover, BackendKind};
 # fn run() {
-if let Some(loc) = detect(Path::new("/abs/path/to/checkout/src")) {
+if let Some(loc) = discover(Path::new("/abs/path/to/checkout/src")) {
     match loc.kind {
         BackendKind::Jj  => println!("jj at {}", loc.root.display()),
         BackendKind::Git => println!("git at {}", loc.root.display()),
@@ -72,16 +72,24 @@ if let Some(loc) = detect(Path::new("/abs/path/to/checkout/src")) {
 
 ```rust,ignore
 impl Repo<JobRunner> {
+    pub fn discover(dir: impl AsRef<Path>) -> Result<Self>;
     pub fn open(dir: impl AsRef<Path>) -> Result<Self>;
 }
 ```
 
-`Repo::open` detects the repository at or above `dir` and opens a handle **bound
-to `dir`**, using the real job-backed process runner. It errors with
+`Repo::discover` detects the repository at or above `dir` and opens a handle
+**bound to `dir`**, using the real job-backed process runner. It errors with
 `Error::NotARepository(dir)` when no `.git`/`.jj` is found from the start dir up
 to the filesystem root, or with `Error::BareRepository(path)` when the walk
 instead reaches a bare git repository (`git init --bare`) before finding a
 `.jj`/`.git` marker.
+
+`Repo::open` is the strict counterpart — mirroring the discover-vs-open split in
+gitoxide (`gix::discover`/`gix::open`) and libgit2
+(`git_repository_discover`/`git_repository_open`). It checks **only** `dir`
+itself, with no ancestor walk: `dir` must directly hold the `.jj`/`.git` marker,
+or it errors with `Error::NotARepository(dir)` even if a repository exists
+somewhere above `dir`.
 
 For tests or a pre-configured client, build a handle from an explicit client —
 these are generic over the `ProcessRunner` so you can inject a fake:

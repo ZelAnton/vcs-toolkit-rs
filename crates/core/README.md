@@ -20,7 +20,7 @@ exposes only the shared operations. Tool-specific power (a full merge, jj's
 
 ## What it gives you
 
-- **`detect(dir) -> Option<Located>`** — walk up from `dir` to find a `.git`/`.jj`
+- **`discover(dir) -> Option<Located>`** — walk up from `dir` to find a `.git`/`.jj`
   repository. A **valid** `.jj` (one containing its `repo` store) wins over `.git`
   (colocated repos are driven through jj); both markers are validated, so a stray
   `.jj`/`.git` doesn't shadow a real repo. Pure filesystem probing, no subprocess.
@@ -31,7 +31,7 @@ exposes only the shared operations. Tool-specific power (a full merge, jj's
 use vcs_core::Repo;
 
 # fn main() -> vcs_core::Result<()> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 println!("backend: {}", repo.kind().as_str());
 # Ok(())
 # }

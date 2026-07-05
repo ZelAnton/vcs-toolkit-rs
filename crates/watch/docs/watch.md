@@ -11,7 +11,7 @@ use vcs_core::Repo;
 use vcs_watch::{RepoWatcher, RepoEvent};
 
 # async fn demo() -> vcs_watch::Result<()> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 let mut watcher = RepoWatcher::watch(repo).await?;
 while let Some(change) = watcher.recv().await {
     for event in &change.events {
@@ -127,7 +127,7 @@ heavier on a large repo.
 
 ## Backends, colocation, worktrees
 
-The backend (and which dir to watch) comes from `vcs-core`'s pure `detect`: `.jj`
+The backend (and which dir to watch) comes from `vcs-core`'s pure `discover`: `.jj`
 for jj, `.git` for git, and **jj wins when colocated** — so a colocated repo is
 watched via `.jj` (jj drives; its op-log change is the signal). A linked
 worktree's `.git` is a gitlink *file*; the watcher resolves it to that worktree's

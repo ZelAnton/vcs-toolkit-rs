@@ -58,7 +58,7 @@ use vcs_mcp::{VcsMcpServer, WriteGate};
 use rmcp::{ServiceExt, transport::stdio};
 
 # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 let server = VcsMcpServer::new(repo, /* forge */ None, WriteGate::None);
 server.serve(stdio()).await?.waiting().await?;
 # Ok(()) }

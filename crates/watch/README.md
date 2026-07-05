@@ -19,7 +19,7 @@ use vcs_core::Repo;
 use vcs_watch::{RepoWatcher, RepoEvent};
 
 # async fn demo() -> vcs_watch::Result<()> {
-let repo = Repo::open(".")?;
+let repo = Repo::discover(".")?;
 let mut watcher = RepoWatcher::watch(repo).await?;
 while let Some(change) = watcher.recv().await {
     for event in &change.events {

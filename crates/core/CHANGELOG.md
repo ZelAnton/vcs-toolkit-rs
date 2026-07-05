@@ -17,9 +17,10 @@ crates; tag releases as `vcs-core-v<version>`.
   never formats the inner `Git`/`Jj` client — `Backend` prints only its
   discriminant (`Git(..)`/`Jj(..)`) via `finish_non_exhaustive`, so a
   credential token set via `with_token` can't leak through `{:?}`.
-- **`Error::BareRepository(PathBuf)`** — `Repo::open` now returns this instead
-  of the generic `Error::NotARepository` when the directory walk instead
-  reaches a **bare** git repository (`git init --bare`: `HEAD`/`config`/
+- **`Error::BareRepository(PathBuf)`** — `Repo::discover` (see the breaking
+  rename below) now returns this instead of the generic
+  `Error::NotARepository` when the directory walk instead reaches a **bare**
+  git repository (`git init --bare`: `HEAD`/`config`/
   `objects`/`refs` directly in the directory, no `.git` subdirectory, no
   working tree). A bare repository *is* a valid git repository — just one this
   facade doesn't drive, since there's no working tree for the CLI wrappers to
@@ -27,9 +28,28 @@ crates; tag releases as `vcs-core-v<version>`.
   being folded into "not a repository". Opening a normal (non-bare) git
   repository, a jj repository, or a genuinely non-repository directory is
   unaffected. Fixes #6.
+- **New `Repo::open(dir)`** — opens the repository at **exactly** `dir`, with
+  no ancestor walk: `dir` itself must hold the `.jj`/`.git` marker, or this
+  errors with `Error::NotARepository(dir)` even if a repository exists
+  somewhere above `dir`. Mirrors the `discover`-vs-`open` split in gitoxide
+  (`gix::discover`/`gix::open`) and libgit2
+  (`git_repository_discover`/`git_repository_open`). See below for the
+  breaking rename that freed up the `open` name. Fixes #8.
 
 ### Changed
--
+- **Breaking: `Repo::open` → `Repo::discover`; `detect` → `discover`.** The
+  project is pre-1.0 with no external users yet (see `ROADMAP.md`), so this
+  ships without a deprecation shim. What `Repo::open`/`detect` used to do —
+  walk up from a directory to the filesystem root looking for a `.jj`/`.git`
+  marker — is what gitoxide and libgit2 call **discovery**
+  (`gix::discover`/`git_repository_discover`), not "open": both of those
+  libraries reserve `open` for a strict check of exactly one directory, with
+  no ancestor walk. The old names conflated the two, and gave no way to ask
+  "is this *exact* directory a repository root?". `Repo::discover` and the
+  top-level `discover` function behave exactly like the old `Repo::open`/
+  `detect` (including the new `Error::BareRepository` classification above);
+  the `open` name is now free for the new, stricter method described above.
+  Fixes #8.
 
 ### Fixed
 -

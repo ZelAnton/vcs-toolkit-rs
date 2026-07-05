@@ -59,7 +59,7 @@
 //! use vcs_core::Repo;
 //! use vcs_watch::RepoWatcher;
 //! # async fn run() -> vcs_watch::Result<()> {
-//! let repo = Repo::open(".")?;
+//! let repo = Repo::discover(".")?;
 //! let mut watcher = RepoWatcher::watch(repo).await?;
 //! while let Some(change) = watcher.recv().await {
 //!     for event in &change.events {
@@ -79,7 +79,7 @@
 //! use vcs_core::Repo;
 //! use vcs_watch::RepoWatcher;
 //! # async fn run() -> vcs_watch::Result<()> {
-//! let repo = Repo::open(".")?;
+//! let repo = Repo::discover(".")?;
 //! let mut watcher = RepoWatcher::watch(repo).await?;
 //! while let Some(change) = watcher.next().await {
 //!     println!("{} event(s)", change.events.len());

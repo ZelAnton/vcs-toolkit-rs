@@ -15,12 +15,13 @@ use std::path::PathBuf;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// [`Repo::open`](crate::Repo::open) found no `.git`/`.jj` from the start dir
-    /// up to the filesystem root.
+    /// [`Repo::discover`](crate::Repo::discover) found no `.git`/`.jj` from the
+    /// start dir up to the filesystem root, or [`Repo::open`](crate::Repo::open)
+    /// found no `.git`/`.jj` marker in the exact directory it was given.
     NotARepository(PathBuf),
-    /// [`Repo::open`](crate::Repo::open) walked up to a **bare** git repository
-    /// (created with `git init --bare`, or an equivalent bare clone) — a
-    /// directory holding `HEAD`/`config`/`objects`/`refs` directly, with no
+    /// [`Repo::discover`](crate::Repo::discover) walked up to a **bare** git
+    /// repository (created with `git init --bare`, or an equivalent bare clone)
+    /// — a directory holding `HEAD`/`config`/`objects`/`refs` directly, with no
     /// `.git` subdirectory and no worktree. This is distinct from
     /// [`NotARepository`](Error::NotARepository): a bare repository *is* a
     /// valid git repository, just one this facade doesn't drive (it has no

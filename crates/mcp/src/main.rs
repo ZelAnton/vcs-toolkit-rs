@@ -21,7 +21,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use vcs_core::vcs_git::{Git, GitApi};
 use vcs_core::vcs_jj::Jj;
-use vcs_core::{BackendKind, Repo, detect};
+use vcs_core::{BackendKind, Repo, discover};
 use vcs_forge::vcs_gitea::Gitea;
 use vcs_forge::vcs_github::GitHub;
 use vcs_forge::vcs_gitlab::GitLab;
@@ -97,11 +97,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// variables, and skips system config, so serving a repository the operator
 /// didn't create can't execute its hooks (or honour a `core.fsmonitor` program)
 /// on a tool call. jj has no repo-local hooks, so its client needs no equivalent.
-/// Both carry the per-command `timeout`. This mirrors [`Repo::open`]'s detection
-/// but injects the hardened/timeout-bound client instead of the plain default.
+/// Both carry the per-command `timeout`. This mirrors [`Repo::discover`]'s
+/// detection but injects the hardened/timeout-bound client instead of the
+/// plain default.
 fn open_repo(dir: &Path, timeout: Option<Duration>) -> Result<Repo, Box<dyn std::error::Error>> {
     let dir = std::path::absolute(dir)?;
-    let located = detect(&dir).ok_or_else(|| {
+    let located = discover(&dir).ok_or_else(|| {
         format!(
             "no git or jj repository found at or above {}",
             dir.display()
