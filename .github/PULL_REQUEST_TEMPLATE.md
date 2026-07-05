@@ -17,4 +17,4 @@
 
 ## Notes for reviewers
 
-<!-- Anything non-obvious: a platform caveat, a CLI-version quirk, a trade-off, a follow-up deferred to ideas/. -->
+<!-- Anything non-obvious: a platform caveat, a CLI-version quirk, a trade-off, a deferred follow-up. -->

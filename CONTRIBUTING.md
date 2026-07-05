@@ -52,6 +52,5 @@ promotes that crate's `CHANGELOG.md`, publishes to crates.io, tags
 `<crate>-v<version>`, and creates the GitHub Release. docs.rs builds the API reference
 from the published crate — there is no separate docs deploy.
 
-Planned and parked work lives in [ROADMAP.md](ROADMAP.md), [`ideas/`](ideas/), and
-[`decisions/`](decisions/) — check there before proposing something large; it may
+Before proposing something large, search the existing GitHub issues — it may
 already be planned, deferred, or settled against.

@@ -113,4 +113,3 @@ a promise):
   dependency conventions.
 - [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — the error model the API review
   references.
-- [ROADMAP.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/ROADMAP.md) — `6.12` and the remaining path-to-1.0 work.

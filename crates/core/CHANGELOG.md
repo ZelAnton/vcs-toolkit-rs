@@ -38,7 +38,7 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Changed
 - **Breaking: `Repo::open` → `Repo::discover`; `detect` → `discover`.** The
-  project is pre-1.0 with no external users yet (see `ROADMAP.md`), so this
+  project is pre-1.0 with no external users yet, so this
   ships without a deprecation shim. What `Repo::open`/`detect` used to do —
   walk up from a directory to the filesystem root looking for a `.jj`/`.git`
   marker — is what gitoxide and libgit2 call **discovery**

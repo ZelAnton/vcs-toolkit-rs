@@ -20,10 +20,8 @@ What would the API or behavior look like?
 vcs-toolkit is a set of **thin, typed wrappers** over the real
 `git` / `jj` / `gh` / `glab` / `tea` binaries — it reflects each tool's exact
 behavior rather than reimplementing it, and the facades stay an honest
-least-common-denominator. Does this fit that scope? Check
-[`ROADMAP.md`](../../ROADMAP.md), [`ideas/`](../../ideas/), and
-[`decisions/`](../../decisions/) — it may already be planned, parked, or
-considered-and-declined.
+least-common-denominator. Does this fit that scope? Search the existing issues
+first — it may already be planned, parked, or considered-and-declined.
 
 **Alternatives considered**
 Other approaches, prior art in other libraries, or workarounds you've tried.
