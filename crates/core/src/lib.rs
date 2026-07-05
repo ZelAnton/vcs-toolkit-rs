@@ -1111,6 +1111,54 @@ mod tests {
         Repo::from_jj("/repo", "/repo", Jj::with_runner(runner))
     }
 
+    // --- Debug -------------------------------------------------------------
+    //
+    // Regression tests for the `Repo`/`Backend` `Debug` impl (PR #7): formatting
+    // the facade must show the elided shape (`Repo { .. }` with a `Git(..)`/
+    // `Jj(..)` backend) but never expose the wrapped CLI client — and therefore
+    // never a credential token that client might hold. These exist to catch a
+    // future refactor that accidentally starts formatting the client (e.g.
+    // deriving `Debug` on `Backend` directly, or dropping `finish_non_exhaustive`).
+
+    // A git-backed `Repo` built over a `Git` client holding a token via
+    // `with_token` must format to the expected elided shape and must NOT leak
+    // the token (or any other inner-client internal) through `{:?}`.
+    #[test]
+    fn debug_output_shows_elided_git_backend_and_never_leaks_the_token() {
+        let repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()).with_token("ghp_super_secret_token"),
+        );
+        let out = format!("{repo:?}");
+        assert!(out.contains("Repo {"), "{out}");
+        assert!(out.contains("root"), "{out}");
+        assert!(out.contains("cwd"), "{out}");
+        assert!(out.contains("Git(.."), "{out}");
+        assert!(
+            !out.contains("ghp_super_secret_token"),
+            "token must not leak through Debug: {out}"
+        );
+        // Nothing from the inner `Git`/`ManagedClient`/`CliClient` internals
+        // (e.g. its env-var bookkeeping) should surface either — the backend
+        // must render as a bare, elided discriminant.
+        assert!(!out.contains("ManagedClient"), "{out}");
+        assert!(!out.contains("CliClient"), "{out}");
+    }
+
+    // A jj-backed `Repo` (jj is ambient-auth-only — no `with_token`) must format
+    // to the analogous elided shape, with the `Jj(..)` discriminant and no inner
+    // client internals.
+    #[test]
+    fn debug_output_shows_elided_jj_backend() {
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(ScriptedRunner::new()));
+        let out = format!("{repo:?}");
+        assert!(out.contains("Repo {"), "{out}");
+        assert!(out.contains("Jj(.."), "{out}");
+        assert!(!out.contains("ManagedClient"), "{out}");
+        assert!(!out.contains("CliClient"), "{out}");
+    }
+
     // --- snapshot ----------------------------------------------------------
 
     // git: one porcelain-v2 call + a git-dir probe → a combined RepoSnapshot.

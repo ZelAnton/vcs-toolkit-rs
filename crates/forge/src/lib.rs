@@ -862,21 +862,42 @@ mod tests {
         assert_eq!(gitea(ScriptedRunner::new()).kind(), ForgeKind::Gitea);
     }
 
-    // Smoke test for the `Forge`/`Backend` `Debug` impl: `{:?}` must not panic,
-    // must name the backend discriminant, and — the security-relevant part — must
-    // never print a token configured via `with_token`. (A fuller regression test
-    // covering every backend lives with T-003.)
+    // Regression test for the `Forge`/`Backend` `Debug` impl (T-002/T-003): `{:?}`
+    // must not panic, must show the elided shape (`Forge { .. }` with a
+    // `GitHub(..)` backend), and — the security-relevant part — must never print
+    // a token configured via `with_token`, nor any inner-client internal.
     #[test]
-    fn debug_output_does_not_leak_backend_token() {
+    fn debug_output_shows_elided_github_backend_and_never_leaks_the_token() {
         let forge = Forge::from_github(
             "/repo",
             GitHub::with_runner(ScriptedRunner::new()).with_token("ghp_super_secret_token"),
         );
         let out = format!("{forge:?}");
-        assert!(out.contains("Forge"), "{out}");
-        assert!(out.contains("GitHub"), "{out}");
+        assert!(out.contains("Forge {"), "{out}");
+        assert!(out.contains("cwd"), "{out}");
+        assert!(out.contains("backend"), "{out}");
+        assert!(out.contains("GitHub(.."), "{out}");
         assert!(
             !out.contains("ghp_super_secret_token"),
+            "token must not leak through Debug: {out}"
+        );
+        assert!(!out.contains("ManagedClient"), "{out}");
+        assert!(!out.contains("CliClient"), "{out}");
+    }
+
+    // The GitLab backend gets the same treatment as GitHub above — a second
+    // credentialed backend, so the regression isn't pinned to GitHub alone.
+    #[test]
+    fn debug_output_shows_elided_gitlab_backend_and_never_leaks_the_token() {
+        let forge = Forge::from_gitlab(
+            "/repo",
+            GitLab::with_runner(ScriptedRunner::new()).with_token("glpat-super-secret-token"),
+        );
+        let out = format!("{forge:?}");
+        assert!(out.contains("Forge {"), "{out}");
+        assert!(out.contains("GitLab(.."), "{out}");
+        assert!(
+            !out.contains("glpat-super-secret-token"),
             "token must not leak through Debug: {out}"
         );
     }
@@ -888,6 +909,7 @@ mod tests {
     fn debug_output_renders_unknown_backend_plainly() {
         let forge: Forge = Forge::from_unknown("/repo");
         let out = format!("{forge:?}");
+        assert!(out.contains("Forge {"), "{out}");
         assert!(out.contains("Unknown"), "{out}");
         assert!(!out.contains("Unknown("), "{out}");
     }
