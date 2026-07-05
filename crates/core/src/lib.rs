@@ -671,11 +671,18 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
-    /// Rebase the current branch onto `onto` — the commits unique to the current
-    /// line (git `rebase <onto>` = `merge-base..HEAD`; jj `rebase -d <onto>` =
-    /// `-b @`, `@`'s fork-point-to-`@` history). A sibling branch sharing only the
-    /// fork point is not moved. `onto` is a branch/bookmark name or revision the
-    /// backend understands.
+    /// Rebase the current line onto `onto`. The two backends **diverge** on
+    /// non-linear layouts, so this is a documented least-common-denominator:
+    /// - **git** (`rebase <onto>` = `merge-base(HEAD,onto)..HEAD`) moves only
+    ///   `HEAD`'s own ancestor line; commits stacked on `HEAD` stay put.
+    /// - **jj** (`rebase -d <onto>` = the default `-b @` = `(onto..@)::`) moves
+    ///   that line *and its whole descendant closure* — anything stacked on `@`,
+    ///   and any sibling off an *intermediate* commit of the line, move too.
+    ///
+    /// They agree on a linear `HEAD`/`@`; on a **stacked or intermediate-fork**
+    /// layout jj moves strictly more. A sibling that shares only the fork point is
+    /// moved by neither. `onto` is a branch/bookmark name or revision the backend
+    /// understands.
     pub async fn rebase(&self, onto: &str) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::rebase(g, &self.cwd, onto).await,

@@ -16,10 +16,14 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
-- **Docs:** `Repo::rebase` is clarified to move the **current branch** — the commits
-  unique to the current line (git `rebase` = `merge-base..HEAD`; jj `rebase -d` = `-b @`)
-  — not literally "the working copy" alone; a sibling sharing only the fork point is not
-  moved. No behavior change. (`docs/audit-2026-07.md` M6.)
+- **Docs:** `Repo::rebase`'s contract now documents the git-vs-jj **divergence** as
+  an explicit least-common-denominator. git (`rebase <onto>` =
+  `merge-base(HEAD,onto)..HEAD`) moves only `HEAD`'s ancestor line; jj (`rebase -d`
+  = default `-b @` = `(onto..@)::`) also moves everything stacked on `@` and any
+  sibling off an *intermediate* commit — strictly more on a stacked/intermediate-fork
+  layout. (An earlier note implied parity; they agree only on a linear line. A
+  sibling sharing only the fork point is moved by neither.) No behavior change.
+  (`docs/audit-2026-07.md` M6.)
 
 ## [0.6.0] - 2026-07-03
 

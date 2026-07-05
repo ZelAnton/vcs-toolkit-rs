@@ -580,12 +580,20 @@ pub trait JjApi: Send + Sync {
 
     // --- Mutations -----------------------------------------------------------
 
-    /// Rebase the current branch onto a destination (`rebase -d <onto>`, i.e. jj's
-    /// default `-b @`): the commits that are ancestors of `@` but **not** of `<onto>`
-    /// — the fork-point-to-`@` line, plus anything stacked on `@` (jj's branch set is
-    /// `(onto..@)::`) — move onto `<onto>`, matching git's `rebase <onto>`
-    /// (`merge-base(@,onto)..@`). A **sibling** branch that only shares the fork point
-    /// is *not* moved (only `@`'s own line is).
+    /// Rebase the working-copy change and its branch onto `<onto>` (`rebase
+    /// -d <onto>`, i.e. jj's default `-b @`). jj's branch set is `(onto..@)::` —
+    /// the fork-point-to-`@` line **and its whole descendant closure**: `@`,
+    /// everything stacked on top of `@`, and any sibling that branches off an
+    /// *intermediate* commit of that line all move onto `<onto>`.
+    ///
+    /// This is **not** identical to git's `rebase <onto>`, which moves only
+    /// `merge-base(@,onto)..@` — `@`'s own ancestor line — and leaves commits
+    /// stacked on `@` (and intermediate-fork siblings) where they are. On a
+    /// linear `@` the two agree; on a **stacked or intermediate-fork** layout jj
+    /// moves strictly more. A sibling that branches off the **fork point itself**
+    /// is untouched by both (it is not in `(onto..@)::`). Use
+    /// [`rebase_branch`](JjApi::rebase_branch) with an explicit revset for
+    /// narrower control.
     async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
     /// Rebase a whole branch onto a destination (`rebase -b <branch> -d <dest>`).
     async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()>;
