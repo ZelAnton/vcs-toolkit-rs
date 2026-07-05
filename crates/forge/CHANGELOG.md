@@ -16,6 +16,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.5.0] - 2026-07-05
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **`ForgePr::draft` now reflects a GitHub PR's real draft status** instead of
   always being `false`. `vcs-github` gained the `isDraft` field, so the GitHub
   mapper reads `pr.is_draft` rather than hardcoding `false`; GitLab already
@@ -265,7 +276,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.4.0...vcs-forge-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.3.0...vcs-forge-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.2.0...vcs-forge-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.1.0...vcs-forge-v0.2.0

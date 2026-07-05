@@ -18,6 +18,69 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
+## [0.5.0] - 2026-07-05
+
+### Changed
+
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Added
+
+- feat(wave1.5a): is_invalid_input + is_resource_not_found classifiers (A2/A3)
+
+
+### Changed
+
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- refactor(cli-support): share one at_forwarders! macro across the 5 wrappers
+- refactor(cli-support): managed_client! macro for the common wrapper scaffold
+- refactor(cli-support): hoist forge JSON helpers (null_to_empty, from_json) behind a serde feature
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(wave0): data-loss & security bleeders (C1/C2/C3/H1/H5/P1)
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): content verbs preserve trailing bytes (H7)
+- fix(wave2): don't retry a fetch timeout (avoids 3x deadline amplification) (R6)
+
+
+### Added
+
+- feat(retry+ci): is_transient classifier (R9), fetch timeout_grace (R10), report-only semver-checks CI (R3), >4KiB classification regression test (R2)
+- feat(retry): lock-contention classifier + opt-in jittered RetryPolicy on git/jj mutations
+- feat(credentials): CredentialProvider abstraction + forge (gh/glab) token injection (Phase 1)
+- feat(credentials): git remote (HTTPS) credential injection via credential.helper (Phase 2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(credentials): treat an empty resolved secret as ambient (no injection)
+- fix(cli-support): tighten lock-retry markers, credential robustness, flag-guard hardening
+- fix(cli-support+jj): tighten transient marker, resolve_list match, conflict end-marker
+
+
+### Changed
+
+- refactor: extract vcs-diff + vcs-cli-support foundational crates
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: review follow-ups — docs, CI, Windows paths, mappers, and tests
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
 ## [0.4.0] - 2026-07-03
 
 ### Added
@@ -238,7 +301,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.4.0...vcs-cli-support-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.3.0...vcs-cli-support-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.2.0...vcs-cli-support-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.1.0...vcs-cli-support-v0.2.0

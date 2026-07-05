@@ -1,6 +1,6 @@
 [package]
 name = "vcs-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "A Model Context Protocol (MCP) server exposing Git, Jujutsu, and GitHub/GitLab/Gitea operations as agent-callable tools, with writes gated off by default."
 edition.workspace = true
 rust-version.workspace = true
@@ -18,8 +18,8 @@ categories = ["command-line-utilities","development-tools","asynchronous"]
 rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
 # The git/jj facade (`Repo`) and the forge facade (`Forge`), with their `serde`
 # feature on so the DTOs the tools return serialize to JSON.
-vcs-core = { path = "../core", version = "0.6", features = ["serde"] }
-vcs-forge = { path = "../forge", version = "0.4", features = ["serde"] }
+vcs-core = { path = "../core", version = "0.7", features = ["serde"] }
+vcs-forge = { path = "../forge", version = "0.5", features = ["serde"] }
 # Async runtime for the server loop + rmcp's async handler dispatch (like
 # `vcs-watch`, this is a runtime dependency, not just dev). `io-std` backs the
 # stdio transport.

@@ -13,6 +13,17 @@ crates; tag releases as `vcs-github-v<version>`.
 -
 
 ### Changed
+-
+
+### Fixed
+-
+
+## [0.9.0] - 2026-07-05
+
+### Added
+-
+
+### Changed
 - **`pr list`/`pr view` now request the `isDraft` JSON field**, exposed as
   `PullRequest::is_draft`. `PR_FIELDS` previously omitted it, so a PR's draft
   status was invisible (the `vcs-forge` `ForgePr::draft` was consequently always
@@ -459,7 +470,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.8.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.0...HEAD
+[0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.8.0...vcs-github-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.7.0...vcs-github-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.6.0...vcs-github-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.5.0...vcs-github-v0.6.0

@@ -16,6 +16,17 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.7.0] - 2026-07-05
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **Docs:** `Repo::rebase`'s contract now documents the git-vs-jj **divergence** as
   an explicit least-common-denominator. git (`rebase <onto>` =
   `merge-base(HEAD,onto)..HEAD`) moves only `HEAD`'s ancestor line; jj (`rebase -d`
@@ -335,7 +346,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...vcs-core-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.5.0...vcs-core-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.4.0...vcs-core-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.3.0...vcs-core-v0.4.0

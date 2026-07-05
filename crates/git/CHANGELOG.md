@@ -16,6 +16,17 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.9.0] - 2026-07-05
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **`rev_parse_short` passes `--verify`, matching `rev_parse`/`resolve_commit`.**
   It pins the single-object contract explicitly: `rev` must name exactly one
   object or the call errors. (`--short` already rejects a plain path with `Needed
@@ -574,7 +585,8 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.8.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.9.0...HEAD
+[0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.8.0...vcs-git-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.7.0...vcs-git-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.6.0...vcs-git-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.5.0...vcs-git-v0.6.0

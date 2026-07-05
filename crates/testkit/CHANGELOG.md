@@ -18,6 +18,47 @@ crates; tag releases as `vcs-testkit-v<version>`.
 ### Fixed
 -
 
+## [0.5.0] - 2026-07-05
+
+### Changed
+
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Changed
+
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(git): current_branch handles unborn repos via symbolic-ref
+- fix(watch+testkit+forge+gitlab): doc + isolation minors
+
+
+### Added
+
+- feat: vcs-testkit crate, version capabilities, observation docs
+
+
+### Changed
+
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: review follow-ups — docs, CI, Windows paths, mappers, and tests
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
 ## [0.4.0] - 2026-07-03
 
 ### Changed
@@ -109,7 +150,8 @@ crates; tag releases as `vcs-testkit-v<version>`.
   hooks a test installs on purpose still run (`core.hooksPath` is deliberately
   not touched).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.4.0...vcs-testkit-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.3.0...vcs-testkit-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.2.0...vcs-testkit-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.1.0...vcs-testkit-v0.2.0

@@ -1,6 +1,6 @@
 [package]
 name = "vcs-watch"
-version = "0.4.0"
+version = "0.5.0"
 description = "Watch a Git or Jujutsu repository and stream typed state-change events (branch, HEAD, dirty, conflicts) — async, built on vcs-core."
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,7 @@ categories = ["development-tools","filesystem","asynchronous"]
 [dependencies]
 # Re-query the repository state on each filesystem change and diff snapshots —
 # `detect`/`Repo::open`/`snapshot`/`local_branches` and the `RepoSnapshot` DTO.
-vcs-core = { path = "../core", version = "0.6" }
+vcs-core = { path = "../core", version = "0.7" }
 # Cross-platform filesystem watcher (inotify / FSEvents / ReadDirectoryChangesW).
 # Raw events only — we debounce ourselves and re-query state, so the heavier
 # debouncer crates buy nothing here.

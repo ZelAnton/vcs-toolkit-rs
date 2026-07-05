@@ -16,6 +16,17 @@ crates; tag releases as `vcs-gitea-v<version>`.
 -
 
 ### Fixed
+-
+
+## [0.5.0] - 2026-07-05
+
+### Added
+-
+
+### Changed
+-
+
+### Fixed
 - **A fork PR's `head_branch` is now a flat branch name.** tea renders a cross-fork
   PR's head as `owner:branch` (and `<marker>:branch` for a deleted fork), unlike the
   plain branch it renders for a same-repo PR — and unlike GitHub/GitLab's flat head. The
@@ -239,7 +250,8 @@ crates; tag releases as `vcs-gitea-v<version>`.
   `--limit 999`, so a PR beyond the first page is no longer a false "not found"
   (PRs beyond 999 still are; documented).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.4.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.5.0...HEAD
+[0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.4.0...vcs-gitea-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.3.0...vcs-gitea-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.2.0...vcs-gitea-v0.3.0
 [0.2.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.1.0...vcs-gitea-v0.2.0
