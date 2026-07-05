@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.5.1] - 2026-07-05
+
+### Added
 - **The `managed_client!` macro now generates a `Debug` impl** for every wrapper
   type it scaffolds (`Git`, `Jj`, `GitHub`, `GitLab`), delegating straight to the
   wrapped `ManagedClient` field — which already redacts its configured
@@ -305,7 +316,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.1...HEAD
+[0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.0...vcs-cli-support-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.4.0...vcs-cli-support-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.3.0...vcs-cli-support-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.2.0...vcs-cli-support-v0.3.0

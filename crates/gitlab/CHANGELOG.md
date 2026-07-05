@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.5.1] - 2026-07-05
+
+### Added
 - **`GitLab<R>` now implements `Debug`**, via the shared `vcs_cli_support::managed_client!`
   macro (no code change here). No `R: Debug` bound; a token configured via
   `with_token` is never printed, only whether a credential provider is set.
@@ -301,7 +312,8 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `mr_list` passes `--per-page 100` — glab's default of 30 silently truncated
   larger result sets. The cap is now explicit and documented.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.1...HEAD
+[0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.0...vcs-gitlab-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.4.0...vcs-gitlab-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.3.0...vcs-gitlab-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.2.0...vcs-gitlab-v0.3.0

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.1] - 2026-07-05
+
+### Added
 - **`Repo`/`Backend` now implement `Debug`.** The impl is hand-written rather
   than derived, for two reasons: it avoids forcing an `R: Debug` bound onto the
   generic runner type parameter (`R: ProcessRunner`), which callers would
@@ -382,7 +393,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...HEAD
+[0.7.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...vcs-core-v0.7.1
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...vcs-core-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.5.0...vcs-core-v0.6.0
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.4.0...vcs-core-v0.5.0

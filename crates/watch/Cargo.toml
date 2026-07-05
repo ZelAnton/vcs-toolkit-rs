@@ -1,6 +1,6 @@
 [package]
 name = "vcs-watch"
-version = "0.5.0"
+version = "0.5.1"
 description = "Watch a Git or Jujutsu repository and stream typed state-change events (branch, HEAD, dirty, conflicts) — async, built on vcs-core."
 edition.workspace = true
 rust-version.workspace = true

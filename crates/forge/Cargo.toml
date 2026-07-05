@@ -1,6 +1,6 @@
 [package]
 name = "vcs-forge"
-version = "0.5.0"
+version = "0.5.1"
 description = "One async Rust API over GitHub, GitLab, and Gitea: unified pull/merge requests, issues, and releases across the gh, glab, and tea CLIs."
 edition.workspace = true
 rust-version.workspace = true
