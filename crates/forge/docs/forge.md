@@ -104,8 +104,8 @@ owner is the namespace path). [`CiStatus`] is `Passing` / `Failing` / `Pending` 
 `None` — GitHub aggregates its per-check buckets into it, GitLab maps its pipeline
 status. [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`) maps to each CLI's flag.
 
-`draft` is **best-effort**: only GitLab reports it on the lean surface; GitHub and
-Gitea report `false` (their lean JSON doesn't carry the flag).
+`draft` is **best-effort**: GitHub (`gh --json isDraft`) and GitLab report it;
+Gitea reports `false` (`tea`'s PR list doesn't carry the flag).
 
 [`ForgeIssue`] generalises the three issue shapes: `number` (GitLab's `iid`),
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",

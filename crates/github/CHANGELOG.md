@@ -13,7 +13,11 @@ crates; tag releases as `vcs-github-v<version>`.
 -
 
 ### Changed
--
+- **`pr list`/`pr view` now request the `isDraft` JSON field**, exposed as
+  `PullRequest::is_draft`. `PR_FIELDS` previously omitted it, so a PR's draft
+  status was invisible (the `vcs-forge` `ForgePr::draft` was consequently always
+  `false` for GitHub). The field deserializes with `#[serde(default)]` for
+  robustness (defaults to `false` if a payload omits it).
 
 ### Fixed
 -

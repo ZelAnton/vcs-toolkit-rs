@@ -165,8 +165,8 @@ pub struct ForgePr {
     pub target_branch: String,
     /// Web URL.
     pub url: String,
-    /// Whether the PR/MR is a draft. **Best-effort**: only GitLab reports it on
-    /// the lean surface; GitHub and Gitea report `false` here (their lean JSON
+    /// Whether the PR/MR is a draft. **Best-effort**: GitHub (`gh --json isDraft`)
+    /// and GitLab report it; Gitea always reports `false` here (`tea`'s PR list
     /// doesn't carry the draft flag).
     pub draft: bool,
 }

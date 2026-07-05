@@ -178,9 +178,7 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         source_branch: pr.head_ref_name,
         target_branch: pr.base_ref_name,
         url: pr.url,
-        // gh's lean `--json` fields don't include `isDraft`, so it's reported
-        // `false` here (see `ForgePr::draft`).
-        draft: false,
+        draft: pr.is_draft,
     }
 }
 

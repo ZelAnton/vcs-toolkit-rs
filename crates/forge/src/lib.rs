@@ -852,12 +852,15 @@ mod tests {
     // GitHub's "OPEN"/"MERGED" states map onto the unified ForgePrState.
     #[tokio::test]
     async fn github_pr_list_maps_to_unified() {
-        let json = r#"[{"number":7,"title":"X","state":"MERGED","headRefName":"feat","baseRefName":"main","url":"u"}]"#;
+        let json = r#"[{"number":7,"title":"X","state":"MERGED","isDraft":true,"headRefName":"feat","baseRefName":"main","url":"u"}]"#;
         let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].number, 7);
         assert_eq!(prs[0].state, ForgePrState::Merged);
         assert_eq!(prs[0].source_branch, "feat");
+        // `isDraft` flows through the GitHub mapper (regression guard: a revert to
+        // a hardcoded `draft: false` would fail here, as the GitLab path does).
+        assert!(prs[0].draft);
     }
 
     // GitLab `repo_view` maps a known "public" visibility to private == false.

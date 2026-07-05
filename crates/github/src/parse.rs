@@ -6,7 +6,8 @@ use serde::Deserialize;
 
 use crate::BINARY;
 
-/// A pull request (`gh pr list/view --json number,title,state,headRefName,baseRefName,url`).
+/// A pull request
+/// (`gh pr list/view --json number,title,state,isDraft,headRefName,baseRefName,url`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
 pub struct PullRequest {
@@ -16,6 +17,9 @@ pub struct PullRequest {
     pub title: String,
     /// State, e.g. `"OPEN"`, `"MERGED"`, `"CLOSED"`.
     pub state: String,
+    /// Whether the PR is a draft (`gh --json isDraft`).
+    #[serde(rename = "isDraft", default)]
+    pub is_draft: bool,
     /// Source (head) branch name.
     #[serde(
         rename = "headRefName",
@@ -414,7 +418,7 @@ mod tests {
     #[test]
     fn parses_pr_list() {
         let json = r#"[
-            {"number": 12, "title": "Add feature", "state": "OPEN",
+            {"number": 12, "title": "Add feature", "state": "OPEN", "isDraft": true,
              "headRefName": "feat/x", "baseRefName": "main", "url": "https://gh/pr/12"}
         ]"#;
         let prs: Vec<PullRequest> =
@@ -426,11 +430,27 @@ mod tests {
                 number: 12,
                 title: "Add feature".into(),
                 state: "OPEN".into(),
+                is_draft: true,
                 head_ref_name: "feat/x".into(),
                 base_ref_name: "main".into(),
                 url: "https://gh/pr/12".into(),
             }
         );
+    }
+
+    // `#[serde(default)]` robustness: a payload that omits `isDraft` deserializes
+    // to `false` rather than failing the whole parse. (When we request `--json
+    // isDraft`, gh emits the key or hard-errors on an unknown field — it never
+    // silently omits it — so this guards our own tolerance, not a real gh quirk.)
+    #[test]
+    fn pr_without_is_draft_defaults_false() {
+        let pr: PullRequest = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"number": 4, "title": "t", "state": "OPEN",
+                "headRefName": "h", "baseRefName": "main", "url": "u"}"#,
+        )
+        .expect("PR without isDraft");
+        assert!(!pr.is_draft);
     }
 
     #[test]

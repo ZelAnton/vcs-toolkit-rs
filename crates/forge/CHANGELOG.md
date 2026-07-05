@@ -16,6 +16,11 @@ crates; tag releases as `vcs-forge-v<version>`.
 -
 
 ### Fixed
+- **`ForgePr::draft` now reflects a GitHub PR's real draft status** instead of
+  always being `false`. `vcs-github` gained the `isDraft` field, so the GitHub
+  mapper reads `pr.is_draft` rather than hardcoding `false`; GitLab already
+  reported it. (Gitea's `tea` PR list still carries no draft flag, so it remains
+  `false` there — documented on the field.)
 - **`Error::is_unauthorized` no longer false-fires on `gh`'s wrong-remote hint.** The
   bare `gh auth login` *suggestion* verb was an auth marker, but `gh` also prints it in
   a misconfiguration message ("none of the git remotes … point to a known GitHub host …
