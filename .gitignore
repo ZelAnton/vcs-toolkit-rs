@@ -1,5 +1,8 @@
 /target
 
+# Local agent task-tracking workspace — never committed.
+/.work/
+
 # Per-user scratch notes — never committed. Use these names freely for
 # throwaway planning/working files.
 *.local.md
