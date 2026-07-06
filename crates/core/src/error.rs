@@ -172,16 +172,16 @@ mod tests {
     #[test]
     fn is_transient_delegates_to_processkit_and_excludes_facade_variants() {
         // An interrupted spawn is a transient io failure.
-        let interrupted = Error::Vcs(processkit::Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
-        });
+        let interrupted = Error::Vcs(processkit::Error::spawn(
+            "git",
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ));
         assert!(interrupted.is_transient());
         // A missing binary is NOT transient (retrying won't install it).
-        let missing = Error::Vcs(processkit::Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        });
+        let missing = Error::Vcs(processkit::Error::spawn(
+            "git",
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ));
         assert!(!missing.is_transient());
         // The facade's own io/detection variants are never transient.
         assert!(!Error::Io(std::io::Error::from(std::io::ErrorKind::Interrupted)).is_transient());
@@ -190,18 +190,15 @@ mod tests {
 
     #[test]
     fn is_not_found_only_for_a_missing_binary() {
-        let not_found = Error::Vcs(processkit::Error::NotFound {
-            program: "jj".into(),
-            searched: None,
-        });
+        let not_found = Error::Vcs(processkit::Error::not_found("jj", None));
         assert!(not_found.is_not_found());
         // An ordinary non-zero exit is not a "binary not found".
-        let exit = Error::Vcs(processkit::Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: String::new(),
-            stderr: "fatal: not a git repository".into(),
-        });
+        let exit = Error::Vcs(processkit::Error::exit(
+            "git",
+            1,
+            "",
+            "fatal: not a git repository",
+        ));
         assert!(!exit.is_not_found());
         assert!(!Error::NotARepository("/x".into()).is_not_found());
     }
@@ -209,10 +206,10 @@ mod tests {
     #[test]
     fn is_invalid_input_for_guard_rejections_and_facade_input_errors() {
         // A wrapper guard rejection (flag-like positional) surfaces as invalid input.
-        let guarded = Error::Vcs(processkit::Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like"),
-        });
+        let guarded = Error::Vcs(processkit::Error::spawn(
+            "git",
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like"),
+        ));
         assert!(guarded.is_invalid_input());
         // The facade's own `Io(InvalidInput)` guard (e.g. an empty commit set) too.
         assert!(
@@ -220,10 +217,10 @@ mod tests {
         );
         // A real spawn failure, a detection error, and a generic io error are NOT.
         assert!(
-            !Error::Vcs(processkit::Error::Spawn {
-                program: "git".into(),
-                source: std::io::Error::from(std::io::ErrorKind::NotFound),
-            })
+            !Error::Vcs(processkit::Error::spawn(
+                "git",
+                std::io::Error::from(std::io::ErrorKind::NotFound),
+            ))
             .is_invalid_input()
         );
         assert!(!Error::NotARepository("/x".into()).is_invalid_input());
@@ -235,10 +232,7 @@ mod tests {
         assert!(Error::WorktreeNotFound("/wt".into()).is_resource_not_found());
         // The *binary* missing is a different classifier (is_not_found), and a bad
         // repo path is neither.
-        let missing_bin = Error::Vcs(processkit::Error::NotFound {
-            program: "jj".into(),
-            searched: None,
-        });
+        let missing_bin = Error::Vcs(processkit::Error::not_found("jj", None));
         assert!(missing_bin.is_not_found() && !missing_bin.is_resource_not_found());
         assert!(!Error::NotARepository("/x".into()).is_resource_not_found());
     }

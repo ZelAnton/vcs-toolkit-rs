@@ -2610,12 +2610,12 @@ mod tests {
 
     #[test]
     fn error_classifiers_recognise_markers() {
-        let conflict = Error::Vcs(processkit::Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: "CONFLICT (content): Merge conflict in a.rs".into(),
-            stderr: String::new(),
-        });
+        let conflict = Error::Vcs(processkit::Error::exit(
+            "git",
+            1,
+            "CONFLICT (content): Merge conflict in a.rs",
+            "",
+        ));
         assert!(conflict.is_merge_conflict());
         assert!(!conflict.is_nothing_to_commit());
         // A non-Vcs error classifies as none of them.

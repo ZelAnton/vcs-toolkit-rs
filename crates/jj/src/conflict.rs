@@ -245,10 +245,7 @@ fn marker_label(line: &str, n: usize) -> String {
 }
 
 fn parse_error(message: String) -> Error {
-    Error::Parse {
-        program: BINARY.to_string(),
-        message,
-    }
+    Error::parse(BINARY, message)
 }
 
 /// Parse `conflict N of M` / `conflict N of M ends` headers.
@@ -449,9 +446,11 @@ pub fn render(segments: &[JjConflictSegment]) -> String {
 ///
 /// Errors with a clear message when a region has no such side/base.
 pub fn resolve(segments: &[JjConflictSegment], resolution: JjResolution) -> Result<String> {
-    let refuse = |what: String| Error::Spawn {
-        program: BINARY.to_string(),
-        source: std::io::Error::new(std::io::ErrorKind::InvalidInput, what),
+    let refuse = |what: String| {
+        Error::spawn(
+            BINARY,
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, what),
+        )
     };
     let mut out = String::new();
     for segment in segments {

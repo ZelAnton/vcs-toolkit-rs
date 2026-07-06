@@ -104,10 +104,10 @@ mod tests {
     #[test]
     fn classifiers_and_accessor_reach_through_the_vcs_layer() {
         // A transient io/spawn hiccup from the underlying vcs-core query.
-        let transient = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
-        }));
+        let transient = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::spawn(
+            "git",
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        )));
         assert!(transient.is_transient(), "interrupted spawn is transient");
         assert!(!transient.is_not_found());
         assert!(
@@ -116,10 +116,7 @@ mod tests {
         );
 
         // The VCS binary wasn't found (setup problem), not transient.
-        let missing = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::NotFound {
-            program: "jj".into(),
-            searched: None,
-        }));
+        let missing = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::not_found("jj", None)));
         assert!(missing.is_not_found(), "missing binary is not-found");
         assert!(!missing.is_transient());
         assert!(missing.processkit_error().is_some());

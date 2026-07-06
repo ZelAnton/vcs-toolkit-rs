@@ -1153,12 +1153,12 @@ mod pipeline_tests {
             let is_status = command.arguments().first().map(|a| a == "status") == Some(true);
             if is_status && self.fails_left.load(Ordering::Relaxed) > 0 {
                 self.fails_left.fetch_sub(1, Ordering::Relaxed);
-                return Err(processkit::Error::Exit {
-                    program: "git".into(),
-                    code: 128,
-                    stdout: String::new(),
-                    stderr: "fatal: Unable to create '.git/index.lock'".into(),
-                });
+                return Err(processkit::Error::exit(
+                    "git",
+                    128,
+                    "",
+                    "fatal: Unable to create '.git/index.lock'",
+                ));
             }
             scripted(&self.gitdir, self.head)
                 .output_string(command)

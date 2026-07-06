@@ -413,16 +413,16 @@ impl JjCapabilities {
         if self.is_supported() {
             return Ok(());
         }
-        Err(Error::Spawn {
-            program: BINARY.to_string(),
-            source: std::io::Error::new(
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 format!(
                     "vcs-jj requires jj >= {MIN_SUPPORTED} (the validated floor), found {}",
                     self.version
                 ),
             ),
-        })
+        ))
     }
 }
 
@@ -738,9 +738,8 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn capabilities(&self) -> Result<JjCapabilities> {
         let raw = self.version().await?;
-        let version = parse::parse_jj_version(&raw).ok_or_else(|| Error::Parse {
-            program: BINARY.to_string(),
-            message: format!("unrecognisable `jj --version` output: {raw:?}"),
+        let version = parse::parse_jj_version(&raw).ok_or_else(|| {
+            Error::parse(BINARY, format!("unrecognisable `jj --version` output: {raw:?}"))
         })?;
         Ok(JjCapabilities { version })
     }
@@ -783,10 +782,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn current_change(&self, dir: &Path) -> Result<Change> {
         let mut changes = self.log(dir, "@", 1).await?;
-        changes.pop().ok_or_else(|| Error::Parse {
-            program: BINARY.to_string(),
-            message: "no working-copy change found".to_string(),
-        })
+        changes
+            .pop()
+            .ok_or_else(|| Error::parse(BINARY, "no working-copy change found"))
     }
 
     async fn describe(&self, dir: &Path, message: &str) -> Result<()> {
@@ -1242,14 +1240,14 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // opposite of the "exactly these filesets" contract. Refuse it before spawning
         // (mirrors `split_paths`).
         if filesets.is_empty() {
-            return Err(Error::Spawn {
-                program: BINARY.to_string(),
-                source: std::io::Error::new(
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "commit_paths requires at least one fileset — an empty set would \
                      commit the entire working copy, not just the named paths",
                 ),
-            });
+            ));
         }
         let mut args: Vec<String> = vec!["commit".into(), "-m".into(), message.into()];
         args.extend(filesets.iter().map(|f| f.as_str().to_string()));
@@ -1384,14 +1382,14 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // with `-m` — which would hang a headless run indefinitely. Refuse
         // before spawning anything.
         if filesets.is_empty() {
-            return Err(Error::Spawn {
-                program: BINARY.to_string(),
-                source: std::io::Error::new(
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "split_paths requires at least one fileset — an empty split \
                      opens jj's interactive diff editor",
                 ),
-            });
+            ));
         }
         // `-m` doubles as the description-editor suppressor.
         let mut args: Vec<String> = vec!["split".into(), "-m".into(), message.into()];

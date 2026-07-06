@@ -507,23 +507,23 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             }
             if exhausted {
                 // An empty page means we walked past the last PR — a genuine absence.
-                return Err(Error::Parse {
-                    program: BINARY.to_string(),
-                    message: format!("no pull request #{number} in `tea pr list`"),
-                });
+                return Err(Error::parse(
+                    BINARY,
+                    format!("no pull request #{number} in `tea pr list`"),
+                ));
             }
         }
         // Ran out of the page safety bound without finding it — an extremely large
         // repo. Report honestly rather than a confident false "not found".
-        Err(Error::Parse {
-            program: BINARY.to_string(),
-            message: format!(
+        Err(Error::parse(
+            BINARY,
+            format!(
                 "pull request #{number} not found in the first {} of `tea pr list` (stopped at \
                  the {PR_VIEW_MAX_PAGES}-page safety bound; query `tea`/the Gitea API directly for \
                  a repository this large)",
                 PR_VIEW_MAX_PAGES * PR_VIEW_PAGE_SIZE
             ),
-        })
+        ))
     }
 
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String> {

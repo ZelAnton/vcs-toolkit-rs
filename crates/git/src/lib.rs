@@ -502,13 +502,13 @@ impl RefName {
                 .chars()
                 .any(|c| c.is_control() || " ~^:?*[\\".contains(c));
         if bad {
-            return Err(Error::Spawn {
-                program: BINARY.to_string(),
-                source: std::io::Error::new(
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("invalid git reference name: {name:?}"),
                 ),
-            });
+            ));
         }
         Ok(RefName(name))
     }
@@ -587,9 +587,9 @@ impl GitCapabilities {
         if self.is_supported() {
             return Ok(());
         }
-        Err(Error::Spawn {
-            program: BINARY.to_string(),
-            source: std::io::Error::new(
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 format!(
                     "vcs-git requires git >= {MIN_SUPPORTED_MAJOR}.{MIN_SUPPORTED_MINOR} \
@@ -597,7 +597,7 @@ impl GitCapabilities {
                     self.version
                 ),
             ),
-        })
+        ))
     }
 }
 
@@ -1011,9 +1011,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn capabilities(&self) -> Result<GitCapabilities> {
         let raw = self.version().await?;
-        let version = parse::parse_git_version(&raw).ok_or_else(|| Error::Parse {
-            program: BINARY.to_string(),
-            message: format!("unrecognisable `git --version` output: {raw:?}"),
+        let version = parse::parse_git_version(&raw).ok_or_else(|| {
+            Error::parse(BINARY, format!("unrecognisable `git --version` output: {raw:?}"))
         })?;
         Ok(GitCapabilities { version })
     }
@@ -1462,10 +1461,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .try_parse(
                 self.core.command_in(dir, ["rev-list", "--count", range]),
                 |s| {
-                    s.trim().parse::<usize>().map_err(|e| Error::Parse {
-                        program: BINARY.to_string(),
-                        message: e.to_string(),
-                    })
+                    s.trim().parse::<usize>().map_err(|e| Error::parse(BINARY, e.to_string()))
                 },
             )
             .await
@@ -1667,9 +1663,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `run(["push", "--force", …])`, not smuggle a `+` through a branch name.
         let sides: Vec<&str> = spec.refspec.split(':').collect();
         if sides.len() > 2 || sides.iter().any(|s| s.starts_with('+')) {
-            return Err(processkit::Error::Spawn {
-                program: BINARY.to_string(),
-                source: std::io::Error::new(
+            return Err(processkit::Error::spawn(
+                BINARY,
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!(
                         "push refspec {:?} contains a force (`+`) or multi-ref (`:`) \
@@ -1678,7 +1674,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                         spec.refspec
                     ),
                 ),
-            });
+            ));
         }
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;

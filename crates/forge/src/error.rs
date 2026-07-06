@@ -229,18 +229,15 @@ mod tests {
 
     #[test]
     fn is_not_found_only_for_a_missing_cli_binary() {
-        let missing = Error::Forge(processkit::Error::NotFound {
-            program: "gh".into(),
-            searched: None,
-        });
+        let missing = Error::Forge(processkit::Error::not_found("gh", None));
         assert!(missing.is_not_found());
         // An ordinary non-zero exit (e.g. no such PR) is not a "binary not found".
-        let exit = Error::Forge(processkit::Error::Exit {
-            program: "gh".into(),
-            code: 1,
-            stdout: String::new(),
-            stderr: "no pull requests found".into(),
-        });
+        let exit = Error::Forge(processkit::Error::exit(
+            "gh",
+            1,
+            "",
+            "no pull requests found",
+        ));
         assert!(!exit.is_not_found());
         // The facade's own variants are never "not found".
         assert!(!Error::InvalidInput("x".into()).is_not_found());
@@ -248,16 +245,16 @@ mod tests {
 
     #[test]
     fn is_transient_only_for_an_io_transient() {
-        let interrupted = Error::Forge(processkit::Error::Spawn {
-            program: "glab".into(),
-            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
-        });
+        let interrupted = Error::Forge(processkit::Error::spawn(
+            "glab",
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ));
         assert!(interrupted.is_transient());
         // A missing binary is NOT transient (retrying won't install it).
-        let missing = Error::Forge(processkit::Error::Spawn {
-            program: "glab".into(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        });
+        let missing = Error::Forge(processkit::Error::spawn(
+            "glab",
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ));
         assert!(!missing.is_transient());
         assert!(
             !Error::Unsupported {
@@ -270,14 +267,7 @@ mod tests {
 
     #[test]
     fn classifies_auth_and_rate_limit_from_cli_output() {
-        let exit = |stderr: &str| {
-            Error::Forge(processkit::Error::Exit {
-                program: "gh".into(),
-                code: 1,
-                stdout: String::new(),
-                stderr: stderr.into(),
-            })
-        };
+        let exit = |stderr: &str| Error::Forge(processkit::Error::exit("gh", 1, "", stderr));
         // Authentication failures (representative gh / glab phrasings) — auth, not rate-limit.
         for msg in [
             "HTTP 401: Bad credentials (https://api.github.com/graphql)",
@@ -329,10 +319,10 @@ mod tests {
         // Empty / message-less output is neither.
         assert!(!exit("").is_unauthorized() && !exit("").is_rate_limited());
         // Non-`Exit` errors and the facade's own variants carry no CLI body → neither.
-        let spawn = Error::Forge(processkit::Error::Spawn {
-            program: "gh".into(),
-            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
-        });
+        let spawn = Error::Forge(processkit::Error::spawn(
+            "gh",
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ));
         assert!(!spawn.is_unauthorized() && !spawn.is_rate_limited());
         assert!(!Error::InvalidInput("x".into()).is_unauthorized());
         assert!(
@@ -346,21 +336,14 @@ mod tests {
 
     #[test]
     fn classifies_invalid_input_and_resource_not_found() {
-        let exit = |stderr: &str| {
-            Error::Forge(processkit::Error::Exit {
-                program: "gh".into(),
-                code: 1,
-                stdout: String::new(),
-                stderr: stderr.into(),
-            })
-        };
+        let exit = |stderr: &str| Error::Forge(processkit::Error::exit("gh", 1, "", stderr));
         // Invalid input: the facade's own variant + a wrapper guard rejection.
         assert!(Error::InvalidInput("nothing to edit".into()).is_invalid_input());
         assert!(
-            Error::Forge(processkit::Error::Spawn {
-                program: "tea".into(),
-                source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like body"),
-            })
+            Error::Forge(processkit::Error::spawn(
+                "tea",
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "flag-like body"),
+            ))
             .is_invalid_input()
         );
         assert!(!exit("boom").is_invalid_input());
@@ -373,18 +356,15 @@ mod tests {
         assert!(exit("404 Not Found").is_resource_not_found());
         assert!(exit("release not found").is_resource_not_found()); // gh release miss
         assert!(
-            Error::Forge(processkit::Error::Parse {
-                program: "tea".into(),
-                message: "no pull request #9999 in `tea pr list`".into(),
-            })
+            Error::Forge(processkit::Error::parse(
+                "tea",
+                "no pull request #9999 in `tea pr list`",
+            ))
             .is_resource_not_found()
         );
         // A missing binary is `is_not_found`, NOT resource-not-found; and neither
         // classifies a generic error.
-        let missing = Error::Forge(processkit::Error::NotFound {
-            program: "gh".into(),
-            searched: None,
-        });
+        let missing = Error::Forge(processkit::Error::not_found("gh", None));
         assert!(missing.is_not_found() && !missing.is_resource_not_found());
         assert!(!exit("some other error").is_resource_not_found());
         assert!(!exit("some other error").is_invalid_input());

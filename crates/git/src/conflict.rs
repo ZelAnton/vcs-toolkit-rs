@@ -106,10 +106,7 @@ fn marker_label(line: &str, n: usize) -> String {
 }
 
 fn parse_error(message: String) -> Error {
-    Error::Parse {
-        program: BINARY.to_string(),
-        message,
-    }
+    Error::parse(BINARY, message)
 }
 
 /// Parse a conflicted file's content into text/conflict segments.
@@ -249,13 +246,15 @@ pub fn resolve(segments: &[ConflictSegment], side: ResolutionSide) -> Result<Str
                 let chosen = match side {
                     ResolutionSide::Ours => &region.ours,
                     ResolutionSide::Theirs => &region.theirs,
-                    ResolutionSide::Base => region.base.as_ref().ok_or_else(|| Error::Spawn {
-                        program: BINARY.to_string(),
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "cannot resolve to Base: this conflict records no base \
-                             (2-way `merge` style; use diff3/zdiff3)",
-                        ),
+                    ResolutionSide::Base => region.base.as_ref().ok_or_else(|| {
+                        Error::spawn(
+                            BINARY,
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "cannot resolve to Base: this conflict records no base \
+                                 (2-way `merge` style; use diff3/zdiff3)",
+                            ),
+                        )
                     })?,
                 };
                 chosen.iter().for_each(|l| out.push_str(l));

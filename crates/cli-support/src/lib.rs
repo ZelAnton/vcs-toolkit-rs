@@ -104,10 +104,7 @@ pub mod json {
     /// Deserialize a forge CLI's `--json` output into `T`, mapping a parse failure to
     /// [`Error::Parse`] tagged with `program` (the CLI's binary name).
     pub fn from_json<T: DeserializeOwned>(program: &str, json: &str) -> Result<T> {
-        serde_json::from_str(json).map_err(|e| Error::Parse {
-            program: program.to_string(),
-            message: e.to_string(),
-        })
+        serde_json::from_str(json).map_err(|e| Error::parse(program, e.to_string()))
     }
 }
 
@@ -310,16 +307,16 @@ macro_rules! managed_client {
 pub fn reject_flag_like(program: &str, what: &str, value: &str) -> Result<()> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with('-') || value.contains('\0') {
-        return Err(Error::Spawn {
-            program: program.to_string(),
-            source: std::io::Error::new(
+        return Err(Error::spawn(
+            program,
+            std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(
                     "{what} {value:?} would be parsed as a flag (or is empty / contains NUL) — \
                      refusing to pass it as a positional argument"
                 ),
             ),
-        });
+        ));
     }
     Ok(())
 }
@@ -837,18 +834,41 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self.inner.output_string(cmd).await
     }
 
+    /// Like [`CliClient::output_bytes`], with credential injection. Captures stdout
+    /// as **raw bytes**, byte-exact — unlike [`output_string`](Self::output_string),
+    /// which reassembles stdout from decoded lines and so drops a trailing newline.
+    /// This is the byte-faithful path [`run_untrimmed`](Self::run_untrimmed) needs.
+    /// **No lock-retry**, for the same reason as `output_string`: it returns `Ok`
+    /// on a non-zero exit (it captures the result), so a lock failure surfaces as an
+    /// `Ok` here rather than an `Err` the retry predicate could match.
+    pub async fn output_bytes(
+        &self,
+        call: impl IntoCommand<R>,
+    ) -> Result<ProcessResult<Vec<u8>>> {
+        let cmd = self.prepare(call).await?;
+        self.inner.output_bytes(cmd).await
+    }
+
     /// Like [`run`](Self::run), but returns stdout **verbatim** — no `trim_end`.
     /// For **content**-returning verbs (a file's bytes at a rev, a diff, a raw
     /// template render) where the trailing newline(s) are part of the value, not
     /// noise: trimming them corrupts a read-modify-write round-trip and desyncs a
     /// diff's last hunk from its `@@` line count. Exit-checked like `run`; no
     /// lock-retry (a content read is not a mutation).
+    ///
+    /// Routed through [`output_bytes`](Self::output_bytes) (raw stdout), not
+    /// `output_string`, so the exact bytes — trailing newline included — survive:
+    /// `output_string` rebuilds stdout from decoded lines and would drop that final
+    /// `\n`. The raw bytes are then decoded losslessly with
+    /// [`String::from_utf8_lossy`], the same raw-stdout-to-`String` convention used
+    /// elsewhere in this workspace (e.g. `vcs-jj`).
     pub async fn run_untrimmed(&self, call: impl IntoCommand<R>) -> Result<String> {
-        Ok(self
-            .output_string(call)
+        let bytes = self
+            .output_bytes(call)
             .await?
             .ensure_success()?
-            .into_stdout())
+            .into_stdout();
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Like [`CliClient::probe`] (zero-or-nonzero exit → `bool`), with credential
@@ -927,24 +947,14 @@ mod tests {
 
     #[test]
     fn classifies_merge_conflict() {
-        let on_stdout = Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: "CONFLICT (content): Merge conflict in a.rs".into(),
-            stderr: String::new(),
-        };
-        let on_stderr = Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: String::new(),
-            stderr: "Automatic merge failed; fix conflicts and then commit".into(),
-        };
-        let unrelated = Error::Exit {
-            program: "git".into(),
-            code: 128,
-            stdout: String::new(),
-            stderr: "fatal: not a git repository".into(),
-        };
+        let on_stdout = Error::exit("git", 1, "CONFLICT (content): Merge conflict in a.rs", "");
+        let on_stderr = Error::exit(
+            "git",
+            1,
+            "",
+            "Automatic merge failed; fix conflicts and then commit",
+        );
+        let unrelated = Error::exit("git", 128, "", "fatal: not a git repository");
         assert!(is_merge_conflict(&on_stdout));
         assert!(is_merge_conflict(&on_stderr));
         assert!(!is_merge_conflict(&unrelated));
@@ -953,32 +963,22 @@ mod tests {
 
     #[test]
     fn classifies_nothing_to_commit_and_transient_fetch() {
-        let nothing = Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: "nothing to commit, working tree clean".into(),
-            stderr: String::new(),
-        };
+        let nothing = Error::exit("git", 1, "nothing to commit, working tree clean", "");
         assert!(is_nothing_to_commit(&nothing));
 
-        let dns = Error::Exit {
-            program: "git".into(),
-            code: 128,
-            stdout: String::new(),
-            stderr: "fatal: unable to access 'https://x/': Could not resolve host: x".into(),
-        };
+        let dns = Error::exit(
+            "git",
+            128,
+            "",
+            "fatal: unable to access 'https://x/': Could not resolve host: x",
+        );
         assert!(is_transient_fetch_error(&dns));
         assert!(!is_transient_fetch_error(&nothing));
 
         // A processkit timeout is deliberately NOT retried (R6): it already consumed
         // the caller's full deadline, so retrying would multiply the wall-clock by
         // FETCH_ATTEMPTS. The deadline is the patience budget; raise it, don't triple it.
-        let timeout = Error::Timeout {
-            program: "git".into(),
-            timeout: Duration::from_secs(10),
-            stdout: String::new(),
-            stderr: String::new(),
-        };
+        let timeout = Error::timeout("git", Duration::from_secs(10), "", "");
         assert!(!is_transient_fetch_error(&timeout));
     }
 
@@ -986,20 +986,14 @@ mod tests {
     // retryable too, via processkit's `Error::is_transient()`.
     #[test]
     fn classifies_io_transient_as_fetch_retryable() {
-        let interrupted = Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::from(std::io::ErrorKind::Interrupted),
-        };
+        let interrupted = Error::spawn("git", std::io::Error::from(std::io::ErrorKind::Interrupted));
         assert!(
             interrupted.is_transient(),
             "processkit treats Interrupted as a transient io error"
         );
         assert!(is_transient_fetch_error(&interrupted));
         // A non-transient io error (e.g. NotFound — the binary is missing) is not retried.
-        let missing = Error::Spawn {
-            program: "git".into(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        };
+        let missing = Error::spawn("git", std::io::Error::from(std::io::ErrorKind::NotFound));
         assert!(!is_transient_fetch_error(&missing));
     }
 
@@ -1009,23 +1003,23 @@ mod tests {
     #[test]
     fn classifies_on_large_output_past_the_old_4kib_cap() {
         let padding = "noise line that says nothing\n".repeat(500); // ~14 KiB
-        let conflict = Error::Exit {
-            program: "git".into(),
-            code: 1,
-            stdout: format!("{padding}CONFLICT (content): Merge conflict in late.rs"),
-            stderr: String::new(),
-        };
+        let conflict = Error::exit(
+            "git",
+            1,
+            format!("{padding}CONFLICT (content): Merge conflict in late.rs"),
+            "",
+        );
         assert!(
             is_merge_conflict(&conflict),
             "a conflict marker past 4 KiB must still classify"
         );
 
-        let transient = Error::Exit {
-            program: "git".into(),
-            code: 128,
-            stdout: String::new(),
-            stderr: format!("{padding}fatal: unable to access: Could not resolve host: x"),
-        };
+        let transient = Error::exit(
+            "git",
+            128,
+            "",
+            format!("{padding}fatal: unable to access: Could not resolve host: x"),
+        );
         assert!(is_transient_fetch_error(&transient));
     }
 
@@ -1076,12 +1070,12 @@ mod tests {
     // killed fetch is still not ours to silently replay).
     #[test]
     fn signalled_is_terminal_not_transient() {
-        let signalled = Error::Signalled {
-            program: "git".into(),
-            signal: Some(15),
-            stdout: String::new(),
-            stderr: "fatal: unable to access: Could not resolve host: x".into(),
-        };
+        let signalled = Error::signalled(
+            "git",
+            Some(15),
+            "",
+            "fatal: unable to access: Could not resolve host: x",
+        );
         assert!(!signalled.is_transient());
         assert!(!is_transient_fetch_error(&signalled));
         assert!(!is_merge_conflict(&signalled));
@@ -1089,12 +1083,7 @@ mod tests {
     }
 
     fn exit(program: &str, code: i32, stderr: &str) -> Error {
-        Error::Exit {
-            program: program.into(),
-            code,
-            stdout: String::new(),
-            stderr: stderr.into(),
-        }
+        Error::exit(program, code, "", stderr)
     }
 
     // `is_lock_contention` recognises ONLY the *whole-repo* / working-copy lock
@@ -1153,12 +1142,7 @@ mod tests {
                 "error: cannot lock ref 'refs/heads/index': Unable to create \
                  '/r/.git/refs/heads/index.lock': File exists.",
             ),
-            Error::Timeout {
-                program: "git".into(),
-                timeout: Duration::from_secs(1),
-                stdout: String::new(),
-                stderr: String::new(),
-            },
+            Error::timeout("git", Duration::from_secs(1), "", ""),
         ];
         for e in &not_locks {
             assert!(
@@ -1183,17 +1167,9 @@ mod tests {
         // A real spawn failure (missing binary), a non-zero exit, and a timeout are
         // NOT invalid input — they're environment/usage failures, not a bad argument.
         let not_input = [
-            Error::Spawn {
-                program: "git".into(),
-                source: std::io::Error::from(std::io::ErrorKind::NotFound),
-            },
+            Error::spawn("git", std::io::Error::from(std::io::ErrorKind::NotFound)),
             exit("git", 1, "fatal: not a git repository"),
-            Error::Timeout {
-                program: "git".into(),
-                timeout: Duration::from_secs(1),
-                stdout: String::new(),
-                stderr: String::new(),
-            },
+            Error::timeout("git", Duration::from_secs(1), "", ""),
         ];
         for e in &not_input {
             assert!(!is_invalid_input(e), "should NOT be invalid input: {e:?}");
