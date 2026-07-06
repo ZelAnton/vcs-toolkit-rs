@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.9.1] - 2026-07-05
+
+### Added
 - **`GitHub<R>` now implements `Debug`**, via the shared `vcs_cli_support::managed_client!`
   macro (no code change here). No `R: Debug` bound; a token configured via
   `with_token` is never printed, only whether a credential provider is set.
@@ -472,7 +483,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.1...HEAD
+[0.9.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.0...vcs-github-v0.9.1
 [0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.8.0...vcs-github-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.7.0...vcs-github-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.6.0...vcs-github-v0.7.0

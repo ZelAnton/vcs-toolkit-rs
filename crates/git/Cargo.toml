@@ -1,6 +1,6 @@
 [package]
 name = "vcs-git"
-version = "0.9.0"
+version = "0.9.1"
 description = "Automate Git from Rust: a typed, async wrapper that drives the real git CLI with its exact behavior, config, and credentials."
 edition.workspace = true
 rust-version.workspace = true

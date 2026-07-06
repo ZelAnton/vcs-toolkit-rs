@@ -1,6 +1,6 @@
 [package]
 name = "vcs-gitea"
-version = "0.5.0"
+version = "0.5.1"
 description = "Automate Gitea and Forgejo from Rust: a typed, async wrapper for the tea CLI — pull requests, issues, and releases."
 edition.workspace = true
 rust-version.workspace = true

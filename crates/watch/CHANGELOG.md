@@ -18,6 +18,76 @@ crates; tag releases as `vcs-watch-v<version>`.
 ### Fixed
 -
 
+## [0.5.1] - 2026-07-05
+
+### Changed
+
+- core: rename Repo::open to Repo::discover; add strict Repo::open
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Changed
+
+- refactor(a7): make data-carrying RepoEvent/Error variants #[non_exhaustive] (field-safe)
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Added
+
+- feat(watch): Error classifiers + processkit_error reach-through
+
+
+### Changed
+
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(wave0): data-loss & security bleeders (C1/C2/C3/H1/H5/P1)
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): bound watch raw-event bridge + deadline the baseline snapshot (R2/R4)
+- fix(wave2): a gone upstream reads uncountable, not in-sync (M17, breaking DTO)
+- fix(m-cluster-followup): snapshot() detects git am (BLOCKER) + audit status + M17/M19/M20 doc coherence
+
+
+### Added
+
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(watch+testkit+forge+gitlab): doc + isolation minors
+
+
+### Added
+
+- feat(watch): vcs-watch — filesystem-watch repo events (Wave E)
+- feat(watch+ci+mcp): hermetic watch pipeline tests, requery timeout, stats, Stream; CI feature matrix; testable mcp args (Wave R)
+
+
+### Changed
+
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
 ## [0.5.0] - 2026-07-05
 
 ### Changed
@@ -221,7 +291,8 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.1...HEAD
+[0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.0...vcs-watch-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.4.0...vcs-watch-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.3.0...vcs-watch-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.2.0...vcs-watch-v0.3.0

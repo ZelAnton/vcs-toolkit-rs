@@ -10,6 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.5.1] - 2026-07-05
+
+### Added
 - **`Forge`/`Backend` now implement `Debug`**, symmetric with `vcs_core::Repo`'s.
   Hand-written rather than derived: it avoids forcing an `R: Debug` bound onto
   the generic runner type parameter, and it never formats the inner
@@ -282,7 +293,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.1...HEAD
+[0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.0...vcs-forge-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.4.0...vcs-forge-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.3.0...vcs-forge-v0.4.0
 [0.3.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.2.0...vcs-forge-v0.3.0
