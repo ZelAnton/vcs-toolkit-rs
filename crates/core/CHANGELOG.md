@@ -18,6 +18,151 @@ crates; tag releases as `vcs-core-v<version>`.
 ### Fixed
 -
 
+## [0.7.2] - 2026-07-06
+
+### Changed
+
+- Minimal Debug impl for vcs_core::Repo (#7)
+- core: distinguish bare git repositories from not-a-repository
+- core: rename Repo::open to Repo::discover; add strict Repo::open
+- Release: vcs-diff v0.5.1, vcs-cli-support v0.5.1, vcs-git v0.9.1, vcs-jj v0.9.1, vcs-github v0.9.1, vcs-gitlab v0.5.1, vcs-gitea v0.5.1, vcs-forge v0.5.1, vcs-testkit v0.5.1, vcs-core v0.7.1, vcs-watch v0.5.1, vcs-mcp v0.5.1
+
+
+### Fixed
+
+- fix(core): rustfmt the discover ancestor-walk test (CI fmt check)
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Fixed
+
+- fix(m10): update vcs-core test mocks for jj workspace-root --ignore-working-copy
+- fix(git): rev_parse_short --verify + diff verbs terminate revisions with -- (pathspec-collision hardening, C2/M13 class)
+
+
+### Added
+
+- feat(a4): public builder constructors for the core return DTOs (external impls/test doubles)
+
+
+### Changed
+
+- refactor(a5): create_worktree takes a WorktreeCreate spec (branch/base not transposable)
+- review(0.4.0): whole-solution followups — MergeCheckPartial rename, is_merged test, mcp/core changelogs
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Added
+
+- feat(wave1.5a): is_invalid_input + is_resource_not_found classifiers (A2/A3)
+
+
+### Changed
+
+- refactor(core): use vcs_testkit::TempDir in tests (drop duplicate fixture)
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- refactor(wave1.5b): Repo::remove_worktree takes a WorktreeRemove spec, not a bare force bool (A1)
+- refactor(wave1.5b): Repo::delete_branch takes a BranchDelete spec, not a bare force bool (A1)
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(review): branch-listing color-safety (git); try_merge always rolls back (core)
+- fix(wave0): data-loss & security bleeders (C1/C2/C3/H1/H5/P1)
+- fix(wave0-followup): close cleanup_worktree_blocking repo-wipe + doc/register gaps
+- fix(wave2): has_uncommitted honors jj conflict; detect requires .jj/repo (M18/M19)
+- fix(wave2): a gone upstream reads uncountable, not in-sync (M17, breaking DTO)
+- fix(wave2): detect cherry-pick/revert/bisect/am state; don't rebase-abort a git am (M20)
+- fix(m-cluster-followup): snapshot() detects git am (BLOCKER) + audit status + M17/M19/M20 doc coherence
+- fix(wave2): switch_with_stash pops only its own stash, with --index (M12)
+
+
+### Added
+
+- feat(retry+ci): is_transient classifier (R9), fetch timeout_grace (R10), report-only semver-checks CI (R3), >4KiB classification regression test (R2)
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+- feat(core): re-export processkit + is_transient helper on Error (fewer direct deps for downstream)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- refactor(api): git current_branch -> Option; gitlab mr id -> number (pre-1.0 consistency)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(core): atomic jj worktree creation — clean up on bookmark-step failure (R1)
+- fix(core): jj worktree-rollback & forget-error safety, snapshot arity-guard; bookmarks() via template
+- fix(git): current_branch handles unborn repos via symbolic-ref
+- fix(core): gitlink-aware detect, conflicted-empty snapshot dirty, worktree zip guard
+- fix(core): resolve relative jj worktree paths against the repo dir, not process cwd
+- fix(core): unify jj current_branch on the nearest reachable bookmark (#3)
+- fix(core): deterministic tie-break for jj current_branch among equally-near bookmarks (#4)
+
+
+### Added
+
+- feat: typed description/fetch_from/conflicted_files/status_tracked + facade surface
+- feat: orchestration primitives — jj transaction, try_merge, abort/continue, switch_with_stash
+- feat: vcs-testkit crate, version capabilities, observation docs
+- feat(core): batched Repo::snapshot + maturity docs (Wave C)
+- feat(mcp): vcs-mcp — MCP server over the facades (Wave F)
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- refactor: extract vcs-diff + vcs-cli-support foundational crates
+- refactor(core+forge): macro-mirror VcsRepo/ForgeApi trait decl + delegating impl (Wave S)
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: review follow-ups — docs, CI, Windows paths, mappers, and tests
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
+
+### Added
+
+- feat: optimize toolkit for consumers — non-interactive git, blocking cleanup, API gaps, FileDiff.raw (0.4)
+- feat: cwd-bound handles, wider facade, new ops, VcsRepo trait
+
+
+### Changed
+
+- review: fix cross-cutting issues — CI packages vcs-core, doc consistency, facade tracing feature + crates.io README links
+- deps: processkit 0.6 — probe() predicates + transient fetch-retry
+- review: fix stale README exit_code() example + clean vcs-core changelog maintainer-note
+- review(jj): force --color never; fix tab-truncation, revset range, git merge flags
+- Release: vcs-git v0.4.0, vcs-jj v0.4.0, vcs-github v0.4.0, vcs-core v0.2.0
+
+
+### Fixed
+
+- fix: jj rename paths, Windows separators, unborn-repo diff
+
+
+### Added
+
+- feat(vcs-core): Phase 2 unified VCS facade crate
+- feat(vcs-core): extend common surface for agent-workspace migration + re-export underlying crates
+
+
+### Changed
+
+- build(vcs-core): wire facade crate into the release pipeline
+- Release: vcs-git v0.3.1, vcs-jj v0.3.1, vcs-github v0.3.1, vcs-core v0.1.0
+
 ## [0.7.1] - 2026-07-05
 
 ### Added
@@ -393,7 +538,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.2...HEAD
+[0.7.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...vcs-core-v0.7.2
 [0.7.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...vcs-core-v0.7.1
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...vcs-core-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.5.0...vcs-core-v0.6.0

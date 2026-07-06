@@ -18,6 +18,79 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ### Fixed
 -
 
+## [0.5.2] - 2026-07-06
+
+### Changed
+
+- core: rename Repo::open to Repo::discover; add strict Repo::open
+- Release: vcs-diff v0.5.1, vcs-cli-support v0.5.1, vcs-git v0.9.1, vcs-jj v0.9.1, vcs-github v0.9.1, vcs-gitlab v0.5.1, vcs-gitea v0.5.1, vcs-forge v0.5.1, vcs-testkit v0.5.1, vcs-core v0.7.1, vcs-watch v0.5.1, vcs-mcp v0.5.1
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Changed
+
+- refactor(a5): create_worktree takes a WorktreeCreate spec (branch/base not transposable)
+- refactor(a5): Forge::issue_create takes an IssueCreate spec (extensible, mirrors PrCreate)
+- review(0.4.0): whole-solution followups — MergeCheckPartial rename, is_merged test, mcp/core changelogs
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Changed
+
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- refactor(wave1.5b): Repo::remove_worktree takes a WorktreeRemove spec, not a bare force bool (A1)
+- refactor(wave1.5b): Forge::pr_close takes a PrClose spec, not a bare delete_branch bool (A1)
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(forge+gitea+mcp): correct argv-safety docs for pr_comment body (per-backend)
+- fix(wave0-followup): close cleanup_worktree_blocking repo-wipe + doc/register gaps
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): gitea pr_view paginates past the server page cap; list caps documented (H8)
+
+
+### Added
+
+- feat(mcp): forge PR comment/edit + capability map + forge_info tool (#2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- review: write-gate repo_try_merge, forge Error classifier parity, forge_pr_mark_ready MCP tool
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(diff+mcp): drop empty-path diff sections; validate mcp --allow-tools names
+- fix(git): current_branch handles unborn repos via symbolic-ref
+
+
+### Added
+
+- feat(mcp): vcs-mcp — MCP server over the facades (Wave F)
+- feat(watch+ci+mcp): hermetic watch pipeline tests, requery timeout, stats, Stream; CI feature matrix; testable mcp args (Wave R)
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
 ## [0.5.1] - 2026-07-05
 
 ### Changed
@@ -318,7 +391,8 @@ crates; tag releases as `vcs-mcp-v<version>`.
   Read-only by default. The wrappers' argv injection guards apply under every
   tool.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.2...HEAD
+[0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.1...vcs-mcp-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.0...vcs-mcp-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.4.0...vcs-mcp-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.3.0...vcs-mcp-v0.4.0
