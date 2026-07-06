@@ -313,7 +313,7 @@ async fn absorb_split_and_duplicate_cycle() {
     );
     assert_eq!(
         jj.file_show(dir, "@-", "a.txt").await.expect("show"),
-        "alpha edited",
+        "alpha edited\n",
         "the base change now carries the edit"
     );
 
@@ -335,7 +335,7 @@ async fn absorb_split_and_duplicate_cycle() {
     );
     assert_eq!(
         jj.file_show(dir, "@-", "c.txt").await.expect("show"),
-        "gamma"
+        "gamma\n"
     );
 
     // Duplicate: copying @- adds a commit without moving @.
