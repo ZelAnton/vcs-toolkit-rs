@@ -1012,7 +1012,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn capabilities(&self) -> Result<GitCapabilities> {
         let raw = self.version().await?;
         let version = parse::parse_git_version(&raw).ok_or_else(|| {
-            Error::parse(BINARY, format!("unrecognisable `git --version` output: {raw:?}"))
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `git --version` output: {raw:?}"),
+            )
         })?;
         Ok(GitCapabilities { version })
     }
@@ -1461,7 +1464,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .try_parse(
                 self.core.command_in(dir, ["rev-list", "--count", range]),
                 |s| {
-                    s.trim().parse::<usize>().map_err(|e| Error::parse(BINARY, e.to_string()))
+                    s.trim()
+                        .parse::<usize>()
+                        .map_err(|e| Error::parse(BINARY, e.to_string()))
                 },
             )
             .await

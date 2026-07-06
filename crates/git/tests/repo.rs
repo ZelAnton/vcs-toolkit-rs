@@ -549,7 +549,7 @@ async fn tags_show_config_and_remotes_round_trip() {
     let sub_path = "sub/f.txt";
     assert_eq!(
         git.show_file(dir, "HEAD", sub_path).await.expect("show"),
-        "v1"
+        "v1\n"
     );
 
     // Config: set → get → unset key reads as None.

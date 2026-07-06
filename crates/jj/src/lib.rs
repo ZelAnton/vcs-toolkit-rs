@@ -739,7 +739,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn capabilities(&self) -> Result<JjCapabilities> {
         let raw = self.version().await?;
         let version = parse::parse_jj_version(&raw).ok_or_else(|| {
-            Error::parse(BINARY, format!("unrecognisable `jj --version` output: {raw:?}"))
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `jj --version` output: {raw:?}"),
+            )
         })?;
         Ok(JjCapabilities { version })
     }

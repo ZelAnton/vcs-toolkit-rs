@@ -841,10 +841,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// **No lock-retry**, for the same reason as `output_string`: it returns `Ok`
     /// on a non-zero exit (it captures the result), so a lock failure surfaces as an
     /// `Ok` here rather than an `Err` the retry predicate could match.
-    pub async fn output_bytes(
-        &self,
-        call: impl IntoCommand<R>,
-    ) -> Result<ProcessResult<Vec<u8>>> {
+    pub async fn output_bytes(&self, call: impl IntoCommand<R>) -> Result<ProcessResult<Vec<u8>>> {
         let cmd = self.prepare(call).await?;
         self.inner.output_bytes(cmd).await
     }
@@ -986,7 +983,8 @@ mod tests {
     // retryable too, via processkit's `Error::is_transient()`.
     #[test]
     fn classifies_io_transient_as_fetch_retryable() {
-        let interrupted = Error::spawn("git", std::io::Error::from(std::io::ErrorKind::Interrupted));
+        let interrupted =
+            Error::spawn("git", std::io::Error::from(std::io::ErrorKind::Interrupted));
         assert!(
             interrupted.is_transient(),
             "processkit treats Interrupted as a transient io error"

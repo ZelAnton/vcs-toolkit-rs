@@ -257,9 +257,10 @@ fn strip_fork_owner(head: String) -> String {
 /// Parse a tea table cell holding an issue/PR index (always a JSON **string**,
 /// e.g. `"4"`) into a `u64`, mapping a non-numeric value to [`Error::Parse`].
 fn parse_index(value: &str) -> Result<u64> {
-    value.trim().parse().map_err(|_| {
-        Error::parse(BINARY, format!("expected a numeric index, got {value:?}"))
-    })
+    value
+        .trim()
+        .parse()
+        .map_err(|_| Error::parse(BINARY, format!("expected a numeric index, got {value:?}")))
 }
 
 /// Parse `tea pr list --output json` into the flattened [`PullRequest`]s.

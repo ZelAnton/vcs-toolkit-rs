@@ -116,7 +116,9 @@ mod tests {
         );
 
         // The VCS binary wasn't found (setup problem), not transient.
-        let missing = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::not_found("jj", None)));
+        let missing = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::not_found(
+            "jj", None,
+        )));
         assert!(missing.is_not_found(), "missing binary is not-found");
         assert!(!missing.is_transient());
         assert!(missing.processkit_error().is_some());
