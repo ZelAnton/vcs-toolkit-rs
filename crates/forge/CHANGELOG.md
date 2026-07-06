@@ -18,6 +18,105 @@ crates; tag releases as `vcs-forge-v<version>`.
 ### Fixed
 -
 
+## [0.5.2] - 2026-07-06
+
+### Added
+
+- feat: add Debug to Forge/Backend and the five CLI wrapper clients
+
+
+### Changed
+
+- Release: vcs-diff v0.5.1, vcs-cli-support v0.5.1, vcs-git v0.9.1, vcs-jj v0.9.1, vcs-github v0.9.1, vcs-gitlab v0.5.1, vcs-gitea v0.5.1, vcs-forge v0.5.1, vcs-testkit v0.5.1, vcs-core v0.7.1, vcs-watch v0.5.1, vcs-mcp v0.5.1
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Fixed
+
+- fix(forge): gitea PR head_branch strips fork owner: prefix (M26); is_unauthorized keys gh's no-auth phrase instead of the bare 'auth login' verb (M27)
+- fix(github): PR draft flag is read from gh's isDraft, not hardcoded false
+
+
+### Added
+
+- feat(a4): public builder constructors for forge return DTOs (custom ForgeApi backends)
+
+
+### Changed
+
+- refactor(a5): Forge::issue_create takes an IssueCreate spec (extensible, mirrors PrCreate)
+- refactor(a7): make data-carrying RepoEvent/Error variants #[non_exhaustive] (field-safe)
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Added
+
+- feat(forge): is_unauthorized / is_rate_limited error classifiers
+- feat(forge): github_with_token / gitlab_with_token convenience constructors
+- feat(wave1.5a): is_invalid_input + is_resource_not_found classifiers (A2/A3)
+
+
+### Changed
+
+- refactor(forge)!: rename vcs_github::Repo + vcs_gitlab::Project to RepoView
+- refactor!: interface-consistency renames (pr_mark_ready, Forge::from_* ctors, git fetch_branch)
+- refactor(wave1.5b): Forge::pr_close takes a PrClose spec, not a bare delete_branch bool (A1)
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(forge+gitea+mcp): correct argv-safety docs for pr_comment body (per-backend)
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): gitea pr_view paginates past the server page cap; list caps documented (H8)
+
+
+### Added
+
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+- feat(forge)!: capability introspection (supports/capabilities), DTO field parity (labels/assignees/draft/prerelease), glab api() parity
+- feat(mcp): forge PR comment/edit + capability map + forge_info tool (#2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- review: write-gate repo_try_merge, forge Error classifier parity, forge_pr_mark_ready MCP tool
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(forge): gitea pr_view page-miss signal + release key aliases; gh pr_checks case-insensitive; forge pr_comment empty-body guard
+- fix(forge): github CI aggregate maps all-unknown checks to Pending (gitlab parity)
+- fix(watch+testkit+forge+gitlab): doc + isolation minors
+
+
+### Added
+
+- feat(forge): vcs-gitlab + vcs-gitea + vcs-forge facade (Wave D)
+- feat(mcp): vcs-mcp — MCP server over the facades (Wave F)
+- feat(watch+ci+mcp): hermetic watch pipeline tests, requery timeout, stats, Stream; CI feature matrix; testable mcp args (Wave R)
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- refactor(core+forge): macro-mirror VcsRepo/ForgeApi trait decl + delegating impl (Wave S)
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+- fix(gitea): re-model tea --output json parsers to tea's table/detail shape (not REST)
+
 ## [0.5.1] - 2026-07-05
 
 ### Added
@@ -293,7 +392,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.2...HEAD
+[0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.1...vcs-forge-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.0...vcs-forge-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.4.0...vcs-forge-v0.5.0
 [0.4.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.3.0...vcs-forge-v0.4.0

@@ -1,6 +1,6 @@
 [package]
 name = "vcs-gitlab"
-version = "0.5.1"
+version = "0.5.2"
 description = "Automate GitLab from Rust: a typed, async wrapper for the GitLab CLI (glab) — merge requests, issues, releases, and pipelines."
 edition.workspace = true
 rust-version.workspace = true

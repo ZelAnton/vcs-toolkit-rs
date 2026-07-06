@@ -1,6 +1,6 @@
 [package]
 name = "vcs-mcp"
-version = "0.5.1"
+version = "0.5.2"
 description = "A Model Context Protocol (MCP) server exposing Git, Jujutsu, and GitHub/GitLab/Gitea operations as agent-callable tools, with writes gated off by default."
 edition.workspace = true
 rust-version.workspace = true

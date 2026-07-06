@@ -1,6 +1,6 @@
 [package]
 name = "vcs-jj"
-version = "0.9.1"
+version = "0.9.2"
 description = "Automate Jujutsu (jj) from Rust: a typed, async wrapper that drives the real jj CLI with its exact behavior."
 edition.workspace = true
 rust-version.workspace = true

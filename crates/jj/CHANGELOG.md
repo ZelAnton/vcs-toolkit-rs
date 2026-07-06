@@ -18,6 +18,184 @@ crates; tag releases as `vcs-jj-v<version>`.
 ### Fixed
 -
 
+## [0.9.2] - 2026-07-06
+
+### Added
+
+- feat: add Debug to Forge/Backend and the five CLI wrapper clients
+
+
+### Changed
+
+- Release: vcs-diff v0.5.1, vcs-cli-support v0.5.1, vcs-git v0.9.1, vcs-jj v0.9.1, vcs-github v0.9.1, vcs-gitlab v0.5.1, vcs-gitea v0.5.1, vcs-forge v0.5.1, vcs-testkit v0.5.1, vcs-core v0.7.1, vcs-watch v0.5.1, vcs-mcp v0.5.1
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Fixed
+
+- fix(jj): commit_paths refuses empty fileset (M7); backslash rewrite is Windows-only (M4)
+- fix(jj): workspace root-path probes are read-only (--ignore-working-copy), no snapshot on Drop-cleanup (M10)
+- fix(m2): JjFileset uses root-relative root-file: so filesets target the right file when dir != workspace root
+- fix(m28): jj git fetch forces LC_ALL=C so transient network markers classify on a non-English locale
+- fix(m29): git support gate enforces the real (2, 31) floor the crate's argv needs, not major-only
+
+
+### Changed
+
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Fixed
+
+- fix(a10): jj op-log timestamp uses RFC-3339 offset (%:z), matching git's %aI
+
+
+### Added
+
+- feat(wrappers): re-export ProcessRunner + JobRunner so consumers needn't depend on processkit directly
+
+
+### Changed
+
+- refactor(diff): hoist shared DiffSpec into vcs-diff (dedup git+jj)
+- refactor(cli-support): share one at_forwarders! macro across the 5 wrappers
+- refactor(cli-support): managed_client! macro for the common wrapper scaffold
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(review): C-locale on git diff_stat; --color never on jj blocking workspace probe
+- fix(wave0): data-loss & security bleeders (C1/C2/C3/H1/H5/P1)
+- fix(wave0-followup): close cleanup_worktree_blocking repo-wipe + doc/register gaps
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): content verbs preserve trailing bytes (H7)
+- fix(wave2): clean a partial dest after a failed clone so a retry isn't blocked (R7)
+
+
+### Added
+
+- feat(retry+ci): is_transient classifier (R9), fetch timeout_grace (R10), report-only semver-checks CI (R3), >4KiB classification regression test (R2)
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+- feat(retry): lock-contention classifier + opt-in jittered RetryPolicy on git/jj mutations
+- feat(credentials): git remote (HTTPS) credential injection via credential.helper (Phase 2)
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- refactor: adopt processkit 0.10 direct-arg-list verbs (drop self.core.command double-mention) + envs() for env sets
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- security(git): harden() pins core.sshCommand + honestly scope the guarantee
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(core): jj worktree-rollback & forget-error safety, snapshot arity-guard; bookmarks() via template
+- fix(forges): tolerate JSON null in optional string fields; jj self-rename guard
+- fix(cli-support+jj): tighten transient marker, resolve_list match, conflict end-marker
+- fix(diff): unquote git-quoted paths so non-ASCII filenames aren't dropped
+- fix(jj): parser robustness — drop empty-name bookmark rows; annotate CRLF; conflict to:-marker length
+
+
+### Added
+
+- feat: typed description/fetch_from/conflicted_files/status_tracked + facade surface
+- feat: orchestration primitives — jj transaction, try_merge, abort/continue, switch_with_stash
+- feat: client coverage — git clone/tags/show/blame/config, jj clone/absorb/split/op_log/evolog/annotate
+- feat: vcs-testkit crate, version capabilities, observation docs
+- feat: injection guards + validating newtypes, Git::hardened, typed conflict model
+- feat(api): facade push, forge issues+releases (+MCP tools), builder unification, MCP per-tool allowlist (Wave A)
+
+
+### Changed
+
+- refactor: extract vcs-diff + vcs-cli-support foundational crates
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: review follow-ups — docs, CI, Windows paths, mappers, and tests
+
+
+### Added
+
+- feat: optimize toolkit for consumers — non-interactive git, blocking cleanup, API gaps, FileDiff.raw (0.4)
+- feat: cwd-bound handles, wider facade, new ops, VcsRepo trait
+
+
+### Changed
+
+- review: harden whole solution — non-interactive git fetch, fix stale root-README pr_create example
+- deps: processkit 0.6 — probe() predicates + transient fetch-retry
+- review: fix stale README exit_code() example + clean vcs-core changelog maintainer-note
+- review(jj): force --color never; fix tab-truncation, revset range, git merge flags
+- Release: vcs-git v0.4.0, vcs-jj v0.4.0, vcs-github v0.4.0, vcs-core v0.2.0
+
+
+### Fixed
+
+- fix: jj rename paths, Windows separators, unborn-repo diff
+
+
+### Changed
+
+- Release: vcs-git v0.3.1, vcs-jj v0.3.1, vcs-github v0.3.1, vcs-core v0.1.0
+
+
+### Added
+
+- feat(diff): typed diff (raw + parsed) for git and jj
+- feat(git,jj): fill Phase 1 API gaps
+- feat: Step B + 1d + 1e — error classifiers, status/diff_stat consistency, &[&str] ergonomics
+
+
+### Changed
+
+- deps: bump processkit 0.4 -> 0.5; absorb breaking API changes
+- Release: vcs-git v0.3.0, vcs-jj v0.3.0, vcs-github v0.3.0
+
+
+### Changed
+
+- Release: vcs-git v0.2.1, vcs-jj v0.2.1, vcs-github v0.2.1
+
+
+### Added
+
+- feat(git,jj): expand clients with worktree/workspace, discovery, diff, merge ops for agent-workspace
+
+
+### Changed
+
+- Release: vcs-git v0.2.0, vcs-jj v0.2.0, vcs-github v0.2.0
+
+
+### Added
+
+- feat(process): job-backed spawn (JobObject/cgroup) + publish setup
+- feat: typed command wrappers, exec options, integration tests
+- feat: mockable trait-based API + Runner injection
+- feat: async (tokio) API, timeouts, structured errors, richer models
+- feat: non_exhaustive result structs, optional tracing, cli_client! macro
+
+
+### Changed
+
+- Scaffold vcs-toolkit-rs workspace from rust-repo-template
+- review: harden whole solution, fix potential issues
+- refactor: portable Output model, CliClient core, richer test seam, -z git parsing
+- refactor: replace internal vcs-process with external processkit 0.3
+- ci: release workflow picks major/minor/patch with auto-increment (+ all-crates, first-release)
+- Release: vcs-git v0.1.0, vcs-jj v0.1.0, vcs-github v0.1.0
+
 ## [0.9.1] - 2026-07-05
 
 ### Added
@@ -499,7 +677,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.1...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.2...HEAD
+[0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.1...vcs-jj-v0.9.2
 [0.9.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.0...vcs-jj-v0.9.1
 [0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.8.0...vcs-jj-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.7.0...vcs-jj-v0.8.0

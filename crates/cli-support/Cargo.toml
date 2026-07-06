@@ -1,6 +1,6 @@
 [package]
 name = "vcs-cli-support"
-version = "0.5.1"
+version = "0.5.2"
 description = "Shared plumbing for CLI-wrapping crates: an argv injection guard, a managed client with retry (fetch + lock contention) and credential injection, and processkit error classifiers."
 edition.workspace = true
 rust-version.workspace = true
