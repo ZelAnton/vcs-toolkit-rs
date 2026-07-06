@@ -10,7 +10,11 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- test: lock in the `remote_branch_exists` bounded wait — a hung `ls-remote`
+  resolves via its per-command 10 s timeout rather than hanging (pins the
+  processkit 2.1 guarantee that a scripted pending reply honors `Command::timeout`
+  on bulk verbs).
 
 ### Changed
 -

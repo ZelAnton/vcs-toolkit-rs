@@ -3107,6 +3107,28 @@ mod tests {
         );
     }
 
+    // `remote_branch_exists` sets a per-command `Command::timeout` (10 s) so an
+    // unreachable or hung remote can't wedge the call — the "bounded wait" its own
+    // doc-comment promises. That bound is only hermetically testable because of the
+    // processkit 2.1 guarantee that a `ScriptedRunner` **pending** reply on a bulk
+    // verb (`output_string`) now honors `Command::timeout`; under the old 1.2.x
+    // semantics a pending reply parked forever regardless of the deadline. On a
+    // paused clock the command's 10 s deadline elapses in virtual time, so a hung
+    // `ls-remote` resolves as "absent" (`false`, empty output) instead of hanging.
+    // The outer 1 h guard turns a regression (pending parking forever) into a clear
+    // failure rather than a wedged suite; the command's own 10 s bound fires first.
+    #[tokio::test(start_paused = true)]
+    async fn remote_branch_exists_bounded_wait_resolves_a_hung_remote() {
+        let git =
+            Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::pending()));
+        let probe = git.remote_branch_exists(Path::new("/r"), "main");
+        let exists = tokio::time::timeout(std::time::Duration::from_secs(3600), probe)
+            .await
+            .expect("the per-command 10 s timeout must resolve a hung ls-remote")
+            .expect("a timed-out best-effort probe is `Ok(false)`, not an error");
+        assert!(!exists, "an unreachable remote reads as absent");
+    }
+
     #[tokio::test]
     async fn diff_stat_parses_counts() {
         let git = Git::with_runner(ScriptedRunner::new().on(
