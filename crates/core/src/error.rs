@@ -16,9 +16,15 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub enum Error {
     /// [`Repo::discover`](crate::Repo::discover) found no `.git`/`.jj` from the
-    /// start dir up to the filesystem root, or [`Repo::open`](crate::Repo::open)
-    /// found no `.git`/`.jj` marker in the exact directory it was given.
+    /// start dir up to the filesystem root
+    ///
+    /// See also [`Error::NotARepositoryExactly`].
     NotARepository(PathBuf),
+    /// [`Repo::open`](crate::Repo::open)
+    /// found no `.git`/`.jj` marker in the exact directory it was given.
+    ///
+    /// See also [`Error::NotARepository`].
+    NotARepositoryExactly(PathBuf),
     /// [`Repo::discover`](crate::Repo::discover) walked up to a **bare** git
     /// repository (created with `git init --bare`, or an equivalent bare clone)
     /// — a directory holding `HEAD`/`config`/`objects`/`refs` directly, with no
@@ -128,6 +134,9 @@ impl std::fmt::Display for Error {
                     p.display()
                 )
             }
+            Error::NotARepositoryExactly(p) => {
+                write!(f, "no git or jj repository found at {}", p.display())
+            }
             Error::BareRepository(p) => {
                 write!(f, "bare git repositories are unsupported ({})", p.display())
             }
@@ -186,6 +195,7 @@ mod tests {
         // The facade's own io/detection variants are never transient.
         assert!(!Error::Io(std::io::Error::from(std::io::ErrorKind::Interrupted)).is_transient());
         assert!(!Error::NotARepository("/x".into()).is_transient());
+        assert!(!Error::NotARepositoryExactly("/x".into()).is_transient());
     }
 
     #[test]
@@ -201,6 +211,7 @@ mod tests {
         ));
         assert!(!exit.is_not_found());
         assert!(!Error::NotARepository("/x".into()).is_not_found());
+        assert!(!Error::NotARepositoryExactly("/x".into()).is_not_found());
     }
 
     #[test]
@@ -224,6 +235,7 @@ mod tests {
             .is_invalid_input()
         );
         assert!(!Error::NotARepository("/x".into()).is_invalid_input());
+        assert!(!Error::NotARepositoryExactly("/x".into()).is_invalid_input());
         assert!(!Error::Io(std::io::Error::other("disk full")).is_invalid_input());
     }
 
@@ -235,5 +247,6 @@ mod tests {
         let missing_bin = Error::Vcs(processkit::Error::not_found("jj", None));
         assert!(missing_bin.is_not_found() && !missing_bin.is_resource_not_found());
         assert!(!Error::NotARepository("/x".into()).is_resource_not_found());
+        assert!(!Error::NotARepositoryExactly("/x".into()).is_resource_not_found());
     }
 }

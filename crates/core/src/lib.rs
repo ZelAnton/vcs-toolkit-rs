@@ -417,7 +417,7 @@ impl Repo<JobRunner> {
     /// hold the `.jj`/`.git` marker (a `.jj` directory with a `repo` entry, or a
     /// `.git` directory / gitlink file — the same validated markers [`discover`]
     /// uses), or this errors with
-    /// [`Error::NotARepository(dir)`](Error::NotARepository)
+    /// [`Error::NotARepositoryExactly(dir)`](Error::NotARepositoryExactly)
     /// even if a repository exists somewhere above `dir`. Mirrors the
     /// discover-vs-open split in gitoxide (`gix::discover` vs `gix::open`) and
     /// libgit2 (`git_repository_discover` vs `git_repository_open`) — see
@@ -431,7 +431,7 @@ impl Repo<JobRunner> {
         } else if is_git_marker(&dir.join(".git")) {
             BackendKind::Git
         } else {
-            return Err(Error::NotARepository(dir));
+            return Err(Error::NotARepositoryExactly(dir));
         };
         let backend = match kind {
             BackendKind::Git => Backend::Git(Arc::new(Git::new())),
@@ -1216,7 +1216,7 @@ mod tests {
         // `NotARepository` there (only `discover`'s walk-then-classify path
         // distinguishes it).
         match Repo::open(root) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, root),
+            Err(Error::NotARepositoryExactly(p)) => assert_eq!(p, root),
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
@@ -1239,11 +1239,11 @@ mod tests {
             other => panic!("expected Error::BareRepository, got {other:?}"),
         }
 
-        // The strict `open` never walks up, so it reports `NotARepository` on
+        // The strict `open` never walks up, so it reports `NotARepositoryExactly` on
         // the nested dir regardless of what sits above it.
         match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+            Err(Error::NotARepositoryExactly(p)) => assert_eq!(p, nested),
+            other => panic!("expected Error::NotARepositoryExactly, got {other:?}"),
         }
     }
 
@@ -1290,13 +1290,13 @@ mod tests {
     }
 
     // A directory that is neither a repo nor a bare repo still reports the
-    // generic `NotARepository`.
+    // generic `NotARepositoryExactly`.
     #[test]
     fn open_reports_not_a_repository_when_nothing_found() {
         let tmp = TempDir::new("norepo-open");
         match Repo::open(tmp.path()) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, tmp.path()),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+            Err(Error::NotARepositoryExactly(p)) => assert_eq!(p, tmp.path()),
+            other => panic!("expected Error::NotARepositoryExactly, got {other:?}"),
         }
     }
 
@@ -1312,8 +1312,8 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
 
         match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+            Err(Error::NotARepositoryExactly(p)) => assert_eq!(p, nested),
+            other => panic!("expected Error::NotARepositoryExactly, got {other:?}"),
         }
         // `discover` from the same nested dir finds the repo at `root`.
         assert_eq!(
@@ -2620,6 +2620,7 @@ mod tests {
         assert!(!conflict.is_nothing_to_commit());
         // A non-Vcs error classifies as none of them.
         assert!(!Error::NotARepository("/x".into()).is_merge_conflict());
+        assert!(!Error::NotARepositoryExactly("/x".into()).is_merge_conflict());
     }
 }
 
