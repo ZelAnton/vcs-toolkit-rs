@@ -65,6 +65,7 @@ pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>
 pub async fn pr_mark_ready(&self, number: u64) -> Result<()>;
 pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.delete_branch()] — delete_branch is GitHub-only
 pub async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
+pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
 pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
@@ -107,6 +108,11 @@ status. [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`) maps to each CLI's fla
 `draft` is **best-effort**: GitHub (`gh --json isDraft`) and GitLab report it;
 Gitea reports `false` (`tea`'s PR list doesn't carry the flag).
 
+`pr_diff` returns [`FileDiff`] (re-exported from [`vcs-diff`](https://docs.rs/vcs-diff/latest/vcs_diff/)) directly — no
+facade-specific DTO wraps it, since `gh pr diff`/`glab mr diff` already emit the
+same git-format unified diff `git diff`/`jj diff --git` do, so it goes through
+the same shared parser.
+
 [`ForgeIssue`] generalises the three issue shapes: `number` (GitLab's `iid`),
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",
 everything else reads as `Open`, so an unmodelled state is treated as live),
@@ -126,7 +132,7 @@ both are always `false` there.
 
 ## Capability matrix
 
-The CLIs differ in coverage. Gitea's `tea` lacks four operations, which return
+The CLIs differ in coverage. Gitea's `tea` lacks five operations, which return
 [`Error::Unsupported { forge, operation }`] (the call does **not** spawn);
 `delete_branch` on `pr_close` is GitHub-only.
 
@@ -137,6 +143,7 @@ The CLIs differ in coverage. Gitea's `tea` lacks four operations, which return
 | `repo_view` | ✅ | ✅ | ❌ Unsupported |
 | `pr_mark_ready` | ✅ | ✅ | ❌ Unsupported |
 | `pr_checks` | ✅ | ✅ | ❌ Unsupported |
+| `pr_diff` | ✅ | ✅ | ❌ Unsupported (`tea` has no diff command) |
 | `release_view` | ✅ | ✅ | ❌ Unsupported (`tea releases` only lists — filter `release_list`) |
 | `pr_close` honours `delete_branch` | ✅ | ignored | ignored |
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |

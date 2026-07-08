@@ -655,6 +655,17 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "The PR/MR's diff, one file entry per changed file (Unsupported on Gitea).",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn forge_pr_diff(
+        &self,
+        Parameters(p): Parameters<PrNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(&self.forge()?.pr_diff(p.number).await.map_err(forge_err)?)
+    }
+
+    #[tool(
         description = "Open issues on the configured forge (up to 100; ~50 on Gitea).",
         annotations(read_only_hint = true)
     )]
@@ -1134,6 +1145,33 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
     }
 
+    // `forge_pr_diff` is read-only (works with no write access) and returns the
+    // parsed per-file diff as JSON.
+    #[tokio::test]
+    async fn forge_pr_diff_routes_and_returns_parsed_diff() {
+        let diff = "diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-a\n+b\n";
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(diff)),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let out = server
+            .forge_pr_diff(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect("pr_diff ok");
+        // `result_json` serialises the whole `CallToolResult`, so the tool's own
+        // JSON text comes back escaped inside it — match unquoted substrings.
+        let json = result_json(&out);
+        assert!(json.contains("notes.txt"), "{json}");
+        assert!(json.contains("Modified"), "{json}");
+    }
+
     // A forge op the backend can't do (tea has no single-release view) surfaces
     // as INVALID_PARAMS — the client's "this forge can't do that" — without
     // spawning anything (the runner has no rules, so a spawn would error
@@ -1155,6 +1193,26 @@ mod tests {
             .expect_err("unsupported on gitea");
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         assert!(err.message.contains("release_view"), "{}", err.message);
+    }
+
+    // Same treatment for `forge_pr_diff` (tea has no diff command).
+    #[tokio::test]
+    async fn forge_pr_diff_unsupported_maps_to_invalid_params() {
+        let tea = vcs_forge::vcs_gitea::Gitea::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitea("/repo", tea));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+        let err = server
+            .forge_pr_diff(Parameters(PrNumberParams { number: 1 }))
+            .await
+            .expect_err("unsupported on gitea");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(err.message.contains("pr_diff"), "{}", err.message);
     }
 
     // The two new mutating tools (`forge_pr_comment`, `forge_pr_edit`) are

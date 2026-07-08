@@ -237,6 +237,48 @@ jobs:
       # owns doctest health via `cargo test --doc`).
       - run: cargo test --workspace --all-features --tests -- --ignored
 
+  # Same real-binary suites as `integration`, but on Windows: several branches
+  # are Windows-only or Windows-empirically-validated (`\`-normalization in
+  # JjFileset::path, separator normalization in show_file/file_show, hook
+  # suppression via `core.hooksPath`, Job Object containment) and until now were
+  # only exercised against the mock/scripted runner on the `test` job's Windows
+  # lane. Runner-default git (no explicit install) plus a single pinned jj
+  # version — this is a confirmation lane, not a version-drift matrix like
+  # `integration`, so it doesn't need multiple jj versions or OSes.
+  integration-windows:
+    name: integration (windows, jj 0.42.0)
+    runs-on: windows-latest
+    env:
+      # Let the read-only gh integration tests (run/release reads against this
+      # repo) run too; the rest skip gracefully when unauthenticated.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - name: Install jj 0.42.0
+        # jj has no install-action entry and cargo-binstall ignores the pinned
+        # version, so download the release archive and drop the binary on PATH.
+        # Unlike the Linux `*x86_64-unknown-linux-musl.tar.gz` asset, the Windows
+        # asset is a `.zip` (`jj-vX.Y.Z-x86_64-pc-windows-msvc.zip`, containing
+        # `jj.exe` at its root), so it's unpacked with Expand-Archive, not tar.
+        run: |
+          gh release download "v0.42.0" --repo jj-vcs/jj `
+            --pattern '*x86_64-pc-windows*' --output jj.zip
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.local\bin" | Out-Null
+          Expand-Archive -Path jj.zip -DestinationPath "$env:USERPROFILE\.local\bin" -Force
+          echo "$env:USERPROFILE\.local\bin" >> $env:GITHUB_PATH
+      - run: jj --version
+      - run: git --version
+      # The integration suites are `#[ignore]`d (need the real binaries); run them.
+      # `--tests` scopes this to unit + integration test targets and EXCLUDES
+      # doctests (see the `doc` job, which owns doctest health via `cargo test
+      # --doc`).
+      - run: cargo test --workspace --all-features --tests -- --ignored
+
   audit:
     name: cargo-deny
     runs-on: ubuntu-latest

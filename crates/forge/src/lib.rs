@@ -69,18 +69,18 @@
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
 //!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
-//!   [`pr_checks`](Forge::pr_checks)); the capability map
-//!   ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
+//!   [`pr_checks`](Forge::pr_checks) / [`pr_diff`](Forge::pr_diff)); the capability
+//!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
 //!   releases ([`release_list`](Forge::release_list) /
 //!   [`release_view`](Forge::release_view)). List ops cap at 100 — drop to the
 //!   wrapped client for more.
 //! - **Capability gaps** — `tea` has no current-repo view, draft toggle, checks
-//!   command, or single-release view, so on a Gitea handle
+//!   command, single-release view, or diff view, so on a Gitea handle
 //!   [`repo_view`](Forge::repo_view), [`pr_mark_ready`](Forge::pr_mark_ready),
-//!   [`pr_checks`](Forge::pr_checks), and [`release_view`](Forge::release_view)
-//!   return [`Error::Unsupported`] **without spawning**. Classify it with
-//!   [`Error::is_unsupported`].
+//!   [`pr_checks`](Forge::pr_checks), [`release_view`](Forge::release_view), and
+//!   [`pr_diff`](Forge::pr_diff) return [`Error::Unsupported`] **without
+//!   spawning**. Classify it with [`Error::is_unsupported`].
 //! - **Capability introspection** — to branch *before* calling rather than
 //!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
 //!   varying operation is available, and [`ForgeOp::ALL`] enumerates those
@@ -148,6 +148,11 @@ pub use error::{Error, Result};
 pub use vcs_gitea;
 pub use vcs_github;
 pub use vcs_gitlab;
+// Re-export `vcs-diff`'s unified-diff model, since `pr_diff` returns it
+// directly — `gh pr diff`/`glab mr diff` already emit the same git-format diff
+// the parser expects, so no facade-specific DTO wraps it.
+pub use vcs_diff;
+pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 // Re-export `Secret` so a consumer can name the token type the `*_with_token`
 // constructors accept (a plain `&str`/`String` also coerces via `Into<Secret>`, so
 // most callers never name it). It is `vcs_cli_support::Secret`, the very type the
@@ -329,7 +334,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// Whether this handle's backend supports `op`. The capability-varying
     /// operations ([`ForgeOp`]) are all present on GitHub and GitLab; Gitea
     /// (`tea`) supports **none** of them — it has no current-repo view, draft
-    /// toggle, PR-checks command, or single-release view; and an
+    /// toggle, PR-checks command, single-release view, or diff view; and an
     /// [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
     /// nothing at all (every operation returns `Unsupported`). Every other facade
     /// operation works on all three real backends. Branch on this to hide an
@@ -343,10 +348,14 @@ impl<R: ProcessRunner> Forge<R> {
             // `true` here made a UI render every op as available, each click then
             // failing with `Unsupported`.)
             (ForgeKind::Unknown, _) => false,
-            // The four operations `tea` can't do; GitHub/GitLab do everything.
+            // The five operations `tea` can't do; GitHub/GitLab do everything.
             (
                 ForgeKind::Gitea,
-                ForgeOp::RepoView | ForgeOp::PrMarkReady | ForgeOp::PrChecks | ForgeOp::ReleaseView,
+                ForgeOp::RepoView
+                | ForgeOp::PrMarkReady
+                | ForgeOp::PrChecks
+                | ForgeOp::ReleaseView
+                | ForgeOp::PrDiff,
             ) => false,
             _ => true,
         }
@@ -550,6 +559,20 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// The PR/MR's diff, one [`FileDiff`] per changed file — `gh pr diff <n>` /
+    /// `glab mr diff <n>`, through the same unified-diff parser `vcs-git`/
+    /// `vcs-jj` use (both CLIs emit the same git-format diff `git diff` does).
+    /// **[`Unsupported`](Error::Unsupported) on Gitea** (`tea` has no diff
+    /// command).
+    pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_diff(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::pr_diff(c, &self.cwd, number).await,
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_diff")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_diff")),
+        }
+    }
+
     /// Open issues for the bound directory (up to 100 on GitHub/GitLab; **Gitea
     /// returns at most ~50** per its server page cap — drop to the underlying client
     /// and page for more).
@@ -742,6 +765,8 @@ pub trait ForgeApi: Send + Sync {
     async fn pr_close(&self, spec: PrClose) -> Result<()>;
     /// See [`Forge::pr_checks`](crate::Forge::pr_checks).
     async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
+    /// See [`Forge::pr_diff`](crate::Forge::pr_diff).
+    async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
     /// See [`Forge::issue_list`](crate::Forge::issue_list).
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>>;
     /// See [`Forge::issue_view`](crate::Forge::issue_view).
@@ -803,6 +828,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
         self.pr_checks(number).await
+    }
+    async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>> {
+        self.pr_diff(number).await
     }
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
         self.issue_list().await
@@ -971,7 +999,7 @@ mod tests {
         assert_eq!(pr.target_branch, "main");
     }
 
-    // The Gitea backend reports the four unmodelled ops as Unsupported, naming
+    // The Gitea backend reports the five unmodelled ops as Unsupported, naming
     // the operation — and without spawning anything.
     #[tokio::test]
     async fn gitea_unsupported_ops_error_without_spawning() {
@@ -982,6 +1010,7 @@ mod tests {
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
             forge.release_view("v1.0.0").await.unwrap_err(),
+            forge.pr_diff(1).await.unwrap_err(),
         ] {
             assert!(err.is_unsupported(), "{err:?}");
         }
@@ -1007,6 +1036,7 @@ mod tests {
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_close(PrClose::new(1)).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
+            forge.pr_diff(1).await.unwrap_err(),
             forge.issue_list().await.unwrap_err(),
             forge.issue_view(1).await.unwrap_err(),
             forge
@@ -1289,6 +1319,25 @@ mod tests {
         let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"frobnicate"}]"#;
         let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Passing);
+    }
+
+    // `pr_diff` dispatches to `gh pr diff`/`glab mr diff` and parses the same
+    // git-format output through the shared `vcs-diff` parser — a plain forward,
+    // no facade-specific mapping.
+    #[tokio::test]
+    async fn pr_diff_dispatches_and_parses_per_backend() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)));
+        let files = forge.pr_diff(1).await.expect("github pr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].change, ChangeKind::Modified);
+
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(out)));
+        let files = forge.pr_diff(1).await.expect("gitlab pr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
     }
 
     // `at` re-binds the cwd while sharing the backend.
