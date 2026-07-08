@@ -249,6 +249,15 @@ pub(crate) async fn checkout<R: ProcessRunner>(
     Ok(())
 }
 
+pub(crate) async fn new_child<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    reference: &str,
+) -> Result<()> {
+    jj.new_child(dir, reference).await?;
+    Ok(())
+}
+
 pub(crate) async fn rebase<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, onto: &str) -> Result<()> {
     jj.rebase(dir, onto).await?;
     Ok(())
