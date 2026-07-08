@@ -10,7 +10,9 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `MergeRequest`/`Issue` gained `labels: Vec<String>` (GitLab's REST API already
+  reports these as plain strings) and `assignees: Vec<String>` (flattened from
+  the REST `assignees` array of User objects' `username`).
 
 ### Changed
 -

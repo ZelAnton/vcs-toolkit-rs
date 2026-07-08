@@ -10,7 +10,10 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `ForgePr`/`ForgeIssue` gained `labels: Vec<String>` and `assignees: Vec<String>`
+  (additive on the `#[non_exhaustive]` DTOs, plus chained `.labels(...)`/
+  `.assignees(...)` setters) — GitHub and GitLab populate them; Gitea's `tea` has
+  no such columns, so they are always empty there.
 
 ### Changed
 -

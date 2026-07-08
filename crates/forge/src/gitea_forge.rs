@@ -158,6 +158,10 @@ fn map_issue(i: Issue) -> ForgeIssue {
         },
         body: i.body,
         url: i.url,
+        // `tea`'s issue list/view has no labels/assignees column — always empty
+        // (see `ForgeIssue::labels`/`ForgeIssue::assignees` doc).
+        labels: Vec::new(),
+        assignees: Vec::new(),
     }
 }
 
@@ -193,5 +197,9 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         target_branch: pr.base_branch,
         url: pr.url,
         draft: false,
+        // `tea`'s PR list/view has no labels/assignees column — always empty
+        // (see `ForgePr::labels`/`ForgePr::assignees` doc).
+        labels: Vec::new(),
+        assignees: Vec::new(),
     }
 }

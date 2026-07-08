@@ -33,6 +33,14 @@ pub struct MergeRequest {
     /// `work_in_progress` is not read).
     #[serde(default)]
     pub draft: bool,
+    /// Labels attached to the MR. GitLab's REST API reports these as plain
+    /// label-name strings (not objects), unlike GitHub's `[{"name": …}]`.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Usernames of assigned users, flattened from GitLab's REST `assignees`
+    /// array of User objects (`[{"username": …}, ...]`) to plain usernames.
+    #[serde(default, deserialize_with = "users_to_usernames")]
+    pub assignees: Vec<String>,
 }
 
 /// A project, returned as `RepoView` (`glab repo view --output json`) — the
@@ -91,6 +99,33 @@ pub struct Issue {
         deserialize_with = "vcs_cli_support::json::null_to_empty"
     )]
     pub url: String,
+    /// Labels attached to the issue. GitLab's REST API reports these as plain
+    /// label-name strings (not objects), unlike GitHub's `[{"name": …}]`.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Usernames of assigned users, flattened from GitLab's REST `assignees`
+    /// array of User objects (`[{"username": …}, ...]`) to plain usernames.
+    #[serde(default, deserialize_with = "users_to_usernames")]
+    pub assignees: Vec<String>,
+}
+
+// GitLab's REST `assignees` is an array of User objects (`{"username": …, "id":
+// …, "name": …, ...}`), unlike `labels`, which is already a plain array of
+// strings — flatten just the username. `Option<Vec<_>>` (not a bare `Vec<_>`)
+// so a present JSON `null` degrades to an empty list rather than failing the
+// whole parse, matching this file's other tolerant optional fields.
+#[derive(Deserialize)]
+struct UserJson {
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    username: String,
+}
+
+fn users_to_usernames<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Vec<UserJson>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(raw.into_iter().map(|u| u.username).collect())
 }
 
 /// A release (`glab release list/view --output json`) — GitLab's REST
@@ -235,8 +270,51 @@ mod tests {
                 target_branch: "main".into(),
                 web_url: "https://gl/mr/12".into(),
                 draft: false,
+                labels: Vec::new(),
+                assignees: Vec::new(),
             }
         );
+    }
+
+    // Positive case: GitLab's `labels` are already plain strings, and
+    // `assignees` is an array of User objects flattened to plain usernames.
+    #[test]
+    fn mr_parses_labels_and_assignees() {
+        let json = r#"{"iid": 12, "title": "Add feature", "state": "opened",
+            "source_branch": "feat/x", "target_branch": "main",
+            "web_url": "https://gl/mr/12", "draft": false,
+            "labels": ["bug", "priority::1"],
+            "assignees": [{"username": "steiza", "id": 1}, {"username": "andyfeller"}]}"#;
+        let mr: MergeRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse mr with labels/assignees");
+        assert_eq!(
+            mr.labels,
+            vec!["bug".to_string(), "priority::1".to_string()]
+        );
+        assert_eq!(
+            mr.assignees,
+            vec!["steiza".to_string(), "andyfeller".to_string()]
+        );
+    }
+
+    // Negative case: empty arrays parse to empty `Vec`s, not an error, and an
+    // absent key defaults the same way.
+    #[test]
+    fn mr_without_labels_or_assignees_parses_to_empty_vecs() {
+        let json = r#"{"iid": 13, "title": "t", "state": "opened",
+            "labels": [], "assignees": []}"#;
+        let mr: MergeRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("mr with empty labels/assignees");
+        assert!(mr.labels.is_empty());
+        assert!(mr.assignees.is_empty());
+
+        let mr_no_keys: MergeRequest = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"iid": 14, "title": "t", "state": "opened"}"#,
+        )
+        .expect("mr without labels/assignees keys");
+        assert!(mr_no_keys.labels.is_empty());
+        assert!(mr_no_keys.assignees.is_empty());
     }
 
     // glab/GitLab omit fields that don't apply; the DTO must tolerate a minimal
@@ -268,8 +346,37 @@ mod tests {
                 state: "opened".into(),
                 body: "the body".into(),
                 url: "https://gl/i/1".into(),
+                labels: Vec::new(),
+                assignees: Vec::new(),
             }
         );
+    }
+
+    // Positive case for issues, mirroring `mr_parses_labels_and_assignees`.
+    #[test]
+    fn issue_parses_labels_and_assignees() {
+        let json = r#"{"iid": 1, "title": "Fix bug", "state": "opened",
+            "description": "the body", "web_url": "https://gl/i/1",
+            "labels": ["bug", "confirmed"],
+            "assignees": [{"username": "steiza"}]}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse issue with labels/assignees");
+        assert_eq!(
+            issue.labels,
+            vec!["bug".to_string(), "confirmed".to_string()]
+        );
+        assert_eq!(issue.assignees, vec!["steiza".to_string()]);
+    }
+
+    // Negative case for issues: empty arrays parse to empty `Vec`s, not an error.
+    #[test]
+    fn issue_without_labels_or_assignees_parses_to_empty_vecs() {
+        let json = r#"{"iid": 2, "title": "t", "state": "closed",
+            "labels": [], "assignees": []}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("issue with empty labels/assignees");
+        assert!(issue.labels.is_empty());
+        assert!(issue.assignees.is_empty());
     }
 
     // glab/GitLab can omit description/web_url; the DTO must tolerate a minimal
