@@ -108,7 +108,7 @@
 //! # Testing
 //!
 //! The facade trait has **no mock feature** — `mockall` can't process the
-//! macro-generated [`ForgeApi`] signatures. Test the *real* dispatch instead:
+//! hand-maintained [`ForgeApi`] signatures. Test the *real* dispatch instead:
 //! build a [`Forge`] over an explicit client wrapping a fake runner — e.g.
 //! `Forge::from_github(cwd, GitHub::with_runner(ScriptedRunner::new()))` (likewise
 //! [`from_gitlab`](Forge::from_gitlab) / [`from_gitea`](Forge::from_gitea)) — and
