@@ -117,7 +117,6 @@
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
 //! from `docs/`. See the [`guide`] module.
 
-use std::fmt::{self, Debug, Formatter};
 use std::path::Path;
 
 // Re-export the processkit types in this crate's public API, so consumers needn't
@@ -376,10 +375,18 @@ pub trait GiteaApi: Send + Sync {
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
 }
 
-processkit::cli_client!(
+vcs_cli_support::managed_client! {
     /// The real Gitea client. Generic over the [`ProcessRunner`] so tests can
     /// inject a fake process executor; `Gitea::new()` uses the real job-backed
     /// runner.
+    ///
+    /// Wraps a [`ManagedClient`](vcs_cli_support::ManagedClient), but does **not**
+    /// expose [`with_retry`](vcs_cli_support::ManagedClient::with_retry): the
+    /// bundled retry predicate ([`is_lock_contention`](vcs_cli_support::is_lock_contention))
+    /// matches git/jj's filesystem working-copy/index lock messages, which have no
+    /// counterpart in `tea` — it drives a remote HTTP API with no local repo lock to
+    /// contend on, so wiring up that seam here would be a retry that can never fire.
+    /// Revisit if `tea` ever grows its own transient/contention error class.
     ///
     /// **Authentication is ambient.** Unlike `vcs-github`/`vcs-gitlab` (which
     /// accept a per-operation token provider via `with_credentials`), `tea` has no
@@ -389,16 +396,6 @@ processkit::cli_client!(
     /// `CredentialService::Gitea` is reserved for if/when `tea` gains env-token
     /// support.)
     pub struct Gitea => BINARY
-);
-
-// Manual Debug: `processkit::cli_client!` (an external macro from the `processkit`
-// dependency, not ours to change) doesn't generate one. No `R: Debug` bound;
-// delegates straight to the wrapped `core` (a `processkit::CliClient<R>`, which
-// already has its own manual `Debug` redacting env values and never printing `R`).
-impl<R: ProcessRunner> Debug for Gitea<R> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Gitea").field("core", &self.core).finish()
-    }
 }
 
 #[async_trait::async_trait]
