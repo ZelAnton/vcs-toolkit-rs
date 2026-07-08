@@ -770,13 +770,23 @@ impl<R: ProcessRunner> Repo<R> {
     ///
     /// So backend-agnostic "start fresh work on top of `main`" code must **not** rely
     /// on `checkout` alone. If you want git-like append-on-top semantics on both
-    /// backends, start a new child change explicitly — on jj that is `jj new
-    /// <reference>` via the raw [`jj`](Repo::jj) client (a first-class `new_child`
-    /// facade primitive is planned); on git, `checkout` already appends.
+    /// backends, use [`new_child`](Repo::new_child), which maps to `jj new
+    /// <reference>` on jj and to `checkout <reference>` on git.
     pub async fn checkout(&self, reference: &str) -> Result<()> {
         match &self.backend {
             Backend::Git(g) => git_backend::checkout(g, &self.cwd, reference).await,
             Backend::Jj(j) => jj_backend::checkout(j, &self.cwd, reference).await,
+        }
+    }
+
+    /// Start new work on top of `reference` without modifying it.
+    ///
+    /// On git this checks out `reference`; the next commit naturally appends on top.
+    /// On jj this runs `jj new <reference>`, creating an undescribed child change.
+    pub async fn new_child(&self, reference: &str) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::new_child(g, &self.cwd, reference).await,
+            Backend::Jj(j) => jj_backend::new_child(j, &self.cwd, reference).await,
         }
     }
 
@@ -1073,6 +1083,7 @@ facade_trait! {
         fn fetch_branch(branch: &str) -> Result<()>;
         fn push(branch: &str) -> Result<()>;
         fn checkout(reference: &str) -> Result<()>;
+        fn new_child(reference: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
         fn try_merge(source: &str) -> Result<MergeProbe>;
         fn abort_in_progress() -> Result<OperationState>;
@@ -2099,6 +2110,27 @@ mod tests {
         assert_eq!(
             jrec.only_call().args_str(),
             ["edit", "feat", "--color", "never"]
+        );
+    }
+
+    #[tokio::test]
+    async fn new_child_dispatches_per_backend() {
+        use processkit::testing::RecordingRunner;
+        let grec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
+            .new_child("feat")
+            .await
+            .unwrap();
+        assert_eq!(grec.only_call().args_str(), ["checkout", "feat", "--"]);
+
+        let jrec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
+            .new_child("feat")
+            .await
+            .unwrap();
+        assert_eq!(
+            jrec.only_call().args_str(),
+            ["new", "feat", "--color", "never"]
         );
     }
 

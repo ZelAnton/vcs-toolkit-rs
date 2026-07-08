@@ -75,6 +75,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
 | `mr_checks(dir, id)` | `glab mr view <id> --output json` (reads `head_pipeline.status`) | [`CiStatus`] |
+| `mr_diff(dir, id)` | `glab mr diff <id> --color never` | `Vec<`[`FileDiff`]`>` |
 
 `MergeRequest` carries `iid` (the project-scoped id the commands take), `title`,
 `state` (GitLab's `"opened"`/`"closed"`/`"merged"`/`"locked"`), `source_branch`,
@@ -105,6 +106,13 @@ body)` and chain the optional `.source(b)` (`--source-branch`; `None` = the
 current branch) / `.target(b)` (`--target-branch`; `None` = the project default)
 setters. Public fields: `title: String`, `body: String`, `source: Option<String>`,
 `target: Option<String>`.
+
+`mr_diff` returns the MR's diff as one [`FileDiff`] per changed file, parsed
+through the same unified-diff parser
+[`vcs-git`](https://docs.rs/vcs-git/latest/vcs_git/guide/)/[`vcs-jj`](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
+use — `glab mr diff` emits the same git-format diff `git diff` does, so
+`vcs-gitlab` re-exports [`FileDiff`] (and [`ChangeKind`], [`Hunk`], [`DiffLine`])
+rather than depending on `vcs-diff` directly for the type alone.
 
 ## Issues & releases
 

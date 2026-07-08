@@ -129,6 +129,12 @@ pub use processkit::CancellationToken;
 
 mod parse;
 pub use parse::{CiStatus, Issue, MergeRequest, Release, RepoView};
+// Re-exported so `vcs_gitlab::FileDiff` (and the types nested in it) resolve
+// without a direct `vcs-diff` dependency — `mr_diff` returns `vcs-diff`'s
+// model verbatim (`glab mr diff` emits the same git-format diff `git diff`/
+// `jj diff --git` do; `crates/diff/src/diff.rs`'s parser is shared, not
+// duplicated).
+pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 
 /// Options for [`GitLabApi::mr_create`] (`glab mr create`).
 ///
@@ -351,6 +357,11 @@ pub trait GitLabApi: Send + Sync {
     /// The MR's pipeline status, bucketed (`glab mr view <id> --output json`,
     /// reading `head_pipeline.status`). [`CiStatus::None`] when no pipeline ran.
     async fn mr_checks(&self, dir: &Path, number: u64) -> Result<CiStatus>;
+    /// The MR's diff, one [`FileDiff`] per changed file (`glab mr diff <id>
+    /// --color never`), through the same unified-diff parser
+    /// [`vcs-git`](https://docs.rs/vcs-git)/[`vcs-jj`](https://docs.rs/vcs-jj)
+    /// use — `glab mr diff` emits the same git-format diff `git diff` does.
+    async fn mr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>>;
     /// Open issues for `dir`
     /// (`glab issue list --per-page 100 --output json`). Returns up to 100 (100
     /// is the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
@@ -575,6 +586,22 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
+    async fn mr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing
+        // could desync the parser from `git`'s own byte-exact output. `--color
+        // never` keeps the output free of ANSI even if stdout were ever a tty.
+        let id = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed(
+                self.core
+                    .command_in(dir, ["mr", "diff", id.as_str(), "--color", "never"]),
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
         // `--per-page 100` (the GitLab API max) overrides glab's default page
         // size of 30, which would otherwise silently truncate the list.
@@ -710,6 +737,7 @@ vcs_cli_support::at_forwarders! {
         fn mr_comment(number: u64, body: &str) -> Result<String>;
         fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
         fn mr_checks(number: u64) -> Result<CiStatus>;
+        fn mr_diff(number: u64) -> Result<Vec<FileDiff>>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
@@ -1002,6 +1030,23 @@ mod tests {
         assert_eq!(
             glab.mr_checks(Path::new("."), 4).await.unwrap(),
             CiStatus::Failing
+        );
+    }
+
+    // Hermetic: real mr_diff() arg-building (incl. `--color never`) + the
+    // shared unified-diff parser against canned `glab mr diff` output.
+    #[tokio::test]
+    async fn mr_diff_builds_args_and_parses_scripted_output() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(out));
+        let glab = GitLab::with_runner(&rec);
+        let files = glab.mr_diff(Path::new("/r"), 4).await.expect("mr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].change, ChangeKind::Modified);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["mr", "diff", "4", "--color", "never"]
         );
     }
 

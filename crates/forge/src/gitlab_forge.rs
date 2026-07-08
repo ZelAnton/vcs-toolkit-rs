@@ -123,6 +123,19 @@ pub(crate) async fn pr_checks<R: ProcessRunner>(
     Ok(map_ci(glab.mr_checks(dir, number).await?))
 }
 
+// `glab.mr_diff` already returns `vcs-diff`'s model directly (glab emits the
+// same git-format diff `git diff` does), so this is a plain forward — no
+// mapping. Named `pr_diff` (not `mr_diff`) to match the facade-level naming
+// used by every other bridging fn here (`pr_view`, `pr_merge`, `pr_checks`, …
+// all call into glab's `mr_*` methods under a `pr_*` facade name).
+pub(crate) async fn pr_diff<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(glab.mr_diff(dir, number).await?)
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
