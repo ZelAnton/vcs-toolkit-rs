@@ -429,6 +429,59 @@ impl MergeProbe {
     }
 }
 
+/// One commit/change from the repository history — the honest least common
+/// denominator between git's typed `git log` (`vcs_git::parse::Commit`, which
+/// carries hash/short-hash/author/date/subject) and jj's typed `jj log`
+/// (`vcs_jj::parse::Change`, which carries change-id/commit-id/empty/description).
+/// See [`Repo::log`](crate::Repo::log).
+///
+/// `author`/`date` are `Some` only on git: jj's typed log doesn't currently
+/// surface authorship or a timestamp (its template renders only the id/empty/
+/// description columns), so this DTO leaves them `None` on jj rather than
+/// fabricating a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct Commit {
+    /// The commit's identifying hash: git's full object id (`%H`) / jj's
+    /// (already-short) commit id.
+    pub id: String,
+    /// Commit message: git's subject line (`%s`) / jj's first description line.
+    pub description: String,
+    /// Author name (git `%an`); `None` on jj (see the type docs).
+    pub author: Option<String>,
+    /// Author date, strict ISO-8601 on git (`%aI`); `None` on jj (see the type
+    /// docs).
+    pub date: Option<String>,
+}
+
+impl Commit {
+    /// A commit `id` with `description`, no author/date (jj's typed-log shape);
+    /// chain [`author`](Commit::author) / [`date`](Commit::date) to add them
+    /// (git's shape). Lets an external `VcsRepo` impl or a test build one despite
+    /// the `#[non_exhaustive]`.
+    pub fn new(id: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            description: description.into(),
+            author: None,
+            date: None,
+        }
+    }
+
+    /// Set the author name.
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Set the author date.
+    pub fn date(mut self, date: impl Into<String>) -> Self {
+        self.date = Some(date.into());
+        self
+    }
+}
+
 /// How a worktree was materialised. The facade always reports
 /// [`Plain`](CreateOutcome::Plain); the [`CowCloned`](CreateOutcome::CowCloned)
 /// variant exists so a consumer that layers a copy-on-write strategy on top can
@@ -497,6 +550,16 @@ mod serde_tests {
         assert_eq!(conflicts["files"][0], "a.rs");
         assert_eq!(conflicts["files"][1], "b.rs");
     }
+
+    #[test]
+    fn commit_serializes_with_null_author_date_on_the_jj_shape() {
+        let jj_shaped = Commit::new("abc123", "first line");
+        let v = serde_json::to_value(&jj_shaped).unwrap();
+        assert_eq!(v["id"], "abc123");
+        assert_eq!(v["description"], "first line");
+        assert!(v["author"].is_null());
+        assert!(v["date"].is_null());
+    }
 }
 
 #[cfg(test)]
@@ -507,6 +570,18 @@ mod ctor_tests {
     // build the `#[non_exhaustive]` return DTOs, and land the fields where expected.
     #[test]
     fn dto_constructors_populate_fields() {
+        let jj_shaped = Commit::new("abc123", "first line");
+        assert_eq!(jj_shaped.id, "abc123");
+        assert_eq!(jj_shaped.description, "first line");
+        assert_eq!(jj_shaped.author, None);
+        assert_eq!(jj_shaped.date, None);
+
+        let git_shaped = Commit::new("deadbeef", "subject")
+            .author("Jane")
+            .date("2026-05-31");
+        assert_eq!(git_shaped.author.as_deref(), Some("Jane"));
+        assert_eq!(git_shaped.date.as_deref(), Some("2026-05-31"));
+
         let fc = FileChange::new("new.rs", ChangeKind::Modified).old_path("old.rs");
         assert_eq!(fc.path, "new.rs");
         assert_eq!(fc.old_path.as_deref(), Some("old.rs"));

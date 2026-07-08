@@ -7,8 +7,8 @@ use processkit::ProcessRunner;
 use vcs_git::{Git, GitApi, GitPush, StatusEntry, WorktreeAdd};
 
 use crate::dto::{
-    ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState, RepoSnapshot,
-    UpstreamTracking, WorktreeInfo,
+    ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
+    RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
 use crate::error::Result;
 
@@ -106,6 +106,20 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Res
         "HEAD"
     };
     git.diff_stat(dir, range).await.map_err(Into::into)
+}
+
+pub(crate) async fn log<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    revspec: &str,
+    max: usize,
+) -> Result<Vec<Commit>> {
+    Ok(git
+        .log(dir, revspec, max)
+        .await?
+        .into_iter()
+        .map(|c| Commit::new(c.hash, c.subject).author(c.author).date(c.date))
+        .collect())
 }
 
 pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<RepoSnapshot> {
