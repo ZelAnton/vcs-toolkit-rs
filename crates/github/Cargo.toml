@@ -31,7 +31,7 @@ serde_json = "1"
 async-trait = "0.1"
 # Auto-generated `MockGitHubApi` for consumers' tests. Test-only — enabled only
 # via the `mock` feature, never compiled into production builds.
-mockall = { version = "0.13", optional = true }
+mockall = { version = "0.15", optional = true }
 
 [features]
 # Expose the `mockall`-generated `MockGitHubApi` (and pull in processkit's mocks).
