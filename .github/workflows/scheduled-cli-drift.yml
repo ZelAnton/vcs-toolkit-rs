@@ -16,12 +16,18 @@ on:
     - cron: "17 4 * * 1"
   workflow_dispatch: {}
 
-# Only one drift check needs to be in flight at a time; a scheduled run
-# should not be cancelled by a concurrent manual `workflow_dispatch`; queue
-# instead of cancelling so a manually triggered debug run doesn't get
-# silently dropped.
+# Scheduled runs queue against each other (GitHub keeps at most one running
+# plus one pending per group, so a stray double-fire of the weekly cron
+# doesn't spawn overlapping runs). Manual `workflow_dispatch` runs get a
+# unique group per run instead of sharing that queue: GitHub's queueing only
+# retains a single pending job, so a *shared* group could let a second
+# manual debug run silently replace (and thus drop) a first one still
+# waiting behind a long scheduled run. Giving each dispatch its own group
+# means a manual run always executes and is never dropped, at the cost of
+# possibly running alongside the scheduled check — an acceptable trade-off
+# for an infrequent, non-gating debug lane.
 concurrency:
-  group: scheduled-cli-drift
+  group: ${{ github.event_name == 'workflow_dispatch' && format('scheduled-cli-drift-manual-{0}', github.run_id) || 'scheduled-cli-drift-schedule' }}
   cancel-in-progress: false
 
 permissions:
