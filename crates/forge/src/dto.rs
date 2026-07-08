@@ -133,6 +133,8 @@ pub enum ForgeOp {
     PrChecks,
     /// [`release_view`](crate::Forge::release_view) — a single release by tag.
     ReleaseView,
+    /// [`pr_diff`](crate::Forge::pr_diff) — a PR/MR's file-by-file diff.
+    PrDiff,
 }
 
 impl ForgeOp {
@@ -143,6 +145,7 @@ impl ForgeOp {
         ForgeOp::PrMarkReady,
         ForgeOp::PrChecks,
         ForgeOp::ReleaseView,
+        ForgeOp::PrDiff,
     ];
 }
 
@@ -1070,5 +1073,17 @@ mod serde_tests {
         assert_eq!(v["title"], "T");
         assert_eq!(v["source"], "feat");
         assert!(v["target"].is_null());
+    }
+
+    // `pr_diff` returns `vcs-diff`'s model directly — pin that the `serde`
+    // feature forward (`vcs-diff/serde`, wired in `Cargo.toml`) actually turns
+    // on `Serialize` there too, not just on this crate's own DTOs.
+    #[test]
+    fn file_diff_serializes_when_serde_feature_forwards() {
+        let files =
+            vcs_diff::parse_diff("diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n");
+        let v = serde_json::to_value(&files).unwrap();
+        assert_eq!(v[0]["path"], "m");
+        assert_eq!(v[0]["change"], "Modified");
     }
 }

@@ -49,7 +49,7 @@
 //!   [`pr_merge`](GitHubApi::pr_merge), [`pr_mark_ready`](GitHubApi::pr_mark_ready),
 //!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
 //!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
-//!   [`pr_feedback`](GitHubApi::pr_feedback), …); Actions runs
+//!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
 //!   timeout); issues & releases ([`issue_create`](GitHubApi::issue_create),
@@ -137,6 +137,11 @@ pub use parse::{
     CheckBucket, CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, RepoView, Review,
     WorkflowRun,
 };
+// Re-exported so `vcs_github::FileDiff` (and the types nested in it) resolve
+// without a direct `vcs-diff` dependency — `pr_diff` returns `vcs-diff`'s model
+// verbatim (`gh pr diff` emits the same git-format diff `git diff`/`jj diff
+// --git` do; `crates/diff/src/diff.rs`'s parser is shared, not duplicated).
+pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
@@ -491,6 +496,11 @@ pub trait GitHubApi: Send + Sync {
     /// The PR's submitted reviews and conversation comments
     /// (`gh pr view <n> --json reviews,comments`).
     async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback>;
+    /// The PR's diff, one [`FileDiff`] per changed file (`gh pr diff <n>
+    /// --color never`), through the same unified-diff parser
+    /// [`vcs-git`](https://docs.rs/vcs-git)/[`vcs-jj`](https://docs.rs/vcs-jj)
+    /// use — `gh pr diff` emits the same git-format diff `git diff` does.
+    async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>>;
 
     // --- Actions runs ------------------------------------------------------
 
@@ -823,6 +833,22 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
+    async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing
+        // could desync the parser from `git`'s own byte-exact output. `--color
+        // never` keeps the output free of ANSI even if stdout were ever a tty.
+        let n = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed(
+                self.core
+                    .command_in(dir, ["pr", "diff", n.as_str(), "--color", "never"]),
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     async fn run_list(
         &self,
         dir: &Path,
@@ -1001,6 +1027,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_comment(number: u64, body: &str) -> Result<String>;
         fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn pr_feedback(number: u64) -> Result<PrFeedback>;
+        fn pr_diff(number: u64) -> Result<Vec<FileDiff>>;
         fn run_list(limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
         fn run_view(id: u64) -> Result<WorkflowRun>;
         fn run_watch(id: u64) -> Result<WorkflowRun>;
@@ -1351,6 +1378,23 @@ mod tests {
             gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
             Error::Timeout { .. }
         ));
+    }
+
+    // Hermetic: real pr_diff() arg-building (incl. `--color never`) + the
+    // shared unified-diff parser against canned `gh pr diff` output.
+    #[tokio::test]
+    async fn pr_diff_builds_args_and_parses_scripted_output() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(out));
+        let gh = GitHub::with_runner(&rec);
+        let files = gh.pr_diff(Path::new("/r"), 7).await.expect("pr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].change, ChangeKind::Modified);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "diff", "7", "--color", "never"]
+        );
     }
 
     // Each review action maps to its flag; the body is carried on the action

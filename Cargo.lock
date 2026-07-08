@@ -1193,6 +1193,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "vcs-cli-support",
+ "vcs-diff",
  "vcs-gitea",
  "vcs-github",
  "vcs-gitlab",
@@ -1237,6 +1238,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "vcs-cli-support",
+ "vcs-diff",
 ]
 
 [[package]]
@@ -1250,6 +1252,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "vcs-cli-support",
+ "vcs-diff",
 ]
 
 [[package]]

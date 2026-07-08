@@ -341,6 +341,34 @@ fn exact(name: &str) -> String {
     format!("exact:{name}")
 }
 
+/// Injection guard for the remote segment of jj's positional `<name>@<remote>`
+/// bookmark-tracking pattern. Unlike a bare `<NAMES>`/`--remote` slot, the
+/// remote segment of this composite form is **not** itself parsed as a
+/// string-pattern: a `exact:`/`glob:` prefix on it is taken as part of the
+/// *literal* remote name instead of being interpreted (verified on jj 0.42:
+/// `bookmark track exact:main@exact:origin` warns "No matching remote
+/// bookmarks for names: main@\"exact:origin\"" and tracks nothing — a silent
+/// no-op, not an error — and `main@glob:origin` is rejected outright with
+/// "remote bookmark must be specified in bookmark@remote form"). The segment
+/// is, however, still glob-matched positionally (`main@ori?in` tracks
+/// `origin`), so a hostile/glob-bearing remote name must be rejected before
+/// spawn rather than wrapped in `exact:`.
+fn reject_glob_like(what: &str, value: &str) -> Result<()> {
+    if value.contains(['*', '?', '[', ']']) {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} contains a glob metacharacter and could fan out across \
+                     remotes — refusing to pass it as a positional argument"
+                ),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Pin `LC_ALL=C` on a command whose failure output is classified by matching
 /// **untranslated English substrings** — the transient-fetch markers
 /// (`is_transient_fetch_error`). jj's `git fetch` surfaces libc/gai/curl network
@@ -471,6 +499,8 @@ pub trait JjApi: Send + Sync {
     async fn describe_rev(&self, dir: &Path, revset: &str, message: &str) -> Result<()>;
     /// Start a new change on top of the working copy (`jj new -m`).
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()>;
+    /// Start a new undescribed change on top of `parent` (`jj new <parent>`).
+    async fn new_child(&self, dir: &Path, parent: &str) -> Result<()>;
     /// Local bookmarks (`jj bookmark list`).
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Local *and* remote-tracking bookmarks (`jj bookmark list -a`).
@@ -808,6 +838,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
+    async fn new_child(&self, dir: &Path, parent: &str) -> Result<()> {
+        reject_flag_like("parent", parent)?;
+        self.core.run_unit(self.cmd_in(dir, ["new", parent])).await
+    }
+
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
         self.core
             .parse(
@@ -853,9 +888,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()> {
         // A leading-`-` name makes the whole token start with `-`, which jj
-        // parses as a global flag (e.g. `--config`); guard it. `exact:` also
-        // stops a `*`/pattern name from tracking every remote bookmark at once.
+        // parses as a global flag (e.g. `--config`); guard it. The bookmark
+        // segment is wrapped in `exact:` (a real string-pattern there), but
+        // the remote segment of this `<name>@<remote>` positional form is
+        // *not* itself pattern-syntax — a `exact:` prefix on it is taken as
+        // part of the literal remote name and silently matches nothing
+        // (verified on jj 0.42: see `reject_glob_like`'s doc comment) — so the
+        // remote is validated against glob metacharacters instead of wrapped.
         reject_flag_like("bookmark name", name)?;
+        reject_glob_like("remote", remote)?;
         let target = format!("exact:{name}@{remote}");
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
@@ -1680,6 +1721,7 @@ vcs_cli_support::at_forwarders! {
         fn describe(message: &str) -> Result<()>;
         fn describe_rev(revset: &str, message: &str) -> Result<()>;
         fn new_change(message: &str) -> Result<()>;
+        fn new_child(parent: &str) -> Result<()>;
         fn bookmarks() -> Result<Vec<Bookmark>>;
         fn bookmarks_all() -> Result<Vec<BookmarkRef>>;
         fn reachable_bookmarks() -> Result<Vec<Bookmark>>;
@@ -2183,6 +2225,29 @@ mod tests {
             rec.only_call().args_str(),
             ["bookmark", "track", "exact:feat@origin", "--color", "never"]
         );
+    }
+
+    #[tokio::test]
+    async fn bookmark_track_rejects_glob_like_remote() {
+        // Unlike the bookmark segment, the remote segment of jj's positional
+        // `<name>@<remote>` pattern isn't itself pattern-syntax — wrapping it
+        // in `exact:` would silently no-op (see `reject_glob_like`'s doc
+        // comment) rather than exact-match, so a glob-bearing remote must be
+        // rejected before spawn instead.
+        for remote in ["*", "o?igin", "[origin]"] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+            assert!(
+                jj.bookmark_track(Path::new("."), "main", remote)
+                    .await
+                    .is_err(),
+                "remote {remote:?} should be rejected before spawn"
+            );
+            assert!(
+                rec.calls().is_empty(),
+                "must not spawn for remote {remote:?}"
+            );
+        }
     }
 
     #[tokio::test]

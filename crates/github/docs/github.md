@@ -190,6 +190,7 @@ async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>>;
 async fn pr_review(&self, dir: &Path, number: u64, action: ReviewAction) -> Result<()>;
 async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String>;
 async fn pr_feedback(&self, dir: &Path, number: u64) -> Result<PrFeedback>;
+async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>>;
 ```
 
 `pr_checks` returns the PR's checks as `Vec<CheckRun>`. gh encodes the *overall*
@@ -233,6 +234,24 @@ gh.pr_review(repo, 7, ReviewAction::request_changes("fix the parser")).await?;
 
 let fb = gh.pr_feedback(repo, 7).await?;
 for r in &fb.reviews { println!("{} {}", r.author, r.state); }
+# Ok(()) }
+```
+
+`pr_diff` returns the PR's diff as one [`FileDiff`] per changed file
+(`gh pr diff <n> --color never`), parsed through the same unified-diff parser
+[`vcs-git`](https://docs.rs/vcs-git/latest/vcs_git/guide/)/[`vcs-jj`](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
+use — `gh pr diff` emits the same git-format diff `git diff` does, so
+`vcs-github` re-exports [`FileDiff`] (and [`ChangeKind`], [`Hunk`], [`DiffLine`])
+rather than depending on `vcs-diff` directly for the type alone.
+
+```rust,ignore
+# use vcs_github::{GitHub, GitHubApi};
+use std::path::Path;
+# async fn demo(repo: &Path) -> Result<(), processkit::Error> {
+let gh = GitHub::new();
+for f in gh.pr_diff(repo, 7).await? {
+    println!("{:?} {}", f.change, f.path);
+}
 # Ok(()) }
 ```
 
