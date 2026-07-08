@@ -1329,11 +1329,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
-        if name.is_empty()
-            || name
-                .chars()
-                .any(|c| c.is_control() || " *?[:".contains(c))
-        {
+        if name.is_empty() || name.chars().any(|c| c.is_control() || " *?[:".contains(c)) {
             return Err(Error::spawn(
                 BINARY,
                 std::io::Error::new(
@@ -3138,14 +3134,25 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
 
-        for name in ["", "feature/*", "feature/?", "feature/[a]", "a:b", "two words", "bad\nname"] {
+        for name in [
+            "",
+            "feature/*",
+            "feature/?",
+            "feature/[a]",
+            "a:b",
+            "two words",
+            "bad\nname",
+        ] {
             let err = git
                 .remote_branch_exists(Path::new("/repo"), name)
                 .await
                 .expect_err("invalid remote branch name must be rejected");
             assert!(err.to_string().contains("invalid remote branch name"));
         }
-        assert!(rec.calls().is_empty(), "validation must run before spawning git");
+        assert!(
+            rec.calls().is_empty(),
+            "validation must run before spawning git"
+        );
     }
 
     #[tokio::test]
@@ -3153,10 +3160,11 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("abc123\trefs/heads/feature/T-010_fix\n"));
         let git = Git::with_runner(&rec);
 
-        assert!(git
-            .remote_branch_exists(Path::new("/repo"), "feature/T-010_fix")
-            .await
-            .expect("valid remote branch name"));
+        assert!(
+            git.remote_branch_exists(Path::new("/repo"), "feature/T-010_fix")
+                .await
+                .expect("valid remote branch name")
+        );
         assert_eq!(
             rec.only_call().args_str(),
             ["ls-remote", "origin", "refs/heads/feature/T-010_fix"]
@@ -4635,14 +4643,25 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
 
-        for branch in ["", "feature/*", "feature/?", "feature/[a]", "a:b", "two words", "bad\tname"] {
+        for branch in [
+            "",
+            "feature/*",
+            "feature/?",
+            "feature/[a]",
+            "a:b",
+            "two words",
+            "bad\tname",
+        ] {
             let err = git
                 .fetch_branch(Path::new("/repo"), branch)
                 .await
                 .expect_err("invalid fetch branch name must be rejected");
             assert!(err.to_string().contains("invalid branch name for fetch"));
         }
-        assert!(rec.calls().is_empty(), "validation must run before spawning git");
+        assert!(
+            rec.calls().is_empty(),
+            "validation must run before spawning git"
+        );
     }
 
     #[tokio::test]
