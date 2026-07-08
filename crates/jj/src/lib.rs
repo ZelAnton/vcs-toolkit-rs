@@ -471,6 +471,8 @@ pub trait JjApi: Send + Sync {
     async fn describe_rev(&self, dir: &Path, revset: &str, message: &str) -> Result<()>;
     /// Start a new change on top of the working copy (`jj new -m`).
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()>;
+    /// Start a new undescribed change on top of `parent` (`jj new <parent>`).
+    async fn new_child(&self, dir: &Path, parent: &str) -> Result<()>;
     /// Local bookmarks (`jj bookmark list`).
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Local *and* remote-tracking bookmarks (`jj bookmark list -a`).
@@ -806,6 +808,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core
             .run_unit(self.cmd_in(dir, ["new", "-m", message]))
             .await
+    }
+
+    async fn new_child(&self, dir: &Path, parent: &str) -> Result<()> {
+        reject_flag_like("parent", parent)?;
+        self.core.run_unit(self.cmd_in(dir, ["new", parent])).await
     }
 
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
@@ -1680,6 +1687,7 @@ vcs_cli_support::at_forwarders! {
         fn describe(message: &str) -> Result<()>;
         fn describe_rev(revset: &str, message: &str) -> Result<()>;
         fn new_change(message: &str) -> Result<()>;
+        fn new_child(parent: &str) -> Result<()>;
         fn bookmarks() -> Result<Vec<Bookmark>>;
         fn bookmarks_all() -> Result<Vec<BookmarkRef>>;
         fn reachable_bookmarks() -> Result<Vec<Bookmark>>;

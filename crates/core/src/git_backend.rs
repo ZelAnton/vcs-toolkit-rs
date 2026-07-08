@@ -214,6 +214,14 @@ pub(crate) async fn checkout<R: ProcessRunner>(
     Ok(())
 }
 
+pub(crate) async fn new_child<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    reference: &str,
+) -> Result<()> {
+    checkout(git, dir, reference).await
+}
+
 pub(crate) async fn rebase<R: ProcessRunner>(git: &Git<R>, dir: &Path, onto: &str) -> Result<()> {
     git.rebase(dir, onto).await?;
     Ok(())
