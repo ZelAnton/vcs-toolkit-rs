@@ -215,14 +215,14 @@ impl JjFileset {
     /// path separators are normalised to jj's forward slash (so `src\a.rs` matches);
     /// **on Unix** `\` is a legitimate filename byte and is left intact — rewriting it
     /// there would corrupt a real path (matching `vcs-git`'s twin, which also gates
-    /// the rewrite on Windows). Then `"` is escaped for the string literal.
+    /// the rewrite on Windows). Then `\` and `"` are escaped for the string literal.
     pub fn path(path: impl AsRef<str>) -> Self {
         let path = path.as_ref();
         #[cfg(windows)]
         let normalised = path.replace('\\', "/");
         #[cfg(not(windows))]
         let normalised = path.to_string();
-        let escaped = normalised.replace('"', "\\\"");
+        let escaped = normalised.replace('\\', "\\\\").replace('"', "\\\"");
         JjFileset(format!("root-file:\"{escaped}\""))
     }
 
@@ -2027,7 +2027,10 @@ mod tests {
             JjFileset::path("src/a(b).rs").as_str(),
             "root-file:\"src/a(b).rs\""
         );
-        // A literal quote is escaped for the `root-file:"…"` string literal (both platforms).
+    }
+
+    #[test]
+    fn fileset_escapes_double_quote() {
         assert_eq!(JjFileset::path("a\"b").as_str(), "root-file:\"a\\\"b\"");
     }
 
@@ -2059,10 +2062,15 @@ mod tests {
 
     #[test]
     #[cfg(not(windows))]
-    fn fileset_preserves_backslash_on_unix() {
+    fn fileset_escapes_backslashes_on_unix() {
         assert_eq!(
-            JjFileset::path("weird\\name.rs").as_str(),
-            "root-file:\"weird\\name.rs\""
+            JjFileset::path("a\\b.txt").as_str(),
+            "root-file:\"a\\\\b.txt\""
+        );
+        assert_eq!(JjFileset::path("a\\").as_str(), "root-file:\"a\\\\\"");
+        assert_eq!(
+            JjFileset::path("a\\b\"c.txt").as_str(),
+            "root-file:\"a\\\\b\\\"c.txt\""
         );
     }
 
