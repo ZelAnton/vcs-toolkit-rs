@@ -853,10 +853,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()> {
         // A leading-`-` name makes the whole token start with `-`, which jj
-        // parses as a global flag (e.g. `--config`); guard it. `exact:` also
-        // stops a `*`/pattern name from tracking every remote bookmark at once.
+        // parses as a global flag (e.g. `--config`); guard it. Both selector
+        // parts use `exact:` so glob characters cannot fan out to multiple
+        // bookmarks or remotes.
         reject_flag_like("bookmark name", name)?;
-        let target = format!("exact:{name}@{remote}");
+        let remote_pat = exact(remote);
+        let target = format!("exact:{name}@{remote_pat}");
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
             .await
@@ -2181,8 +2183,35 @@ mod tests {
             .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
-            ["bookmark", "track", "exact:feat@origin", "--color", "never"]
+            [
+                "bookmark",
+                "track",
+                "exact:feat@exact:origin",
+                "--color",
+                "never"
+            ]
         );
+    }
+
+    #[tokio::test]
+    async fn bookmark_track_uses_exact_remote_pattern() {
+        for remote in ["*", "o?igin"] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+            jj.bookmark_track(Path::new("."), "main", remote)
+                .await
+                .unwrap();
+            assert_eq!(
+                rec.only_call().args_str(),
+                [
+                    "bookmark",
+                    "track",
+                    format!("exact:main@exact:{remote}").as_str(),
+                    "--color",
+                    "never"
+                ]
+            );
+        }
     }
 
     #[tokio::test]
