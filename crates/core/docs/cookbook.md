@@ -155,6 +155,30 @@ itself cancelled. If you need a guaranteed-clean state after cancelling, re-prob
 (`Repo::in_progress_state` / `Jj::op_head`) and reset with a **fresh, un-cancelled
 client** rather than assuming the interrupted call tidied up after itself.
 
+## Probe a merge for conflicts
+
+Check whether merging a branch would conflict, without leaving a merge in
+progress. [`Repo::try_merge`](https://docs.rs/vcs-core/latest/vcs_core/guide/) does a throwaway merge attempt and rolls it
+back itself (`merge --abort` on git, `op_restore` on jj) before returning, so a
+clean working tree comes back either way — you get a yes/no plus the
+conflicting paths, not a merge you now have to clean up.
+
+```rust,ignore
+# use vcs_core::{MergeProbe, Repo};
+# async fn demo(repo: &Repo) -> vcs_core::Result<()> {
+match repo.try_merge("feature").await? {
+    MergeProbe::Clean => println!("feature merges cleanly"),
+    MergeProbe::Conflicts(paths) => println!("would conflict in {paths:?}"),
+    _ => {}
+}
+# Ok(()) }
+```
+
+Notes: a real merge failure unrelated to conflicts (missing ref, dirty tree)
+propagates as a plain error, not as `MergeProbe::Conflicts`. See the
+cancellation caveat above — a cancelled probe's own rollback can itself be
+cancelled, leaving the throwaway merge in place.
+
 ## Stash-safe branch switch
 
 Carry a dirty working tree across a checkout without losing it.
