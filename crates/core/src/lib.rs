@@ -972,8 +972,13 @@ impl<R: ProcessRunner> Repo<R> {
 /// hand-written on the inherent `impl`. `async` methods doc-link to their inherent
 /// twin; `sync` methods carry an explicit doc string (their docs aren't uniform).
 ///
-/// A near-identical copy lives in `vcs-forge`; the two are deliberately not shared
-/// (separate crates, ~40-line macro — duplication beats a new dependency).
+/// `vcs-forge` used to carry a near-identical copy of this macro, kept
+/// deliberately unshared (separate crates, ~40-line macro — duplication beats a
+/// new dependency); it was removed there in v0.1.1 when new trait methods needed
+/// default bodies the macro couldn't express, so `vcs-forge`'s facade trait and
+/// impl are now hand-maintained (see the removal note in `vcs-forge`'s
+/// `src/lib.rs`). This crate is still v0.x and doesn't need that, so the
+/// original signature-table macro remains the right shape here.
 ///
 /// Signatures only: each entry is a bare `&self` (or sync) method — no method-level
 /// generics, no `&mut self`, no default bodies (a new method shaped that way needs a

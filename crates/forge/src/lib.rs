@@ -677,25 +677,6 @@ fn zero_unauthed(caps: &mut ForgeCapabilities) {
     caps.issue_create = false;
 }
 
-/// Generate a facade trait from one signature table: the `#[async_trait]` trait
-/// declaration *and* the delegating `impl … for $Ty<R>`, so the two can never drift
-/// out of sync (a hazard when each is hand-maintained). Every generated body is a
-/// trivial delegation to the like-named inherent method — which method resolution
-/// prefers, so this never recurses; the real backend-`match` dispatch stays
-/// hand-written on the inherent `impl`. `async` methods doc-link to their inherent
-/// twin; `sync` methods carry an explicit doc string (their docs aren't uniform).
-///
-/// A near-identical copy lives in `vcs-core` (`facade_trait!`); the two are
-/// deliberately not shared (separate crates, ~40-line macro — duplication beats a
-/// new dependency). Signatures only — each entry is a bare `&self`/sync method (no
-/// method-level generics, no `&mut self`, no default bodies; a method shaped that
-/// way needs a grammar tweak, not just a table row).
-/// No `mockall::automock`: a Wave-S spike proved it can't process a
-/// trait whose signatures come from `macro_rules!` — captured `$_:ty` fragments
-/// reach `automock` as opaque nonterminal token groups its `syn` parser rejects
-/// ("unsupported type in this position"), whereas `#[async_trait]` tolerates them.
-/// The facade stays test-seam-tested (build a [`Forge`] over a fake runner).
-///
 // Macro `facade_trait!` removed in v0.1.1 — the v0.1.0 macro generated a
 // trait + delegating impl from a signature table. Adding default bodies
 // for the three post-v0.1.0 methods (`pr_comment`, `pr_edit`,
