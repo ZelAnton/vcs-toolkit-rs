@@ -17,12 +17,22 @@ cargo test -- --ignored                 # real-binary integration suites
                                         # (need git / jj / gh / glab / tea on PATH)
 ```
 
-Before opening a PR:
+Before opening a PR, run the full local gate — it reproduces the CI jobs
+(`fmt`, `clippy` in both configurations, `doc`, `msrv`, feature isolation, `test`,
+`cargo deny check`, `cargo package`) in the same order and with the same flags as
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), skipping with an explicit
+message whatever can't run locally (no `nightly`/MSRV toolchain, no `cargo-deny`,
+the multi-version `integration` job):
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+scripts/gate          # full gate — run before pushing
+scripts/gate --fast   # fmt + clippy + test only, for quick local iteration
+scripts/gate --help
 ```
+
+`scripts/gate` requires a POSIX shell (bash); see the comment at the top of the
+script. Its composition is kept in sync with `ci.yml` by hand, not generated —
+if you change a CI job, update `scripts/gate` too.
 
 The pure parsers are property-tested (`proptest`) for panic-freedom, and CI runs the
 `--ignored` suites against several `jj` versions to catch CLI/template drift. The test

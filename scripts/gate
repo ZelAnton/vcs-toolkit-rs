@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+#
+# scripts/gate — single local entry point for the full CI gate.
+#
+# Reproduces, in the same order and with the same flags, the jobs defined in
+# `.github/workflows/ci.yml` that can meaningfully run on a developer machine:
+# rustfmt, clippy (both configurations), rustdoc (incl. the doctest run and,
+# if a `nightly` toolchain is installed, the `docsrs`-cfg build), the MSRV
+# check (if the pinned toolchain is installed), per-feature isolation checks,
+# the test suite, `cargo deny check` (if `cargo-deny` is installed), and
+# `cargo package` for the crates that can be packaged pre-publish.
+#
+# Two jobs are deliberately NOT reproduced here and are reported as skipped:
+#   - `integration`: needs several *specific* `jj` versions plus `glab`/`tea`
+#     installed and, for the read-only gh smoke tests, a `GH_TOKEN`. Run it
+#     manually once you have the right binaries on `PATH`:
+#       cargo test --workspace --all-features --tests -- --ignored
+#   - `semver` (`cargo-semver-checks`, report-only in CI via
+#     `continue-on-error: true`): every crate is pre-1.0 and free to break
+#     its API, so this is advisory noise locally and out of scope for a gate
+#     meant to gatekeep a push.
+#
+# Usage:
+#   scripts/gate            # full gate: fmt, clippy x2, doc, msrv, feature
+#                            # isolation, test, cargo-deny, cargo package
+#   scripts/gate --fast     # fast gate: fmt, clippy x2, test only
+#   scripts/gate --help
+#
+# Requires a POSIX-compatible shell (bash). Invoke as `./scripts/gate` (needs
+# the executable bit — `chmod +x scripts/gate` if it was lost, e.g. after a
+# checkout on a filesystem that doesn't track it) or `bash scripts/gate`. The
+# project already assumes a POSIX shell for local development (see
+# `flake.nix`'s Unix-oriented dev shell), so this deliberately doesn't ship a
+# `.ps1` twin.
+#
+# IMPORTANT — manual sync required: this script's composition is NOT derived
+# from `.github/workflows/ci.yml` automatically. If a job, command, or flag
+# changes there, update this script by hand or it will silently drift from
+# what CI actually runs.
+
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/gate [--fast] [--help]
+
+Runs the locally-reproducible part of the CI gate.
+
+  (no flags)   Full gate: fmt, clippy (default + all-features), rustdoc
+               (all-features, no-default-features, doctests, and the nightly
+               docsrs build when available), MSRV check (when the pinned
+               toolchain is installed), per-feature isolation checks, the
+               test suite, `cargo deny check` (when cargo-deny is installed),
+               and `cargo package` for the packageable crates.
+
+  --fast       Fast gate: fmt, clippy (both configurations), and the test
+               suite only — skips doc, msrv, feature isolation, cargo-deny,
+               and cargo package.
+
+  --help, -h   Show this help and exit.
+
+Steps that need tooling not installed locally (a `nightly` toolchain, the
+pinned MSRV toolchain, or `cargo-deny`) are skipped with an explicit message
+rather than failing. The `integration` and `semver` CI jobs are never run
+here — see the comment at the top of this script for why.
+EOF
+}
+
+FAST=0
+for arg in "$@"; do
+  case "$arg" in
+    --fast)
+      FAST=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "gate: unknown option: $arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+PASSED=()
+FAILED=()
+SKIPPED=()
+
+step() {
+  local name="$1"
+  shift
+  echo
+  echo "==> $name"
+  echo "    \$ $*"
+  "$@"
+  local code=$?
+  if [ "$code" -eq 0 ]; then
+    PASSED+=("$name")
+  else
+    FAILED+=("$name")
+    echo "!!  FAILED: $name (exit $code)" >&2
+  fi
+}
+
+skip() {
+  local name="$1" reason="$2"
+  echo
+  echo "==> $name"
+  echo "    SKIPPED: $reason"
+  SKIPPED+=("$name -- $reason")
+}
+
+has_toolchain() {
+  cargo "+$1" --version >/dev/null 2>&1
+}
+
+has_cargo_deny() {
+  cargo deny --version >/dev/null 2>&1
+}
+
+# Mirrors the `features` CI job's data-driven loop verbatim (see
+# .github/workflows/ci.yml). Runs in a subshell with its own `set -e` so a
+# failing pair stops the loop immediately, same as CI; the outer `step` call
+# still gets a single pass/fail exit code for the whole job.
+features_isolation() {
+  (
+    set -euo pipefail
+    pairs="
+    vcs-git mock
+    vcs-jj mock
+    vcs-github mock
+    vcs-gitlab mock
+    vcs-gitea mock
+    vcs-git tracing
+    vcs-jj tracing
+    vcs-github tracing
+    vcs-gitlab tracing
+    vcs-gitea tracing
+    vcs-core tracing
+    vcs-forge tracing
+    vcs-watch tracing
+    vcs-watch stream
+    vcs-diff serde
+    vcs-core serde
+    vcs-forge serde
+    "
+    echo "$pairs" | while read -r crate feature; do
+      [ -z "$crate" ] && continue
+      echo "    -- cargo check -p $crate --features $feature"
+      cargo check -p "$crate" --features "$feature"
+    done
+  )
+}
+
+# --- fmt --------------------------------------------------------------
+step "fmt" cargo fmt --all --check
+
+# --- clippy (two configurations, same as the `clippy` CI job) ---------
+step "clippy (default features)" cargo clippy --all-targets -- -D warnings
+step "clippy (all features)" cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# --- doc ----------------------------------------------------------------
+if [ "$FAST" -eq 1 ]; then
+  skip "doc: all-features" "--fast mode"
+  skip "doc: no-default-features" "--fast mode"
+  skip "doc: doctests" "--fast mode"
+  skip "doc: nightly docsrs" "--fast mode"
+else
+  step "doc: all-features" env RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --all-features
+  step "doc: no-default-features" env RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --no-default-features
+  step "doc: doctests" cargo test --doc --workspace --all-features
+  if has_toolchain nightly; then
+    step "doc: nightly docsrs" env RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --no-deps --workspace --all-features
+  else
+    skip "doc: nightly docsrs" "no 'nightly' toolchain installed (rustup toolchain install nightly)"
+  fi
+fi
+
+# --- msrv -----------------------------------------------------------------
+MSRV=1.88.0
+if [ "$FAST" -eq 1 ]; then
+  skip "msrv ($MSRV)" "--fast mode"
+elif has_toolchain "$MSRV"; then
+  step "msrv ($MSRV)" cargo "+$MSRV" check --workspace --all-features
+else
+  skip "msrv ($MSRV)" "toolchain $MSRV not installed (rustup toolchain install $MSRV)"
+fi
+
+# --- feature isolation ------------------------------------------------
+if [ "$FAST" -eq 1 ]; then
+  skip "feature isolation" "--fast mode"
+else
+  step "feature isolation" features_isolation
+fi
+
+# --- test (same commands as the `test` CI job, current OS only) -------
+step "test: build --all-targets" cargo build --all-targets
+step "test: hermetic (default features)" cargo test
+step "test: all-features" cargo test --workspace --all-features
+
+# --- integration (never run locally, see header comment) --------------
+skip "integration" "needs multiple pinned jj versions + glab/tea on PATH; run manually: cargo test --workspace --all-features --tests -- --ignored"
+
+# --- cargo-deny ---------------------------------------------------------
+if [ "$FAST" -eq 1 ]; then
+  skip "cargo deny check" "--fast mode"
+elif has_cargo_deny; then
+  step "cargo deny check" cargo deny check advisories bans
+else
+  skip "cargo deny check" "cargo-deny not installed (cargo install cargo-deny)"
+fi
+
+# --- package ------------------------------------------------------------
+if [ "$FAST" -eq 1 ]; then
+  skip "cargo package" "--fast mode"
+else
+  step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit
+fi
+
+echo
+echo "================================================================"
+echo "gate summary"
+echo "================================================================"
+echo "passed:  ${#PASSED[@]}"
+for name in "${PASSED[@]:-}"; do
+  [ -n "$name" ] && echo "  - $name"
+done
+echo "skipped: ${#SKIPPED[@]}"
+for name in "${SKIPPED[@]:-}"; do
+  [ -n "$name" ] && echo "  - $name"
+done
+echo "failed:  ${#FAILED[@]}"
+for name in "${FAILED[@]:-}"; do
+  [ -n "$name" ] && echo "  - $name"
+done
+
+if [ "${#FAILED[@]}" -gt 0 ]; then
+  echo
+  echo "gate: FAILED"
+  exit 1
+fi
+
+echo
+echo "gate: OK"
