@@ -121,6 +121,16 @@ pub(crate) async fn pr_checks<R: ProcessRunner>(
     Ok(aggregate(&gh.pr_checks(dir, number).await?))
 }
 
+// `gh.pr_diff` already returns `vcs-diff`'s model directly (gh emits the same
+// git-format diff `git diff` does), so this is a plain forward — no mapping.
+pub(crate) async fn pr_diff<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(gh.pr_diff(dir, number).await?)
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
