@@ -654,16 +654,35 @@ fn drain(raw_rx: &mut mpsc::Receiver<()>) {
 /// `BranchCreated`/`BranchDeleted` on a worktree, since the shared dir is a
 /// *sibling*, not nested under it (see [`common_dir`]).
 ///
+/// A colocated jj repository also watches its `.git` directory (or resolved
+/// gitlink). Git-only operations do not touch `.jj`; the `.git` event provides
+/// the re-query signal even though jj imports that data only when the next jj
+/// snapshot triggers auto-import.
+///
 /// Overlapping watches are harmless — the re-query+debounce coalesces duplicate
 /// signals — but we drop a second dir whose normalized path equals the first, so
 /// `notify` isn't asked to watch the same path twice.
 fn state_dirs(kind: BackendKind, root: &Path) -> Result<Vec<PathBuf>> {
-    let state_dir = state_dir(kind, root)?;
-    let mut dirs = vec![state_dir.clone()];
-    if let Some(shared) = common_dir(&state_dir)
-        && normalize(&shared) != normalize(&state_dir)
-    {
-        dirs.push(shared);
+    let primary_state_dir = state_dir(kind, root)?;
+    let mut dirs = vec![primary_state_dir.clone()];
+
+    let mut add_git_dirs = |git_dir: PathBuf| {
+        if !dirs.iter().any(|dir| normalize(dir) == normalize(&git_dir)) {
+            dirs.push(git_dir.clone());
+        }
+        if let Some(shared) = common_dir(&git_dir)
+            && !dirs.iter().any(|dir| normalize(dir) == normalize(&shared))
+        {
+            dirs.push(shared);
+        }
+    };
+
+    match kind {
+        BackendKind::Git => add_git_dirs(primary_state_dir),
+        BackendKind::Jj if root.join(".git").exists() => {
+            add_git_dirs(state_dir(BackendKind::Git, root)?)
+        }
+        _ => {}
     }
     Ok(dirs)
 }
@@ -849,6 +868,27 @@ mod tests {
         assert_eq!(dirs.len(), 2, "private + shared, got {dirs:?}");
         assert_eq!(normalize(&dirs[0]), normalize(&private));
         assert_eq!(normalize(&dirs[1]), normalize(&shared));
+    }
+
+    #[test]
+    fn state_dirs_includes_git_dir_for_colocated_jj_repo() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("colocated");
+        std::fs::create_dir_all(root.join(".jj")).expect("mkdir .jj");
+        std::fs::create_dir_all(root.join(".git")).expect("mkdir .git");
+
+        let dirs = state_dirs(BackendKind::Jj, &root).expect("state_dirs");
+        assert_eq!(dirs, vec![root.join(".jj"), root.join(".git")]);
+    }
+
+    #[test]
+    fn state_dirs_excludes_missing_git_dir_for_pure_jj_repo() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("pure-jj");
+        std::fs::create_dir_all(root.join(".jj")).expect("mkdir .jj");
+
+        let dirs = state_dirs(BackendKind::Jj, &root).expect("state_dirs");
+        assert_eq!(dirs, vec![root.join(".jj")]);
     }
 
     // When `commondir` resolves back to the state dir itself (degenerate), the

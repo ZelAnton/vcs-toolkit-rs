@@ -1329,6 +1329,19 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
+        if name.is_empty()
+            || name
+                .chars()
+                .any(|c| c.is_control() || " *?[:".contains(c))
+        {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid remote branch name: {name:?}"),
+                ),
+            ));
+        }
         // No credential prompt, bounded wait: a missing helper or a flaky network
         // must not hang the call. `output_string` reports a timeout as a flagged result
         // (non-zero exit) rather than erroring, so an unreachable remote reads as
@@ -1641,6 +1654,19 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
+        if branch.is_empty()
+            || branch
+                .chars()
+                .any(|c| c.is_control() || " *?[:".contains(c))
+        {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid branch name for fetch: {branch:?}"),
+                ),
+            ));
+        }
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
@@ -3104,6 +3130,36 @@ mod tests {
                 .remote_branch_exists(Path::new("."), "x")
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_branch_exists_rejects_invalid_names() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        for name in ["", "feature/*", "feature/?", "feature/[a]", "a:b", "two words", "bad\nname"] {
+            let err = git
+                .remote_branch_exists(Path::new("/repo"), name)
+                .await
+                .expect_err("invalid remote branch name must be rejected");
+            assert!(err.to_string().contains("invalid remote branch name"));
+        }
+        assert!(rec.calls().is_empty(), "validation must run before spawning git");
+    }
+
+    #[tokio::test]
+    async fn remote_branch_exists_accepts_valid_names() {
+        let rec = RecordingRunner::replying(Reply::ok("abc123\trefs/heads/feature/T-010_fix\n"));
+        let git = Git::with_runner(&rec);
+
+        assert!(git
+            .remote_branch_exists(Path::new("/repo"), "feature/T-010_fix")
+            .await
+            .expect("valid remote branch name"));
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["ls-remote", "origin", "refs/heads/feature/T-010_fix"]
         );
     }
 
@@ -4572,6 +4628,40 @@ mod tests {
         let git = Git::with_runner(&failing);
         assert!(git.fetch_from(Path::new("/r"), "upstream").await.is_err());
         assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    #[tokio::test]
+    async fn fetch_branch_rejects_invalid_names() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        for branch in ["", "feature/*", "feature/?", "feature/[a]", "a:b", "two words", "bad\tname"] {
+            let err = git
+                .fetch_branch(Path::new("/repo"), branch)
+                .await
+                .expect_err("invalid fetch branch name must be rejected");
+            assert!(err.to_string().contains("invalid branch name for fetch"));
+        }
+        assert!(rec.calls().is_empty(), "validation must run before spawning git");
+    }
+
+    #[tokio::test]
+    async fn fetch_branch_accepts_valid_names() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        git.fetch_branch(Path::new("/repo"), "feature/T-010_fix")
+            .await
+            .expect("valid fetch branch name");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "fetch",
+                "--quiet",
+                "origin",
+                "refs/heads/feature/T-010_fix:refs/remotes/origin/feature/T-010_fix"
+            ]
+        );
     }
 
     // The consumer-facing mock seam: a function depending on `&dyn GitApi` is

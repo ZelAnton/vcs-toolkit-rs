@@ -432,30 +432,6 @@ fn forge_err(e: vcs_forge::Error) -> ErrorData {
     }
 }
 
-/// Belt-and-braces argv guard for the mutating tool's `body` / `title`
-/// fields. The wrappers already handle a flag-like value per backend — GitHub and
-/// GitLab pass `body`/`title` in a flag-VALUE slot (`--body`/`-m`/`--title`, where
-/// a leading `-` is safe), and Gitea guards its one bare positional (`tea comment`'s
-/// body) with `reject_flag_like`. This guard is a *uniform* second line of defence
-/// at the MCP seam, so a `body: "-evil"` value never reaches any subprocess
-/// regardless of backend. Mirrors the wrapper's `Error::Spawn` shape so the
-/// surfaced message is recognisable.
-///
-/// **Empty string is a real value** (clears the field per spec §2) — it
-/// passes through this guard. The wrappers themselves reject `""` on flag
-/// VALUE positions only when the value is whitespace; an empty quoted
-/// string (`--title ""`) is exactly what gh / glab / tea accept to clear
-/// the field.
-fn guard_argv_field(what: &str, value: &str) -> Result<(), ErrorData> {
-    if value.starts_with('-') {
-        return Err(ErrorData::invalid_params(
-            format!("{what} {value:?} would be parsed as a flag — refusing to pass it"),
-            None,
-        ));
-    }
-    Ok(())
-}
-
 #[tool_router]
 impl VcsMcpServer {
     // --- repo: read --------------------------------------------------------
@@ -739,6 +715,10 @@ impl VcsMcpServer {
         Parameters(p): Parameters<IssueCreateParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_issue_create")?;
+        // No MCP-layer argv guard on `title`/`body`: every backend passes both in
+        // a flag-VALUE slot (`--title`/`--body`/`--description`), so a leading `-`
+        // is safe — uniform with `forge_pr_comment`/`forge_pr_edit` (T-013). Any
+        // genuine bare-positional slot is guarded in its own wrapper.
         let out = self
             .forge()?
             .issue_create(vcs_forge::IssueCreate::new(p.title, p.body))
@@ -756,6 +736,9 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrCreateParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_create")?;
+        // No MCP-layer argv guard on `title`/`body`: both ride in flag-VALUE slots
+        // on every backend (`--title`/`--body`/`--description`), so a leading `-`
+        // is safe — uniform with `forge_pr_comment`/`forge_pr_edit` (T-013).
         let mut spec = vcs_forge::PrCreate::new(p.title, p.body);
         if let Some(source) = p.source {
             spec = spec.source(source);
@@ -825,13 +808,16 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrCommentParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_comment")?;
-        // Pre-spawn argv guard — the facade's wrapper already handles a flag-like
-        // `body` per backend (GitHub/GitLab pass it in a flag-VALUE slot; Gitea
-        // guards its bare positional with `reject_flag_like`), but the MCP layer
-        // adds a uniform second line of defence: a body that starts with `-` would
-        // be parsed by the CLI as a flag. (An empty body is rejected by the facade
+        // No MCP-layer argv guard on `body`: argv-injection safety is a
+        // wrapper-layer concern, and only the wrapper knows which argv slot a
+        // value lands in. GitHub (`gh pr comment --body <body>`) and GitLab
+        // (`glab mr note -m <body>`) put the body in a flag-VALUE slot, where a
+        // leading `-` is safe and typical for Markdown (a `- item` bullet list or
+        // `---` rule); Gitea's `tea comment <n> <body>` is the one bare positional,
+        // and the Gitea wrapper already guards it with `reject_flag_like`. A blanket
+        // leading-`-` refusal here wrongly rejected legitimate Markdown on
+        // GitHub/GitLab (T-013). (An empty body is still rejected by the facade
         // itself, before any spawn.)
-        guard_argv_field("body", &p.body)?;
         let out = self
             .forge()?
             .pr_comment(p.number, &p.body)
@@ -849,16 +835,13 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrEditParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_edit")?;
-        // Same belt-and-braces argv guard as `forge_pr_comment`, applied to
-        // each `Some` field. The facade also rejects both-`None` with
-        // `InvalidInput` before spawning — a backstop the MCP tool surfaces
-        // as `invalid_params`.
-        if let Some(title) = p.title.as_deref() {
-            guard_argv_field("title", title)?;
-        }
-        if let Some(body) = p.body.as_deref() {
-            guard_argv_field("body", body)?;
-        }
+        // No MCP-layer argv guard on `title`/`body` (see `forge_pr_comment`): every
+        // backend passes both in a flag-VALUE slot (`gh`/`tea` `--title`/`--body`/
+        // `--description`, `glab mr update --title`/`--description`), so a leading
+        // `-` is safe here — refusing it wrongly rejected legitimate Markdown
+        // titles/bodies (T-013). The facade still rejects both-`None` with
+        // `InvalidInput` before spawning — a backstop the MCP tool surfaces as
+        // `invalid_params`.
         let mut edit = vcs_forge::PrEdit::new();
         if let Some(title) = p.title {
             edit = edit.title(title);
@@ -1239,14 +1222,105 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
     }
 
-    // `forge_pr_comment` rejects a flag-like body (e.g. `-evil`) with an
-    // invalid-params error BEFORE reaching the wrapper — a leak-through would
-    // hit the runner's `pr comment` rule with argv `["pr", "comment", "7",
-    // "-evil"]` and error differently.
+    // T-013: on GitHub a `body` that begins with `-` is a legitimate Markdown
+    // value (a `- item` bullet list, or a `---` rule), not a flag — `gh pr comment
+    // --body <body>` puts it in a flag-VALUE slot. The MCP layer must NOT reject it
+    // (the old blanket `guard_argv_field` did). The runner rule matches only
+    // `["gh", "pr", "comment"]`, so reaching the reply proves the body was passed
+    // through to the wrapper rather than refused up front.
     #[tokio::test]
-    async fn forge_pr_comment_rejects_flag_like_body() {
+    async fn forge_pr_comment_github_allows_leading_dash_body() {
+        for body in ["- item one\n- item two", "---"] {
+            let gh = vcs_forge::vcs_github::GitHub::with_runner(
+                ScriptedRunner::new().on(["gh", "pr", "comment"], Reply::ok("https://gh/pr/7#c1")),
+            );
+            let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+                "/repo",
+                "/repo",
+                Git::with_runner(ScriptedRunner::new()),
+            ));
+            let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+            let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+            let out = server
+                .forge_pr_comment(Parameters(PrCommentParams {
+                    number: 7,
+                    body: body.into(),
+                }))
+                .await
+                .unwrap_or_else(|e| panic!("leading-`-` body {body:?} must pass on GitHub: {e:?}"));
+            assert!(
+                result_json(&out).contains("https://gh/pr/7#c1"),
+                "{}",
+                result_json(&out)
+            );
+        }
+    }
+
+    // T-013: the same on GitLab — `glab mr note <id> -m <body>` is a flag-VALUE
+    // slot, so a leading `-` is safe and must pass.
+    #[tokio::test]
+    async fn forge_pr_comment_gitlab_allows_leading_dash_body() {
+        let gl = vcs_forge::vcs_gitlab::GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "mr", "note"], Reply::ok("https://gl/mr/7#note1")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitlab("/repo", gl));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let out = server
+            .forge_pr_comment(Parameters(PrCommentParams {
+                number: 7,
+                body: "- a bullet".into(),
+            }))
+            .await
+            .expect("leading-`-` body must pass on GitLab");
+        assert!(
+            result_json(&out).contains("https://gl/mr/7#note1"),
+            "{}",
+            result_json(&out)
+        );
+    }
+
+    // T-013 regression: Gitea's `tea comment <n> <body>` takes the body as a bare
+    // POSITIONAL, so a flag-like body IS dangerous there and stays rejected — by
+    // the Gitea wrapper's own `reject_flag_like`, reached through the MCP tool. The
+    // runner has a `["tea", "comment"]` rule, so a leak-through would SUCCEED
+    // (returning the reply) instead of erroring — this pins that it does not.
+    #[tokio::test]
+    async fn forge_pr_comment_gitea_rejects_flag_like_body() {
+        let tea = vcs_forge::vcs_gitea::Gitea::with_runner(
+            ScriptedRunner::new().on(["tea", "comment"], Reply::ok("https://gitea/pr/7#c1")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitea("/repo", tea));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let err = server
+            .forge_pr_comment(Parameters(PrCommentParams {
+                number: 7,
+                body: "-evil".into(),
+            }))
+            .await
+            .expect_err("flag-like body must stay rejected on Gitea's positional slot");
+        assert!(err.message.contains("flag"), "{}", err.message);
+    }
+
+    // T-013: `forge_pr_edit` also passes leading-`-` `title`/`body` through — both
+    // ride in flag-VALUE slots (`gh pr edit --title <t> --body <b>`), so a Markdown
+    // bullet title or a `---` body is legitimate and must not be refused.
+    #[tokio::test]
+    async fn forge_pr_edit_allows_leading_dash_title_and_body() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["gh", "pr", "comment"], Reply::ok("")),
+            ScriptedRunner::new().on(["gh", "pr", "edit"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1256,15 +1330,22 @@ mod tests {
         let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
         let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
 
-        let err = server
-            .forge_pr_comment(Parameters(PrCommentParams {
+        let out = server
+            .forge_pr_edit(Parameters(PrEditParams {
                 number: 7,
-                body: "-evil".into(),
+                title: Some("- a bullet title".into()),
+                body: Some("---".into()),
             }))
             .await
-            .expect_err("flag-like body rejected");
-        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert!(err.message.contains("flag"), "{}", err.message);
+            .expect("leading-`-` title/body must pass on GitHub");
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.raw.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["edited"], 7, "{text}");
     }
 
     // `forge_pr_edit` rejects both-`None` with an invalid-params error BEFORE

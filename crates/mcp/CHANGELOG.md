@@ -16,7 +16,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Fixed
--
+- forge_pr_comment / forge_pr_edit: stop rejecting a legitimate leading-`-` body/title
+  (a Markdown `- item` bullet list or `---` rule). These values ride in flag-VALUE
+  slots on GitHub/GitLab (and Gitea's `--title`/`--description`), where a leading `-`
+  is safe; the blanket MCP-layer `guard_argv_field` wrongly refused them for every
+  backend. Argv-injection safety now lives solely at the wrapper layer, where the one
+  bare positional (Gitea's `tea comment <n> <body>`) is still guarded by
+  `reject_flag_like`. Behaviour is now uniform across forge_pr_create / forge_pr_edit /
+  forge_pr_comment / forge_issue_create.
 
 ## [0.5.2] - 2026-07-06
 
