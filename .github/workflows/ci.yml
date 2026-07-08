@@ -324,3 +324,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  # Report-only coverage (cargo-llvm-cov). No crate has a coverage floor and
+  # this must NOT gate — `continue-on-error: true` keeps it advisory, the same
+  # posture as `semver` above: it makes the coverage trend and per-file gaps
+  # (e.g. in vcs-core's backend dispatchers or the MCP tools) visible without
+  # blocking the pipeline, so gaps can be targeted deliberately instead of
+  # guessed at.
+  coverage:
+    name: coverage (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --all-features --html
+      - name: Add coverage summary to job summary
+        run: |
+          {
+            echo "### Coverage summary"
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: target/llvm-cov/html
+          if-no-files-found: warn
