@@ -665,6 +665,22 @@ pub trait GitApi: Send + Sync {
     /// so cross-backend code uses one signature. The `revspec` is guarded against
     /// being parsed as a flag.
     async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>>;
+    /// Like [`log`](GitApi::log), but scoped to commits that touched `paths`
+    /// (`git log <revspec> -n <max> -- <paths>`) — e.g. "who changed this
+    /// module". The `--` separator keeps a path from being read as a flag
+    /// (same convention as [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths)).
+    /// An empty `paths` is refused *before spawning*: silently falling back to
+    /// [`log`](GitApi::log)'s unrestricted history would defeat the "scoped to
+    /// these paths" contract. Mirrors
+    /// [`JjApi::log_paths`](../vcs_jj/trait.JjApi.html#tymethod.log_paths), which
+    /// takes filesets instead of pathspecs.
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revspec: &str,
+        max: usize,
+        paths: &[String],
+    ) -> Result<Vec<Commit>>;
     /// Resolve a revision to a full hash (`git rev-parse --verify <rev>`). `--verify`
     /// requires `rev` to name exactly one object, so a non-revision (e.g. a filename)
     /// errors instead of being echoed back as a fake id.
@@ -1133,6 +1149,47 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 parse::parse_log,
             )
             .await
+    }
+
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revspec: &str,
+        max: usize,
+        paths: &[String],
+    ) -> Result<Vec<Commit>> {
+        reject_flag_like("revspec", revspec)?;
+        // An empty `paths` would build `git log <revspec> -n <max> -- ` — no
+        // pathspecs after `--` is the same as no `--` at all, i.e. an
+        // UNRESTRICTED log. That's the opposite of "scoped to these paths",
+        // so refuse before spawning (mirrors `JjApi::commit_paths`'s
+        // empty-fileset guard).
+        if paths.is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "log_paths requires at least one path — an empty list would log \
+                     unrestricted history, not history scoped to the named paths",
+                ),
+            ));
+        }
+        let n = format!("-n{max}");
+        let mut command = self.core.command_in(
+            dir,
+            [
+                "log",
+                revspec,
+                n.as_str(),
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+            ],
+        );
+        for path in paths {
+            command = command.arg(path);
+        }
+        self.core.parse(command, parse::parse_log).await
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
@@ -2466,6 +2523,7 @@ vcs_cli_support::at_forwarders! {
         fn current_branch() -> Result<Option<String>>;
         fn branches() -> Result<Vec<Branch>>;
         fn log(revspec: &str, max: usize) -> Result<Vec<Commit>>;
+        fn log_paths(revspec: &str, max: usize, paths: &[String]) -> Result<Vec<Commit>>;
         fn rev_parse(rev: &str) -> Result<String>;
         fn rev_parse_short(rev: &str) -> Result<String>;
         fn init() -> Result<()>;
@@ -2977,6 +3035,52 @@ mod tests {
                 "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"
             ]
         );
+    }
+
+    // `log_paths` must insert `--` exactly once, right before the pathspecs,
+    // after the same revspec/count/format arguments `log` builds.
+    #[tokio::test]
+    async fn log_paths_builds_revspec_format_and_pathspec_separator() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.log_paths(
+            Path::new("."),
+            "main..HEAD",
+            5,
+            &["src/a.rs".to_string(), "src/b.rs".to_string()],
+        )
+        .await
+        .expect("log_paths");
+        let args = rec.only_call().args_str();
+        assert_eq!(
+            args,
+            [
+                "log",
+                "main..HEAD",
+                "-n5",
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+                "src/a.rs",
+                "src/b.rs",
+            ]
+        );
+        assert_eq!(args.iter().filter(|a| *a == "--").count(), 1);
+    }
+
+    // An empty `paths` slice must NOT degrade to an unrestricted `git log` —
+    // it's refused before any spawn (mirrors `commit_paths_refuses_empty_*` in
+    // vcs-jj).
+    #[tokio::test]
+    async fn log_paths_refuses_empty_paths_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .log_paths(Path::new("."), "HEAD", 5, &[])
+            .await
+            .expect_err("empty paths must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     #[tokio::test]

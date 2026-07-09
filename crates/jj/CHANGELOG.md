@@ -10,7 +10,11 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- feat: add `JjApi::log_paths` — like `log`, but scoped to changes that
+  touched the given filesets (`jj log -r <revset> <filesets>`), built with
+  `JjFileset::path` (same primitive as `commit_paths`/`squash_paths`) and a
+  refusal of an empty fileset list before spawning.
 
 ### Changed
 -
