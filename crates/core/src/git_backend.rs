@@ -122,6 +122,15 @@ pub(crate) async fn log<R: ProcessRunner>(
         .collect())
 }
 
+pub(crate) async fn show_file<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    rev: &str,
+    path: &str,
+) -> Result<String> {
+    Ok(git.show_file(dir, rev, path).await?)
+}
+
 pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<RepoSnapshot> {
     // 1 spawn: branch + upstream + ahead/behind + change counts (porcelain v2).
     let bs = git.branch_status(dir).await?;

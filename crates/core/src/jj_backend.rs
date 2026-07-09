@@ -139,6 +139,15 @@ pub(crate) async fn log<R: ProcessRunner>(
         .collect())
 }
 
+pub(crate) async fn show_file<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    path: &str,
+) -> Result<String> {
+    Ok(jj.file_show(dir, revset, path).await?)
+}
+
 /// One `jj log -r @` template carrying the working-copy-only fields the
 /// snapshot needs except the change count: the full commit id (`head` is the
 /// full oid on both backends — truncate for display; a short id would make a
