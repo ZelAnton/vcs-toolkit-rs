@@ -17,7 +17,16 @@ crates; tag releases as `vcs-jj-v<version>`.
   refusal of an empty fileset list before spawning.
 
 ### Changed
--
+
+- **Breaking:** replace the trailing positional `bool` on three `JjApi` methods
+  with named specs, so the flag reads at the call site: `bookmark_move(dir, name,
+  to, allow_backwards)` → `bookmark_move(dir, BookmarkMove::new(name,
+  to)[.allow_backwards()])`, `squash_into(dir, into, use_destination_message)` →
+  `squash_into(dir, SquashInto::new(into)[.use_destination_message()])`, and
+  `git_clone(url, dest, colocate)` → `git_clone(url, dest,
+  GitClone::colocated()|GitClone::separate())` (the colocation choice is still
+  always explicit — there is deliberately no default). The `JjAt` bound view moves
+  to the same specs.
 
 ### Fixed
 -

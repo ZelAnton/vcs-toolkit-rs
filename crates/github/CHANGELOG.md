@@ -20,7 +20,12 @@ crates; tag releases as `vcs-github-v<version>`.
   the trait so external implementers keep compiling.
 
 ### Changed
--
+
+- **Breaking:** `GitHubApi::pr_close` drops its trailing positional
+  `delete_branch: bool` for a named `#[non_exhaustive]` `PrClose` spec —
+  `pr_close(dir, number, true)` → `pr_close(dir, number,
+  PrClose::new().delete_branch())` — so the flag reads at the call site (mirroring
+  `PrMerge`). The `GitHubAt` bound view moves to the same spec.
 
 ### Fixed
 -

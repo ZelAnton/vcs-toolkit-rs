@@ -72,7 +72,11 @@ pub(crate) async fn delete_branch<R: ProcessRunner>(
     name: &str,
     force: bool,
 ) -> Result<()> {
-    git.delete_branch(dir, name, force).await?;
+    let mut spec = vcs_git::BranchDelete::new(name);
+    if force {
+        spec = spec.force();
+    }
+    git.delete_branch(dir, spec).await?;
     Ok(())
 }
 
@@ -389,7 +393,11 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     path: &Path,
     force: bool,
 ) -> Result<()> {
-    git.worktree_remove(dir, path, force).await?;
+    let mut spec = vcs_git::WorktreeRemove::new(path);
+    if force {
+        spec = spec.force();
+    }
+    git.worktree_remove(dir, spec).await?;
     Ok(())
 }
 

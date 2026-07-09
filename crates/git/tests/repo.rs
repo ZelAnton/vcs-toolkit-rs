@@ -8,7 +8,7 @@ use std::path::PathBuf;
 // (initialisation IS the subject), so they use `TempDir` + `configure_identity`
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
-use vcs_git::{AnnotatedTag, Git, GitApi, MergeCheck, MergeCommit, WorktreeAdd};
+use vcs_git::{AnnotatedTag, Git, GitApi, MergeCheck, MergeCommit, WorktreeAdd, WorktreeRemove};
 use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
 
 #[tokio::test]
@@ -212,7 +212,9 @@ async fn worktree_add_list_remove_cycle() {
         "new worktree should be listed, got {list:?}"
     );
 
-    git.worktree_remove(dir, &wt, true).await.expect("remove");
+    git.worktree_remove(dir, WorktreeRemove::new(&wt).force())
+        .await
+        .expect("remove");
     assert!(
         !git.worktree_list(dir)
             .await

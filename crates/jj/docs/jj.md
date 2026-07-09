@@ -198,7 +198,7 @@ async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()>;
 async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()>;
 async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()>;
-async fn bookmark_move(&self, dir: &Path, name: &str, to: &str, allow_backwards: bool) -> Result<()>;
+async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 ```
 
 - `bookmarks` — local bookmarks (`bookmark list`).
@@ -213,7 +213,8 @@ async fn bookmark_move(&self, dir: &Path, name: &str, to: &str, allow_backwards:
 - `bookmark_create` / `bookmark_delete` / `bookmark_rename` — at/by name.
 - `bookmark_track` — track a remote bookmark (`bookmark track <name>@<remote>`).
 - `bookmark_set` — point a bookmark at `revision` (`bookmark set <name> -r`).
-- `bookmark_move` — move to `to`; pass `allow_backwards` to append
+- `bookmark_move` — move a bookmark to a revision, built with
+  `BookmarkMove::new(name, to)`; chain `.allow_backwards()` to append
   `--allow-backwards`.
 
 Every name-taking method rejects an empty or leading-`-` name *before* spawning
@@ -355,16 +356,16 @@ jj.edit(repo, "@-").await?;
 ## Squash & split
 
 ```rust,ignore
-async fn squash_into(&self, dir: &Path, into: &str, use_destination_message: bool) -> Result<()>;
+async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()>;
 async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
 async fn squash_paths(&self, dir: &Path, spec: SquashPaths) -> Result<()>;
 async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
 async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
 ```
 
-- `squash_into` — squash the working copy into `into` (`squash --into`). With
-  `use_destination_message`, keep the destination's description
-  (`--use-destination-message`) instead of combining the two.
+- `squash_into` — squash the working copy into `into` (`squash --into`), built
+  with `SquashInto::new(into)`. Chain `.use_destination_message()` to keep the
+  destination's description (`--use-destination-message`) instead of combining the two.
 - `commit_paths` — finalise a commit from exactly these [`JjFileset`]s
   (`commit -m <message> <filesets>`); the rest stay in the new working-copy
   change. Like `split_paths`, `filesets` must be **non-empty** — a fileset-less
@@ -382,12 +383,12 @@ async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset])
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::{Jj, JjApi, JjFileset, SquashPaths};
+# use vcs_jj::{Jj, JjApi, JjFileset, SquashInto, SquashPaths};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 let only = [JjFileset::path("src/parser.rs")];
 jj.split_paths(repo, &only, "feat: parser").await?;
 jj.commit_paths(repo, &only, "feat: parser").await?;
-jj.squash_into(repo, "@-", false).await?;
+jj.squash_into(repo, SquashInto::new("@-")).await?;
 jj.squash_paths(repo, SquashPaths::new("@", "@-").filesets(only)).await?;
 jj.absorb(repo, None, &[]).await?;            // absorb everything into ancestors
 # Ok(()) }
@@ -442,7 +443,7 @@ async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
 async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
 async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()>;
 async fn git_import(&self, dir: &Path) -> Result<()>;
-async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
+async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
 ```
 
 - `git_fetch` — `jj git fetch`. Transient (network) failures are retried: 3
@@ -457,19 +458,20 @@ async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
   (`Option<String>`) to keep the trait `mockall`-friendly.
 - `git_import` — import git refs into jj (`jj git import`) — colocated-repo sync.
 - `git_clone` — clone into `dest` (`git clone <url> <dest>
-  --colocate|--no-colocate`). Runs **without** a working directory — pass an
+  --colocate|--no-colocate`), the colocation chosen by `GitClone::colocated()`
+  or `GitClone::separate()`. Runs **without** a working directory — pass an
   **absolute** `dest`. The colocate flag is *always* passed explicitly:
   whether colocation is jj's default depends on the jj version and the user's
-  `git.colocate` config, so `colocate` decides deterministically. `url` is
+  `git.colocate` config, so the `GitClone` choice decides deterministically. `url` is
   guarded against a leading-`-` value.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::{Jj, JjApi};
+# use vcs_jj::{GitClone, Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 jj.git_fetch(repo).await?;
 jj.git_push(repo, Some("main".to_string())).await?;     // `jj git push -b main`
-jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), true).await?;
+jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), GitClone::colocated()).await?;
 # Ok(()) }
 ```
 

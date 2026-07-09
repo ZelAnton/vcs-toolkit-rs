@@ -45,7 +45,8 @@
 //!   when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`CommitPaths`],
 //!   [`MergeCommit`] / [`MergeNoCommit`], [`GitPush`], [`CloneSpec`],
-//!   [`WorktreeAdd`], [`AnnotatedTag`], [`MergeCheck`] — each `#[non_exhaustive]`, built
+//!   [`WorktreeAdd`], [`AnnotatedTag`], [`MergeCheck`], [`BranchDelete`],
+//!   [`StashPush`], [`WorktreeRemove`] — each `#[non_exhaustive]`, built
 //!   with a constructor + chained setters, named after the flags they emit.
 //! - **[`conflict`]** — a typed conflict-marker model: parse marker soup into
 //!   structured regions, re-render byte-exact, and resolve to a chosen side.
@@ -476,6 +477,92 @@ impl AnnotatedTag {
     }
 }
 
+/// Options for [`GitApi::delete_branch`] (`git branch -d`/`-D`).
+///
+/// `#[non_exhaustive]`, so build it through [`BranchDelete::new`] and the chained
+/// [`force`](BranchDelete::force) setter rather than a struct literal — a bare
+/// `bool` at the call site (`delete_branch(name, true)`) doesn't say what `true`
+/// means, and this leaves room to add options without a breaking signature change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BranchDelete {
+    /// The local branch name to delete.
+    pub name: String,
+    /// Delete even if not fully merged — `git branch -D` vs `-d`.
+    pub force: bool,
+}
+
+impl BranchDelete {
+    /// Delete branch `name`; not forced (git refuses an unmerged branch).
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            force: false,
+        }
+    }
+
+    /// Delete even if not fully merged (`-D`).
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
+/// Options for [`GitApi::stash_push`] (`git stash push`).
+///
+/// `#[non_exhaustive]`, so build it through [`StashPush::new`] and the chained
+/// [`include_untracked`](StashPush::include_untracked) setter rather than a bare
+/// `bool` (`stash_push(dir, true)` doesn't say what `true` selects).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StashPush {
+    /// Also stash untracked files (`--include-untracked`).
+    pub include_untracked: bool,
+}
+
+impl StashPush {
+    /// Stash the tracked working-tree changes only.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Also stash untracked files (`--include-untracked`).
+    pub fn include_untracked(mut self) -> Self {
+        self.include_untracked = true;
+        self
+    }
+}
+
+/// Options for [`GitApi::worktree_remove`] (`git worktree remove`).
+///
+/// `#[non_exhaustive]`, so build it through [`WorktreeRemove::new`] and the chained
+/// [`force`](WorktreeRemove::force) setter rather than a struct literal — a bare
+/// `bool` (`worktree_remove(path, true)`) doesn't say what `true` means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorktreeRemove {
+    /// The attached worktree path to remove.
+    pub path: PathBuf,
+    /// Remove even when the worktree has uncommitted changes (`--force`).
+    pub force: bool,
+}
+
+impl WorktreeRemove {
+    /// Remove the worktree at `path`; not forced (git refuses a dirty one).
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            force: false,
+        }
+    }
+
+    /// Remove even when the worktree has uncommitted changes (`--force`).
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
 /// A pre-validated git reference name (branch/tag/remote), for callers that
 /// accept names from untrusted input (UIs, bots, agents) and want to fail
 /// early with a clear error. The dir-taking methods stay `&str` — they apply
@@ -753,8 +840,8 @@ pub trait GitApi: Send + Sync {
     /// Set `branch`'s upstream to `upstream` (e.g. `origin/main`)
     /// (`branch --set-upstream-to=<upstream> <branch>`).
     async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
-    /// Delete a local branch (`branch -d`, or `-D` when `force`).
-    async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>;
+    /// Delete a local branch (`branch -d`, or `-D` when forced); see [`BranchDelete`].
+    async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()>;
     /// Rename a local branch (`branch -m <old> <new>`).
     async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
     /// Count commits in a range (`rev-list --count <range>`).
@@ -839,8 +926,8 @@ pub trait GitApi: Send + Sync {
     /// editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never hangs.
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
     /// Stash the working tree (`stash push`, `--include-untracked` when asked) —
-    /// e.g. to save state before a copy-on-write restore.
-    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
+    /// e.g. to save state before a copy-on-write restore. See [`StashPush`].
+    async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>;
     /// Restore the most recent stash and drop it (`stash pop`).
     async fn stash_pop(&self, dir: &Path) -> Result<()>;
 
@@ -850,8 +937,8 @@ pub trait GitApi: Send + Sync {
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
     /// Add a worktree (`worktree add [-b <branch>] <path> [<commitish>]`).
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
-    /// Remove a worktree (`worktree remove [--force] <path>`).
-    async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()>;
+    /// Remove a worktree (`worktree remove [--force] <path>`); see [`WorktreeRemove`].
+    async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()>;
     /// Move a worktree (`worktree move <from> <to>`).
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
     /// Prune stale worktree admin entries (`worktree prune`).
@@ -1508,11 +1595,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()> {
-        reject_flag_like("branch name", name)?;
-        let flag = if force { "-D" } else { "-d" };
+    async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()> {
+        reject_flag_like("branch name", &spec.name)?;
+        let flag = if spec.force { "-D" } else { "-d" };
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", flag, name]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", flag, spec.name.as_str()]),
+            )
             .await
     }
 
@@ -1894,9 +1984,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()> {
+    async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()> {
         let mut command = self.core.command_in(dir, ["stash", "push"]);
-        if include_untracked {
+        if spec.include_untracked {
             command = command.arg("--include-untracked");
         }
         self.core.run_unit(command).await
@@ -1942,12 +2032,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(command).await
     }
 
-    async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()> {
+    async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()> {
         let mut command = self.core.command_in(dir, ["worktree", "remove"]);
-        if force {
+        if spec.force {
             command = command.arg("--force");
         }
-        command = command.arg(path);
+        command = command.arg(&spec.path);
         self.core.run_unit(command).await
     }
 
@@ -2415,7 +2505,8 @@ impl<R: ProcessRunner> Git<R> {
         // saved, and only pop when it did. (Single-actor contract: a concurrent
         // `stash push`/`pop` by another process between our two calls is out of scope.)
         let depth_before = self.stash_depth(dir).await?;
-        self.stash_push(dir, true).await?;
+        self.stash_push(dir, StashPush::new().include_untracked())
+            .await?;
         if self.stash_depth(dir).await? <= depth_before {
             // Nothing was stashed — switch as-is rather than pop someone else's entry.
             return self.checkout(dir, branch).await;
@@ -2547,7 +2638,7 @@ vcs_cli_support::at_forwarders! {
         fn remote_branches(remote: &str) -> Result<Vec<String>>;
         fn is_merged(spec: MergeCheck) -> Result<bool>;
         fn set_upstream(branch: &str, upstream: &str) -> Result<()>;
-        fn delete_branch(name: &str, force: bool) -> Result<()>;
+        fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn rev_list_count(range: &str) -> Result<usize>;
         fn diff_range_is_empty(range: &str) -> Result<bool>;
@@ -2573,12 +2664,12 @@ vcs_cli_support::at_forwarders! {
         fn rebase_abort() -> Result<()>;
         fn am_abort() -> Result<()>;
         fn rebase_continue() -> Result<()>;
-        fn stash_push(include_untracked: bool) -> Result<()>;
+        fn stash_push(spec: StashPush) -> Result<()>;
         fn stash_pop() -> Result<()>;
         fn switch_with_stash(branch: &str) -> Result<()>;
         fn worktree_list() -> Result<Vec<Worktree>>;
         fn worktree_add(spec: WorktreeAdd) -> Result<()>;
-        fn worktree_remove(path: &Path, force: bool) -> Result<()>;
+        fn worktree_remove(spec: WorktreeRemove) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
         fn tag_create(name: &str, rev: Option<String>) -> Result<()>;
@@ -2604,14 +2695,15 @@ pub mod blocking {
     use std::path::Path;
     use std::process::Command;
 
-    /// Remove a worktree synchronously (`git worktree remove [--force] <path>`).
-    pub fn worktree_remove(dir: &Path, path: &Path, force: bool) -> std::io::Result<()> {
+    /// Remove a worktree synchronously (`git worktree remove [--force] <path>`);
+    /// see [`WorktreeRemove`](super::WorktreeRemove).
+    pub fn worktree_remove(dir: &Path, spec: super::WorktreeRemove) -> std::io::Result<()> {
         let mut cmd = Command::new(super::BINARY);
         cmd.current_dir(dir).args(["worktree", "remove"]);
-        if force {
+        if spec.force {
             cmd.arg("--force");
         }
-        cmd.arg(path);
+        cmd.arg(&spec.path);
         let status = cmd.status()?;
         if status.success() {
             Ok(())
@@ -2660,11 +2752,11 @@ mod tests {
             .await
             .unwrap();
         // A method taking a path arg after dir.
-        git.worktree_remove(dir, Path::new("/wt"), true)
+        git.worktree_remove(dir, WorktreeRemove::new("/wt").force())
             .await
             .unwrap();
         git.at(dir)
-            .worktree_remove(Path::new("/wt"), true)
+            .worktree_remove(WorktreeRemove::new("/wt").force())
             .await
             .unwrap();
         // One of the new query methods.
@@ -2906,13 +2998,24 @@ mod tests {
     async fn worktree_remove_passes_force_then_path() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.worktree_remove(Path::new("/repo"), Path::new("/wt"), true)
+        git.worktree_remove(Path::new("/repo"), WorktreeRemove::new("/wt").force())
             .await
             .expect("remove");
         assert_eq!(
             rec.only_call().args_str(),
             ["worktree", "remove", "--force", "/wt"]
         );
+    }
+
+    // The default (un-forced) spec omits `--force`.
+    #[tokio::test]
+    async fn worktree_remove_default_omits_force() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.worktree_remove(Path::new("/repo"), WorktreeRemove::new("/wt"))
+            .await
+            .expect("remove");
+        assert_eq!(rec.only_call().args_str(), ["worktree", "remove", "/wt"]);
     }
 
     // `--no-checkout` must land between `-b <name>` and the path.
@@ -3087,11 +3190,24 @@ mod tests {
     async fn stash_push_adds_include_untracked() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.stash_push(Path::new("."), true).await.expect("stash");
+        git.stash_push(Path::new("."), StashPush::new().include_untracked())
+            .await
+            .expect("stash");
         assert_eq!(
             rec.only_call().args_str(),
             ["stash", "push", "--include-untracked"]
         );
+    }
+
+    // The default spec stashes tracked changes only — no `--include-untracked`.
+    #[tokio::test]
+    async fn stash_push_default_omits_include_untracked() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.stash_push(Path::new("."), StashPush::new())
+            .await
+            .expect("stash");
+        assert_eq!(rec.only_call().args_str(), ["stash", "push"]);
     }
 
     // `diff_text` for the working tree must build `diff HEAD` plus the stable
@@ -3755,10 +3871,21 @@ mod tests {
     async fn delete_branch_force_uses_capital_d() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.delete_branch(Path::new("/r"), "old", true)
+        git.delete_branch(Path::new("/r"), BranchDelete::new("old").force())
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["branch", "-D", "old"]);
+    }
+
+    // The default (un-forced) spec uses lowercase `-d`.
+    #[tokio::test]
+    async fn delete_branch_default_uses_lowercase_d() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.delete_branch(Path::new("/r"), BranchDelete::new("old"))
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["branch", "-d", "old"]);
     }
 
     // `branch --merged` marks the current branch with `*` and a branch checked out
@@ -3956,7 +4083,11 @@ mod tests {
 
         assert!(git.checkout(dir, "-evil").await.is_err());
         assert!(git.create_branch(dir, "--force").await.is_err());
-        assert!(git.delete_branch(dir, "-D", false).await.is_err());
+        assert!(
+            git.delete_branch(dir, BranchDelete::new("-D"))
+                .await
+                .is_err()
+        );
         assert!(git.rename_branch(dir, "ok", "-bad").await.is_err());
         assert!(
             git.merge_commit(dir, MergeCommit::branch("-evil"))
