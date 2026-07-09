@@ -18,6 +18,22 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ### Changed
 
+- **Breaking:** bookmark names and revsets are now taken as the validated newtypes
+  `BookmarkName` (new — jj's equivalent of a branch) and `RevsetExpr` (previously
+  constructible but accepted by no method). Every `JjApi` op that names a bookmark
+  to create/move/rename/delete/track/fetch/push now takes `&BookmarkName`; every op
+  that resolves a revset takes `&RevsetExpr`; the option structs follow
+  (`BookmarkMove::new(BookmarkName, RevsetExpr)`, `SquashInto::new(RevsetExpr)`,
+  `SquashPaths::new(RevsetExpr, RevsetExpr)`, `WorkspaceAdd::new(name, RevsetExpr,
+  path)`, `git_push(Option<BookmarkName>)`, `new_merge(msg, Vec<RevsetExpr>)`,
+  `file_annotate(path, Option<RevsetExpr>)`, `absorb(Option<RevsetExpr>, …)`). A
+  flag-like or malformed value is now rejected at construction, before it can reach
+  an argv slot, as a classifiable `Error::is_invalid_input`. Migrate by wrapping
+  the string: `jj.edit(dir, "@-")` → `jj.edit(dir, &RevsetExpr::new("@-")?)`,
+  `jj.bookmark_create(dir, "feat", "@")` →
+  `jj.bookmark_create(dir, &BookmarkName::new("feat")?, &RevsetExpr::new("@")?)`.
+  Remaining bare-positional `&str` inputs that are not bookmarks/revsets (remote
+  names, operation ids, workspace names) keep their internal guard.
 - **Breaking:** replace the trailing positional `bool` on three `JjApi` methods
   with named specs, so the flag reads at the call site: `bookmark_move(dir, name,
   to, allow_backwards)` → `bookmark_move(dir, BookmarkMove::new(name,

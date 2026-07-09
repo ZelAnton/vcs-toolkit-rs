@@ -72,12 +72,13 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_git::{CommitPaths, Git, GitApi, GitPush};
+//! use vcs_git::{CommitPaths, Git, GitApi, GitPush, RefName};
 //! # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 //! let dir = Path::new(".");
 //! git.fetch(dir).await?;
 //! git.commit_paths(dir, CommitPaths::new(["src/a.rs"], "wip")).await?;
-//! git.push(dir, GitPush::branch("feature").set_upstream()).await?;
+//! // Ref/revision inputs are validated newtypes — build them at the boundary.
+//! git.push(dir, GitPush::branch(RefName::new("feature")?).set_upstream()).await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -92,11 +93,18 @@
 //!
 //! # Safety
 //!
-//! Every caller value placed in a bare positional argv slot is refused before
-//! spawning if it is empty or starts with `-` (git would parse it as a flag);
-//! flag-value slots (`-b <name>`) are consumed verbatim and don't need it. For
-//! eager validation at an input boundary, the [`RefName`] / [`RevSpec`] newtypes
-//! validate up front. Paths always go through `--` / pathspec.
+//! Every operation that takes a caller-supplied **reference name** or **revision
+//! expression** now does so through a validated newtype — [`RefName`] for
+//! branch/tag/ref names, [`RevSpec`] for revisions/ranges — so a flag-like or
+//! malformed value is rejected at construction, *before* it can reach an argv
+//! slot (a classifiable [`Error::is_invalid_input`] failure). The one
+//! context-dependent special value, git's `-` "previous branch", is modelled
+//! explicitly as [`CheckoutTarget::Previous`] rather than smuggled through a
+//! newtype. Remaining bare-positional inputs that are **not** refs/revisions
+//! (remote names, URLs, config keys) keep an internal
+//! [`reject_flag_like`](vcs_cli_support::reject_flag_like) guard — refused before
+//! spawning if empty or starting with `-`. Flag-value slots (`-b <name>`) are
+//! consumed verbatim; paths always go through `--` / pathspec.
 //!
 //! # In-depth guide
 //!
@@ -151,9 +159,9 @@ pub struct WorktreeAdd {
     pub path: PathBuf,
     /// Create and check out this new branch (`-b <name>`); `None` checks out an
     /// existing ref.
-    pub new_branch: Option<String>,
+    pub new_branch: Option<RefName>,
     /// The commit/branch to base the worktree on; `None` defaults to `HEAD`.
-    pub commitish: Option<String>,
+    pub commitish: Option<RevSpec>,
     /// Register the worktree without populating its files (`--no-checkout`) — the
     /// caller fills the working tree itself (e.g. a copy-on-write clone).
     pub no_checkout: bool,
@@ -162,26 +170,22 @@ pub struct WorktreeAdd {
 impl WorktreeAdd {
     /// A worktree at `path` checking out an existing `commitish` (e.g. a branch):
     /// `git worktree add <path> <commitish>`.
-    pub fn checkout(path: impl Into<PathBuf>, commitish: impl Into<String>) -> Self {
+    pub fn checkout(path: impl Into<PathBuf>, commitish: RevSpec) -> Self {
         Self {
             path: path.into(),
             new_branch: None,
-            commitish: Some(commitish.into()),
+            commitish: Some(commitish),
             no_checkout: false,
         }
     }
 
     /// A worktree at `path` creating a new branch `name` based on `commitish`:
     /// `git worktree add -b <name> <path> <commitish>`.
-    pub fn create_branch(
-        path: impl Into<PathBuf>,
-        name: impl Into<String>,
-        commitish: impl Into<String>,
-    ) -> Self {
+    pub fn create_branch(path: impl Into<PathBuf>, name: RefName, commitish: RevSpec) -> Self {
         Self {
             path: path.into(),
-            new_branch: Some(name.into()),
-            commitish: Some(commitish.into()),
+            new_branch: Some(name),
+            commitish: Some(commitish),
             no_checkout: false,
         }
     }
@@ -211,20 +215,22 @@ pub struct GitPush {
 
 impl GitPush {
     /// Push branch `name` to `origin` under the same name (`git push origin <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    pub fn branch(name: RefName) -> Self {
         Self {
             remote: "origin".to_string(),
-            refspec: name.into(),
+            refspec: name.as_str().to_string(),
             set_upstream: false,
         }
     }
 
     /// Push `local` to a differently-named `remote_branch`
-    /// (`git push origin <local>:<remote_branch>`).
-    pub fn refspec(local: impl AsRef<str>, remote_branch: impl AsRef<str>) -> Self {
+    /// (`git push origin <local>:<remote_branch>`). Both sides are validated
+    /// [`RefName`]s, so the single `:` is always the API-inserted separator — a
+    /// caller cannot smuggle an extra ref or a force (`+`) through them.
+    pub fn refspec(local: &RefName, remote_branch: &RefName) -> Self {
         Self {
             remote: "origin".to_string(),
-            refspec: format!("{}:{}", local.as_ref(), remote_branch.as_ref()),
+            refspec: format!("{}:{}", local.as_str(), remote_branch.as_str()),
             set_upstream: false,
         }
     }
@@ -325,39 +331,37 @@ impl CommitPaths {
 /// [`into_base`](MergeCheckPartial::into_base) to name the base it must be merged into.
 #[derive(Debug, Clone)]
 pub struct MergeCheckPartial {
-    branch: String,
+    branch: RefName,
 }
 
 impl MergeCheckPartial {
-    /// The base branch/ref `branch` should be fully merged **into**.
-    pub fn into_base(self, base: impl Into<String>) -> MergeCheck {
+    /// The base commit-ish `branch` should be fully merged **into**.
+    pub fn into_base(self, base: RevSpec) -> MergeCheck {
         MergeCheck {
             branch: self.branch,
-            base: base.into(),
+            base,
         }
     }
 }
 
 /// A "is `branch` fully merged into `base`?" check for [`GitApi::is_merged`].
 ///
-/// Built as `MergeCheck::branch("feature").into_base("main")` — the two same-typed
+/// Built as `MergeCheck::branch(RefName::new("feature")?).into_base(RevSpec::new("main")?)` — the two same-typed
 /// refs are named across **two** builder steps, so they can't be silently transposed
 /// (a swap would *invert* the answer). `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct MergeCheck {
     /// The branch/ref being tested for having been merged.
-    pub branch: String,
-    /// The base branch/ref it should be fully merged into.
-    pub base: String,
+    pub branch: RefName,
+    /// The base commit-ish it should be fully merged into.
+    pub base: RevSpec,
 }
 
 impl MergeCheck {
     /// Name the `branch` to test; chain [`into_base`](MergeCheckPartial::into_base).
-    pub fn branch(name: impl Into<String>) -> MergeCheckPartial {
-        MergeCheckPartial {
-            branch: name.into(),
-        }
+    pub fn branch(name: RefName) -> MergeCheckPartial {
+        MergeCheckPartial { branch: name }
     }
 }
 
@@ -368,8 +372,8 @@ impl MergeCheck {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct MergeCommit {
-    /// The branch to merge in.
-    pub branch: String,
+    /// The commit-ish to merge in.
+    pub branch: RevSpec,
     /// Always create a merge commit, even when a fast-forward was possible
     /// (`--no-ff`).
     pub no_ff: bool,
@@ -379,11 +383,11 @@ pub struct MergeCommit {
 }
 
 impl MergeCommit {
-    /// Merge `name` taking the default merge message non-interactively
-    /// (`git merge --no-edit <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    /// Merge `target` taking the default merge message non-interactively
+    /// (`git merge --no-edit <target>`).
+    pub fn branch(target: RevSpec) -> Self {
         Self {
-            branch: name.into(),
+            branch: target,
             no_ff: false,
             message: None,
         }
@@ -410,8 +414,8 @@ impl MergeCommit {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct MergeNoCommit {
-    /// The branch to merge in.
-    pub branch: String,
+    /// The commit-ish to merge in.
+    pub branch: RevSpec,
     /// Stage the squashed result without recording `MERGE_HEAD` (`--squash`);
     /// takes precedence over `no_ff` (git rejects the pair).
     pub squash: bool,
@@ -421,10 +425,10 @@ pub struct MergeNoCommit {
 }
 
 impl MergeNoCommit {
-    /// Merge `name` but stop before committing (`git merge --no-commit <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    /// Merge `target` but stop before committing (`git merge --no-commit <target>`).
+    pub fn branch(target: RevSpec) -> Self {
         Self {
-            branch: name.into(),
+            branch: target,
             squash: false,
             no_ff: false,
         }
@@ -452,27 +456,27 @@ impl MergeNoCommit {
 #[non_exhaustive]
 pub struct AnnotatedTag {
     /// The tag name.
-    pub name: String,
+    pub name: RefName,
     /// The tag message (`-m`).
     pub message: String,
     /// The revision to tag (`<rev>`); `None` tags `HEAD`.
-    pub rev: Option<String>,
+    pub rev: Option<RevSpec>,
 }
 
 impl AnnotatedTag {
     /// An annotated tag `name` with `message` at `HEAD`
     /// (`git tag -a <name> -m <message>`).
-    pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(name: RefName, message: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            name,
             message: message.into(),
             rev: None,
         }
     }
 
     /// Tag `r` instead of `HEAD`.
-    pub fn rev(mut self, r: impl Into<String>) -> Self {
-        self.rev = Some(r.into());
+    pub fn rev(mut self, r: RevSpec) -> Self {
+        self.rev = Some(r);
         self
     }
 }
@@ -487,18 +491,15 @@ impl AnnotatedTag {
 #[non_exhaustive]
 pub struct BranchDelete {
     /// The local branch name to delete.
-    pub name: String,
+    pub name: RefName,
     /// Delete even if not fully merged — `git branch -D` vs `-d`.
     pub force: bool,
 }
 
 impl BranchDelete {
     /// Delete branch `name`; not forced (git refuses an unmerged branch).
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            force: false,
-        }
+    pub fn new(name: RefName) -> Self {
+        Self { name, force: false }
     }
 
     /// Delete even if not fully merged (`-D`).
@@ -563,15 +564,19 @@ impl WorktreeRemove {
     }
 }
 
-/// A pre-validated git reference name (branch/tag/remote), for callers that
-/// accept names from untrusted input (UIs, bots, agents) and want to fail
-/// early with a clear error. The dir-taking methods stay `&str` — they apply
-/// the same flag-injection guard internally — so this type is **optional**
-/// up-front validation, not a required wrapper.
+/// A validated git reference name (branch/tag/remote-tracking ref). Every
+/// [`GitApi`] operation that names a branch, tag, or ref to **create, delete,
+/// rename, or look up by exact name** takes a `RefName` (directly or inside its
+/// options struct), so a name from untrusted input (UIs, bots, agents) is
+/// validated once, at construction, and the type — not an internal guard — is
+/// the argv-injection barrier from then on. For a general commit-ish or range
+/// (`checkout`, `reset_hard`, `log`, `diff` ranges, …) use the more permissive
+/// [`RevSpec`] instead.
 ///
 /// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
 /// no leading `-` or `.`, no `..`, no control characters or space, none of
-/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`.
+/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`. A rejected name is an
+/// [`Error::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RefName(String);
 
@@ -612,11 +617,14 @@ impl std::fmt::Display for RefName {
     }
 }
 
-/// A pre-validated revision/range expression (`HEAD~2`, `main..feature`).
+/// A validated revision/range expression (`HEAD~2`, `main..feature`). Every
+/// [`GitApi`] operation that resolves a general **commit-ish or range** takes a
+/// `RevSpec`, so an untrusted revision is validated once, at construction.
 /// Deliberately *minimal* — git's revision grammar is too rich to validate
 /// here — it only guarantees the expression is non-empty and cannot be parsed
-/// as a flag (no leading `-`), matching the internal guard the dir-taking
-/// methods apply anyway. Optional up-front validation for untrusted input.
+/// as a flag (no leading `-`). For a value that must be a genuine ref **name**
+/// (to create/delete/rename a branch or tag) use the stricter [`RefName`]. A
+/// rejected expression is an [`Error::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RevSpec(String);
 
@@ -637,6 +645,62 @@ impl RevSpec {
 impl std::fmt::Display for RevSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for RefName {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+impl std::str::FromStr for RevSpec {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+/// What [`GitApi::checkout`] switches to: a validated ref/revision, or git's `-`
+/// "previous branch" shortcut.
+///
+/// `-` is the one place a leading-`-` token is legitimate — it is git's
+/// `@{-1}` shorthand, not caller-controlled argv — so it is modelled as a
+/// distinct [`Previous`](CheckoutTarget::Previous) variant emitting a fixed
+/// literal, rather than punching a hole in [`RevSpec`]'s no-leading-`-`
+/// invariant (which the other commit-ish operations rely on).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutTarget {
+    /// Check out this validated ref or revision.
+    Ref(RevSpec),
+    /// Check out the previous branch (`git checkout -`).
+    Previous,
+}
+
+impl CheckoutTarget {
+    /// Check out a validated ref/revision.
+    pub fn rev(rev: RevSpec) -> Self {
+        Self::Ref(rev)
+    }
+
+    /// Check out the previous branch (`git checkout -`).
+    pub fn previous() -> Self {
+        Self::Previous
+    }
+
+    /// The single argv token this target expands to.
+    fn as_arg(&self) -> &str {
+        match self {
+            Self::Ref(rev) => rev.as_str(),
+            Self::Previous => "-",
+        }
+    }
+}
+
+impl From<RevSpec> for CheckoutTarget {
+    fn from(rev: RevSpec) -> Self {
+        Self::Ref(rev)
     }
 }
 
@@ -691,14 +755,18 @@ impl GitCapabilities {
 /// The Git operations this crate exposes — the interface consumers code against
 /// and mock in tests.
 ///
-/// **Injection safety:** every method that places a caller-supplied name,
-/// revision, range, remote, or URL in a positional argv slot rejects a value
-/// that is empty or begins with `-` (it would be parsed as a flag) with an
-/// [`Error::Spawn`] *before* spawning. Flag-value slots (`-m <msg>`,
-/// `--branch <b>`), filesystem path arguments (`--`-separated pathspecs, plus
-/// worktree paths and clone destinations — typed `Path`, caller-trusted), and
-/// the `run`/`run_raw` escape hatches are not guarded. For eager validation at
-/// an input boundary, see [`RefName`] / [`RevSpec`].
+/// **Injection safety:** reference names and revision expressions are taken as
+/// the validated [`RefName`] / [`RevSpec`] newtypes (directly or inside an
+/// options struct), so a flag-like or malformed value is rejected at
+/// construction, before it can reach an argv slot. The remaining
+/// caller-supplied bare positionals that are *not* refs/revisions — remote
+/// names and URLs — keep an internal `reject_flag_like` guard: a value that is
+/// empty or begins with `-` is rejected with an [`Error::Spawn`] *before*
+/// spawning. Flag-value slots (`-m <msg>`, `--branch <b>`), filesystem path
+/// arguments (`--`-separated pathspecs, plus worktree paths and clone
+/// destinations — typed `Path`, caller-trusted), and the `run`/`run_raw`
+/// escape hatches are not guarded. The one context-dependent special value,
+/// git's `-` "previous branch", is [`CheckoutTarget::Previous`].
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitApi: Send + Sync {
@@ -749,9 +817,9 @@ pub trait GitApi: Send + Sync {
     /// (`git log <revspec>`). Pass `"HEAD"` for the current branch's history, or
     /// a range like `"main..HEAD"` / `"origin/main..HEAD"` to scope it. Mirrors
     /// [`JjApi::log`](../vcs_jj/trait.JjApi.html#tymethod.log)'s revset argument,
-    /// so cross-backend code uses one signature. The `revspec` is guarded against
-    /// being parsed as a flag.
-    async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>>;
+    /// so cross-backend code uses one signature. The `revspec` is a validated
+    /// [`RevSpec`], so it can never be parsed as a flag.
+    async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
     /// Like [`log`](GitApi::log), but scoped to commits that touched `paths`
     /// (`git log <revspec> -n <max> -- <paths>`) — e.g. "who changed this
     /// module". The `--` separator keeps a path from being read as a flag
@@ -764,17 +832,17 @@ pub trait GitApi: Send + Sync {
     async fn log_paths(
         &self,
         dir: &Path,
-        revspec: &str,
+        revspec: &RevSpec,
         max: usize,
         paths: &[String],
     ) -> Result<Vec<Commit>>;
     /// Resolve a revision to a full hash (`git rev-parse --verify <rev>`). `--verify`
     /// requires `rev` to name exactly one object, so a non-revision (e.g. a filename)
     /// errors instead of being echoed back as a fake id.
-    async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Resolve a revision to its abbreviated hash (`git rev-parse --short <rev>`) —
     /// e.g. to label a detached HEAD.
-    async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Initialise a repository (`git init`).
     async fn init(&self, dir: &Path) -> Result<()>;
     /// Stage `paths` (`git add -- <paths>`).
@@ -782,11 +850,12 @@ pub trait GitApi: Send + Sync {
     /// Commit staged changes (`git commit -m`).
     async fn commit(&self, dir: &Path, message: &str) -> Result<()>;
     /// Create a branch without switching to it (`git branch <name>`).
-    async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
-    /// Switch to a branch or revision (`git checkout <reference>`).
-    async fn checkout(&self, dir: &Path, reference: &str) -> Result<()>;
+    async fn create_branch(&self, dir: &Path, name: &RefName) -> Result<()>;
+    /// Switch to a branch/revision, or the previous branch (`git checkout
+    /// <target>`); see [`CheckoutTarget`].
+    async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()>;
     /// Check out a commit as a detached HEAD (`git checkout --detach <commit>`).
-    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
+    async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
     /// Commit exactly the spec's paths' working-tree content, ignoring the index
     /// (`git commit [--amend] -m <message> --only -- <paths>`); see [`CommitPaths`].
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
@@ -810,17 +879,17 @@ pub trait GitApi: Send + Sync {
     async fn git_dir(&self, dir: &Path) -> Result<PathBuf>;
     /// Resolve a revision to a commit hash, peeling tags
     /// (`rev-parse --verify <rev>^{commit}`).
-    async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// The remote's default branch from `symbolic-ref refs/remotes/origin/HEAD`
     /// (short name only); `None` when `origin/HEAD` is unset.
     async fn remote_head_branch(&self, dir: &Path) -> Result<Option<String>>;
     /// Whether a local branch exists (`show-ref --verify --quiet refs/heads/<name>`).
-    async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
+    async fn branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// Whether `origin` has `name`, without fetching (`ls-remote origin
     /// refs/heads/<name>` — the fully-qualified ref, so `foo` can't tail-match
     /// `bar/foo`). Runs with `GIT_TERMINAL_PROMPT=0` and a 10s timeout so a missing
     /// credential or a flaky network can't hang the call.
-    async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
+    async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// A remote's URL (`remote get-url <remote>`).
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
     /// The current branch's upstream, e.g. `Some("origin/main")`
@@ -834,23 +903,23 @@ pub trait GitApi: Send + Sync {
 
     /// Whether the [`MergeCheck`]'s `branch` is fully merged into its `base`
     /// (`branch --merged <base>`). Build it as
-    /// `MergeCheck::branch("feature").into_base("main")` so the two refs can't be
-    /// transposed (a swap would invert the answer).
+    /// `MergeCheck::branch(RefName::new("feature")?).into_base(RevSpec::new("main")?)`
+    /// so the two refs can't be transposed (a swap would invert the answer).
     async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>;
     /// Set `branch`'s upstream to `upstream` (e.g. `origin/main`)
     /// (`branch --set-upstream-to=<upstream> <branch>`).
-    async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
+    async fn set_upstream(&self, dir: &Path, branch: &RefName, upstream: &RefName) -> Result<()>;
     /// Delete a local branch (`branch -d`, or `-D` when forced); see [`BranchDelete`].
     async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()>;
     /// Rename a local branch (`branch -m <old> <new>`).
-    async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
+    async fn rename_branch(&self, dir: &Path, old: &RefName, new: &RefName) -> Result<()>;
     /// Count commits in a range (`rev-list --count <range>`).
-    async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize>;
+    async fn rev_list_count(&self, dir: &Path, range: &RevSpec) -> Result<usize>;
     /// Whether a diff range is empty (`diff --quiet <range>`).
-    async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool>;
+    async fn diff_range_is_empty(&self, dir: &Path, range: &RevSpec) -> Result<bool>;
     /// Aggregate change stats for a range (`diff --shortstat <range>`). Named to
     /// match `vcs_jj::JjApi::diff_stat`.
-    async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
+    async fn diff_stat(&self, dir: &Path, range: &RevSpec) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec`
     /// (`diff <spec> --no-color --no-ext-diff -M`) — stable machine output, returned
     /// **verbatim** (a trailing blank context line is preserved, so the last hunk
@@ -885,11 +954,11 @@ pub trait GitApi: Send + Sync {
     /// Fetch a single branch from `origin` into its remote-tracking ref
     /// (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`), with
     /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried (3×, 500 ms).
-    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn fetch_branch(&self, dir: &Path, branch: &RefName) -> Result<()>;
     /// Push to a remote (`push [-u] <remote> <refspec>`); see [`GitPush`].
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
     /// Stage a branch's changes without committing (`merge --squash <branch>`).
-    async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()>;
     /// Merge a branch (`merge [--no-ff] [-m <msg> | --no-edit] <branch>`); with no
     /// message it takes the default merge message non-interactively (`--no-edit`).
     /// See [`MergeCommit`].
@@ -914,10 +983,10 @@ pub trait GitApi: Send + Sync {
     /// where there is no `MERGE_HEAD` for `merge_abort` to act on.
     async fn reset_merge(&self, dir: &Path) -> Result<()>;
     /// Hard-reset the working tree to a revision (`reset --hard <rev>`).
-    async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn reset_hard(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Rebase the current branch onto `onto` (`rebase <onto>`); the editor is
     /// suppressed (`GIT_EDITOR=true`) so it never hangs a headless caller.
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
+    async fn rebase(&self, dir: &Path, onto: &RevSpec) -> Result<()>;
     /// Abort an in-progress rebase (`rebase --abort`).
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
     /// Abort an in-progress `git am` (`am --abort`), restoring the pre-`am` HEAD.
@@ -950,20 +1019,20 @@ pub trait GitApi: Send + Sync {
     /// Runs without a working directory — pass an **absolute** `dest`.
     async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
     /// Create a lightweight tag at `rev` (`tag <name> [<rev>]`; `None` = HEAD).
-    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()>;
+    async fn tag_create(&self, dir: &Path, name: &RefName, rev: Option<RevSpec>) -> Result<()>;
     /// Create an annotated tag (`tag -a <name> -m <message> [<rev>]`); see
     /// [`AnnotatedTag`].
     async fn tag_create_annotated(&self, dir: &Path, spec: AnnotatedTag) -> Result<()>;
     /// Tag names, sorted by git's default ordering (`tag --list`).
     async fn tag_list(&self, dir: &Path) -> Result<Vec<String>>;
     /// Delete a tag (`tag -d <name>`).
-    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()>;
+    async fn tag_delete(&self, dir: &Path, name: &RefName) -> Result<()>;
     /// A file's content at a revision (`git show <rev>:<path>`). `path` is
     /// repo-relative; backslashes are normalised to `/` (git requires it).
     /// Content is decoded **lossily** — binary files come back mangled rather
     /// than erroring — and returned **verbatim**: the blob's trailing newline(s)
     /// are preserved (not trimmed), so a read-modify-write round-trip is byte-exact.
-    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String>;
+    async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String>;
     /// The value of a config key, or `None` when unset (`config --get <key>`,
     /// whose exit 1 covers both "unset" and "no such section" — git doesn't
     /// distinguish). A multi-valued key errors; read those via `run`.
@@ -981,15 +1050,15 @@ pub trait GitApi: Send + Sync {
     async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
     /// Per-line authorship of `path` (`blame --line-porcelain [<rev>] -- <path>`;
     /// `None` = the working tree's HEAD).
-    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>>;
 
     // --- Sequencer -------------------------------------------------------------
 
     /// Apply a commit onto the current branch (`cherry-pick <rev>`). A conflict
     /// surfaces as an error classified by [`is_merge_conflict`].
-    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn cherry_pick(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Revert a commit with the default message (`revert --no-edit <rev>`).
-    async fn revert(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn revert(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Skip the current patch of a paused rebase (`rebase --skip`). Mainly for
     /// the `apply` backend's "nothing to commit" stop — the default `merge`
     /// backend auto-drops emptied patches on `--continue`.
@@ -1218,8 +1287,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>> {
-        reject_flag_like("revspec", revspec)?;
+    async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>> {
         let n = format!("-n{max}");
         self.core
             .parse(
@@ -1227,7 +1295,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     dir,
                     [
                         "log",
-                        revspec,
+                        revspec.as_str(),
                         n.as_str(),
                         "-z",
                         "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
@@ -1241,11 +1309,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn log_paths(
         &self,
         dir: &Path,
-        revspec: &str,
+        revspec: &RevSpec,
         max: usize,
         paths: &[String],
     ) -> Result<Vec<Commit>> {
-        reject_flag_like("revspec", revspec)?;
         // An empty `paths` would build `git log <revspec> -n <max> -- ` — no
         // pathspecs after `--` is the same as no `--` at all, i.e. an
         // UNRESTRICTED log. That's the opposite of "scoped to these paths",
@@ -1266,7 +1333,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             dir,
             [
                 "log",
-                revspec,
+                revspec.as_str(),
                 n.as_str(),
                 "-z",
                 "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
@@ -1279,20 +1346,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.parse(command, parse::parse_log).await
     }
 
-    async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `--verify`: without it, `git rev-parse Makefile` echoes the *filename* back
         // as a fake object id (exit 0), so a caller resolving an untrusted revision
         // could get a non-hash. `--verify` requires `rev` to name exactly one object,
         // erroring otherwise — a valid revision still resolves to the same full hash
         // (M13; matches `rev_parse_short`/`resolve_commit`, which already `--verify`).
         self.core
-            .run(self.core.command_in(dir, ["rev-parse", "--verify", rev]))
+            .run(
+                self.core
+                    .command_in(dir, ["rev-parse", "--verify", rev.as_str()]),
+            )
             .await
     }
 
-    async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `--verify` (matching `rev_parse`/`resolve_commit`): require `rev` to name
         // exactly one object, erroring otherwise. Unlike bare `rev-parse` — which
         // echoes a filename back as a fake id (the M13 bug) — `--short` already
@@ -1303,7 +1371,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core
             .run(
                 self.core
-                    .command_in(dir, ["rev-parse", "--verify", "--short", rev]),
+                    .command_in(dir, ["rev-parse", "--verify", "--short", rev.as_str()]),
             )
             .await
     }
@@ -1332,30 +1400,36 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn create_branch(&self, dir: &Path, name: &str) -> Result<()> {
-        reject_flag_like("branch name", name)?;
+    async fn create_branch(&self, dir: &Path, name: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", name]))
+            .run_unit(self.core.command_in(dir, ["branch", name.as_str()]))
             .await
     }
 
-    async fn checkout(&self, dir: &Path, reference: &str) -> Result<()> {
-        reject_flag_like("reference", reference)?;
-        // The trailing `--` marks the end of revisions with no pathspecs
-        // following, so git resolves `reference` as a ref *only*. Without it a
-        // `reference` that doesn't name a ref but names a tracked path silently
-        // falls into pathspec mode and restores that path from the index,
-        // discarding unstaged edits (verified: `git checkout notes.txt` →
-        // "Updated 1 path", exit 0; `git checkout notes.txt --` → hard error).
+    async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()> {
+        // `target.as_arg()` is either a validated `RevSpec` or the fixed `-`
+        // literal ([`CheckoutTarget::Previous`]) — never caller-controlled argv,
+        // so no flag can be injected here. The trailing `--` marks the end of
+        // revisions with no pathspecs following, so git resolves the target as a
+        // ref *only*. Without it a target that doesn't name a ref but names a
+        // tracked path silently falls into pathspec mode and restores that path
+        // from the index, discarding unstaged edits (verified: `git checkout
+        // notes.txt` → "Updated 1 path", exit 0; `git checkout notes.txt --` →
+        // hard error).
         self.core
-            .run_unit(self.core.command_in(dir, ["checkout", reference, "--"]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["checkout", target.as_arg(), "--"]),
+            )
             .await
     }
 
-    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()> {
-        reject_flag_like("commit", commit)?;
+    async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["checkout", "--detach", commit]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["checkout", "--detach", commit.as_str()]),
+            )
             .await
     }
 
@@ -1417,10 +1491,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         ))
     }
 
-    async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `^{commit}` peels an annotated tag down to the commit it points at.
-        let spec = format!("{rev}^{{commit}}");
+        let spec = format!("{}^{{commit}}", rev.as_str());
         self.core
             .run(
                 self.core
@@ -1461,8 +1534,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         }
     }
 
-    async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
-        let refname = format!("refs/heads/{name}");
+    async fn branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool> {
+        let refname = format!("refs/heads/{}", name.as_str());
         // `show-ref --verify --quiet` is an exit-code answer: 0 = exists, 1 = not.
         self.core
             .probe(
@@ -1472,16 +1545,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
-        if name.is_empty() || name.chars().any(|c| c.is_control() || " *?[:".contains(c)) {
-            return Err(Error::spawn(
-                BINARY,
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("invalid remote branch name: {name:?}"),
-                ),
-            ));
-        }
+    async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool> {
+        // `RefName` already forbids the glob/control/`:` characters this probe
+        // must exclude (its `check-ref-format` rules are a strict superset), so
+        // the value is safe to interpolate into the `refs/heads/<name>` ref below.
+        let name = name.as_str();
         // No credential prompt, bounded wait: a missing helper or a flaky network
         // must not hang the call. `output_string` reports a timeout as a flagged result
         // (non-zero exit) rather than erroring, so an unreachable remote reads as
@@ -1559,8 +1627,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool> {
-        reject_flag_like("branch", &spec.branch)?;
-        reject_flag_like("base", &spec.base)?;
         // `--no-column` + `--no-color`: under `column.ui = always` git would pack
         // several names per line and under `color.{ui,branch} = always` it would
         // inject ANSI escapes — both even when piped, so the marker-stripping
@@ -1587,16 +1653,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .any(|b| b == spec.branch.as_str()))
     }
 
-    async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()> {
-        reject_flag_like("branch name", branch)?;
-        let flag = format!("--set-upstream-to={upstream}");
+    async fn set_upstream(&self, dir: &Path, branch: &RefName, upstream: &RefName) -> Result<()> {
+        let flag = format!("--set-upstream-to={}", upstream.as_str());
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", flag.as_str(), branch]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", flag.as_str(), branch.as_str()]),
+            )
             .await
     }
 
     async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()> {
-        reject_flag_like("branch name", &spec.name)?;
         let flag = if spec.force { "-D" } else { "-d" };
         self.core
             .run_unit(
@@ -1606,19 +1673,20 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
-        reject_flag_like("branch name", old)?;
-        reject_flag_like("branch name", new)?;
+    async fn rename_branch(&self, dir: &Path, old: &RefName, new: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", "-m", old, new]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", "-m", old.as_str(), new.as_str()]),
+            )
             .await
     }
 
-    async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize> {
-        reject_flag_like("range", range)?;
+    async fn rev_list_count(&self, dir: &Path, range: &RevSpec) -> Result<usize> {
         self.core
             .try_parse(
-                self.core.command_in(dir, ["rev-list", "--count", range]),
+                self.core
+                    .command_in(dir, ["rev-list", "--count", range.as_str()]),
                 |s| {
                     s.trim()
                         .parse::<usize>()
@@ -1628,8 +1696,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool> {
-        reject_flag_like("range", range)?;
+    async fn diff_range_is_empty(&self, dir: &Path, range: &RevSpec) -> Result<bool> {
         // `diff --quiet <range>`: 0 = empty range, 1 = has changes.
         // The trailing `--` forces `range` to be read as a revision/range, not a
         // pathspec: without it `git diff --quiet Makefile` diffs the *working
@@ -1638,12 +1705,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (the C2/M13 pathspec-collision class). With `--`, an unresolvable
         // revision exits 128, which `probe` surfaces as an honest error.
         self.core
-            .probe(self.core.command_in(dir, ["diff", "--quiet", range, "--"]))
+            .probe(
+                self.core
+                    .command_in(dir, ["diff", "--quiet", range.as_str(), "--"]),
+            )
             .await
     }
 
-    async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat> {
-        reject_flag_like("range", range)?;
+    async fn diff_stat(&self, dir: &Path, range: &RevSpec) -> Result<DiffStat> {
         // `LC_ALL=C`: git's `--shortstat` summary ("N file(s) changed, …") is
         // gettext-translated, but `parse_shortstat` keys on the English
         // "file"/"insertion"/"deletion" — without C locale a non-English git
@@ -1655,7 +1724,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .parse(
                 c_locale(
                     self.core
-                        .command_in(dir, ["diff", "--shortstat", range, "--"]),
+                        .command_in(dir, ["diff", "--shortstat", range.as_str(), "--"]),
                 ),
                 parse::parse_shortstat,
             )
@@ -1796,20 +1865,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(cmd).await
     }
 
-    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
-        if branch.is_empty()
-            || branch
-                .chars()
-                .any(|c| c.is_control() || " *?[:".contains(c))
-        {
-            return Err(Error::spawn(
-                BINARY,
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("invalid branch name for fetch: {branch:?}"),
-                ),
-            ));
-        }
+    async fn fetch_branch(&self, dir: &Path, branch: &RefName) -> Result<()> {
+        // `RefName` already forbids the glob/control/`:` characters this refspec
+        // must exclude (a strict superset), so both interpolations below are safe.
+        let branch = branch.as_str();
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
@@ -1872,19 +1931,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(cmd).await
     }
 
-    async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()> {
-        reject_flag_like("branch", branch)?;
+    async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()> {
         // C locale: a conflict's output feeds `is_merge_conflict` (same reason as
         // `merge_commit`/`merge_no_commit`). `--squash` never commits, so no editor.
         self.core
-            .run_unit(c_locale(
-                self.core.command_in(dir, ["merge", "--squash", branch]),
-            ))
+            .run_unit(c_locale(self.core.command_in(
+                dir,
+                ["merge", "--squash", branch.as_str()],
+            )))
             .await
     }
 
     async fn merge_commit(&self, dir: &Path, spec: MergeCommit) -> Result<()> {
-        reject_flag_like("branch", &spec.branch)?;
         let mut args: Vec<&str> = vec!["merge"];
         if spec.no_ff {
             args.push("--no-ff");
@@ -1897,7 +1955,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             // instead of opening `$EDITOR` (which would hang a headless caller).
             args.push("--no-edit");
         }
-        args.push(&spec.branch);
+        args.push(spec.branch.as_str());
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(c_locale(self.core.command_in(dir, args)))
@@ -1905,7 +1963,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_no_commit(&self, dir: &Path, spec: MergeNoCommit) -> Result<()> {
-        reject_flag_like("branch", &spec.branch)?;
         let mut args: Vec<&str> = vec!["merge", "--no-commit"];
         // `--squash` and `--no-ff` are mutually exclusive (git rejects the pair);
         // a squash never fast-forwards anyway, so it takes precedence.
@@ -1914,7 +1971,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         } else if spec.no_ff {
             args.push("--no-ff");
         }
-        args.push(&spec.branch);
+        args.push(spec.branch.as_str());
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(c_locale(self.core.command_in(dir, args)))
@@ -1945,21 +2002,22 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn reset_hard(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["reset", "--hard", rev]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["reset", "--hard", rev.as_str()]),
+            )
             .await
     }
 
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
-        reject_flag_like("rebase target", onto)?;
+    async fn rebase(&self, dir: &Path, onto: &RevSpec) -> Result<()> {
         // Force a no-op editor so a rebase that would open `$EDITOR` (reword, or
         // the message-confirm on `--continue`) never hangs a headless caller.
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["rebase", onto]),
+                self.core.command_in(dir, ["rebase", onto.as_str()]),
             )))
             .await
     }
@@ -2012,22 +2070,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
-        if let Some(name) = spec.new_branch.as_deref() {
-            reject_flag_like("branch name", name)?;
-        }
-        if let Some(commitish) = spec.commitish.as_deref() {
-            reject_flag_like("commit-ish", commitish)?;
-        }
         let mut command = self.core.command_in(dir, ["worktree", "add"]);
-        if let Some(name) = spec.new_branch.as_deref() {
-            command = command.arg("-b").arg(name);
+        if let Some(name) = spec.new_branch.as_ref() {
+            command = command.arg("-b").arg(name.as_str());
         }
         if spec.no_checkout {
             command = command.arg("--no-checkout");
         }
         command = command.arg(&spec.path);
-        if let Some(commitish) = spec.commitish.as_deref() {
-            command = command.arg(commitish);
+        if let Some(commitish) = spec.commitish.as_ref() {
+            command = command.arg(commitish.as_str());
         }
         self.core.run_unit(command).await
     }
@@ -2114,26 +2166,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         result
     }
 
-    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()> {
-        reject_flag_like("tag name", name)?;
-        if let Some(rev) = rev.as_deref() {
-            reject_flag_like("revision", rev)?;
-        }
-        let mut args = vec!["tag", name];
-        if let Some(rev) = rev.as_deref() {
-            args.push(rev);
+    async fn tag_create(&self, dir: &Path, name: &RefName, rev: Option<RevSpec>) -> Result<()> {
+        let mut args = vec!["tag", name.as_str()];
+        if let Some(rev) = rev.as_ref() {
+            args.push(rev.as_str());
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn tag_create_annotated(&self, dir: &Path, spec: AnnotatedTag) -> Result<()> {
-        reject_flag_like("tag name", &spec.name)?;
-        if let Some(rev) = spec.rev.as_deref() {
-            reject_flag_like("revision", rev)?;
-        }
-        let mut args = vec!["tag", "-a", &spec.name, "-m", &spec.message];
-        if let Some(rev) = spec.rev.as_deref() {
-            args.push(rev);
+        let mut args = vec!["tag", "-a", spec.name.as_str(), "-m", &spec.message];
+        if let Some(rev) = spec.rev.as_ref() {
+            args.push(rev.as_str());
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
@@ -2148,17 +2192,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         Ok(out.lines().map(str::to_string).collect())
     }
 
-    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()> {
-        reject_flag_like("tag name", name)?;
+    async fn tag_delete(&self, dir: &Path, name: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["tag", "-d", name]))
+            .run_unit(self.core.command_in(dir, ["tag", "-d", name.as_str()]))
             .await
     }
 
-    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String> {
-        // A leading-`-` rev makes the whole `<rev>:<path>` token start with `-`,
-        // so git would parse it as a flag — guard it before building the spec.
-        reject_flag_like("revision", rev)?;
+    async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String> {
+        let rev = rev.as_str();
         // git rejects backslash separators in the `<rev>:<path>` spec ("exists
         // on disk, but not in <rev>") — normalise for Windows callers. Only on
         // Windows: on Unix a backslash is a legal filename byte, and rewriting
@@ -2219,13 +2260,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>> {
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>> {
         let mut args = vec!["blame", "--line-porcelain"];
-        if let Some(rev) = rev.as_deref() {
-            // A standalone positional rev with a leading `-` would be any blame
-            // flag (`-s`, `--reverse`, `-L…`) — guard before the `--`.
-            reject_flag_like("revision", rev)?;
-            args.push(rev);
+        if let Some(rev) = rev.as_ref() {
+            args.push(rev.as_str());
         }
         args.push("--");
         args.push(path);
@@ -2237,22 +2275,20 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn cherry_pick(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         // No editor opens non-interactively, but keep the headless backstop.
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["cherry-pick", rev]),
+                self.core.command_in(dir, ["cherry-pick", rev.as_str()]),
             )))
             .await
     }
 
-    async fn revert(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn revert(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["revert", "--no-edit", rev]),
+                self.core.command_in(dir, ["revert", "--no-edit", rev.as_str()]),
             )))
             .await
     }
@@ -2492,11 +2528,11 @@ impl<R: ProcessRunner> Git<R> {
     ///
     /// Inherent (not on the object-safe trait): a composed operation, not a 1:1
     /// CLI verb — mock the underlying `status`/`stash_*`/`checkout` instead.
-    pub async fn switch_with_stash(&self, dir: &Path, branch: &str) -> Result<()> {
+    pub async fn switch_with_stash(&self, dir: &Path, target: &CheckoutTarget) -> Result<()> {
         // Untracked-inclusive guard to match `stash push -u`: "dirty" must mean
         // the same thing to the guard and to the stash. Fast path for a clean tree.
         if self.status(dir).await?.is_empty() {
-            return self.checkout(dir, branch).await;
+            return self.checkout(dir, target).await;
         }
         // `stash push` exits 0 having saved **nothing** when the only dirt is
         // unstashable (e.g. a submodule-only change that `status` still reports), so a
@@ -2509,11 +2545,11 @@ impl<R: ProcessRunner> Git<R> {
             .await?;
         if self.stash_depth(dir).await? <= depth_before {
             // Nothing was stashed — switch as-is rather than pop someone else's entry.
-            return self.checkout(dir, branch).await;
+            return self.checkout(dir, target).await;
         }
         // `--index` restores the staged/unstaged split faithfully; a bare `pop` would
         // bring everything back UNSTAGED, silently flattening the index.
-        match self.checkout(dir, branch).await {
+        match self.checkout(dir, target).await {
             Ok(()) => self.stash_pop_index(dir).await,
             Err(err) => {
                 // A failed checkout is atomic — we are still on the original branch, so
@@ -2613,36 +2649,36 @@ vcs_cli_support::at_forwarders! {
         fn conflicted_files() -> Result<Vec<String>>;
         fn current_branch() -> Result<Option<String>>;
         fn branches() -> Result<Vec<Branch>>;
-        fn log(revspec: &str, max: usize) -> Result<Vec<Commit>>;
-        fn log_paths(revspec: &str, max: usize, paths: &[String]) -> Result<Vec<Commit>>;
-        fn rev_parse(rev: &str) -> Result<String>;
-        fn rev_parse_short(rev: &str) -> Result<String>;
+        fn log(revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
+        fn log_paths(revspec: &RevSpec, max: usize, paths: &[String]) -> Result<Vec<Commit>>;
+        fn rev_parse(rev: &RevSpec) -> Result<String>;
+        fn rev_parse_short(rev: &RevSpec) -> Result<String>;
         fn init() -> Result<()>;
         fn add(paths: &[PathBuf]) -> Result<()>;
         fn commit(message: &str) -> Result<()>;
-        fn create_branch(name: &str) -> Result<()>;
-        fn checkout(reference: &str) -> Result<()>;
-        fn checkout_detach(commit: &str) -> Result<()>;
+        fn create_branch(name: &RefName) -> Result<()>;
+        fn checkout(target: &CheckoutTarget) -> Result<()>;
+        fn checkout_detach(commit: &RevSpec) -> Result<()>;
         fn commit_paths(spec: CommitPaths) -> Result<()>;
         fn last_commit_message() -> Result<String>;
         fn is_unborn() -> Result<bool>;
         fn diff_is_empty() -> Result<bool>;
         fn common_dir() -> Result<PathBuf>;
         fn git_dir() -> Result<PathBuf>;
-        fn resolve_commit(rev: &str) -> Result<String>;
+        fn resolve_commit(rev: &RevSpec) -> Result<String>;
         fn remote_head_branch() -> Result<Option<String>>;
-        fn branch_exists(name: &str) -> Result<bool>;
-        fn remote_branch_exists(name: &str) -> Result<bool>;
+        fn branch_exists(name: &RefName) -> Result<bool>;
+        fn remote_branch_exists(name: &RefName) -> Result<bool>;
         fn remote_url(remote: &str) -> Result<String>;
         fn upstream() -> Result<Option<String>>;
         fn remote_branches(remote: &str) -> Result<Vec<String>>;
         fn is_merged(spec: MergeCheck) -> Result<bool>;
-        fn set_upstream(branch: &str, upstream: &str) -> Result<()>;
+        fn set_upstream(branch: &RefName, upstream: &RefName) -> Result<()>;
         fn delete_branch(spec: BranchDelete) -> Result<()>;
-        fn rename_branch(old: &str, new: &str) -> Result<()>;
-        fn rev_list_count(range: &str) -> Result<usize>;
-        fn diff_range_is_empty(range: &str) -> Result<bool>;
-        fn diff_stat(range: &str) -> Result<DiffStat>;
+        fn rename_branch(old: &RefName, new: &RefName) -> Result<()>;
+        fn rev_list_count(range: &RevSpec) -> Result<usize>;
+        fn diff_range_is_empty(range: &RevSpec) -> Result<bool>;
+        fn diff_stat(range: &RevSpec) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
         fn diff(spec: DiffSpec) -> Result<Vec<FileDiff>>;
         fn staged_is_empty() -> Result<bool>;
@@ -2651,39 +2687,39 @@ vcs_cli_support::at_forwarders! {
         fn is_am_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
-        fn fetch_branch(branch: &str) -> Result<()>;
+        fn fetch_branch(branch: &RefName) -> Result<()>;
         fn push(spec: GitPush) -> Result<()>;
-        fn merge_squash(branch: &str) -> Result<()>;
+        fn merge_squash(branch: &RevSpec) -> Result<()>;
         fn merge_commit(spec: MergeCommit) -> Result<()>;
         fn merge_no_commit(spec: MergeNoCommit) -> Result<()>;
         fn merge_abort() -> Result<()>;
         fn merge_continue() -> Result<()>;
         fn reset_merge() -> Result<()>;
-        fn reset_hard(rev: &str) -> Result<()>;
-        fn rebase(onto: &str) -> Result<()>;
+        fn reset_hard(rev: &RevSpec) -> Result<()>;
+        fn rebase(onto: &RevSpec) -> Result<()>;
         fn rebase_abort() -> Result<()>;
         fn am_abort() -> Result<()>;
         fn rebase_continue() -> Result<()>;
         fn stash_push(spec: StashPush) -> Result<()>;
         fn stash_pop() -> Result<()>;
-        fn switch_with_stash(branch: &str) -> Result<()>;
+        fn switch_with_stash(target: &CheckoutTarget) -> Result<()>;
         fn worktree_list() -> Result<Vec<Worktree>>;
         fn worktree_add(spec: WorktreeAdd) -> Result<()>;
         fn worktree_remove(spec: WorktreeRemove) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
-        fn tag_create(name: &str, rev: Option<String>) -> Result<()>;
+        fn tag_create(name: &RefName, rev: Option<RevSpec>) -> Result<()>;
         fn tag_create_annotated(spec: AnnotatedTag) -> Result<()>;
         fn tag_list() -> Result<Vec<String>>;
-        fn tag_delete(name: &str) -> Result<()>;
-        fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn tag_delete(name: &RefName) -> Result<()>;
+        fn show_file(rev: &RevSpec, path: &str) -> Result<String>;
         fn config_get(key: &str) -> Result<Option<String>>;
         fn config_set(key: &str, value: &str) -> Result<()>;
         fn remote_add(name: &str, url: &str) -> Result<()>;
         fn remote_set_url(name: &str, url: &str) -> Result<()>;
-        fn blame(path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
-        fn cherry_pick(rev: &str) -> Result<()>;
-        fn revert(rev: &str) -> Result<()>;
+        fn blame(path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>>;
+        fn cherry_pick(rev: &RevSpec) -> Result<()>;
+        fn revert(rev: &RevSpec) -> Result<()>;
         fn rebase_skip() -> Result<()>;
     }
 }
@@ -2718,6 +2754,22 @@ pub mod blocking {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Terse constructors for the validated newtypes in test call sites; the
+    // literals here are always valid, so `unwrap` is fine in tests.
+    fn rn(s: &str) -> RefName {
+        RefName::new(s).unwrap()
+    }
+    fn rv(s: &str) -> RevSpec {
+        RevSpec::new(s).unwrap()
+    }
+    fn ct(s: &str) -> CheckoutTarget {
+        if s == "-" {
+            CheckoutTarget::Previous
+        } else {
+            CheckoutTarget::Ref(rv(s))
+        }
+    }
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
@@ -2744,11 +2796,11 @@ mod tests {
         let git = Git::with_runner(&rec);
 
         // A method with trailing args (dir injected first).
-        git.merge_commit(dir, MergeCommit::branch("feat").no_ff())
+        git.merge_commit(dir, MergeCommit::branch(rv("feat")).no_ff())
             .await
             .unwrap();
         git.at(dir)
-            .merge_commit(MergeCommit::branch("feat").no_ff())
+            .merge_commit(MergeCommit::branch(rv("feat")).no_ff())
             .await
             .unwrap();
         // A method taking a path arg after dir.
@@ -2763,8 +2815,8 @@ mod tests {
         git.conflicted_files(dir).await.unwrap();
         git.at(dir).conflicted_files().await.unwrap();
         // One of the §4 additions.
-        git.tag_delete(dir, "v1").await.unwrap();
-        git.at(dir).tag_delete("v1").await.unwrap();
+        git.tag_delete(dir, &rn("v1")).await.unwrap();
+        git.at(dir).tag_delete(&rn("v1")).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
@@ -2860,7 +2912,7 @@ mod tests {
     async fn rev_parse_short_builds_short_flag() {
         let rec = RecordingRunner::replying(Reply::ok("a1b2c3d\n"));
         let git = Git::with_runner(&rec);
-        let out = git.rev_parse_short(Path::new("/r"), "HEAD").await.unwrap();
+        let out = git.rev_parse_short(Path::new("/r"), &rv("HEAD")).await.unwrap();
         assert_eq!(out, "a1b2c3d");
         assert_eq!(
             rec.only_call().args_str(),
@@ -2874,7 +2926,7 @@ mod tests {
     async fn rev_parse_verifies_the_revision() {
         let rec = RecordingRunner::replying(Reply::ok("deadbeef\n"));
         let git = Git::with_runner(&rec);
-        let out = git.rev_parse(Path::new("/r"), "HEAD").await.unwrap();
+        let out = git.rev_parse(Path::new("/r"), &rv("HEAD")).await.unwrap();
         assert_eq!(out, "deadbeef");
         assert_eq!(
             rec.only_call().args_str(),
@@ -2984,7 +3036,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.worktree_add(
             Path::new("/repo"),
-            WorktreeAdd::create_branch("/wt", "feature", "main"),
+            WorktreeAdd::create_branch("/wt", rn("feature"), rv("main")),
         )
         .await
         .expect("worktree add");
@@ -3025,7 +3077,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.worktree_add(
             Path::new("/repo"),
-            WorktreeAdd::checkout("/wt", "main").no_checkout(),
+            WorktreeAdd::checkout("/wt", rv("main")).no_checkout(),
         )
         .await
         .expect("worktree add");
@@ -3039,7 +3091,7 @@ mod tests {
     async fn checkout_detach_builds_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.checkout_detach(Path::new("."), "abc123")
+        git.checkout_detach(Path::new("."), &rv("abc123"))
             .await
             .expect("detach");
         assert_eq!(
@@ -3127,7 +3179,7 @@ mod tests {
     async fn log_builds_revspec_and_format() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.log(Path::new("."), "main..HEAD", 5).await.expect("log");
+        git.log(Path::new("."), &rv("main..HEAD"), 5).await.expect("log");
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -3146,9 +3198,7 @@ mod tests {
     async fn log_paths_builds_revspec_format_and_pathspec_separator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.log_paths(
-            Path::new("."),
-            "main..HEAD",
+        git.log_paths(Path::new("."), &rv("main..HEAD"),
             5,
             &["src/a.rs".to_string(), "src/b.rs".to_string()],
         )
@@ -3179,7 +3229,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         let err = git
-            .log_paths(Path::new("."), "HEAD", 5, &[])
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[])
             .await
             .expect_err("empty paths must be refused");
         assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
@@ -3274,10 +3324,10 @@ mod tests {
     #[tokio::test]
     async fn branch_exists_maps_exit_codes() {
         let yes = Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::ok("")));
-        assert!(yes.branch_exists(Path::new("."), "main").await.unwrap());
+        assert!(yes.branch_exists(Path::new("."), &rn("main")).await.unwrap());
         let no =
             Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::fail(1, "")));
-        assert!(!no.branch_exists(Path::new("."), "nope").await.unwrap());
+        assert!(!no.branch_exists(Path::new("."), &rn("nope")).await.unwrap());
     }
 
     // The full ref prefix is stripped but a slashed default branch survives; an
@@ -3328,7 +3378,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("abc123\trefs/heads/main\n"));
         let git = Git::with_runner(&rec);
         assert!(
-            git.remote_branch_exists(Path::new("/repo"), "main")
+            git.remote_branch_exists(Path::new("/repo"), &rn("main"))
                 .await
                 .unwrap()
         );
@@ -3343,17 +3393,17 @@ mod tests {
         let empty = Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::ok("")));
         assert!(
             !empty
-                .remote_branch_exists(Path::new("."), "x")
+                .remote_branch_exists(Path::new("."), &rn("x"))
                 .await
                 .unwrap()
         );
     }
 
-    #[tokio::test]
-    async fn remote_branch_exists_rejects_invalid_names() {
-        let rec = RecordingRunner::replying(Reply::ok(""));
-        let git = Git::with_runner(&rec);
-
+    // The glob/control/`:`/space names `remote_branch_exists` must exclude are now
+    // refused at `RefName` construction — an invalid value can't reach the method
+    // at all, so the exclusion is enforced by the type rather than an ad-hoc guard.
+    #[test]
+    fn remote_branch_invalid_names_rejected_at_refname() {
         for name in [
             "",
             "feature/*",
@@ -3363,16 +3413,10 @@ mod tests {
             "two words",
             "bad\nname",
         ] {
-            let err = git
-                .remote_branch_exists(Path::new("/repo"), name)
-                .await
-                .expect_err("invalid remote branch name must be rejected");
-            assert!(err.to_string().contains("invalid remote branch name"));
+            let err =
+                RefName::new(name).expect_err("invalid remote branch name must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&err), "{name:?}");
         }
-        assert!(
-            rec.calls().is_empty(),
-            "validation must run before spawning git"
-        );
     }
 
     #[tokio::test]
@@ -3381,7 +3425,7 @@ mod tests {
         let git = Git::with_runner(&rec);
 
         assert!(
-            git.remote_branch_exists(Path::new("/repo"), "feature/T-010_fix")
+            git.remote_branch_exists(Path::new("/repo"), &rn("feature/T-010_fix"))
                 .await
                 .expect("valid remote branch name")
         );
@@ -3405,7 +3449,8 @@ mod tests {
     async fn remote_branch_exists_bounded_wait_resolves_a_hung_remote() {
         let git =
             Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::pending()));
-        let probe = git.remote_branch_exists(Path::new("/r"), "main");
+        let name = rn("main");
+        let probe = git.remote_branch_exists(Path::new("/r"), &name);
         let exists = tokio::time::timeout(std::time::Duration::from_secs(3600), probe)
             .await
             .expect("the per-command 10 s timeout must resolve a hung ls-remote")
@@ -3419,7 +3464,7 @@ mod tests {
             ["git", "diff", "--shortstat"],
             Reply::ok(" 2 files changed, 5 insertions(+), 1 deletion(-)\n"),
         ));
-        let stat = git.diff_stat(Path::new("."), "main..HEAD").await.unwrap();
+        let stat = git.diff_stat(Path::new("."), &rv("main..HEAD")).await.unwrap();
         assert_eq!(
             (stat.files_changed, stat.insertions, stat.deletions),
             (2, 5, 1)
@@ -3433,7 +3478,7 @@ mod tests {
     async fn diff_range_verbs_terminate_revisions_with_dashes() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.diff_range_is_empty(Path::new("/r"), "main..HEAD")
+        git.diff_range_is_empty(Path::new("/r"), &rv("main..HEAD"))
             .await
             .expect("diff_range_is_empty");
         assert_eq!(
@@ -3443,7 +3488,7 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(" 0 files changed\n"));
         let git = Git::with_runner(&rec);
-        git.diff_stat(Path::new("/r"), "main..HEAD")
+        git.diff_stat(Path::new("/r"), &rv("main..HEAD"))
             .await
             .expect("diff_stat");
         assert_eq!(
@@ -3475,7 +3520,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.merge_commit(
             Path::new("/r"),
-            MergeCommit::branch("feature").no_ff().message("merge it"),
+            MergeCommit::branch(rv("feature")).no_ff().message("merge it"),
         )
         .await
         .unwrap();
@@ -3490,7 +3535,7 @@ mod tests {
     async fn merge_commit_without_message_uses_no_edit() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.merge_commit(Path::new("/r"), MergeCommit::branch("feature"))
+        git.merge_commit(Path::new("/r"), MergeCommit::branch(rv("feature")))
             .await
             .unwrap();
         assert_eq!(
@@ -3504,7 +3549,7 @@ mod tests {
     async fn rebase_suppresses_editor() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.rebase(Path::new("/r"), "main").await.unwrap();
+        git.rebase(Path::new("/r"), &rv("main")).await.unwrap();
         let call = rec.only_call();
         assert_eq!(call.args_str(), ["rebase", "main"]);
         assert!(call.envs.iter().any(|(k, v)| {
@@ -3519,7 +3564,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.push(
             Path::new("/r"),
-            GitPush::refspec("feat", "feature").set_upstream(),
+            GitPush::refspec(&rn("feat"), &rn("feature")).set_upstream(),
         )
         .await
         .unwrap();
@@ -3535,7 +3580,7 @@ mod tests {
     async fn push_bare_branch_builds_origin_branch_prompt_off() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3552,17 +3597,24 @@ mod tests {
     async fn push_rejects_force_and_multiref_metacharacters() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        for bad in ["+main", "+main:main", "a:b:c"] {
-            assert!(
-                git.push(Path::new("/r"), GitPush::branch(bad))
-                    .await
-                    .is_err(),
-                "{bad:?} must be rejected"
-            );
+        // A `:` (an extra ref) is not a legal `RefName` character, so a multi-ref
+        // refspec is refused at construction — it can never reach `GitPush`.
+        for bad in ["+main:main", "a:b:c", "main:prod"] {
+            assert!(RefName::new(bad).is_err(), "{bad:?} carries a `:`");
         }
-        // A legitimate `local:remote` refspec still works (one `:`, no `+`).
+        // A leading `+` (force) IS a legal ref character, so it passes `RefName` —
+        // but the push refspec guard still refuses it before spawning. A force-push
+        // must be explicit via `run`.
         assert!(
-            git.push(Path::new("/r"), GitPush::refspec("main", "prod"))
+            git.push(Path::new("/r"), GitPush::branch(rn("+main")))
+                .await
+                .is_err(),
+            "a force refspec must be refused before spawning"
+        );
+        // A legitimate `local:remote` refspec still works (the single `:` is the
+        // API-inserted separator between two validated `RefName`s).
+        assert!(
+            git.push(Path::new("/r"), GitPush::refspec(&rn("main"), &rn("prod")))
                 .await
                 .is_ok()
         );
@@ -3580,7 +3632,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.push(
             Path::new("/r"),
-            GitPush::branch("feature").remote("upstream"),
+            GitPush::branch(rn("feature")).remote("upstream"),
         )
         .await
         .unwrap();
@@ -3595,7 +3647,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec)
             .with_credentials(Arc::new(StaticCredential::token("ghp_secret123")));
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3637,7 +3689,7 @@ mod tests {
     async fn default_client_injects_no_credential_helper() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3848,7 +3900,7 @@ mod tests {
     async fn set_upstream_builds_branch_flag() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.set_upstream(Path::new("/r"), "feat", "origin/feature")
+        git.set_upstream(Path::new("/r"), &rn("feat"), &rn("origin/feature"))
             .await
             .unwrap();
         assert_eq!(
@@ -3871,7 +3923,7 @@ mod tests {
     async fn delete_branch_force_uses_capital_d() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.delete_branch(Path::new("/r"), BranchDelete::new("old").force())
+        git.delete_branch(Path::new("/r"), BranchDelete::new(rn("old")).force())
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["branch", "-D", "old"]);
@@ -3882,7 +3934,7 @@ mod tests {
     async fn delete_branch_default_uses_lowercase_d() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.delete_branch(Path::new("/r"), BranchDelete::new("old"))
+        git.delete_branch(Path::new("/r"), BranchDelete::new(rn("old")))
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["branch", "-d", "old"]);
@@ -3898,7 +3950,7 @@ mod tests {
         ));
         for name in ["main", "feature", "wt-branch"] {
             assert!(
-                git.is_merged(Path::new("."), MergeCheck::branch(name).into_base("main"))
+                git.is_merged(Path::new("."), MergeCheck::branch(rn(name)).into_base(rv("main")))
                     .await
                     .unwrap(),
                 "{name} should be reported merged"
@@ -3907,7 +3959,7 @@ mod tests {
         assert!(
             !git.is_merged(
                 Path::new("."),
-                MergeCheck::branch("absent").into_base("main")
+                MergeCheck::branch(rn("absent")).into_base(rv("main"))
             )
             .await
             .unwrap()
@@ -3920,15 +3972,15 @@ mod tests {
     #[tokio::test]
     async fn merge_check_names_branch_and_base_without_transposition() {
         use processkit::testing::RecordingRunner;
-        let spec = MergeCheck::branch("feature").into_base("main");
-        assert_eq!(spec.branch, "feature");
-        assert_eq!(spec.base, "main");
+        let spec = MergeCheck::branch(rn("feature")).into_base(rv("main"));
+        assert_eq!(spec.branch.as_str(), "feature");
+        assert_eq!(spec.base.as_str(), "main");
 
         let rec = RecordingRunner::replying(Reply::ok("  feature\n* main\n"));
         let merged = Git::with_runner(&rec)
             .is_merged(
                 Path::new("/repo"),
-                MergeCheck::branch("feature").into_base("main"),
+                MergeCheck::branch(rn("feature")).into_base(rv("main")),
             )
             .await
             .unwrap();
@@ -4073,106 +4125,100 @@ mod tests {
         );
     }
 
-    // The injection guard: a flag-shaped value in any exposed positional slot
-    // must be refused BEFORE anything spawns.
+    // The injection barrier now has two tiers:
+    //  1. ref-name / revision inputs are validated NEWTYPES, so a flag-like or
+    //     malformed value is rejected at *construction* — it can never reach an
+    //     argv slot (migration tests below); and
+    //  2. the remaining bare-positional `&str` inputs that are not refs/revisions
+    //     (remote names, URLs, config keys) keep the internal `reject_flag_like`
+    //     guard, refused before anything spawns.
+
+    // Tier 1 — the newtypes reject the flag-like / malformed values the typed ops
+    // would otherwise have received, as a classifiable invalid-input error.
+    #[test]
+    fn validated_ref_and_rev_newtypes_reject_bad_values() {
+        // RefName: the load-bearing core of `check-ref-format`.
+        for ok in ["main", "feature/x", "origin/main", "v1.2.3", "a-b_c"] {
+            assert!(RefName::new(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "", "-evil", "--force", "-D", "-bad", ".hidden", "a..b", "a b", "a~b", "a^b", "a:b",
+            "a?b", "a*b", "a[b", "a\\b", "end/", "x.lock",
+        ] {
+            let err = RefName::new(bad).expect_err(&format!("{bad:?} must be rejected"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{bad:?} must classify as invalid input"
+            );
+        }
+        // RevSpec: non-empty and not flag-shaped (git's revision grammar is
+        // otherwise too rich to validate here), so `-` special values are refused.
+        for ok in ["HEAD", "HEAD~2", "main..feature", "@{-1}", "abc123"] {
+            assert!(RevSpec::new(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "-evil", "-i", "-n", "-s"] {
+            let err = RevSpec::new(bad).expect_err(&format!("{bad:?} must be rejected"));
+            assert!(vcs_cli_support::is_invalid_input(&err), "{bad:?}");
+        }
+    }
+
+    // Tier 2 — the ops that still take a bare `&str` (remote names, URLs, config
+    // keys) refuse a flag-like value BEFORE anything spawns. `DiffSpec::Rev` is a
+    // shared cross-backend `String`, so it keeps the same internal guard.
     #[tokio::test]
-    async fn flag_like_positionals_are_rejected_before_spawning() {
+    async fn str_positionals_are_rejected_before_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         let dir = Path::new("/r");
 
-        assert!(git.checkout(dir, "-evil").await.is_err());
-        assert!(git.create_branch(dir, "--force").await.is_err());
-        assert!(
-            git.delete_branch(dir, BranchDelete::new("-D"))
-                .await
-                .is_err()
-        );
-        assert!(git.rename_branch(dir, "ok", "-bad").await.is_err());
-        assert!(
-            git.merge_commit(dir, MergeCommit::branch("-evil"))
-                .await
-                .is_err()
-        );
-        assert!(
-            git.merge_no_commit(dir, MergeNoCommit::branch("-evil").no_ff())
-                .await
-                .is_err()
-        );
-        assert!(git.merge_squash(dir, "-evil").await.is_err());
-        assert!(git.rebase(dir, "-i").await.is_err());
-        assert!(git.cherry_pick(dir, "-n").await.is_err());
-        assert!(git.revert(dir, "-evil").await.is_err());
-        assert!(git.tag_create(dir, "-d", None).await.is_err());
-        assert!(
-            git.tag_create(dir, "ok", Some("-evil".into()))
-                .await
-                .is_err()
-        );
-        assert!(git.tag_delete(dir, "-evil").await.is_err());
-        assert!(git.remote_add(dir, "-evil", "url").await.is_err());
-        assert!(git.remote_set_url(dir, "-evil", "url").await.is_err());
-        assert!(git.set_upstream(dir, "-evil", "origin/x").await.is_err());
-        assert!(git.log(dir, "-evil", 5).await.is_err());
-        assert!(git.rev_list_count(dir, "-evil").await.is_err());
-        assert!(git.diff_stat(dir, "-evil").await.is_err());
-        assert!(git.diff_range_is_empty(dir, "-evil").await.is_err());
-        assert!(
-            git.diff_text(dir, DiffSpec::Rev("-evil".into()))
-                .await
-                .is_err()
-        );
-        assert!(git.rev_parse(dir, "-evil").await.is_err());
-        assert!(git.rev_parse_short(dir, "-evil").await.is_err());
-        assert!(git.resolve_commit(dir, "-evil").await.is_err());
-        assert!(git.reset_hard(dir, "-evil").await.is_err());
-        assert!(git.checkout_detach(dir, "-evil").await.is_err());
         assert!(git.config_set(dir, "-evil", "v").await.is_err());
-        assert!(
-            git.push(dir, GitPush::branch("-evil")).await.is_err(),
-            "refspec guard"
-        );
-        // Embedded-token-prefix and standalone-rev positionals:
-        assert!(git.show_file(dir, "-evil", "f.txt").await.is_err());
-        assert!(git.blame(dir, "f.txt", Some("-s".into())).await.is_err());
+        assert!(git.config_get(dir, "-evil").await.is_err());
         assert!(git.remote_url(dir, "-evil").await.is_err());
         assert!(git.remote_branches(dir, "-evil").await.is_err());
         assert!(git.fetch_from(dir, "--upload-pack=x").await.is_err());
-        // URL positionals (a leading-`-` url is an RCE-class flag injection).
+        assert!(git.remote_add(dir, "-evil", "url").await.is_err());
+        assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
+        assert!(git.remote_set_url(dir, "-evil", "url").await.is_err());
+        assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
+        // A leading-`-` url is an RCE-class flag injection.
         assert!(
             git.clone_repo("--upload-pack=x", Path::new("/d"), CloneSpec::new())
                 .await
                 .is_err()
         );
-        assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
-        assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
+        // `DiffSpec::Rev` carries a raw (internally-guarded) revision string.
         assert!(
-            git.is_merged(dir, MergeCheck::branch("-evil").into_base("main"))
+            git.diff_text(dir, DiffSpec::Rev("-evil".into()))
                 .await
                 .is_err()
         );
-        assert!(git.config_get(dir, "-evil").await.is_err());
-        assert!(
-            git.worktree_add(
-                dir,
-                WorktreeAdd::create_branch(Path::new("/wt"), "-evil", "HEAD")
-            )
-            .await
-            .is_err()
-        );
-        // Empty values are refused too.
-        assert!(git.checkout(dir, "").await.is_err());
 
         assert!(
             rec.calls().is_empty(),
             "nothing may spawn: {:?}",
             rec.calls()
         );
+    }
 
-        // …and legitimate values still pass through unchanged (with the trailing
-        // `--` that keeps a path-like ref out of pathspec mode — C2).
-        git.checkout(dir, "feature/x").await.expect("checkout");
+    // A legitimate ref/revision still flows through the typed path unchanged (with
+    // the trailing `--` that keeps a path-like ref out of pathspec mode — C2), and
+    // git's `-` "previous branch" is carried safely as `CheckoutTarget::Previous`
+    // (a fixed literal, not caller-controlled argv).
+    #[tokio::test]
+    async fn typed_checkout_targets_pass_through() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.checkout(Path::new("/r"), &CheckoutTarget::Ref(rv("feature/x")))
+            .await
+            .expect("checkout");
         assert_eq!(rec.only_call().args_str(), ["checkout", "feature/x", "--"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.checkout(Path::new("/r"), &CheckoutTarget::Previous)
+            .await
+            .expect("checkout -");
+        assert_eq!(rec.only_call().args_str(), ["checkout", "-", "--"]);
     }
 
     // The hardened profile lands its env pairs/removals on EVERY command, and
@@ -4468,14 +4514,14 @@ mod tests {
     async fn tag_methods_build_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.tag_create(Path::new("/r"), "v1", None).await.unwrap();
-        git.tag_create(Path::new("/r"), "v1", Some("abc".into()))
+        git.tag_create(Path::new("/r"), &rn("v1"), None).await.unwrap();
+        git.tag_create(Path::new("/r"), &rn("v1"), Some(rv("abc")))
             .await
             .unwrap();
-        git.tag_create_annotated(Path::new("/r"), AnnotatedTag::new("v2", "notes"))
+        git.tag_create_annotated(Path::new("/r"), AnnotatedTag::new(rn("v2"), "notes"))
             .await
             .unwrap();
-        git.tag_delete(Path::new("/r"), "v1").await.unwrap();
+        git.tag_delete(Path::new("/r"), &rn("v1")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["tag", "v1"]);
         assert_eq!(calls[1].args_str(), ["tag", "v1", "abc"]);
@@ -4501,7 +4547,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.branches(Path::new(".")).await.unwrap();
-        git.is_merged(Path::new("."), MergeCheck::branch("b").into_base("main"))
+        git.is_merged(Path::new("."), MergeCheck::branch(rn("b")).into_base(rv("main")))
             .await
             .unwrap();
         git.tag_list(Path::new(".")).await.unwrap();
@@ -4521,14 +4567,14 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.commit(Path::new("."), "msg").await.unwrap();
-        git.merge_commit(Path::new("."), MergeCommit::branch("b"))
+        git.merge_commit(Path::new("."), MergeCommit::branch(rv("b")))
             .await
             .unwrap();
-        git.merge_squash(Path::new("."), "b").await.unwrap();
-        git.merge_no_commit(Path::new("."), MergeNoCommit::branch("b"))
+        git.merge_squash(Path::new("."), &rv("b")).await.unwrap();
+        git.merge_no_commit(Path::new("."), MergeNoCommit::branch(rv("b")))
             .await
             .unwrap();
-        git.cherry_pick(Path::new("."), "abc").await.unwrap();
+        git.cherry_pick(Path::new("."), &rv("abc")).await.unwrap();
         git.stash_pop(Path::new(".")).await.unwrap();
         git.fetch(Path::new(".")).await.unwrap();
         for call in rec.calls() {
@@ -4551,7 +4597,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("content\n"));
         let git = Git::with_runner(&rec);
         let out = git
-            .show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
+            .show_file(Path::new("/r"), &rv("HEAD"), "sub\\dir\\f.txt")
             .await
             .expect("show_file");
         // The blob's trailing newline is preserved verbatim (H7) — not trimmed.
@@ -4567,7 +4613,7 @@ mod tests {
             let rec = RecordingRunner::replying(Reply::ok(raw));
             let git = Git::with_runner(&rec);
             let out = git
-                .show_file(Path::new("/r"), "HEAD", "f.txt")
+                .show_file(Path::new("/r"), &rv("HEAD"), "f.txt")
                 .await
                 .expect("show_file");
             assert_eq!(out, raw, "show_file returns bytes verbatim");
@@ -4641,7 +4687,7 @@ mod tests {
     async fn blame_builds_rev_before_pathspec_separator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.blame(Path::new("/r"), "src/lib.rs", Some("HEAD~1".into()))
+        git.blame(Path::new("/r"), "src/lib.rs", Some(rv("HEAD~1")))
             .await
             .unwrap();
         git.blame(Path::new("/r"), "src/lib.rs", None)
@@ -4663,8 +4709,8 @@ mod tests {
     async fn sequencer_methods_suppress_editors() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.revert(Path::new("/r"), "abc").await.unwrap();
-        git.cherry_pick(Path::new("/r"), "abc").await.unwrap();
+        git.revert(Path::new("/r"), &rv("abc")).await.unwrap();
+        git.cherry_pick(Path::new("/r"), &rv("abc")).await.unwrap();
         git.rebase_skip(Path::new("/r")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["revert", "--no-edit", "abc"]);
@@ -4693,7 +4739,7 @@ mod tests {
     async fn hardened_sequencer_keeps_its_no_op_editor() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec).harden();
-        git.revert(Path::new("/r"), "abc").await.unwrap();
+        git.revert(Path::new("/r"), &rv("abc")).await.unwrap();
         let call = rec.only_call();
         // Resolve each editor var the way the OS does: last op for the key wins.
         let effective = |var: &str| {
@@ -4755,7 +4801,7 @@ mod tests {
                 .on(["git", "stash", "pop"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         let calls = rec.calls();
@@ -4789,7 +4835,7 @@ mod tests {
                 .on(["git", "checkout"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         assert!(
@@ -4811,7 +4857,7 @@ mod tests {
                 .on(["git", "checkout"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         let calls = rec.calls();
@@ -4839,7 +4885,7 @@ mod tests {
         );
         let git = Git::with_runner(&rec);
         let err = git
-            .switch_with_stash(Path::new("/r"), "nope")
+            .switch_with_stash(Path::new("/r"), &ct("nope"))
             .await
             .expect_err("checkout error must surface");
         assert!(matches!(err, Error::Exit { .. }));
@@ -4873,11 +4919,10 @@ mod tests {
         assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
     }
 
-    #[tokio::test]
-    async fn fetch_branch_rejects_invalid_names() {
-        let rec = RecordingRunner::replying(Reply::ok(""));
-        let git = Git::with_runner(&rec);
-
+    // As with `remote_branch_exists`, the names `fetch_branch` must exclude are now
+    // refused at `RefName` construction, before the refspec is ever built.
+    #[test]
+    fn fetch_branch_invalid_names_rejected_at_refname() {
         for branch in [
             "",
             "feature/*",
@@ -4887,16 +4932,10 @@ mod tests {
             "two words",
             "bad\tname",
         ] {
-            let err = git
-                .fetch_branch(Path::new("/repo"), branch)
-                .await
-                .expect_err("invalid fetch branch name must be rejected");
-            assert!(err.to_string().contains("invalid branch name for fetch"));
+            let err =
+                RefName::new(branch).expect_err("invalid fetch branch name must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&err), "{branch:?}");
         }
-        assert!(
-            rec.calls().is_empty(),
-            "validation must run before spawning git"
-        );
     }
 
     #[tokio::test]
@@ -4904,7 +4943,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
 
-        git.fetch_branch(Path::new("/repo"), "feature/T-010_fix")
+        git.fetch_branch(Path::new("/repo"), &rn("feature/T-010_fix"))
             .await
             .expect("valid fetch branch name");
         assert_eq!(

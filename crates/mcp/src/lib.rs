@@ -434,11 +434,15 @@ fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> 
 /// `InvalidInput` io error — that's the client's call to fix, so surface it as
 /// an invalid-params error rather than an internal one.
 fn core_err(e: vcs_core::Error) -> ErrorData {
-    match &e {
-        vcs_core::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidInput => {
-            ErrorData::invalid_params(e.to_string(), None)
-        }
-        _ => ErrorData::internal_error(e.to_string(), None),
+    // A bad-argument failure — a facade precondition (`Error::Io`/`InvalidInput`)
+    // OR the boundary refusal of a flag-like/malformed ref/revision (which the
+    // facade now raises as `Error::Vcs` carrying an `InvalidInput` spawn source
+    // when it converts a tool string into a validated newtype) — is a client-facing
+    // invalid-request, not an internal error. `is_invalid_input` classifies both.
+    if e.is_invalid_input() {
+        ErrorData::invalid_params(e.to_string(), None)
+    } else {
+        ErrorData::internal_error(e.to_string(), None)
     }
 }
 
@@ -1219,6 +1223,26 @@ mod tests {
             "unexpected message: {}",
             err.message
         );
+    }
+
+    // A flag-like ref/revision tool parameter is rejected the moment the facade
+    // converts it into the validated newtype (`RefName`/`RevSpec`) — surfacing as
+    // INVALID_PARAMS (a classifiable client mistake) *before* any git process
+    // spawns, rather than an opaque internal error. The runner has no `git log`
+    // scripted, so had the value NOT been refused pre-spawn the command would have
+    // surfaced as an internal error instead — the INVALID_PARAMS code is the proof
+    // the rejection happened at the boundary.
+    #[tokio::test]
+    async fn flag_like_revspec_surfaces_as_invalid_params() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_log(Parameters(LogParams {
+                revspec_or_revset: "--upload-pack=/bin/evil".into(),
+                max: 10,
+            }))
+            .await
+            .expect_err("a flag-like revspec must be refused");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
     // Forge tools report a clear error when no forge was configured.

@@ -9,13 +9,20 @@
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
-use vcs_jj::{ChangedPath, Jj, JjApi, JjFileset, WorkspaceAdd};
+use vcs_jj::{BookmarkName, ChangedPath, Jj, JjApi, JjFileset, RevsetExpr, WorkspaceAdd};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
     RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
+
+/// Validate a facade revset string into a [`RevsetExpr`] at the boundary, mapping
+/// a rejected value to a classifiable input-validation error. The internal `"@"`
+/// callers pass a fixed literal (never fails); user-supplied revsets are checked.
+fn rev(s: &str) -> Result<RevsetExpr> {
+    Ok(RevsetExpr::new(s)?)
+}
 
 pub(crate) async fn current_branch<R: ProcessRunner>(
     jj: &Jj<R>,
@@ -79,14 +86,14 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
     // marks it `empty` — so `has_uncommitted_changes` agrees with `snapshot().dirty`,
     // which already treats `conflict ⇒ dirty` (M18). Only probed when `@` is empty, so
     // the common non-empty case stays a single query.
-    Ok(jj.is_conflicted(dir, "@").await?)
+    Ok(jj.is_conflicted(dir, &rev("@")?).await?)
 }
 
 pub(crate) async fn conflicted_files<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
 ) -> Result<Vec<String>> {
-    Ok(jj.resolve_list(dir, "@").await?)
+    Ok(jj.resolve_list(dir, &rev("@")?).await?)
 }
 
 pub(crate) async fn delete_branch<R: ProcessRunner>(
@@ -94,7 +101,7 @@ pub(crate) async fn delete_branch<R: ProcessRunner>(
     dir: &Path,
     name: &str,
 ) -> Result<()> {
-    jj.bookmark_delete(dir, name).await?;
+    jj.bookmark_delete(dir, &BookmarkName::new(name)?).await?;
     Ok(())
 }
 
@@ -104,7 +111,7 @@ pub(crate) async fn rename_branch<R: ProcessRunner>(
     old: &str,
     new: &str,
 ) -> Result<()> {
-    jj.bookmark_rename(dir, old, new).await?;
+    jj.bookmark_rename(dir, &BookmarkName::new(old)?, &BookmarkName::new(new)?).await?;
     Ok(())
 }
 
@@ -118,7 +125,7 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 
 pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<DiffStat> {
     // `jj.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
-    jj.diff_stat(dir, "@").await.map_err(Into::into)
+    jj.diff_stat(dir, &rev("@")?).await.map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(
@@ -132,7 +139,7 @@ pub(crate) async fn log<R: ProcessRunner>(
     // `author`/`date` stay `None` here rather than being guessed (see the
     // `Commit` type docs).
     Ok(jj
-        .log(dir, revset, max)
+        .log(dir, &rev(revset)?, max)
         .await?
         .into_iter()
         .map(|c| Commit::new(c.commit_id, c.description))
@@ -145,7 +152,7 @@ pub(crate) async fn show_file<R: ProcessRunner>(
     revset: &str,
     path: &str,
 ) -> Result<String> {
-    Ok(jj.file_show(dir, revset, path).await?)
+    Ok(jj.file_show(dir, &rev(revset)?, path).await?)
 }
 
 /// One `jj log -r @` template carrying the working-copy-only fields the
@@ -164,7 +171,7 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
     // `current_branch` (the nearest reachable bookmark). Spawn 3, only when
     // dirty: the change count.
     let row = jj
-        .template_query(dir, "@", SNAPSHOT_TEMPLATE, Some(1))
+        .template_query(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
         .await?;
     let line = row.trim_end_matches(['\r', '\n']);
     let fields: Vec<&str> = line.split('\t').collect();
@@ -249,7 +256,7 @@ pub(crate) async fn fetch_branch<R: ProcessRunner>(
     dir: &Path,
     branch: &str,
 ) -> Result<()> {
-    jj.git_fetch_branch(dir, branch).await?;
+    jj.git_fetch_branch(dir, &BookmarkName::new(branch)?).await?;
     Ok(())
 }
 
@@ -261,7 +268,7 @@ pub(crate) async fn push<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, branch: &str)
     // paths): jj consumes the token as a name and errors on a nonexistent
     // bookmark. Only the git path guards, because there the branch lands in a
     // *bare positional* refspec slot where a `--flag` would be parsed as one.
-    jj.git_push(dir, Some(branch.to_string())).await?;
+    jj.git_push(dir, Some(BookmarkName::new(branch)?)).await?;
     Ok(())
 }
 
@@ -272,7 +279,7 @@ pub(crate) async fn checkout<R: ProcessRunner>(
 ) -> Result<()> {
     // jj has no "switch branch"; moving `@` to the bookmark/revision is the
     // equivalent of a git checkout.
-    jj.edit(dir, reference).await?;
+    jj.edit(dir, &rev(reference)?).await?;
     Ok(())
 }
 
@@ -281,12 +288,12 @@ pub(crate) async fn new_child<R: ProcessRunner>(
     dir: &Path,
     reference: &str,
 ) -> Result<()> {
-    jj.new_child(dir, reference).await?;
+    jj.new_child(dir, &rev(reference)?).await?;
     Ok(())
 }
 
 pub(crate) async fn rebase<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, onto: &str) -> Result<()> {
-    jj.rebase(dir, onto).await?;
+    jj.rebase(dir, &rev(onto)?).await?;
     Ok(())
 }
 
@@ -299,18 +306,22 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
     let pre_op = jj.op_head(dir).await?;
     // Materialise the merge as a new working-copy change; jj records conflicts
     // on the commit instead of failing, so a 0 exit does NOT mean "clean".
+    // Validate the revsets at the boundary before the mutation; `@` is a fixed
+    // literal and `source` is the caller's, so an invalid `source` is a
+    // classifiable input error rather than a spawn failure.
+    let wc = rev("@")?;
     let merged = jj
         .new_merge(
             dir,
             "vcs-core try_merge probe (rolled back)",
-            vec!["@".into(), source.into()],
+            vec![wc.clone(), rev(source)?],
         )
         .await;
     // Probe the outcome before restoring (the probe target disappears after).
     // If `new_merge` itself failed, a failing probe must not mask that error.
     let probe = async {
-        if jj.is_conflicted(dir, "@").await? {
-            Ok::<_, vcs_jj::Error>(Some(jj.resolve_list(dir, "@").await?))
+        if jj.is_conflicted(dir, &wc).await? {
+            Ok::<_, vcs_jj::Error>(Some(jj.resolve_list(dir, &wc).await?))
         } else {
             Ok(None)
         }
@@ -426,13 +437,16 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     // the rollback below must not `remove_dir_all` a directory the caller already
     // had (that would be silent data loss on an unrelated failure).
     let preexisting = abs_path.exists();
-    jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), base, path))
+    jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), rev(base)?, path))
         .await?;
     // `workspace add -r <base>` puts a fresh empty change on the new workspace's
     // `@`; `<ws_name>@` resolves to it regardless of the cwd. Anchor the bookmark
     // there so the worktree carries the requested branch.
     let revset = format!("{ws_name}@");
-    if let Err(e) = jj.bookmark_create(dir, branch, &revset).await {
+    if let Err(e) = jj
+        .bookmark_create(dir, &BookmarkName::new(branch)?, &rev(&revset)?)
+        .await
+    {
         // The two steps aren't atomic: `workspace add` already created the
         // workspace and its on-disk dir, but the bookmark didn't land. Roll back
         // so a failed call doesn't leak a half-made worktree — mirror

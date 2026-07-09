@@ -455,7 +455,7 @@ async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
 - `git_fetch_branch` — fetch a single bookmark from origin (`git fetch --remote
   origin -b <branch>`); same retry policy.
 - `git_push` — `jj git push`, optionally `-b <bookmark>`. The bookmark is owned
-  (`Option<String>`) to keep the trait `mockall`-friendly.
+  (`Option<BookmarkName>`) to keep the trait `mockall`-friendly.
 - `git_import` — import git refs into jj (`jj git import`) — colocated-repo sync.
 - `git_clone` — clone into `dest` (`git clone <url> <dest>
   --colocate|--no-colocate`), the colocation chosen by `GitClone::colocated()`
@@ -775,25 +775,33 @@ destination's description instead of combining the two.
 
 ## Validating newtypes & filesets
 
-### `RevsetExpr`
-Optional up-front validation for callers that accept revsets from untrusted
-input (UIs, bots, agents) and want to fail early. Deliberately *minimal* — jj's
-revset grammar is too rich to validate here — it only guarantees the expression
-is non-empty and cannot be parsed as a flag (no leading `-`), matching the
-internal guard the positional-revset methods apply anyway. The dir-taking
-methods stay `&str`; this type is optional validation, **not** a required
-wrapper.
+### `RevsetExpr` and `BookmarkName`
+Every operation that resolves a **revset** takes a `RevsetExpr`, and every
+operation that names a **bookmark** (jj's equivalent of a branch) to
+create/move/rename/delete/track/fetch/push takes a `BookmarkName` — not a bare
+`&str`. Construct one at your input boundary; a flag-like or malformed value is
+rejected there (a classifiable `Error::is_invalid_input`) and can never reach an
+argv slot. Both are deliberately *minimal* — jj's revset grammar is too rich to
+validate, and jj bookmark names are permissive — so the load-bearing guarantee is
+non-empty and not flag-shaped (no leading `-`). The typed bookmark methods
+additionally wrap the name in jj's `exact:` pattern so a `*`/`?` can never fan the
+operation out across every bookmark.
 
 ```rust,ignore
-# use vcs_jj::RevsetExpr;
-let r = RevsetExpr::new("main..@")?;       // Ok
-assert!(RevsetExpr::new("").is_err());     // empty
-assert!(RevsetExpr::new("-x").is_err());   // leading `-` → would parse as a flag
+# use vcs_jj::{BookmarkName, RevsetExpr};
+let r = RevsetExpr::new("main..@")?;        // Ok
+let b = BookmarkName::new("feature/x")?;    // Ok
+assert!(RevsetExpr::new("").is_err());      // empty
+assert!(RevsetExpr::new("-x").is_err());    // leading `-` → would parse as a flag
+assert!(BookmarkName::new("--all").is_err());
+# let _ = (r, b);
 # Ok::<(), processkit::Error>(())
 ```
 
-`RevsetExpr::new(impl Into<String>) -> Result<Self>`; `.as_str() -> &str`;
-implements `Display`.
+`RevsetExpr::new` / `BookmarkName::new(impl Into<String>) -> Result<Self>`;
+`.as_str() -> &str`; both implement `Display`. The remaining bare-positional
+`&str` inputs that are *not* bookmarks/revsets (remote names, operation ids,
+workspace names) keep an internal flag-injection guard.
 
 ### `JjFileset`
 An exact-path jj fileset (`root-file:"<path>"`), so path metacharacters like `(`,
@@ -813,12 +821,14 @@ assert_eq!(fs.as_str(), r#"root-file:"src/a (copy).rs""#);
 
 ### Why injection guards, and why filesets
 
-Every method that places a caller-supplied bookmark name, revset, parent, url,
-or operation id in a *bare positional* argv slot refuses an empty or leading-`-`
-value with an `Error::Spawn` **before** spawning (verified: `jj edit -evil` →
-"unexpected argument"). Flag-*value* slots (`-r <revset>`, `-m <msg>`) and the
-`run`/`run_raw` escape hatches are *not* guarded — jj itself rejects dash-values
-there with a clear error rather than misparsing them.
+Bookmark names and revsets are taken as the validated `BookmarkName` /
+`RevsetExpr` newtypes, so an empty or leading-`-` value is refused at
+construction — before it can reach any argv slot (verified: `jj edit -evil` →
+"unexpected argument"). The remaining caller-supplied bare positionals that are
+*not* bookmarks/revsets (remote names, operation ids, workspace names, urls) keep
+an internal guard that refuses an empty or leading-`-` value with an
+`Error::Spawn` **before** spawning. The `run`/`run_raw` escape hatches are *not*
+guarded — you build the whole argv.
 
 `split_paths`/`commit_paths`/`squash_paths`/`absorb` take `&[JjFileset]` rather
 than raw strings so path metacharacters can never be reinterpreted as fileset

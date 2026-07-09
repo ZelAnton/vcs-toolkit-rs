@@ -265,13 +265,17 @@ for b in git.branches(repo).await? {                       // Vec<Branch>
 ## Revisions
 
 ```rust,ignore
-async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
-async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String>;
-async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String>;
+async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
+async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
+async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
 async fn is_unborn(&self, dir: &Path) -> Result<bool>;
-async fn checkout(&self, dir: &Path, reference: &str) -> Result<()>;
-async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
+async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()>;
+async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
 ```
+
+Ref-name and revision arguments are the validated [newtypes](#validating-newtypes)
+`RefName` / `RevSpec` (and `checkout`'s `CheckoutTarget`), not bare `&str` — build
+them at your input boundary.
 
 - **`rev_parse`** — resolve a revision to its full hash (`rev-parse <rev>`).
 - **`rev_parse_short`** — the abbreviated hash (`rev-parse --short <rev>`), e.g. to
@@ -280,21 +284,24 @@ async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
   (`rev-parse --verify <rev>^{commit}`).
 - **`is_unborn`** — whether `HEAD` is unborn — a fresh repo with no commits
   (`rev-parse --verify -q HEAD`, exit-code mapped).
-- **`checkout`** — switch to a branch or revision (`git checkout <reference>`).
+- **`checkout`** — switch to a branch/revision, or the previous branch (`git
+  checkout <target>`); see [`CheckoutTarget`](#checkouttarget).
 - **`checkout_detach`** — check out a commit as a detached HEAD (`checkout --detach
   <commit>`).
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{CheckoutTarget, Git, GitApi, RevSpec};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if git.is_unborn(repo).await? {                            // bool
     println!("no commits yet");
 }
-let hash = git.rev_parse(repo, "HEAD").await?;             // String — full 40-hex sha
-let short = git.rev_parse_short(repo, "HEAD").await?;      // String — abbreviated
+let head = RevSpec::new("HEAD")?;
+let hash = git.rev_parse(repo, &head).await?;              // String — full 40-hex sha
+let short = git.rev_parse_short(repo, &head).await?;       // String — abbreviated
 let _ = (hash, short);
-git.checkout(repo, "main").await?;
+git.checkout(repo, &CheckoutTarget::Ref(RevSpec::new("main")?)).await?;
+git.checkout(repo, &CheckoutTarget::Previous).await?;      // `git checkout -`
 # Ok(()) }
 ```
 
@@ -1040,16 +1047,19 @@ let u = AnnotatedTag::new("v1.0.0", "first release").rev("abc123");
 
 ## Validating newtypes
 
-Optional up-front validation for callers that accept names/revisions from untrusted
-input (UIs, bots, agents) and want to fail early with a clear error at the input
-boundary. They are **not** required wrappers — the dir-taking methods stay `&str`
-and apply the same flag-injection guard internally on every call, regardless of
-whether you used these.
+Every operation that names a **reference** (branch/tag/ref) or a **revision**
+takes one of these validated newtypes — `RefName` or `RevSpec` — instead of a bare
+`&str`. Construct one at your input boundary (from a UI/bot/agent string); a
+flag-like or malformed value is rejected there, as a classifiable
+[`Error::is_invalid_input`], and can never reach an argv slot. The remaining
+bare-positional `&str` inputs that are *not* refs/revisions (remote names, URLs,
+config keys) keep an internal flag-injection guard.
 
 ### `RefName`
 
-A pre-validated reference name (branch/tag/remote), following the load-bearing core
-of `git check-ref-format`. Rejects a name that is:
+A validated reference name (branch/tag/remote-tracking ref), following the
+load-bearing core of `git check-ref-format`. Used where git creates, deletes,
+renames, or looks up a ref by exact name. Rejects a name that is:
 
 - empty,
 - has a leading `-` or `.`,
@@ -1064,28 +1074,40 @@ pub fn as_str(&self) -> &str;
 
 ### `RevSpec`
 
-A pre-validated revision/range expression (`HEAD~2`, `main..feature`). Deliberately
-*minimal* — git's revision grammar is too rich to validate here — it only
-guarantees the expression is non-empty and cannot be parsed as a flag (no leading
-`-`), matching the internal guard.
+A validated revision/range expression (`HEAD~2`, `main..feature`). Used where git
+resolves a general commit-ish or range (`checkout`, `reset_hard`, `log`, diff
+ranges, …). Deliberately *minimal* — git's revision grammar is too rich to validate
+here — it only guarantees the expression is non-empty and cannot be parsed as a
+flag (no leading `-`).
 
 ```rust,ignore
 pub fn new(rev: impl Into<String>) -> Result<Self>;
 pub fn as_str(&self) -> &str;
 ```
 
+### `CheckoutTarget`
+
+`checkout` (and `switch_with_stash`) take a `CheckoutTarget`: either
+`CheckoutTarget::Ref(RevSpec)` — a validated ref/revision — or
+`CheckoutTarget::Previous`, git's `-` "previous branch" shortcut modelled
+explicitly as a safe fixed literal (rather than a leading-`-` value the flag guard
+would reject).
+
 ```rust,ignore
-# use vcs_git::{RefName, RevSpec};
+# use vcs_git::{CheckoutTarget, RefName, RevSpec};
 # fn demo() -> Result<(), processkit::Error> {
-let name = RefName::new("feature/login")?;   // Ok
-let rev = RevSpec::new("main..HEAD")?;        // Ok
-assert!(RefName::new("-evil").is_err());      // leading '-'
-assert!(RefName::new("bad..name").is_err());  // contains '..'
-let _ = (name, rev);
+let name = RefName::new("feature/login")?;         // Ok
+let rev = RevSpec::new("main..HEAD")?;             // Ok
+let target = CheckoutTarget::Ref(RevSpec::new("main")?);
+assert!(RefName::new("-evil").is_err());           // leading '-'
+assert!(RefName::new("bad..name").is_err());       // contains '..'
+assert!(RevSpec::new("-x").is_err());              // would parse as a flag
+let _ = (name, rev, target, CheckoutTarget::Previous);
 # Ok(()) }
 ```
 
-Both implement `Display` and yield the validated string via `as_str()`.
+`RefName`/`RevSpec` implement `Display` and yield the validated string via
+`as_str()`.
 
 ## Error classification
 

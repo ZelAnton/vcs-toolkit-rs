@@ -20,7 +20,13 @@ crates; tag releases as `vcs-mcp-v<version>`.
   forge_pr_checkout`.
 
 ### Changed
--
+- Tool parameters that carry a git revspec / jj revset or a branch/bookmark name
+  (e.g. `repo_log`, `repo_show_file`, `repo_checkout`) now surface a classifiable
+  input-validation error when given a flag-like or malformed value: the `Repo`
+  facade converts the JSON string into the backend's validated newtype at the
+  boundary and rejects it **before** any child process spawns. No tool-schema
+  change — the validation is enforced through the facade rather than the raw
+  string being passed through.
 
 ### Fixed
 - forge_pr_comment / forge_pr_edit: stop rejecting a legitimate leading-`-` body/title

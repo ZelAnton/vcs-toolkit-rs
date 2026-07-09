@@ -8,8 +8,27 @@ use std::path::PathBuf;
 // (initialisation IS the subject), so they use `TempDir` + `configure_identity`
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
-use vcs_git::{AnnotatedTag, Git, GitApi, MergeCheck, MergeCommit, WorktreeAdd, WorktreeRemove};
+use vcs_git::{
+    AnnotatedTag, CheckoutTarget, Git, GitApi, MergeCheck, MergeCommit, RefName, RevSpec,
+    WorktreeAdd, WorktreeRemove,
+};
 use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
+
+// Terse constructors for the validated newtypes in test call sites; the literals
+// here are always valid, so `unwrap` is fine in tests.
+fn rn(s: &str) -> RefName {
+    RefName::new(s).unwrap()
+}
+fn rv(s: &str) -> RevSpec {
+    RevSpec::new(s).unwrap()
+}
+fn ct(s: &str) -> CheckoutTarget {
+    if s == "-" {
+        CheckoutTarget::Previous
+    } else {
+        CheckoutTarget::Ref(rv(s))
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires the git binary"]
@@ -36,7 +55,7 @@ async fn init_status_add_commit_log_cycle() {
     assert!(git.status(dir).await.expect("status").is_empty());
 
     // Log reflects the commit, with the enriched fields.
-    let log = git.log(dir, "HEAD", 10).await.expect("log");
+    let log = git.log(dir, &rv("HEAD"), 10).await.expect("log");
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].subject, "initial commit");
     assert_eq!(log[0].author, "Test");
@@ -55,10 +74,10 @@ async fn init_status_add_commit_log_cycle() {
         .expect("current_branch")
         .expect("on a branch");
     assert!(!branch.is_empty());
-    git.create_branch(dir, "feature")
+    git.create_branch(dir, &rn("feature"))
         .await
         .expect("create_branch");
-    git.checkout(dir, "feature").await.expect("checkout");
+    git.checkout(dir, &ct("feature")).await.expect("checkout");
     assert_eq!(
         git.current_branch(dir).await.expect("branch").as_deref(),
         Some("feature")
@@ -68,7 +87,7 @@ async fn init_status_add_commit_log_cycle() {
 
     // rev_parse resolves HEAD to the commit hash.
     assert_eq!(
-        git.rev_parse(dir, "HEAD").await.expect("rev-parse"),
+        git.rev_parse(dir, &rv("HEAD")).await.expect("rev-parse"),
         log[0].hash
     );
 }
@@ -180,7 +199,7 @@ async fn worktree_add_list_remove_cycle() {
     assert!(
         git.is_merged(
             dir,
-            MergeCheck::branch(cur.as_str()).into_base(cur.as_str())
+            MergeCheck::branch(rn(&cur)).into_base(rv(&cur))
         )
         .await
         .expect("is_merged")
@@ -200,11 +219,11 @@ async fn worktree_add_list_remove_cycle() {
 
     git.worktree_add(
         dir,
-        WorktreeAdd::create_branch(wt.clone(), "feature", "HEAD"),
+        WorktreeAdd::create_branch(wt.clone(), rn("feature"), rv("HEAD")),
     )
     .await
     .expect("worktree add");
-    assert!(git.branch_exists(dir, "feature").await.expect("exists"));
+    assert!(git.branch_exists(dir, &rn("feature")).await.expect("exists"));
 
     let list = git.worktree_list(dir).await.expect("list");
     assert!(
@@ -248,8 +267,8 @@ async fn bound_view_and_rev_parse_short() {
     );
 
     // `rev_parse_short` is a prefix of the full hash.
-    let full = git.rev_parse(dir, "HEAD").await.expect("rev_parse");
-    let short = bound.rev_parse_short("HEAD").await.expect("short");
+    let full = git.rev_parse(dir, &rv("HEAD")).await.expect("rev_parse");
+    let short = bound.rev_parse_short(&rv("HEAD")).await.expect("short");
     assert!(
         !short.is_empty() && full.starts_with(&short),
         "{short} vs {full}"
@@ -298,11 +317,11 @@ async fn conflicted_files_and_status_tracked() {
         .expect("on a branch");
 
     // Diverge: edit a.txt on both sides.
-    git.create_branch(dir, "other").await.expect("branch");
+    git.create_branch(dir, &rn("other")).await.expect("branch");
     std::fs::write(dir.join("a.txt"), "main change\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "main edit").await.expect("commit");
-    git.checkout(dir, "other").await.expect("checkout");
+    git.checkout(dir, &ct("other")).await.expect("checkout");
     std::fs::write(dir.join("a.txt"), "other change\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "other edit").await.expect("commit");
@@ -317,7 +336,7 @@ async fn conflicted_files_and_status_tracked() {
 
     // The conflicting merge fails and leaves a.txt unmerged.
     assert!(
-        git.merge_commit(dir, MergeCommit::branch(main.as_str()))
+        git.merge_commit(dir, MergeCommit::branch(rv(&main)))
             .await
             .is_err()
     );
@@ -361,16 +380,16 @@ async fn merge_commit_no_ff_creates_a_merge_commit() {
 
     // A feature branch one commit ahead; main does not move, so a plain merge
     // would fast-forward.
-    git.create_branch(dir, "feature").await.expect("branch");
-    git.checkout(dir, "feature").await.expect("checkout");
+    git.create_branch(dir, &rn("feature")).await.expect("branch");
+    git.checkout(dir, &ct("feature")).await.expect("checkout");
     std::fs::write(dir.join("b.txt"), "feature\n").expect("write");
     git.add(dir, &[PathBuf::from("b.txt")]).await.expect("add");
     git.commit(dir, "feature work").await.expect("commit");
-    git.checkout(dir, &main).await.expect("checkout");
+    git.checkout(dir, &ct(&main)).await.expect("checkout");
 
     git.merge_commit(
         dir,
-        MergeCommit::branch("feature")
+        MergeCommit::branch(rv("feature"))
             .no_ff()
             .message("merge feature"),
     )
@@ -379,7 +398,7 @@ async fn merge_commit_no_ff_creates_a_merge_commit() {
 
     // A 2-parent merge commit resolves `HEAD^2`; a fast-forward would not.
     assert!(
-        git.resolve_commit(dir, "HEAD^2").await.is_ok(),
+        git.resolve_commit(dir, &rv("HEAD^2")).await.is_ok(),
         "no_ff merge must create a 2-parent merge commit (HEAD^2 should resolve)"
     );
     assert_eq!(
@@ -410,35 +429,35 @@ async fn is_merged_distinguishes_merged_and_unmerged() {
         .expect("on a branch");
 
     // `done` branches off base and is merged back into main.
-    git.create_branch(dir, "done").await.expect("branch");
-    git.checkout(dir, "done").await.expect("checkout");
+    git.create_branch(dir, &rn("done")).await.expect("branch");
+    git.checkout(dir, &ct("done")).await.expect("checkout");
     std::fs::write(dir.join("b.txt"), "done\n").expect("write");
     git.add(dir, &[PathBuf::from("b.txt")]).await.expect("add");
     git.commit(dir, "done work").await.expect("commit");
-    git.checkout(dir, &main).await.expect("checkout");
+    git.checkout(dir, &ct(&main)).await.expect("checkout");
     git.merge_commit(
         dir,
-        MergeCommit::branch("done").no_ff().message("merge done"),
+        MergeCommit::branch(rv("done")).no_ff().message("merge done"),
     )
     .await
     .expect("merge_commit");
 
     // `pending` has a commit that was never merged into main.
-    git.create_branch(dir, "pending").await.expect("branch");
-    git.checkout(dir, "pending").await.expect("checkout");
+    git.create_branch(dir, &rn("pending")).await.expect("branch");
+    git.checkout(dir, &ct("pending")).await.expect("checkout");
     std::fs::write(dir.join("c.txt"), "pending\n").expect("write");
     git.add(dir, &[PathBuf::from("c.txt")]).await.expect("add");
     git.commit(dir, "pending work").await.expect("commit");
-    git.checkout(dir, &main).await.expect("checkout");
+    git.checkout(dir, &ct(&main)).await.expect("checkout");
 
     assert!(
-        git.is_merged(dir, MergeCheck::branch("done").into_base(main.as_str()))
+        git.is_merged(dir, MergeCheck::branch(rn("done")).into_base(rv(&main)))
             .await
             .expect("is_merged done"),
         "`done` was merged into main"
     );
     assert!(
-        !git.is_merged(dir, MergeCheck::branch("pending").into_base(main.as_str()))
+        !git.is_merged(dir, MergeCheck::branch(rn("pending")).into_base(rv(&main)))
             .await
             .expect("is_merged pending"),
         "`pending` was never merged into main"
@@ -459,12 +478,12 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
     std::fs::write(dir.join("a.txt"), "base\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "base").await.expect("commit");
-    git.create_branch(dir, "feature").await.expect("branch");
+    git.create_branch(dir, &rn("feature")).await.expect("branch");
 
     // Dirty tree: a tracked edit and an untracked file both travel.
     std::fs::write(dir.join("a.txt"), "edited\n").expect("write");
     std::fs::write(dir.join("new.txt"), "untracked\n").expect("write");
-    git.switch_with_stash(dir, "feature").await.expect("switch");
+    git.switch_with_stash(dir, &ct("feature")).await.expect("switch");
     assert_eq!(
         git.current_branch(dir).await.expect("branch").as_deref(),
         Some("feature")
@@ -477,7 +496,7 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
 
     // A failing checkout restores the dirty state where it was.
     assert!(
-        git.switch_with_stash(dir, "no-such-branch").await.is_err(),
+        git.switch_with_stash(dir, &ct("no-such-branch")).await.is_err(),
         "checkout of a missing branch must fail"
     );
     assert_eq!(
@@ -508,7 +527,7 @@ async fn clone_repo_from_local_bare_remote() {
     .await
     .expect("clone");
     assert!(dest.join("seed.txt").exists(), "worktree materialised");
-    let log = git.log(&dest, "HEAD", 10).await.expect("log");
+    let log = git.log(&dest, &rv("HEAD"), 10).await.expect("log");
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].subject, "seed");
     assert_eq!(
@@ -534,12 +553,12 @@ async fn tags_show_config_and_remotes_round_trip() {
     git.commit(dir, "base").await.expect("commit");
 
     // Tags: lightweight + annotated, list, delete.
-    git.tag_create(dir, "v1", None).await.expect("tag");
-    git.tag_create_annotated(dir, AnnotatedTag::new("v1.1", "first release"))
+    git.tag_create(dir, &rn("v1"), None).await.expect("tag");
+    git.tag_create_annotated(dir, AnnotatedTag::new(rn("v1.1"), "first release"))
         .await
         .expect("tag -a");
     assert_eq!(git.tag_list(dir).await.expect("list"), ["v1", "v1.1"]);
-    git.tag_delete(dir, "v1").await.expect("delete");
+    git.tag_delete(dir, &rn("v1")).await.expect("delete");
     assert_eq!(git.tag_list(dir).await.expect("list"), ["v1.1"]);
 
     // show_file resolves a subdir path. The backslash form is the Windows trap
@@ -550,7 +569,7 @@ async fn tags_show_config_and_remotes_round_trip() {
     #[cfg(not(windows))]
     let sub_path = "sub/f.txt";
     assert_eq!(
-        git.show_file(dir, "HEAD", sub_path).await.expect("show"),
+        git.show_file(dir, &rv("HEAD"), sub_path).await.expect("show"),
         "v1\n"
     );
 
@@ -591,11 +610,11 @@ async fn blame_cherry_pick_and_revert_cycle() {
     std::fs::write(dir.join("f.txt"), "one\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     git.commit(dir, "first").await.expect("commit");
-    let first = git.rev_parse(dir, "HEAD").await.expect("rev");
+    let first = git.rev_parse(dir, &rv("HEAD")).await.expect("rev");
     std::fs::write(dir.join("f.txt"), "one\ntwo\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     git.commit(dir, "second").await.expect("commit");
-    let second = git.rev_parse(dir, "HEAD").await.expect("rev");
+    let second = git.rev_parse(dir, &rv("HEAD")).await.expect("rev");
 
     let blame = git.blame(dir, "f.txt", None).await.expect("blame");
     assert_eq!(blame.len(), 2);
@@ -606,16 +625,16 @@ async fn blame_cherry_pick_and_revert_cycle() {
     assert_eq!(blame[1].content, "two");
 
     // Transplant "second" onto a branch cut at "first".
-    git.create_branch(dir, "side").await.expect("branch");
-    git.checkout(dir, "side").await.expect("checkout");
-    git.reset_hard(dir, &first).await.expect("reset");
-    git.cherry_pick(dir, &second).await.expect("cherry-pick");
+    git.create_branch(dir, &rn("side")).await.expect("branch");
+    git.checkout(dir, &ct("side")).await.expect("checkout");
+    git.reset_hard(dir, &rv(&first)).await.expect("reset");
+    git.cherry_pick(dir, &rv(&second)).await.expect("cherry-pick");
     assert_eq!(
         std::fs::read_to_string(dir.join("f.txt")).expect("read"),
         "one\ntwo\n"
     );
     // And revert it again.
-    git.revert(dir, "HEAD").await.expect("revert");
+    git.revert(dir, &rv("HEAD")).await.expect("revert");
     assert_eq!(
         std::fs::read_to_string(dir.join("f.txt")).expect("read"),
         "one\n"
@@ -643,20 +662,20 @@ async fn rebase_skip_finishes_an_emptied_patch() {
         .expect("branch")
         .expect("on a branch");
     // A stack commit whose content the base branch then also adopts.
-    git.create_branch(dir, "stack").await.expect("branch");
-    git.checkout(dir, "stack").await.expect("checkout");
+    git.create_branch(dir, &rn("stack")).await.expect("branch");
+    git.checkout(dir, &ct("stack")).await.expect("checkout");
     std::fs::write(dir.join("f.txt"), "same change\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     git.commit(dir, "stack change").await.expect("commit");
-    git.checkout(dir, &main).await.expect("checkout");
+    git.checkout(dir, &ct(&main)).await.expect("checkout");
     std::fs::write(dir.join("f.txt"), "upstream version\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     git.commit(dir, "upstream change").await.expect("commit");
-    git.checkout(dir, "stack").await.expect("checkout");
+    git.checkout(dir, &ct("stack")).await.expect("checkout");
 
     // The rebase conflicts; resolving to EXACTLY the upstream content empties
     // the patch, so --continue refuses and --skip is the way out.
-    assert!(git.rebase(dir, &main).await.is_err(), "conflict expected");
+    assert!(git.rebase(dir, &rv(&main)).await.is_err(), "conflict expected");
     std::fs::write(dir.join("f.txt"), "upstream version\n").expect("resolve");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     assert!(
@@ -759,18 +778,18 @@ async fn classifier_matches_real_merge_conflict() {
 
     // Branch A edits the line; main then edits the SAME line — a merge can't
     // auto-resolve, so it fails on a content conflict.
-    git.create_branch(dir, "a").await.expect("branch");
-    git.checkout(dir, "a").await.expect("checkout");
+    git.create_branch(dir, &rn("a")).await.expect("branch");
+    git.checkout(dir, &ct("a")).await.expect("checkout");
     std::fs::write(dir.join("a.txt"), "a change\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "a edit").await.expect("commit");
-    git.checkout(dir, &main).await.expect("checkout");
+    git.checkout(dir, &ct(&main)).await.expect("checkout");
     std::fs::write(dir.join("a.txt"), "main change\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "main edit").await.expect("commit");
 
     let err = git
-        .merge_commit(dir, MergeCommit::branch("a"))
+        .merge_commit(dir, MergeCommit::branch(rv("a")))
         .await
         .expect_err("conflicting merge must fail");
     assert!(
@@ -850,18 +869,18 @@ async fn conflict_model_resolves_a_real_conflict() {
     std::fs::write(dir.join("a.txt"), "base\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "base").await.expect("commit");
-    git.create_branch(dir, "other").await.expect("branch");
+    git.create_branch(dir, &rn("other")).await.expect("branch");
     std::fs::write(dir.join("a.txt"), "ours\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "ours").await.expect("commit");
-    git.checkout(dir, "other").await.expect("checkout");
+    git.checkout(dir, &ct("other")).await.expect("checkout");
     std::fs::write(dir.join("a.txt"), "theirs\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "theirs").await.expect("commit");
     let main = "-"; // previous branch
     let _ = main;
     assert!(
-        git.merge_commit(dir, MergeCommit::branch("@{-1}"))
+        git.merge_commit(dir, MergeCommit::branch(rv("@{-1}")))
             .await
             .is_err(),
         "conflict expected"

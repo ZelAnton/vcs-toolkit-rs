@@ -2251,36 +2251,29 @@ mod tests {
         assert_eq!(&args[..4], &["git", "push", "-b", "exact:feature"]);
     }
 
-    // The two backends handle a flag-like branch per the documented guard
-    // convention: git rejects it BEFORE spawning (the branch lands in GitPush's
-    // bare-positional refspec slot, where `--force` would otherwise be parsed
-    // as a flag); jj passes it verbatim in the `-b` flag-VALUE slot, where jj
-    // reads it as a bookmark name and errors itself — no flag injection is
-    // possible there, so no pre-spawn guard exists (same as rebase/fetch_from).
+    // A flag-like branch is now rejected the same way on BOTH backends: the
+    // facade converts the branch string into the validated newtype at the
+    // boundary (`vcs_git::RefName` / `vcs_jj::BookmarkName`), so `--force` is
+    // refused with a classifiable input-validation error BEFORE any process
+    // spawns — no longer a per-backend difference.
     #[tokio::test]
-    async fn push_flag_like_branch_follows_guard_convention() {
+    async fn push_flag_like_branch_rejected_before_spawn_on_both_backends() {
         use processkit::testing::RecordingRunner;
         let grec = RecordingRunner::replying(Reply::ok(""));
         let err = Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
             .push("--force")
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, Error::Vcs(processkit::Error::Spawn { .. })),
-            "got: {err:?}"
-        );
-        assert_eq!(grec.calls().len(), 0, "no process must have spawned");
+        assert!(err.is_invalid_input(), "git: got {err:?}");
+        assert_eq!(grec.calls().len(), 0, "git: no process must have spawned");
 
         let jrec = RecordingRunner::replying(Reply::ok(""));
-        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
+        let err = Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
             .push("--force")
             .await
-            .expect("jj path spawns; the value rides -b verbatim");
-        assert_eq!(
-            &jrec.only_call().args_str()[..4],
-            &["git", "push", "-b", "exact:--force"],
-            "the flag-like value must ride the -b flag-VALUE slot, not become argv"
-        );
+            .unwrap_err();
+        assert!(err.is_invalid_input(), "jj: got {err:?}");
+        assert_eq!(jrec.calls().len(), 0, "jj: no process must have spawned");
     }
 
     #[tokio::test]

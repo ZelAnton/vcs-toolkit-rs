@@ -17,6 +17,16 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Changed
 
+- The facade keeps its ergonomic `&str`-taking `Repo` API but now converts each
+  ref-name / revision input into the backend's validated newtype
+  (`vcs_git::RefName`/`RevSpec` / `vcs_jj::BookmarkName`/`RevsetExpr`) **at the
+  boundary**, so an invalid or flag-like value from a caller (CLI/MCP/UI) is
+  rejected with a classifiable `Error::is_invalid_input` **before** any child
+  process spawns, on both backends. Behavioural change: a flag-like branch passed
+  to `Repo::push` is now refused pre-spawn on the **jj** backend too (previously it
+  rode jj's `-b` flag-value slot verbatim), matching the git backend — the
+  conversion is uniform. `Repo::checkout("-")` maps to git's "previous branch"
+  (`CheckoutTarget::Previous`) at the boundary.
 - Internal only (no public API change): the git backend now drives `vcs-git`'s
   spec-typed `delete_branch(BranchDelete)` / `worktree_remove(WorktreeRemove)` and
   `blocking::worktree_remove(WorktreeRemove)` instead of the removed positional

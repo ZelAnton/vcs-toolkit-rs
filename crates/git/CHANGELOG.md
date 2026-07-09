@@ -22,6 +22,27 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- **Breaking:** reference names and revision expressions are now taken as the
+  validated newtypes `RefName` / `RevSpec` (previously constructible but accepted
+  by no method — a false safety promise). Every `GitApi` op that names a branch,
+  tag, or ref to create/delete/rename/look-up now takes `&RefName`; every op that
+  resolves a commit-ish or range takes `&RevSpec`; the option structs follow
+  (`BranchDelete::new(RefName)`, `MergeCheck::branch(RefName).into_base(RevSpec)`,
+  `MergeCommit`/`MergeNoCommit::branch(RevSpec)`, `AnnotatedTag::new(RefName,…)
+  [.rev(RevSpec)]`, `GitPush::branch(RefName)` / `refspec(&RefName, &RefName)`,
+  `WorktreeAdd::create_branch(path, RefName, RevSpec)` / `checkout(path, RevSpec)`,
+  `tag_create(&RefName, Option<RevSpec>)`, `blame(path, Option<RevSpec>)`). A
+  flag-like or malformed value is now rejected at newtype construction, before it
+  can reach an argv slot, as a classifiable `Error::is_invalid_input`. Migrate a
+  call by wrapping the string: `git.checkout(dir, "main")` →
+  `git.checkout(dir, &CheckoutTarget::Ref(RevSpec::new("main")?))`,
+  `git.create_branch(dir, "feat")` → `git.create_branch(dir, &RefName::new("feat")?)`.
+- **Breaking:** `checkout` now takes a `CheckoutTarget` enum instead of `&str`, so
+  git's `-` "previous branch" shortcut is modelled explicitly as
+  `CheckoutTarget::Previous` (a safe fixed literal) rather than being rejected by
+  the flag guard. `switch_with_stash` takes a `CheckoutTarget` for the same reason.
+  Remaining bare-positional `&str` inputs that are not refs/revisions (remote
+  names, URLs, config keys) keep their internal `reject_flag_like` guard.
 - **Breaking:** replace the trailing positional `bool` on three `GitApi` methods
   with named `#[non_exhaustive]` specs, so the flag reads at the call site and can
   grow without a signature break: `delete_branch(dir, name, force)` →

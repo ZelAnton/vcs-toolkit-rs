@@ -224,7 +224,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     let head_before = repo
         .git()
         .expect("git backend")
-        .rev_parse(dir, "HEAD")
+        .rev_parse(dir, &vcs_core::vcs_git::RevSpec::new("HEAD").unwrap())
         .await
         .expect("rev-parse");
 
@@ -249,7 +249,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert_eq!(
         repo.git()
             .expect("git backend")
-            .rev_parse(dir, "HEAD")
+            .rev_parse(dir, &vcs_core::vcs_git::RevSpec::new("HEAD").unwrap())
             .await
             .expect("rev-parse"),
         head_before,
@@ -261,7 +261,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch("conflicting"))
+            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch(vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()))
             .await
             .is_err()
     );
@@ -278,7 +278,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch("conflicting"))
+            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch(vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()))
             .await
             .is_err()
     );
@@ -371,7 +371,7 @@ async fn git_continue_drives_rebase_through_two_conflicts() {
     assert!(
         repo.git()
             .expect("git backend")
-            .rebase(dir, "onto")
+            .rebase(dir, &vcs_core::vcs_git::RevSpec::new("onto").unwrap())
             .await
             .is_err()
     );

@@ -4,7 +4,9 @@
 use std::path::Path;
 
 use processkit::ProcessRunner;
-use vcs_git::{Git, GitApi, GitPush, StatusEntry, WorktreeAdd};
+use vcs_git::{
+    CheckoutTarget, Git, GitApi, GitPush, RefName, RevSpec, StatusEntry, WorktreeAdd,
+};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
@@ -42,7 +44,7 @@ pub(crate) async fn branch_exists<R: ProcessRunner>(
     dir: &Path,
     name: &str,
 ) -> Result<bool> {
-    Ok(git.branch_exists(dir, name).await?)
+    Ok(git.branch_exists(dir, &RefName::new(name)?).await?)
 }
 
 pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
@@ -72,7 +74,7 @@ pub(crate) async fn delete_branch<R: ProcessRunner>(
     name: &str,
     force: bool,
 ) -> Result<()> {
-    let mut spec = vcs_git::BranchDelete::new(name);
+    let mut spec = vcs_git::BranchDelete::new(RefName::new(name)?);
     if force {
         spec = spec.force();
     }
@@ -86,7 +88,8 @@ pub(crate) async fn rename_branch<R: ProcessRunner>(
     old: &str,
     new: &str,
 ) -> Result<()> {
-    git.rename_branch(dir, old, new).await?;
+    git.rename_branch(dir, &RefName::new(old)?, &RefName::new(new)?)
+        .await?;
     Ok(())
 }
 
@@ -109,7 +112,11 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Res
     } else {
         "HEAD"
     };
-    git.diff_stat(dir, range).await.map_err(Into::into)
+    // `range` here is always a fixed literal (`HEAD`/the empty-tree oid), so the
+    // conversion never fails; it goes through the newtype for a uniform boundary.
+    git.diff_stat(dir, &RevSpec::new(range)?)
+        .await
+        .map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(
@@ -119,7 +126,7 @@ pub(crate) async fn log<R: ProcessRunner>(
     max: usize,
 ) -> Result<Vec<Commit>> {
     Ok(git
-        .log(dir, revspec, max)
+        .log(dir, &RevSpec::new(revspec)?, max)
         .await?
         .into_iter()
         .map(|c| Commit::new(c.hash, c.subject).author(c.author).date(c.date))
@@ -132,7 +139,7 @@ pub(crate) async fn show_file<R: ProcessRunner>(
     rev: &str,
     path: &str,
 ) -> Result<String> {
-    Ok(git.show_file(dir, rev, path).await?)
+    Ok(git.show_file(dir, &RevSpec::new(rev)?, path).await?)
 }
 
 pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<RepoSnapshot> {
@@ -220,14 +227,14 @@ pub(crate) async fn fetch_branch<R: ProcessRunner>(
     dir: &Path,
     branch: &str,
 ) -> Result<()> {
-    git.fetch_branch(dir, branch).await?;
+    git.fetch_branch(dir, &RefName::new(branch)?).await?;
     Ok(())
 }
 
 pub(crate) async fn push<R: ProcessRunner>(git: &Git<R>, dir: &Path, branch: &str) -> Result<()> {
     // `-u` so the first facade push also records the upstream — the facade has
     // no separate set-upstream step, and `-u` on later pushes is idempotent.
-    git.push(dir, GitPush::branch(branch).set_upstream())
+    git.push(dir, GitPush::branch(RefName::new(branch)?).set_upstream())
         .await?;
     Ok(())
 }
@@ -237,8 +244,20 @@ pub(crate) async fn checkout<R: ProcessRunner>(
     dir: &Path,
     reference: &str,
 ) -> Result<()> {
-    git.checkout(dir, reference).await?;
+    git.checkout(dir, &checkout_target(reference)?).await?;
     Ok(())
+}
+
+/// Map a facade checkout string to a validated [`CheckoutTarget`] at the boundary:
+/// git's `-` "previous branch" shortcut is its own variant (a safe fixed literal),
+/// everything else is a validated [`RevSpec`] — so a flag-like value is refused
+/// here with a classifiable input-validation error rather than reaching argv.
+fn checkout_target(reference: &str) -> Result<CheckoutTarget> {
+    if reference == "-" {
+        Ok(CheckoutTarget::Previous)
+    } else {
+        Ok(CheckoutTarget::Ref(RevSpec::new(reference)?))
+    }
 }
 
 pub(crate) async fn new_child<R: ProcessRunner>(
@@ -250,7 +269,7 @@ pub(crate) async fn new_child<R: ProcessRunner>(
 }
 
 pub(crate) async fn rebase<R: ProcessRunner>(git: &Git<R>, dir: &Path, onto: &str) -> Result<()> {
-    git.rebase(dir, onto).await?;
+    git.rebase(dir, &RevSpec::new(onto)?).await?;
     Ok(())
 }
 
@@ -262,7 +281,7 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
     // `--no-ff` so even a fast-forwardable merge stages a real (abortable) merge
     // instead of moving HEAD; `--no-commit` so nothing is committed either way.
     let merged = git
-        .merge_no_commit(dir, vcs_git::MergeNoCommit::branch(source).no_ff())
+        .merge_no_commit(dir, vcs_git::MergeNoCommit::branch(RevSpec::new(source)?).no_ff())
         .await;
     match merged {
         Ok(()) => {
@@ -382,8 +401,11 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     branch: &str,
     base: &str,
 ) -> Result<CreateOutcome> {
-    git.worktree_add(dir, WorktreeAdd::create_branch(path, branch, base))
-        .await?;
+    git.worktree_add(
+        dir,
+        WorktreeAdd::create_branch(path, RefName::new(branch)?, RevSpec::new(base)?),
+    )
+    .await?;
     Ok(CreateOutcome::Plain)
 }
 
