@@ -11,6 +11,10 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: add `GitApi::log_paths` — like `log`, but scoped to commits that
+  touched the given paths (`git log <revspec> -n <max> -- <paths>`), with the
+  same `--` pathspec separator as `add`/`commit_paths` and a refusal of an
+  empty path list before spawning.
 - test: lock in the `remote_branch_exists` bounded wait — a hung `ls-remote`
   resolves via its per-command 10 s timeout rather than hanging (pins the
   processkit 2.1 guarantee that a scripted pending reply honors `Command::timeout`

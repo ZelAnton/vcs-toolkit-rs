@@ -491,6 +491,22 @@ pub trait JjApi: Send + Sync {
     async fn status_text(&self, dir: &Path) -> Result<String>;
     /// Changes matching `revset`, newest first, up to `max` (`jj log`).
     async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
+    /// Like [`log`](JjApi::log), but scoped to changes that touched `filesets`
+    /// (`jj log -r <revset> <filesets>`) — e.g. "who changed this module".
+    /// Build filesets with [`JjFileset::path`] (same primitive as
+    /// [`commit_paths`](JjApi::commit_paths)/[`squash_paths`](JjApi::squash_paths)).
+    /// An empty `filesets` is refused *before spawning*: silently falling back
+    /// to [`log`](JjApi::log)'s unrestricted history would defeat the "scoped
+    /// to these paths" contract. Mirrors
+    /// [`GitApi::log_paths`](../vcs_git/trait.GitApi.html#tymethod.log_paths),
+    /// which takes pathspecs instead of filesets.
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revset: &str,
+        max: usize,
+        filesets: &[JjFileset],
+    ) -> Result<Vec<Change>>;
     /// The working-copy change (`jj log -r @`).
     async fn current_change(&self, dir: &Path) -> Result<Change>;
     /// Set the working-copy change's description (`jj describe -m`).
@@ -810,6 +826,43 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                 ),
                 parse::parse_changes,
             )
+            .await
+    }
+
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revset: &str,
+        max: usize,
+        filesets: &[JjFileset],
+    ) -> Result<Vec<Change>> {
+        // An empty fileset slice would degrade `jj log -r <revset> <filesets…>`
+        // to a bare `jj log -r <revset>` — UNRESTRICTED history, the opposite
+        // of "scoped to these paths". Refuse before spawning (mirrors
+        // `commit_paths`/`split_paths`).
+        if filesets.is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "log_paths requires at least one fileset — an empty set would log \
+                     unrestricted history, not history scoped to the named paths",
+                ),
+            ));
+        }
+        let n = format!("-n{max}");
+        let mut args: Vec<String> = vec![
+            "log".into(),
+            "-r".into(),
+            revset.into(),
+            n,
+            "--no-graph".into(),
+            "-T".into(),
+            parse::CHANGE_TEMPLATE.into(),
+        ];
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core
+            .parse(self.cmd_in(dir, args), parse::parse_changes)
             .await
     }
 
@@ -1717,6 +1770,7 @@ vcs_cli_support::at_forwarders! {
         fn status() -> Result<Vec<ChangedPath>>;
         fn status_text() -> Result<String>;
         fn log(revset: &str, max: usize) -> Result<Vec<Change>>;
+        fn log_paths(revset: &str, max: usize, filesets: &[JjFileset]) -> Result<Vec<Change>>;
         fn current_change() -> Result<Change>;
         fn describe(message: &str) -> Result<()>;
         fn describe_rev(revset: &str, message: &str) -> Result<()>;
@@ -2891,6 +2945,51 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         let err = jj
             .commit_paths(Path::new("/r"), &[], "msg")
+            .await
+            .expect_err("empty filesets must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn log_paths_builds_revset_template_and_filesets() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.log_paths(
+            Path::new("."),
+            "main..@",
+            5,
+            &[JjFileset::path("x|y.rs"), JjFileset::path("z.rs")],
+        )
+        .await
+        .expect("log_paths");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "log",
+                "-r",
+                "main..@",
+                "-n5",
+                "--no-graph",
+                "-T",
+                parse::CHANGE_TEMPLATE,
+                "root-file:\"x|y.rs\"",
+                "root-file:\"z.rs\"",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    // An empty fileset slice must NOT degrade to a bare `jj log -r <revset>`
+    // (unrestricted history) — it's refused before any spawn, mirroring
+    // `commit_paths_refuses_empty_filesets_without_spawning`.
+    #[tokio::test]
+    async fn log_paths_refuses_empty_filesets_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .log_paths(Path::new("."), "@", 5, &[])
             .await
             .expect_err("empty filesets must be refused");
         assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");

@@ -10,7 +10,10 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Repo::log(revspec_or_revset, max)` / `VcsRepo::log`: backend-agnostic recent
+  history, dispatching to `GitApi::log` / `JjApi::log`. Returns the new
+  `Commit` DTO (`id`, `description`, and `author`/`date` — the latter two
+  `Some` only on git, since jj's typed log doesn't currently surface them).
 
 ### Changed
 -

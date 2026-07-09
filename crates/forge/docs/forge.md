@@ -90,7 +90,7 @@ trait adds nothing but the `&dyn` boundary.
 
 [`ForgePr`] generalises GitHub's PR, GitLab's MR, and Gitea's PR: `number` (the id
 each CLI takes — GitLab's `iid`), `title`, `state` ([`ForgePrState`]),
-`source_branch`, `target_branch`, `url`, `draft`.
+`source_branch`, `target_branch`, `url`, `draft`, `labels`, `assignees`.
 
 **State normalisation** ([`ForgePrState`]):
 
@@ -108,6 +108,12 @@ status. [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`) maps to each CLI's fla
 `draft` is **best-effort**: GitHub (`gh --json isDraft`) and GitLab report it;
 Gitea reports `false` (`tea`'s PR list doesn't carry the flag).
 
+`labels: Vec<String>` / `assignees: Vec<String>` are **best-effort**: GitHub
+(`gh --json labels,assignees`, flattened from `[{"name": …}]`/`[{"login": …}]`)
+and GitLab (`labels` already plain strings; `assignees` flattened from its User
+objects' `username`) both report them. Gitea is **always empty** on both —
+`tea`'s PR list/view has no labels/assignees column.
+
 `pr_diff` returns [`FileDiff`] (re-exported from [`vcs-diff`](https://docs.rs/vcs-diff/latest/vcs_diff/)) directly — no
 facade-specific DTO wraps it, since `gh pr diff`/`glab mr diff` already emit the
 same git-format unified diff `git diff`/`jj diff --git` do, so it goes through
@@ -116,7 +122,9 @@ the same shared parser.
 [`ForgeIssue`] generalises the three issue shapes: `number` (GitLab's `iid`),
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",
 everything else reads as `Open`, so an unmodelled state is treated as live),
-`body`, `url` — both populated by `issue_list` and `issue_view` on every forge.
+`body`, `url` — both populated by `issue_list` and `issue_view` on every forge —
+plus `labels: Vec<String>` / `assignees: Vec<String>`, best-effort the same way
+as [`ForgePr`]'s: GitHub and GitLab report them, Gitea is always empty on both.
 
 [`ForgeRelease`] is `tag` / `title` / `url` / `published_at: Option<String>`
 (`None` for an unpublished draft or when the backend doesn't report one) /

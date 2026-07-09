@@ -189,6 +189,8 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         target_branch: pr.base_ref_name,
         url: pr.url,
         draft: pr.is_draft,
+        labels: pr.labels,
+        assignees: pr.assignees,
     }
 }
 
@@ -207,6 +209,8 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
+        labels: i.labels,
+        assignees: i.assignees,
     }
 }
 
