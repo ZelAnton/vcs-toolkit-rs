@@ -99,12 +99,14 @@ baseline**: if capturing it exceeds the deadline, `build()` returns a *transient
 stall startup any more than it can stall the loop.
 
 - **`recv().await -> Option<RepoChange>`** — the next settled change; `None` once
-  the watcher is dropped. `current() -> &RepoSnapshot` is the last known state —
+  the watch backend dies permanently, the watcher is dropped, or the task
+  otherwise ends. `current() -> &RepoSnapshot` is the last known state —
   the build-time baseline, advanced **only when you pull a change** (via `recv`
   or the stream — it is as fresh as your last pull, not a live view).
 - **`stats()`** — lock-free health counters: re-queries run, changes emitted,
-  skips (transient failures + deadline overruns) and what the last skip failed
-  on. A climbing `skipped` with flat `requeries` means the repository is wedged —
+  skips (transient failures + deadline overruns), automatic retries and
+  recoveries, terminal failures, and what the last skip failed on. A climbing
+  `skipped` with flat `requeries` means the repository is wedged —
   poll it from a health check instead of inferring health from event silence.
 - **The `stream` feature** adds `impl futures_core::Stream for RepoWatcher`, so
   the watcher drops into `tokio::select!`/stream combinators directly. `recv()`
@@ -138,12 +140,24 @@ are observed from a watched worktree too.
 
 ## Semantics & limits
 
-- **Transient re-query failures are skipped, not surfaced.** A snapshot taken
-  while an operation holds `index.lock` may fail (or overrun `requery_timeout`);
-  the watcher skips that re-check and the next event re-queries the settled
-  state. Setup failures (the watch can't start) surface from `build()`. Skips
-  are **counted** — `stats()` reports them (with the failure kind) — and the
-  `tracing` feature adds a debug line on each.
+- **Transient re-query failures are skipped, then retried automatically.** A
+  snapshot taken while an operation holds `index.lock` may fail (or overrun
+  `requery_timeout`); the watcher skips that re-check and schedules a bounded
+  backoff retry **even if no new filesystem event arrives** — so a failure on
+  the very last signal doesn't leave the watcher stuck until the next one. The
+  retry sequence is capped: once exhausted, the loop goes idle again and waits
+  for the next real filesystem event, so a permanently wedged repository can't
+  spin the task forever. Setup failures (the watch can't start) surface from
+  `build()`. Skips, retries, and recoveries are all **counted** — `stats()`
+  reports them (with the failure kind for skips) — and the `tracing` feature
+  adds a debug line on each.
+- **A permanent watch-backend failure ends the watch.** If the OS-level
+  filesystem watch itself dies (most reliably reported on Windows — e.g. the
+  watched `.git`/`.jj` directory was removed and re-created by a re-clone or
+  `jj git init`), the loop closes its output channel: `recv()` returns `None`
+  (and the stream ends) instead of silently going quiet, and
+  `stats().terminal_failures` increments. Rebuild the watcher
+  (`RepoWatcher::watch` again) to resume.
 - **Runtime.** Unlike the rest of the toolkit, `vcs-watch` uses **tokio at
   runtime** (the watch task + debounce timer). Build/await it inside a tokio
   runtime.

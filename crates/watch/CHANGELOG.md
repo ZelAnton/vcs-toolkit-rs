@@ -10,10 +10,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `WatcherStats::retries`/`recoveries`/`terminal_failures` — a skipped
+  (timed-out or transiently failed) re-query now schedules a bounded backoff
+  retry on its own, without waiting for a new filesystem event, and these
+  counters distinguish a self-scheduled retry, a subsequent recovery, and a
+  terminal watch-backend failure.
 
 ### Changed
--
+- A permanent filesystem-watch backend failure (e.g. the watched `.git`/`.jj`
+  directory was removed and re-created) now closes the watcher's output
+  channel: `RepoWatcher::recv`/the `stream` feature observe it as `None`/end
+  of stream directly, instead of only being visible via `stats().watch_errors`.
 
 ### Fixed
 -
