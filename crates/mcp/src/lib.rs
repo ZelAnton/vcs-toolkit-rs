@@ -300,6 +300,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "forge_pr_mark_ready",
     "forge_pr_comment",
     "forge_pr_edit",
+    "forge_pr_checkout",
 ];
 
 /// Which mutating tools are callable — the server's write policy.
@@ -922,6 +923,22 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Check out a pull/merge request's branch into the local working copy (gh pr checkout / glab mr checkout / tea pr checkout). Mutates the working copy — the head/source branch is fetched and switched to. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_checkout(
+        &self,
+        Parameters(p): Parameters<PrNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_checkout")?;
+        self.forge()?
+            .pr_checkout(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "checked_out": p.number }))
+    }
+
+    #[tool(
         description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }` for the configured forge. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
@@ -1379,6 +1396,49 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
     }
 
+    // `forge_pr_checkout` is write-gated like the other forge mutations: refused
+    // under `WriteGate::None`, but routed to `gh pr checkout <n>` when allowed.
+    #[tokio::test]
+    async fn forge_pr_checkout_gates_and_routes() {
+        // Gated: refused before any spawn.
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+            "/repo",
+            vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_checkout(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        // Allowed: routes to `gh pr checkout` and reports the checked-out number.
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "checkout"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let out = server
+            .forge_pr_checkout(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect("checkout ok");
+        assert!(
+            result_json(&out).contains("checked_out"),
+            "{}",
+            result_json(&out)
+        );
+    }
+
     // T-013: on GitHub a `body` that begins with `-` is a legitimate Markdown
     // value (a `- item` bullet list, or a `---` rule), not a flag — `gh pr comment
     // --body <body>` puts it in a flag-VALUE slot. The MCP layer must NOT reject it
@@ -1638,6 +1698,12 @@ mod tests {
         let a = tool.annotations.expect("annotations present");
         assert_eq!(a.destructive_hint, Some(true));
         assert_eq!(a.read_only_hint, None);
+
+        // `forge_pr_checkout` mutates the working copy — destructive, not read-only.
+        let tool = VcsMcpServer::forge_pr_checkout_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
     }
 
     // The macro-generated tool definitions carry the right MCP annotations: read
@@ -1697,6 +1763,7 @@ mod tests {
         assert!(names.contains(&"forge_pr_list"), "{names:?}");
         assert!(names.contains(&"forge_pr_comment"), "{names:?}");
         assert!(names.contains(&"forge_pr_edit"), "{names:?}");
+        assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
         assert!(names.contains(&"forge_info"), "{names:?}");
 
         let result = client

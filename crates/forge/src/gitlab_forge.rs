@@ -115,6 +115,18 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     Ok(())
 }
 
+// Named `pr_checkout` (not `mr_checkout`) to match the facade-level naming used
+// by the other bridging fns here — it calls glab's `mr_checkout` under the `pr_*`
+// facade name (like `pr_merge` → `mr_merge`, `pr_diff` → `mr_diff`).
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    glab.mr_checkout(dir, number).await?;
+    Ok(())
+}
+
 pub(crate) async fn pr_checks<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,

@@ -104,6 +104,15 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     Ok(())
 }
 
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    tea.pr_checkout(dir, number).await?;
+    Ok(())
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,

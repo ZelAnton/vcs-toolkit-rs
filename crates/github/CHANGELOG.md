@@ -13,6 +13,11 @@ crates; tag releases as `vcs-github-v<version>`.
 - `PullRequest`/`Issue` gained `labels: Vec<String>` and `assignees: Vec<String>`,
   parsed from `gh --json labels,assignees`'s nested `[{"name": …}]`/
   `[{"login": …}]` shapes and flattened to plain strings.
+- `GitHubApi::pr_checkout(dir, number)` — check a pull request's branch out into
+  the working copy (`gh pr checkout <n>`); the head branch is fetched and switched
+  to, so a build/test/edit runs against the PR locally. Mutates the working copy.
+  Mirrored on the `GitHubAt` bound view. **Defaulted** to `Error::Unsupported` on
+  the trait so external implementers keep compiling.
 
 ### Changed
 -

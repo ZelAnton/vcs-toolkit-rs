@@ -13,7 +13,8 @@
 //! # What you can do
 //!
 //! Check auth · view the project · the lean merge-request lifecycle (list / view /
-//! create / merge / mark-ready / close) · CI/pipeline status · issues · releases.
+//! create / merge / mark-ready / close / checkout) · CI/pipeline status · issues ·
+//! releases.
 //! One tiny call to start:
 //!
 //! ```no_run
@@ -332,6 +333,17 @@ pub trait GitLabApi: Send + Sync {
     async fn mr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
     async fn mr_close(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Check out a merge request's source branch into the working copy at `dir`
+    /// (`glab mr checkout <id>`) — the branch is fetched and switched to, so a
+    /// subsequent build/test/edit runs against the MR locally. Mutates the working
+    /// copy. **Defaulted** to `Error::Unsupported` so external implementers keep
+    /// compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "mr_checkout".into(),
+        })
+    }
     /// Add a comment to a merge request, returning the command's output
     /// (`glab mr note <id> -m <message>`). The note body rides in a
     /// flag-VALUE position, so no argv-guard is needed. **Defaulted** to
@@ -543,6 +555,16 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
+    async fn mr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard. `glab mr checkout` fetches the MR's source branch and switches
+        // the working copy to it (no structured output).
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["mr", "checkout", id.as_str()]))
+            .await
+    }
+
     async fn mr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
         // `-m` is a flag-VALUE position; glab consumes the next token verbatim.
         // No `--yes` here: `mr note` is non-destructive in spirit (adds a
@@ -734,6 +756,7 @@ vcs_cli_support::at_forwarders! {
         fn mr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
         fn mr_mark_ready(number: u64) -> Result<()>;
         fn mr_close(number: u64) -> Result<()>;
+        fn mr_checkout(number: u64) -> Result<()>;
         fn mr_comment(number: u64, body: &str) -> Result<String>;
         fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
         fn mr_checks(number: u64) -> Result<CiStatus>;
@@ -1019,6 +1042,28 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
         glab.mr_close(Path::new("/repo"), 3).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["mr", "close", "3"]);
+    }
+
+    // mr_checkout maps to `mr checkout <id>` and runs in the bound repo dir; the
+    // bound view produces byte-identical argv.
+    #[tokio::test]
+    async fn mr_checkout_builds_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("mr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["mr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.at(Path::new("/repo"))
+            .mr_checkout(7)
+            .await
+            .expect("mr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["mr", "checkout", "7"]);
     }
 
     // mr_checks reads the MR's head_pipeline status and buckets it.

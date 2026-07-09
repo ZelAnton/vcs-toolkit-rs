@@ -111,6 +111,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_merge` | `{ number, strategy }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
 | `forge_pr_mark_ready` | `{ number }` | Mark a draft PR/MR ready for review (`Unsupported` on Gitea). |
+| `forge_pr_checkout` | `{ number }` | Check out a PR/MR's branch into the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr checkout`). Mutates the working copy. |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |
 
 A gated call outside the write gate returns a clear error naming the tool

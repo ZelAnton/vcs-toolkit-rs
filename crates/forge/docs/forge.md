@@ -64,6 +64,7 @@ pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()>;
 pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
 pub async fn pr_mark_ready(&self, number: u64) -> Result<()>;
 pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.delete_branch()] — delete_branch is GitHub-only
+pub async fn pr_checkout(&self, number: u64) -> Result<()>; // gh/tea `pr checkout`, glab `mr checkout` — mutates the working copy
 pub async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
 pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
@@ -146,7 +147,7 @@ The CLIs differ in coverage. Gitea's `tea` lacks five operations, which return
 
 | Operation | GitHub | GitLab | Gitea |
 |---|:---:|:---:|:---:|
-| `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` | ✅ | ✅ | ✅ |
+| `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` / `pr_checkout` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
 | `repo_view` | ✅ | ✅ | ❌ Unsupported |
 | `pr_mark_ready` | ✅ | ✅ | ❌ Unsupported |

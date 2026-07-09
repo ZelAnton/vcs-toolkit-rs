@@ -14,6 +14,14 @@ crates; tag releases as `vcs-forge-v<version>`.
   (additive on the `#[non_exhaustive]` DTOs, plus chained `.labels(...)`/
   `.assignees(...)` setters) — GitHub and GitLab populate them; Gitea's `tea` has
   no such columns, so they are always empty there.
+- `Forge::pr_checkout(number)` / `ForgeApi::pr_checkout` — check a PR/MR's branch
+  out into the bound working copy, dispatching to `gh pr checkout` / `glab mr
+  checkout` / `tea pr checkout`. **Mutates the working copy.** Supported on all
+  three real backends (an `Unknown` handle returns `Unsupported`). The `ForgeApi`
+  trait method is **defaulted** to `Error::Unsupported` so external implementers
+  keep compiling. `ForgeOp` gained a `PrCheckout` variant (added to `ForgeOp::ALL`)
+  so `Forge::supports(ForgeOp::PrCheckout)` reports it available — the one
+  `ForgeOp` every real backend supports (only `Unknown` lacks it).
 
 ### Changed
 -

@@ -10,7 +10,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `GiteaApi::pr_checkout(dir, number)` — check a pull request's branch out into
+  the working copy (`tea pr checkout <n>`); the head branch is fetched and
+  switched to, so a build/test/edit runs against the PR locally. Mutates the
+  working copy. Mirrored on the `GiteaAt` bound view. **Defaulted** to
+  `Error::Unsupported` on the trait so external implementers keep compiling.
 
 ### Changed
 -

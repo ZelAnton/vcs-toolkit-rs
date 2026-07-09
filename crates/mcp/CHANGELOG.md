@@ -13,6 +13,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
 - `repo_log` read tool: recent history (up to `max` commits reachable from a
   git revspec / jj revset), backed by the new `Repo::log` facade method. Always
   available (read-only, no `WriteGate`).
+- `forge_pr_checkout` write tool (`{ number }`): check a PR/MR's branch out into
+  the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr
+  checkout`). Mutating, so it is `WriteGate`-gated (annotated `destructiveHint`)
+  and added to `WRITE_TOOLS`; refused unless `--allow-write` or `--allow-tools
+  forge_pr_checkout`.
 
 ### Changed
 -

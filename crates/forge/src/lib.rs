@@ -13,8 +13,8 @@
 //!
 //! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
 //! lifecycle (list / view / create / comment / edit / merge / mark-ready /
-//! close, CI checks) · the flat capability map · issues (list / view / create)
-//! · releases (list / view). One tiny call:
+//! close / checkout, CI checks) · the flat capability map · issues (list / view /
+//! create) · releases (list / view). One tiny call:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
@@ -69,7 +69,8 @@
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
 //!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
-//!   [`pr_checks`](Forge::pr_checks) / [`pr_diff`](Forge::pr_diff)); the capability
+//!   [`pr_checkout`](Forge::pr_checkout) / [`pr_checks`](Forge::pr_checks) /
+//!   [`pr_diff`](Forge::pr_diff)); the capability
 //!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
 //!   releases ([`release_list`](Forge::release_list) /
@@ -331,11 +332,11 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Whether this handle's backend supports `op`. The capability-varying
-    /// operations ([`ForgeOp`]) are all present on GitHub and GitLab; Gitea
-    /// (`tea`) supports **none** of them — it has no current-repo view, draft
-    /// toggle, PR-checks command, single-release view, or diff view; and an
-    /// [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
+    /// Whether this handle's backend supports `op`. The operations in
+    /// [`ForgeOp`] are all present on GitHub and GitLab; Gitea (`tea`) supports
+    /// only [`PrCheckout`](ForgeOp::PrCheckout) among them — it has no current-repo
+    /// view, draft toggle, PR-checks command, single-release view, or diff view; and
+    /// an [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
     /// nothing at all (every operation returns `Unsupported`). Every other facade
     /// operation works on all three real backends. Branch on this to hide an
     /// unavailable operation up front instead of calling it and handling
@@ -545,6 +546,21 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitLab(c) => gitlab_forge::pr_close(c, &self.cwd, spec.number).await,
             Backend::Gitea(c) => gitea_forge::pr_close(c, &self.cwd, spec.number).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_close")),
+        }
+    }
+
+    /// Check out a PR/MR's branch into the bound working copy — `gh pr checkout
+    /// <n>` / `glab mr checkout <n>` / `tea pr checkout <n>`. The head/source
+    /// branch is fetched and switched to, so a subsequent build/test/edit runs
+    /// against the PR locally. **Mutates the working copy.** Supported on all three
+    /// real backends; an [`Unknown`](ForgeKind::Unknown) handle returns
+    /// [`Unsupported`](Error::Unsupported).
+    pub async fn pr_checkout(&self, number: u64) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::Gitea(c) => gitea_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_checkout")),
         }
     }
 
@@ -763,6 +779,13 @@ pub trait ForgeApi: Send + Sync {
     async fn pr_mark_ready(&self, number: u64) -> Result<()>;
     /// See [`Forge::pr_close`](crate::Forge::pr_close).
     async fn pr_close(&self, spec: PrClose) -> Result<()>;
+    /// See [`Forge::pr_checkout`](crate::Forge::pr_checkout). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, number: u64) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_checkout"))
+    }
     /// See [`Forge::pr_checks`](crate::Forge::pr_checks).
     async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
     /// See [`Forge::pr_diff`](crate::Forge::pr_diff).
@@ -825,6 +848,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn pr_close(&self, spec: PrClose) -> Result<()> {
         self.pr_close(spec).await
+    }
+    async fn pr_checkout(&self, number: u64) -> Result<()> {
+        self.pr_checkout(number).await
     }
     async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
         self.pr_checks(number).await
@@ -1035,6 +1061,7 @@ mod tests {
             forge.pr_merge(1, MergeStrategy::Merge).await.unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_close(PrClose::new(1)).await.unwrap_err(),
+            forge.pr_checkout(1).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
             forge.pr_diff(1).await.unwrap_err(),
             forge.issue_list().await.unwrap_err(),
@@ -1147,13 +1174,16 @@ mod tests {
     }
 
     // `supports` must agree exactly with the runtime `Unsupported` behaviour
-    // above: Gitea reports `false` for the four varying ops, GitHub and GitLab
-    // report `true` for all of them — a pure, no-spawn capability check.
+    // above: Gitea reports `false` for its unsupported ops but `true` for
+    // `pr_checkout` (which `tea` does ship); GitHub and GitLab report `true` for
+    // all of them — a pure, no-spawn capability check.
     #[test]
     fn supports_matches_unsupported_ops() {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
-            assert!(!gitea.supports(op), "gitea should not support {op:?}");
+            // Gitea ships `tea pr checkout`; the other varying ops are Unsupported.
+            let expected = op == ForgeOp::PrCheckout;
+            assert_eq!(gitea.supports(op), expected, "gitea supports({op:?})");
         }
         // An Unknown backend supports nothing — every op returns Unsupported, so
         // `supports` must be `false` for all of them (matches `capabilities()`).
@@ -1282,6 +1312,32 @@ mod tests {
             rec.only_call().args_str(),
             ["pr", "merge", "5", "--style", "merge"]
         );
+    }
+
+    // `pr_checkout` dispatches to each CLI's own checkout verb (gh/tea `pr
+    // checkout`, glab `mr checkout`) — supported on all three real backends.
+    #[tokio::test]
+    async fn pr_checkout_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["mr", "checkout", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // GitHub's per-check buckets aggregate into one coarse CiStatus.

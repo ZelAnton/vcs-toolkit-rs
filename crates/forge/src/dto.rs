@@ -110,12 +110,21 @@ fn host_of(url: &str) -> Option<&str> {
         .filter(|h| !h.is_empty())
 }
 
-/// A facade operation whose availability varies by backend — i.e. one that can
-/// return [`Unsupported`](crate::Error::Unsupported). Pass it to
-/// [`Forge::supports`](crate::Forge::supports) to branch *before* calling, so a
-/// consumer (an agent, a TUI) hides an unavailable button instead of issuing the
-/// call and handling the error. Every other facade operation is supported on all
-/// three forges.
+/// A facade operation a consumer can probe with
+/// [`Forge::supports`](crate::Forge::supports) before calling — the operations
+/// worth a capability check, so a consumer (an agent, a TUI) hides an unavailable
+/// button instead of issuing the call and handling the error. Every operation
+/// *not* listed here is supported on all three real forges.
+///
+/// Most of these **vary by backend** — a backend may return
+/// [`Unsupported`](crate::Error::Unsupported) (Gitea's `tea` lacks a current-repo
+/// view, draft toggle, checks command, single-release view, and diff view).
+/// [`PrCheckout`](ForgeOp::PrCheckout) is the exception: every real backend
+/// (GitHub/GitLab/Gitea) supports it, and it is enumerated here so the support
+/// matrix covers the full checkout/mutation surface — a consumer iterating
+/// [`ALL`](ForgeOp::ALL) sees it reported available on all three. An
+/// [`Unknown`](ForgeKind::Unknown) handle (no classified CLI) supports **none** of
+/// them.
 ///
 /// This is the *static* support set — distinct from [`ForgeCapabilities`], the
 /// *auth-gated* action menu from [`Forge::capabilities`](crate::Forge::capabilities).
@@ -135,17 +144,24 @@ pub enum ForgeOp {
     ReleaseView,
     /// [`pr_diff`](crate::Forge::pr_diff) — a PR/MR's file-by-file diff.
     PrDiff,
+    /// [`pr_checkout`](crate::Forge::pr_checkout) — check a PR/MR's branch out into
+    /// the working copy. Supported on all three real backends (only an
+    /// [`Unknown`](ForgeKind::Unknown) handle lacks it).
+    PrCheckout,
 }
 
 impl ForgeOp {
-    /// Every capability-varying operation — iterate it to build a full support
-    /// matrix (e.g. to render an availability list).
+    /// Every operation a consumer may probe with
+    /// [`supports`](crate::Forge::supports) — iterate it to build a full support
+    /// matrix (e.g. to render an availability list). Most vary by backend;
+    /// [`PrCheckout`](ForgeOp::PrCheckout) is available on every real backend.
     pub const ALL: &'static [ForgeOp] = &[
         ForgeOp::RepoView,
         ForgeOp::PrMarkReady,
         ForgeOp::PrChecks,
         ForgeOp::ReleaseView,
         ForgeOp::PrDiff,
+        ForgeOp::PrCheckout,
     ];
 }
 

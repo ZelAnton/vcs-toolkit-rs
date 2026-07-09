@@ -47,7 +47,8 @@
 //! - **Method groups** on the trait: PRs ([`pr_list`](GitHubApi::pr_list),
 //!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
 //!   [`pr_merge`](GitHubApi::pr_merge), [`pr_mark_ready`](GitHubApi::pr_mark_ready),
-//!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
+//!   [`pr_close`](GitHubApi::pr_close), [`pr_checkout`](GitHubApi::pr_checkout),
+//!   [`pr_review`](GitHubApi::pr_review),
 //!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
 //!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
@@ -466,6 +467,18 @@ pub trait GitHubApi: Send + Sync {
     /// Close a pull request without merging (`gh pr close <n>
     /// [--delete-branch]`).
     async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
+    /// Check out a pull request's branch into the working copy at `dir`
+    /// (`gh pr checkout <n>`) — the head branch is fetched and switched to, so a
+    /// subsequent build/test/edit runs against the PR locally. Mutates the working
+    /// copy. **Defaulted** to `Error::Unsupported` so external implementers of the
+    /// trait keep compiling when the crate bumps (only the `GitHub` concrete impl
+    /// and the regenerated `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_checkout".into(),
+        })
+    }
     /// The PR's checks (`gh pr checks <n> --json …`). gh signals the overall
     /// outcome through its exit code — 0 all passed, 8 still pending, 1 some
     /// failed — and emits the same JSON either way, so all three return the
@@ -731,6 +744,16 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             args.push("--delete-branch");
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard with `reject_flag_like`. `gh pr checkout` fetches the PR's head
+        // branch and switches the working copy to it (no structured output).
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["pr", "checkout", n.as_str()]))
+            .await
     }
 
     async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>> {
@@ -1022,6 +1045,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_mark_ready(number: u64) -> Result<()>;
         fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
+        fn pr_checkout(number: u64) -> Result<()>;
         fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
         fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
@@ -1315,6 +1339,27 @@ mod tests {
         assert_eq!(calls[0].args_str(), ["pr", "ready", "3"]);
         assert_eq!(calls[1].args_str(), ["pr", "close", "3", "--delete-branch"]);
         assert_eq!(calls[2].args_str(), ["pr", "close", "4"]);
+    }
+
+    // pr_checkout maps to `pr checkout <n>` and runs in the bound repo dir.
+    #[tokio::test]
+    async fn pr_checkout_builds_args_in_repo_dir() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("pr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+        // The bound view produces byte-identical argv.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.at(Path::new("/repo"))
+            .pr_checkout(7)
+            .await
+            .expect("pr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // gh signals the checks outcome via exit code (0 pass / 8 pending / 1 some

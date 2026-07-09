@@ -13,7 +13,7 @@
 //! # What you can do
 //!
 //! Check auth · the lean pull-request lifecycle (list / view / create / merge /
-//! close) · issues (list / view / create) · release listing. This is deliberately
+//! close / checkout) · issues (list / view / create) · release listing. This is deliberately
 //! narrower than `gh`/`glab` — `tea` itself lacks some operations (see the surface
 //! notes below). One tiny call to start:
 //!
@@ -49,8 +49,8 @@
 //! auth ([`auth_status`](GiteaApi::auth_status)), the PR lifecycle
 //! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
 //! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
-//! [close](GiteaApi::pr_close) / [comment](GiteaApi::pr_comment) /
-//! [edit](GiteaApi::pr_edit)), issues
+//! [close](GiteaApi::pr_close) / [checkout](GiteaApi::pr_checkout) /
+//! [comment](GiteaApi::pr_comment) / [edit](GiteaApi::pr_edit)), issues
 //! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
 //! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
 //! It is deliberately narrower than
@@ -323,6 +323,17 @@ pub trait GiteaApi: Send + Sync {
     async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
     /// Close a pull request without merging (`tea pr close <number>`).
     async fn pr_close(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Check out a pull request's branch into the working copy at `dir`
+    /// (`tea pr checkout <number>`) — the head branch is fetched and switched to,
+    /// so a subsequent build/test/edit runs against the PR locally. Mutates the
+    /// working copy. **Defaulted** to `Error::Unsupported` so external implementers
+    /// keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_checkout".into(),
+        })
+    }
     /// Add a comment to a pull request, returning the command's output
     /// (`tea comment <index> <body>`). Gitea PRs and issues share the `index`
     /// space and the same `tea comment` subcommand hits both. The `body` is a
@@ -560,6 +571,16 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             .await
     }
 
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard with `reject_flag_like`. `tea pr checkout` fetches the PR's head
+        // branch and switches the working copy to it (no structured output).
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["pr", "checkout", n.as_str()]))
+            .await
+    }
+
     async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
         // `body` is a bare positional, so guard it the way `release_view` does
         // in `vcs-gitlab`. Without this, `tea comment 7 --evil` would let a
@@ -712,6 +733,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
         fn pr_close(number: u64) -> Result<()>;
+        fn pr_checkout(number: u64) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
         fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn issue_list() -> Result<Vec<Issue>>;
@@ -980,6 +1002,28 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         tea.pr_close(Path::new("/repo"), 5).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+    }
+
+    // pr_checkout maps to `pr checkout <n>` and runs in the bound repo dir; the
+    // bound view produces byte-identical argv.
+    #[tokio::test]
+    async fn pr_checkout_builds_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.pr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("pr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.at(Path::new("/repo"))
+            .pr_checkout(7)
+            .await
+            .expect("pr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // pr_comment builds `comment <n> <body>` — the body is a bare positional,

@@ -113,6 +113,15 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     Ok(())
 }
 
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    gh.pr_checkout(dir, number).await?;
+    Ok(())
+}
+
 pub(crate) async fn pr_checks<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,

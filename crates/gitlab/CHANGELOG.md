@@ -13,6 +13,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `MergeRequest`/`Issue` gained `labels: Vec<String>` (GitLab's REST API already
   reports these as plain strings) and `assignees: Vec<String>` (flattened from
   the REST `assignees` array of User objects' `username`).
+- `GitLabApi::mr_checkout(dir, number)` — check a merge request's source branch
+  out into the working copy (`glab mr checkout <id>`); the branch is fetched and
+  switched to, so a build/test/edit runs against the MR locally. Mutates the
+  working copy. Mirrored on the `GitLabAt` bound view. **Defaulted** to
+  `Error::Unsupported` on the trait so external implementers keep compiling.
 
 ### Changed
 -
