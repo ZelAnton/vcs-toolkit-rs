@@ -279,6 +279,65 @@ jobs:
       # --doc`).
       - run: cargo test --workspace --all-features --tests -- --ignored
 
+  # Documentation rot that no other job exercises: dead relative links between
+  # README/`docs/**`/per-crate guides/CHANGELOGs (the guides are also embedded
+  # into rustdoc via `include_str!` and published as-is to docs.rs, see the
+  # `doc` job above, so a link that only "works" when browsed on GitHub is
+  # still a real defect there) via `lychee`, and typos in that same prose via
+  # `typos`. Neither tool has an install-action entry, so both are grabbed
+  # from their GitHub release tarballs (same pattern as `jj`/`glab`/`tea` in
+  # the `integration` job).
+  docs-health:
+    name: docs-health (links + spelling)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install typos + lychee
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o typos.tar.gz "https://github.com/crate-ci/typos/releases/download/v1.48.0/typos-v1.48.0-x86_64-unknown-linux-musl.tar.gz"
+          tar -xzf typos.tar.gz -C "$HOME/.local/bin" ./typos
+          curl -fsSL -o lychee.tar.gz "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf lychee.tar.gz -C "$HOME/.local/bin" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+          chmod +x "$HOME/.local/bin/typos" "$HOME/.local/bin/lychee"
+      # Spelling: config in `_typos.toml` at the repo root (domain vocabulary —
+      # jj, revset(s), fileset(s), gitea, argv, and the underlying git/GitHub
+      # crates — so real terms aren't flagged as typos).
+      #
+      # Both steps below check the same documentation surface: README,
+      # CONTRIBUTING, `docs/**`, every per-crate guide (`crates/*/docs/*.md`)
+      # and CHANGELOG, plus `ideas/**`/`decisions/**` if present (neither
+      # exists in this repo yet, so they're included conditionally rather than
+      # failing the glob). Deliberately excludes source code and per-crate
+      # READMEs (crates.io landing pages, not part of the linked guide network
+      # `include_str!` embeds into rustdoc).
+      - name: typos (spelling)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          targets=(README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
+          for extra in ideas decisions; do
+            [ -d "$extra" ] && targets+=("$extra")
+          done
+          typos "${targets[@]}"
+      # Links: relative Markdown links must resolve to real files, external
+      # URLs must be live. Config in `lychee.toml` at the repo root (see its
+      # header for the GITHUB_TOKEN-vs-excluding-github.com rationale — most
+      # links here ARE github.com, e.g. every CHANGELOG's `.../compare/...`).
+      - name: lychee (link check)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          targets=(README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
+          for extra in ideas decisions; do
+            [ -d "$extra" ] && targets+=("$extra")
+          done
+          lychee --config lychee.toml "${targets[@]}"
+
   audit:
     name: cargo-deny
     runs-on: ubuntu-latest

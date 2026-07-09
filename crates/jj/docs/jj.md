@@ -840,8 +840,8 @@ before spawning.
 
 [`op_head`]: #operation-log
 [`op_restore`]: #operation-log
-[`Error::Spawn`]: process-model.md
-[`ProcessResult`]: process-model.md
+[`Error::Spawn`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
+[`ProcessResult`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`Change`]: #change
 [`Bookmark`]: #bookmark
 [`BookmarkRef`]: #bookmarkref
