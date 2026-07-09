@@ -86,7 +86,7 @@ use vcs_git::{Git, GitApi};
 Manage linked worktrees with structured results:
 
 ```rust
-use vcs_git::{Git, GitApi, WorktreeAdd};
+use vcs_git::{Git, GitApi, WorktreeAdd, WorktreeRemove};
 use std::path::Path;
 
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
@@ -100,7 +100,7 @@ for wt in git.worktree_list(repo).await? {            // Vec<Worktree>
     println!("{} -> {:?}", wt.path.display(), wt.branch);
 }
 
-git.worktree_remove(repo, Path::new("/tmp/feature"), false).await?;
+git.worktree_remove(repo, WorktreeRemove::new("/tmp/feature")).await?;
 # Ok(()) }
 ```
 

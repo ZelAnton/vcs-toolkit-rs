@@ -16,7 +16,12 @@ crates; tag releases as `vcs-core-v<version>`.
   `Some` only on git, since jj's typed log doesn't currently surface them).
 
 ### Changed
--
+
+- Internal only (no public API change): the git backend now drives `vcs-git`'s
+  spec-typed `delete_branch(BranchDelete)` / `worktree_remove(WorktreeRemove)` and
+  `blocking::worktree_remove(WorktreeRemove)` instead of the removed positional
+  `bool` flags. `Repo::delete_branch` / `remove_worktree` /
+  `cleanup_worktree_blocking` keep their existing signatures.
 
 ### Fixed
 -

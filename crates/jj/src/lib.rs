@@ -66,7 +66,8 @@
 //!   [`Jj::workspace_roots`] is a sibling inherent method — a bounded fan-out
 //!   resolving many workspace roots at once.
 //! - **Builder specs** for the multi-option commands — [`WorkspaceAdd`],
-//!   [`SquashPaths`] — each `#[non_exhaustive]`, built with a constructor +
+//!   [`SquashPaths`], [`BookmarkMove`], [`SquashInto`], [`GitClone`] — each
+//!   `#[non_exhaustive]`, built with a constructor +
 //!   chained setters, named after the flags they emit. [`JjFileset`] wraps a
 //!   workspace-root-relative path as an exact-path `root-file:"…"` fileset;
 //!   [`RevsetExpr`] is an optional up-front-validated revset newtype for untrusted input.
@@ -308,6 +309,100 @@ impl SquashPaths {
     pub fn use_destination_message(mut self) -> Self {
         self.use_destination_message = true;
         self
+    }
+}
+
+/// Options for [`JjApi::bookmark_move`] (`jj bookmark move <name> --to <rev>`).
+///
+/// `#[non_exhaustive]`, so build it through [`BookmarkMove::new`] and the chained
+/// [`allow_backwards`](BookmarkMove::allow_backwards) setter rather than a bare
+/// `bool` (`bookmark_move(name, to, true)` doesn't say what `true` permits).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BookmarkMove {
+    /// The bookmark to move.
+    pub name: String,
+    /// The revision to move it to (`--to`).
+    pub to: String,
+    /// Allow moving the bookmark to a commit that is not a descendant of its
+    /// current target (`--allow-backwards`).
+    pub allow_backwards: bool,
+}
+
+impl BookmarkMove {
+    /// Move bookmark `name` to revision `to`; a backwards move is refused.
+    pub fn new(name: impl Into<String>, to: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            to: to.into(),
+            allow_backwards: false,
+        }
+    }
+
+    /// Allow moving to a commit that is not a descendant of the current target
+    /// (`--allow-backwards`).
+    pub fn allow_backwards(mut self) -> Self {
+        self.allow_backwards = true;
+        self
+    }
+}
+
+/// Options for [`JjApi::squash_into`] (`jj squash --into <rev>`).
+///
+/// `#[non_exhaustive]`, so build it through [`SquashInto::new`] and the chained
+/// [`use_destination_message`](SquashInto::use_destination_message) setter rather
+/// than a bare `bool`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SquashInto {
+    /// The destination revision the working copy is squashed into (`--into`).
+    pub into: String,
+    /// Keep the destination's description rather than combining the two
+    /// (`--use-destination-message`).
+    pub use_destination_message: bool,
+}
+
+impl SquashInto {
+    /// Squash the working copy into `into`, combining the two descriptions.
+    pub fn new(into: impl Into<String>) -> Self {
+        Self {
+            into: into.into(),
+            use_destination_message: false,
+        }
+    }
+
+    /// Keep the destination's description (`--use-destination-message`) instead
+    /// of combining the two.
+    pub fn use_destination_message(mut self) -> Self {
+        self.use_destination_message = true;
+        self
+    }
+}
+
+/// Colocation choice for [`JjApi::git_clone`] (`jj git clone
+/// --colocate|--no-colocate`).
+///
+/// The flag is **always** passed explicitly — jj's default flipped across versions
+/// and is overridable via `git.colocate` config — so there is deliberately no
+/// default: pick [`GitClone::colocated`] or [`GitClone::separate`].
+/// `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitClone {
+    /// Create a visible `.git` alongside `.jj` (`--colocate`) rather than a
+    /// jj-only checkout (`--no-colocate`).
+    pub colocate: bool,
+}
+
+impl GitClone {
+    /// A colocated clone — a visible `.git` beside `.jj` (`--colocate`).
+    pub fn colocated() -> Self {
+        Self { colocate: true }
+    }
+
+    /// A non-colocated clone — jj-only, no `.git` (`--no-colocate`).
+    pub fn separate() -> Self {
+        Self { colocate: false }
     }
 }
 
@@ -559,14 +654,8 @@ pub trait JjApi: Send + Sync {
     /// Delete a bookmark (`bookmark delete <name>`).
     async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()>;
     /// Move a bookmark to a revision (`bookmark move <name> --to <rev>
-    /// [--allow-backwards]`).
-    async fn bookmark_move(
-        &self,
-        dir: &Path,
-        name: &str,
-        to: &str,
-        allow_backwards: bool,
-    ) -> Result<()>;
+    /// [--allow-backwards]`); see [`BookmarkMove`].
+    async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 
     // --- Diff / query / state ------------------------------------------------
 
@@ -645,15 +734,9 @@ pub trait JjApi: Send + Sync {
     async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()>;
     /// Move the working copy to a revision (`edit <rev>`).
     async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
-    /// Squash the working copy into a revision (`squash --into <rev>`). When
-    /// `use_destination_message`, keep the destination's description
-    /// (`--use-destination-message`) instead of combining the two.
-    async fn squash_into(
-        &self,
-        dir: &Path,
-        into: &str,
-        use_destination_message: bool,
-    ) -> Result<()>;
+    /// Squash the working copy into a revision (`squash --into <rev>
+    /// [--use-destination-message]`); see [`SquashInto`].
+    async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()>;
     /// Finalise a commit from exactly these filesets (`commit -m <message>
     /// <filesets>`); the rest stay in the new working-copy change. An **empty**
     /// `filesets` slice is refused with `Error::Spawn`/`InvalidInput` before spawning
@@ -678,9 +761,9 @@ pub trait JjApi: Send + Sync {
     /// --colocate|--no-colocate`). Runs without a working directory — pass an
     /// **absolute** `dest`. The flag is always passed explicitly: whether
     /// colocation (a visible `.git` alongside `.jj`) is jj's default depends
-    /// on the jj version *and* the user's `git.colocate` config, so `colocate`
-    /// decides deterministically.
-    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
+    /// on the jj version *and* the user's `git.colocate` config, so the
+    /// [`GitClone`] choice decides deterministically.
+    async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
     /// Fold working-copy edits into the mutable ancestors that introduced the
     /// touched lines (`absorb [--from <revset>] [<filesets>…]`); empty
     /// `filesets` absorbs everything.
@@ -1071,19 +1154,19 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn bookmark_move(
-        &self,
-        dir: &Path,
-        name: &str,
-        to: &str,
-        allow_backwards: bool,
-    ) -> Result<()> {
-        reject_flag_like("bookmark name", name)?;
+    async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()> {
+        reject_flag_like("bookmark name", &spec.name)?;
         // `<NAMES>` is glob-matched, so `exact:` keeps a `*` name from moving
         // every bookmark. `to` is a revision, not a pattern — left as-is.
-        let name_pat = exact(name);
-        let mut args = vec!["bookmark", "move", name_pat.as_str(), "--to", to];
-        if allow_backwards {
+        let name_pat = exact(&spec.name);
+        let mut args = vec![
+            "bookmark",
+            "move",
+            name_pat.as_str(),
+            "--to",
+            spec.to.as_str(),
+        ];
+        if spec.allow_backwards {
             args.push("--allow-backwards");
         }
         self.core.run_unit(self.cmd_in(dir, args)).await
@@ -1318,14 +1401,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.run_unit(self.cmd_in(dir, ["edit", revset])).await
     }
 
-    async fn squash_into(
-        &self,
-        dir: &Path,
-        into: &str,
-        use_destination_message: bool,
-    ) -> Result<()> {
-        let mut command = self.cmd_in(dir, ["squash", "--into", into]);
-        if use_destination_message {
+    async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()> {
+        let mut command = self.cmd_in(dir, ["squash", "--into", spec.into.as_str()]);
+        if spec.use_destination_message {
             command = command.arg("--use-destination-message");
         }
         self.core.run_unit(command).await
@@ -1422,7 +1500,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()> {
+    async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()> {
         // A leading-`-` url is a bare positional — guard it (a real URL never
         // leads with `-`, so no false positives).
         reject_flag_like("url", url)?;
@@ -1436,7 +1514,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .core
             .command(["git", "clone", url])
             .arg(dest)
-            .arg(if colocate {
+            .arg(if spec.colocate {
                 "--colocate"
             } else {
                 "--no-colocate"
@@ -1764,7 +1842,7 @@ vcs_cli_support::at_forwarders! {
         fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn capabilities() -> Result<JjCapabilities>;
-        fn git_clone(url: &str, dest: &Path, colocate: bool) -> Result<()>;
+        fn git_clone(url: &str, dest: &Path, spec: GitClone) -> Result<()>;
     }
     dir {
         fn status() -> Result<Vec<ChangedPath>>;
@@ -1790,7 +1868,7 @@ vcs_cli_support::at_forwarders! {
         fn bookmark_create(name: &str, revision: &str) -> Result<()>;
         fn bookmark_rename(old: &str, new: &str) -> Result<()>;
         fn bookmark_delete(name: &str) -> Result<()>;
-        fn bookmark_move(name: &str, to: &str, allow_backwards: bool) -> Result<()>;
+        fn bookmark_move(spec: BookmarkMove) -> Result<()>;
         fn diff_summary(from: &str, to: &str) -> Result<Vec<ChangedPath>>;
         fn diff_stat(revset: &str) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
@@ -1810,7 +1888,7 @@ vcs_cli_support::at_forwarders! {
         fn rebase(onto: &str) -> Result<()>;
         fn rebase_branch(branch: &str, dest: &str) -> Result<()>;
         fn edit(revset: &str) -> Result<()>;
-        fn squash_into(into: &str, use_destination_message: bool) -> Result<()>;
+        fn squash_into(spec: SquashInto) -> Result<()>;
         fn commit_paths(filesets: &[JjFileset], message: &str) -> Result<()>;
         fn squash_paths(spec: SquashPaths) -> Result<()>;
         fn sparse_set(patterns: &[String]) -> Result<()>;
@@ -1968,8 +2046,13 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
 
-        jj.bookmark_move(dir, "main", "@", true).await.unwrap();
-        jj.at(dir).bookmark_move("main", "@", true).await.unwrap();
+        jj.bookmark_move(dir, BookmarkMove::new("main", "@").allow_backwards())
+            .await
+            .unwrap();
+        jj.at(dir)
+            .bookmark_move(BookmarkMove::new("main", "@").allow_backwards())
+            .await
+            .unwrap();
         jj.describe_rev(dir, "feat", "msg").await.unwrap();
         jj.at(dir).describe_rev("feat", "msg").await.unwrap();
         jj.description(dir, "@-").await.unwrap();
@@ -2399,9 +2482,12 @@ mod tests {
     async fn bookmark_move_appends_allow_backwards() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.bookmark_move(Path::new("/r"), "main", "@", true)
-            .await
-            .unwrap();
+        jj.bookmark_move(
+            Path::new("/r"),
+            BookmarkMove::new("main", "@").allow_backwards(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -2413,6 +2499,65 @@ mod tests {
                 "--allow-backwards",
                 "--color",
                 "never"
+            ]
+        );
+    }
+
+    // The default spec omits `--allow-backwards`.
+    #[tokio::test]
+    async fn bookmark_move_default_omits_allow_backwards() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.bookmark_move(Path::new("/r"), BookmarkMove::new("main", "@"))
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "bookmark",
+                "move",
+                "exact:main",
+                "--to",
+                "@",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    // `squash_into` builds `squash --into <rev>`; the spec's setter appends
+    // `--use-destination-message` (after the forced `--color never`, which
+    // `cmd_in` adds before the trailing setter — order is functionally irrelevant
+    // to jj).
+    #[tokio::test]
+    async fn squash_into_builds_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.squash_into(Path::new("/r"), SquashInto::new("@-"))
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["squash", "--into", "@-", "--color", "never"]
+        );
+
+        let flagged = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&flagged);
+        jj.squash_into(
+            Path::new("/r"),
+            SquashInto::new("@-").use_destination_message(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            flagged.only_call().args_str(),
+            [
+                "squash",
+                "--into",
+                "@-",
+                "--color",
+                "never",
+                "--use-destination-message"
             ]
         );
     }
@@ -2730,7 +2875,11 @@ mod tests {
         assert!(jj.bookmark_create(dir, "-evil", "@").await.is_err());
         assert!(jj.bookmark_rename(dir, "ok", "-bad").await.is_err());
         assert!(jj.bookmark_delete(dir, "--all").await.is_err());
-        assert!(jj.bookmark_move(dir, "-evil", "@", false).await.is_err());
+        assert!(
+            jj.bookmark_move(dir, BookmarkMove::new("-evil", "@"))
+                .await
+                .is_err()
+        );
         assert!(jj.edit(dir, "-evil").await.is_err());
         assert!(jj.duplicate(dir, "-r").await.is_err());
         assert!(jj.abandon(dir, "-evil").await.is_err());
@@ -2750,7 +2899,11 @@ mod tests {
                 .is_err(),
             "a flag-shaped parent is refused"
         );
-        assert!(jj.git_clone("-evil", dir, false).await.is_err());
+        assert!(
+            jj.git_clone("-evil", dir, GitClone::separate())
+                .await
+                .is_err()
+        );
         assert!(jj.edit(dir, "").await.is_err(), "empty refused too");
         assert!(
             rec.calls().is_empty(),
@@ -2822,7 +2975,7 @@ mod tests {
     async fn git_clone_builds_dirless_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.git_clone("https://x/r.git", Path::new("/dest"), true)
+        jj.git_clone("https://x/r.git", Path::new("/dest"), GitClone::colocated())
             .await
             .expect("clone");
         let call = rec.only_call();
@@ -2842,7 +2995,9 @@ mod tests {
 
         let plain = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&plain);
-        jj.git_clone("u", Path::new("/d"), false).await.unwrap();
+        jj.git_clone("u", Path::new("/d"), GitClone::separate())
+            .await
+            .unwrap();
         let call = plain.only_call();
         assert!(call.has_flag("--no-colocate"), "explicit either way");
         assert!(!call.has_flag("--colocate"));
@@ -2864,7 +3019,11 @@ mod tests {
         let occupied = tmp.path().join("occupied");
         std::fs::create_dir(&occupied).unwrap();
         std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
-        assert!(jj.git_clone("https://x/r", &occupied, false).await.is_err());
+        assert!(
+            jj.git_clone("https://x/r", &occupied, GitClone::separate())
+                .await
+                .is_err()
+        );
         assert!(
             occupied.join("keep.txt").exists(),
             "a non-empty caller dir must survive a failed jj clone"
@@ -2873,7 +3032,11 @@ mod tests {
         // An empty dest we could have populated is removed on failure.
         let empty = tmp.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
-        assert!(jj.git_clone("https://x/r", &empty, false).await.is_err());
+        assert!(
+            jj.git_clone("https://x/r", &empty, GitClone::separate())
+                .await
+                .is_err()
+        );
         assert!(
             !empty.exists(),
             "an empty dest is cleaned so a retry isn't blocked"

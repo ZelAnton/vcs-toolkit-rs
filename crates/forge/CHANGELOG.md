@@ -24,7 +24,11 @@ crates; tag releases as `vcs-forge-v<version>`.
   `ForgeOp` every real backend supports (only `Unknown` lacks it).
 
 ### Changed
--
+
+- Internal only (no public API change): the GitHub backend now drives
+  `vcs-github`'s spec-typed `pr_close(dir, number, PrClose)` instead of the removed
+  positional `delete_branch: bool`. `Forge::pr_close(PrClose)` keeps its existing
+  signature.
 
 ### Fixed
 -

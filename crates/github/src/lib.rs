@@ -59,7 +59,8 @@
 //! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
 //!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
 //!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
-//!   `--auto`, `--delete-branch`), and [`ReviewAction`] (whose private fields make
+//!   `--auto`, `--delete-branch`), [`PrClose`] (optional `--delete-branch`), and
+//!   [`ReviewAction`] (whose private fields make
 //!   an empty-body request-changes unrepresentable) — each `#[non_exhaustive]`,
 //!   built with a constructor and chained setters, named after the flags they emit.
 //!
@@ -238,6 +239,31 @@ impl PrMerge {
     }
 
     /// Delete the head branch after merging (`--delete-branch`).
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
+/// Options for [`GitHubApi::pr_close`] (`gh pr close`).
+///
+/// `#[non_exhaustive]`, so build it through [`PrClose::new`] and the chained
+/// [`delete_branch`](PrClose::delete_branch) setter rather than a bare `bool`
+/// (`pr_close(n, true)` doesn't say what `true` does).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrClose {
+    /// Delete the head branch after closing the PR (`--delete-branch`).
+    pub delete_branch: bool,
+}
+
+impl PrClose {
+    /// Close the PR, leaving the head branch in place.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Delete the head branch after closing (`--delete-branch`).
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
         self
@@ -465,8 +491,8 @@ pub trait GitHubApi: Send + Sync {
     /// Mark a draft pull request as ready for review (`gh pr ready <n>`).
     async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a pull request without merging (`gh pr close <n>
-    /// [--delete-branch]`).
-    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
+    /// [--delete-branch]`); see [`PrClose`].
+    async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()>;
     /// Check out a pull request's branch into the working copy at `dir`
     /// (`gh pr checkout <n>`) — the head branch is fetched and switched to, so a
     /// subsequent build/test/edit runs against the PR locally. Mutates the working
@@ -737,10 +763,10 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
-    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()> {
+    async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()> {
         let n = number.to_string();
         let mut args = vec!["pr", "close", n.as_str()];
-        if delete_branch {
+        if spec.delete_branch {
             args.push("--delete-branch");
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
@@ -1044,7 +1070,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_mark_ready(number: u64) -> Result<()>;
-        fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
+        fn pr_close(number: u64, spec: PrClose) -> Result<()>;
         fn pr_checkout(number: u64) -> Result<()>;
         fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
         fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
@@ -1333,8 +1359,12 @@ mod tests {
         gh.pr_mark_ready(Path::new("/r"), 3)
             .await
             .expect("pr_mark_ready");
-        gh.pr_close(Path::new("/r"), 3, true).await.expect("close");
-        gh.pr_close(Path::new("/r"), 4, false).await.expect("close");
+        gh.pr_close(Path::new("/r"), 3, PrClose::new().delete_branch())
+            .await
+            .expect("close");
+        gh.pr_close(Path::new("/r"), 4, PrClose::new())
+            .await
+            .expect("close");
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["pr", "ready", "3"]);
         assert_eq!(calls[1].args_str(), ["pr", "close", "3", "--delete-branch"]);

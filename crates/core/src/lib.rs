@@ -963,9 +963,11 @@ impl<R: ProcessRunner> Repo<R> {
     /// would wipe the repo — even on this force-by-contract path.
     pub fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()> {
         match &self.backend {
-            Backend::Git(_) => {
-                vcs_git::blocking::worktree_remove(&self.cwd, path, true).map_err(Error::Io)
-            }
+            Backend::Git(_) => vcs_git::blocking::worktree_remove(
+                &self.cwd,
+                vcs_git::WorktreeRemove::new(path).force(),
+            )
+            .map_err(Error::Io),
             Backend::Jj(_) => {
                 // jj resolves a relative worktree path against the repo dir (its
                 // cwd), so resolve it the same way here — the lookup and the dir

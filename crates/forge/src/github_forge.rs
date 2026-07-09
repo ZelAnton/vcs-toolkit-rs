@@ -5,8 +5,8 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, PrCreate as GhPrCreate, PrEdit as GhPrEdit, PrMerge,
-    PullRequest, Release, RepoView,
+    CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
+    PrEdit as GhPrEdit, PrMerge, PullRequest, Release, RepoView,
 };
 
 use crate::dto::{
@@ -109,7 +109,11 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     number: u64,
     delete_branch: bool,
 ) -> Result<()> {
-    gh.pr_close(dir, number, delete_branch).await?;
+    let mut spec = GhPrClose::new();
+    if delete_branch {
+        spec = spec.delete_branch();
+    }
+    gh.pr_close(dir, number, spec).await?;
     Ok(())
 }
 

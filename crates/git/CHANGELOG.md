@@ -21,7 +21,15 @@ crates; tag releases as `vcs-git-v<version>`.
   on bulk verbs).
 
 ### Changed
--
+
+- **Breaking:** replace the trailing positional `bool` on three `GitApi` methods
+  with named `#[non_exhaustive]` specs, so the flag reads at the call site and can
+  grow without a signature break: `delete_branch(dir, name, force)` →
+  `delete_branch(dir, BranchDelete::new(name)[.force()])`, `stash_push(dir,
+  include_untracked)` → `stash_push(dir, StashPush::new()[.include_untracked()])`,
+  and `worktree_remove(dir, path, force)` → `worktree_remove(dir,
+  WorktreeRemove::new(path)[.force()])`. The `GitAt` bound view and the sync
+  `blocking::worktree_remove(dir, WorktreeRemove)` helper move to the same specs.
 
 ### Fixed
 -

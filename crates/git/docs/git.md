@@ -224,7 +224,7 @@ error.
 async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
 async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
 async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
-async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>;
+async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()>; // BranchDelete::new(name)[.force()]
 async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>; // MergeCheck::branch(b).into_base(base)
 async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
@@ -247,14 +247,14 @@ async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, MergeCheck};
+# use vcs_git::{BranchDelete, Git, GitApi, MergeCheck};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if !git.branch_exists(repo, "feature").await? {            // bool
     git.create_branch(repo, "feature").await?;
 }
 git.set_upstream(repo, "feature", "origin/feature").await?;
 if git.is_merged(repo, MergeCheck::branch("feature").into_base("main")).await? { // bool
-    git.delete_branch(repo, "feature", false).await?;      // `branch -d feature`
+    git.delete_branch(repo, BranchDelete::new("feature")).await?; // `branch -d feature`
 }
 for b in git.branches(repo).await? {                       // Vec<Branch>
     println!("{}{}", if b.current { "* " } else { "  " }, b.name);
@@ -306,7 +306,7 @@ To carry uncommitted changes across a switch, see the composed inherent helper
 ```rust,ignore
 async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
 async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
-async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()>;
+async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()>; // WorktreeRemove::new(path)[.force()]
 async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
 async fn worktree_prune(&self, dir: &Path) -> Result<()>;
 ```
@@ -320,7 +320,7 @@ async fn worktree_prune(&self, dir: &Path) -> Result<()>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, WorktreeAdd};
+# use vcs_git::{Git, GitApi, WorktreeAdd, WorktreeRemove};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 git.worktree_add(repo, WorktreeAdd::create_branch("/tmp/feature", "feature", "HEAD"))
     .await?;                                                 // `worktree add -b feature /tmp/feature HEAD`
@@ -329,7 +329,7 @@ for wt in git.worktree_list(repo).await? {                  // Vec<Worktree>
     println!("{} -> {:?}", wt.path.display(), wt.branch);
 }
 
-git.worktree_remove(repo, Path::new("/tmp/feature"), false).await?;
+git.worktree_remove(repo, WorktreeRemove::new("/tmp/feature")).await?;
 # Ok(()) }
 ```
 
@@ -529,7 +529,7 @@ match git.cherry_pick(repo, "abc123").await {
 ## Stash
 
 ```rust,ignore
-async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
+async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>; // StashPush::new()[.include_untracked()]
 async fn stash_pop(&self, dir: &Path) -> Result<()>;
 ```
 
@@ -539,9 +539,9 @@ async fn stash_pop(&self, dir: &Path) -> Result<()>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{Git, GitApi, StashPush};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
-git.stash_push(repo, true).await?;   // include untracked
+git.stash_push(repo, StashPush::new().include_untracked()).await?;   // include untracked
 // … do work on a clean tree …
 git.stash_pop(repo).await?;
 # Ok(()) }
@@ -693,7 +693,7 @@ git.switch_with_stash(repo, "feature").await?;  // dirty tree comes along
 ### Blocking helpers
 
 ```text
-pub fn blocking::worktree_remove(dir: &Path, path: &Path, force: bool) -> std::io::Result<()>;
+pub fn blocking::worktree_remove(dir: &Path, spec: WorktreeRemove) -> std::io::Result<()>;
 ```
 
 A synchronous, best-effort `git worktree remove [--force] <path>` for contexts that

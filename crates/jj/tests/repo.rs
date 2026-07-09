@@ -4,7 +4,7 @@
 
 // Scaffolding from vcs-testkit: `JjSandbox` owns the throwaway workspace and
 // raw scenario steps; the typed client under test does the rest.
-use vcs_jj::{Jj, JjApi, WorkspaceAdd};
+use vcs_jj::{GitClone, Jj, JjApi, WorkspaceAdd};
 use vcs_testkit::{BareRemote, JjSandbox, TempDir, jj as jj_raw};
 
 #[tokio::test]
@@ -271,7 +271,7 @@ async fn git_clone_from_local_bare_remote() {
     let jj = Jj::new();
 
     let plain = tmp.path().join("plain");
-    jj.git_clone(remote.url().as_str(), &plain, false)
+    jj.git_clone(remote.url().as_str(), &plain, GitClone::separate())
         .await
         .expect("clone");
     assert!(plain.join(".jj").is_dir(), "jj repo materialised");
@@ -282,7 +282,7 @@ async fn git_clone_from_local_bare_remote() {
     assert!(plain.join("seed.txt").exists(), "worktree materialised");
 
     let colocated = tmp.path().join("colocated");
-    jj.git_clone(remote.url().as_str(), &colocated, true)
+    jj.git_clone(remote.url().as_str(), &colocated, GitClone::colocated())
         .await
         .expect("clone --colocate");
     assert!(colocated.join(".jj").is_dir());
