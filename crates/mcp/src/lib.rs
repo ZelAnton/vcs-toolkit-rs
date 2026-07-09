@@ -147,6 +147,16 @@ pub struct RemoveWorktreeParams {
     pub force: bool,
 }
 
+/// List recent history.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct LogParams {
+    /// The revspec (git) / revset (jj) to list history from, e.g. `"HEAD"` (git) or
+    /// `"@"` (jj).
+    pub revspec_or_revset: String,
+    /// Maximum number of commits to return.
+    pub max: usize,
+}
+
 /// A pull/merge request by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrNumberParams {
@@ -471,6 +481,23 @@ impl VcsMcpServer {
     )]
     pub async fn repo_diff_stat(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.diff_stat().await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Recent history: up to `max` commits reachable from `revspec_or_revset` (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@\"), most-recent-first. `author`/`date` are null on jj — its typed log doesn't currently surface authorship or a timestamp.",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_log(
+        &self,
+        Parameters(p): Parameters<LogParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .repo
+                .log(&p.revspec_or_revset, p.max)
+                .await
+                .map_err(core_err)?,
+        )
     }
 
     #[tool(
@@ -969,6 +996,32 @@ mod tests {
         );
         let out = server.repo_status().await.expect("status ok");
         assert!(result_json(&out).contains("a.rs"));
+    }
+
+    // `repo_log` is a read tool (no write gate) that surfaces the facade's
+    // unified `Commit` DTO as JSON, author/date included on git.
+    #[tokio::test]
+    async fn repo_log_returns_commit_json() {
+        let server = git_server(
+            ScriptedRunner::new().on(
+                ["git", "log"],
+                Reply::ok(
+                    "deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0",
+                ),
+            ),
+            WriteGate::None,
+        );
+        let out = server
+            .repo_log(Parameters(LogParams {
+                revspec_or_revset: "HEAD".into(),
+                max: 10,
+            }))
+            .await
+            .expect("repo_log ok");
+        let json = result_json(&out);
+        assert!(json.contains("deadbeef"), "{json}");
+        assert!(json.contains("Fix bug"), "{json}");
+        assert!(json.contains("Jane"), "{json}");
     }
 
     // A mutation tool is gated when writes are disabled — it errors WITHOUT

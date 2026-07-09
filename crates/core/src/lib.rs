@@ -185,7 +185,7 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, BranchDelete, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe,
+    BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
     OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial,
     WorktreeInfo, WorktreeRemove,
 };
@@ -677,6 +677,21 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Recent history: up to `max` commits reachable from `revspec_or_revset`
+    /// (git revspec / jj revset), most-recent-first (git `log`'s default order /
+    /// jj `log`'s topological order).
+    ///
+    /// Backend nuance: [`Commit::author`]/[`Commit::date`] are `Some` only on
+    /// git — jj's typed log doesn't currently surface authorship or a
+    /// timestamp, so they're `None` there rather than guessed (see the
+    /// [`Commit`] type docs).
+    pub async fn log(&self, revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::log(g, &self.cwd, revspec_or_revset, max).await,
+            Backend::Jj(j) => jj_backend::log(j, &self.cwd, revspec_or_revset, max).await,
+        }
+    }
+
     /// A batched [`RepoSnapshot`] of the common repo state — branch, upstream,
     /// ahead/behind, dirtiness, change count, and operation state — in a **small
     /// fixed** number of spawns instead of a call per field (git: `status
@@ -1076,6 +1091,7 @@ facade_trait! {
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
+        fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn snapshot() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[String], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
@@ -2581,6 +2597,41 @@ mod tests {
             "diff_stat should target the empty tree on an unborn repo: {:?}",
             rec.calls()
         );
+    }
+
+    // `Repo::log` on git maps `GitApi::log`'s typed `Commit` (hash/author/date/
+    // subject) onto the facade `Commit`, with author/date populated.
+    #[tokio::test]
+    async fn git_log_maps_commit_fields() {
+        let repo = git_repo(ScriptedRunner::new().on(
+            ["git", "log"],
+            Reply::ok("deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0"),
+        ));
+        let commits = repo.log("HEAD", 10).await.unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].id, "deadbeef");
+        assert_eq!(commits[0].description, "Fix bug");
+        assert_eq!(commits[0].author.as_deref(), Some("Jane"));
+        assert_eq!(
+            commits[0].date.as_deref(),
+            Some("2026-05-31T10:00:00+00:00")
+        );
+    }
+
+    // `Repo::log` on jj maps `JjApi::log`'s typed `Change` (change-id/commit-id/
+    // empty/description) onto the facade `Commit` — author/date stay `None`, since
+    // jj's typed log doesn't surface them.
+    #[tokio::test]
+    async fn jj_log_maps_change_with_no_author_or_date() {
+        let repo = jj_repo(
+            ScriptedRunner::new().on(["jj", "log"], Reply::ok("kztuxlro\t38e00654\tfalse\twip\n")),
+        );
+        let commits = repo.log("@", 10).await.unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].id, "38e00654");
+        assert_eq!(commits[0].description, "wip");
+        assert_eq!(commits[0].author, None);
+        assert_eq!(commits[0].date, None);
     }
 
     // On jj, abort/continue are reporting no-ops (nothing is ever paused).
