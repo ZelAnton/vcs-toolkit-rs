@@ -37,6 +37,14 @@ pub struct PullRequest {
     /// Web URL.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
+    /// Labels attached to the PR (gh `--json labels`, flattened from
+    /// `[{"name": "bug", ...}]` to plain names).
+    #[serde(default, deserialize_with = "labels_to_names")]
+    pub labels: Vec<String>,
+    /// Logins of assigned users (gh `--json assignees`, flattened from
+    /// `[{"login": "octocat", ...}]` to plain logins).
+    #[serde(default, deserialize_with = "assignees_to_logins")]
+    pub assignees: Vec<String>,
 }
 
 /// An issue (`gh issue list --json number,title,state`;
@@ -56,6 +64,47 @@ pub struct Issue {
     /// Web URL. Fetched by both `issue_list` and `issue_view`.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
+    /// Labels attached to the issue (gh `--json labels`, flattened from
+    /// `[{"name": "bug", ...}]` to plain names).
+    #[serde(default, deserialize_with = "labels_to_names")]
+    pub labels: Vec<String>,
+    /// Logins of assigned users (gh `--json assignees`, flattened from
+    /// `[{"login": "octocat", ...}]` to plain logins).
+    #[serde(default, deserialize_with = "assignees_to_logins")]
+    pub assignees: Vec<String>,
+}
+
+// gh emits both `labels` and `assignees` as arrays of objects (`[{"name": …}]`,
+// `[{"login": …}]`), not plain strings — flatten each into a `Vec<String>`.
+// `Option<Vec<_>>` (not a bare `Vec<_>`) so a present JSON `null` — like the
+// other optional fields in this file — degrades to an empty list rather than
+// failing the whole parse.
+#[derive(Deserialize)]
+struct LabelJson {
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct AssigneeJson {
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    login: String,
+}
+
+fn labels_to_names<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Vec<LabelJson>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(raw.into_iter().map(|l| l.name).collect())
+}
+
+fn assignees_to_logins<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Vec<AssigneeJson>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(raw.into_iter().map(|a| a.login).collect())
 }
 
 /// A GitHub Actions workflow run (`gh run list/view --json …`).
@@ -434,8 +483,51 @@ mod tests {
                 head_ref_name: "feat/x".into(),
                 base_ref_name: "main".into(),
                 url: "https://gh/pr/12".into(),
+                labels: Vec::new(),
+                assignees: Vec::new(),
             }
         );
+    }
+
+    // Positive case: gh's `--json labels,assignees` shape (`[{"name": …}]`,
+    // `[{"login": …}]`) flattens to plain `Vec<String>`.
+    #[test]
+    fn pr_parses_labels_and_assignees() {
+        let json = r#"{"number": 12, "title": "Add feature", "state": "OPEN", "isDraft": false,
+            "headRefName": "feat/x", "baseRefName": "main", "url": "https://gh/pr/12",
+            "labels": [{"name": "bug", "color": "f00"}, {"name": "priority-1"}],
+            "assignees": [{"login": "octocat", "id": 1}, {"login": "hubot"}]}"#;
+        let pr: PullRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse pr with labels/assignees");
+        assert_eq!(pr.labels, vec!["bug".to_string(), "priority-1".to_string()]);
+        assert_eq!(
+            pr.assignees,
+            vec!["octocat".to_string(), "hubot".to_string()]
+        );
+    }
+
+    // Negative case: an empty `labels`/`assignees` array parses to an empty
+    // `Vec`, not a panic or parse error. And when the keys are absent entirely
+    // (e.g. an older canned fixture), `#[serde(default)]` fills the same empty
+    // `Vec`.
+    #[test]
+    fn pr_without_labels_or_assignees_parses_to_empty_vecs() {
+        let json = r#"{"number": 13, "title": "t", "state": "OPEN", "isDraft": false,
+            "headRefName": "h", "baseRefName": "main", "url": "u",
+            "labels": [], "assignees": []}"#;
+        let pr: PullRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("PR with empty labels/assignees");
+        assert!(pr.labels.is_empty());
+        assert!(pr.assignees.is_empty());
+
+        let pr_no_keys: PullRequest = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"number": 14, "title": "t", "state": "OPEN",
+                "headRefName": "h", "baseRefName": "main", "url": "u"}"#,
+        )
+        .expect("PR without labels/assignees keys");
+        assert!(pr_no_keys.labels.is_empty());
+        assert!(pr_no_keys.assignees.is_empty());
     }
 
     // `#[serde(default)]` robustness: a payload that omits `isDraft` deserializes
@@ -645,5 +737,34 @@ mod tests {
         let issue: Issue = vcs_cli_support::json::from_json(BINARY, view).expect("parse view");
         assert_eq!(issue.body, "Write them.");
         assert_eq!(issue.url, "https://gh/issues/3");
+        assert!(issue.labels.is_empty());
+        assert!(issue.assignees.is_empty());
+    }
+
+    // Positive case for issues, mirroring `pr_parses_labels_and_assignees`.
+    #[test]
+    fn issue_parses_labels_and_assignees() {
+        let json = r#"{"number": 3, "title": "Docs", "state": "OPEN",
+            "body": "b", "url": "https://gh/issues/3",
+            "labels": [{"name": "docs"}, {"name": "good-first-issue"}],
+            "assignees": [{"login": "andyfeller"}]}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse issue with labels/assignees");
+        assert_eq!(
+            issue.labels,
+            vec!["docs".to_string(), "good-first-issue".to_string()]
+        );
+        assert_eq!(issue.assignees, vec!["andyfeller".to_string()]);
+    }
+
+    // Negative case for issues: empty arrays parse to empty `Vec`s, not an error.
+    #[test]
+    fn issue_without_labels_or_assignees_parses_to_empty_vecs() {
+        let json = r#"{"number": 4, "title": "t", "state": "CLOSED",
+            "labels": [], "assignees": []}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("issue with empty labels/assignees");
+        assert!(issue.labels.is_empty());
+        assert!(issue.assignees.is_empty());
     }
 }

@@ -12,8 +12,8 @@ use processkit::ProcessRunner;
 use vcs_jj::{ChangedPath, Jj, JjApi, JjFileset, WorkspaceAdd};
 
 use crate::dto::{
-    ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState, RepoSnapshot,
-    WorktreeInfo,
+    ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
+    RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -119,6 +119,24 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<DiffStat> {
     // `jj.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
     jj.diff_stat(dir, "@").await.map_err(Into::into)
+}
+
+pub(crate) async fn log<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    max: usize,
+) -> Result<Vec<Commit>> {
+    // `JjApi::log`'s typed `Change` carries no author/timestamp (its template
+    // renders only change-id/commit-id/empty/description) — so, unlike git,
+    // `author`/`date` stay `None` here rather than being guessed (see the
+    // `Commit` type docs).
+    Ok(jj
+        .log(dir, revset, max)
+        .await?
+        .into_iter()
+        .map(|c| Commit::new(c.commit_id, c.description))
+        .collect())
 }
 
 /// One `jj log -r @` template carrying the working-copy-only fields the

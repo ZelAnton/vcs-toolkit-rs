@@ -192,6 +192,8 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
+        labels: i.labels,
+        assignees: i.assignees,
     }
 }
 
@@ -228,6 +230,8 @@ fn map_mr(mr: MergeRequest) -> ForgePr {
         target_branch: mr.target_branch,
         url: mr.web_url,
         draft: mr.draft,
+        labels: mr.labels,
+        assignees: mr.assignees,
     }
 }
 

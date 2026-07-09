@@ -10,7 +10,9 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `repo_log` read tool: recent history (up to `max` commits reachable from a
+  git revspec / jj revset), backed by the new `Repo::log` facade method. Always
+  available (read-only, no `WriteGate`).
 
 ### Changed
 -

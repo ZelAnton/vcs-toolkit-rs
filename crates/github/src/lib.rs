@@ -146,10 +146,10 @@ pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
-const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url";
+const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
-const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url";
-const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url";
+const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url,labels,assignees";
+const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url,labels,assignees";
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
 const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedAt";

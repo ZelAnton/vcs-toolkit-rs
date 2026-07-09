@@ -10,7 +10,9 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `PullRequest`/`Issue` gained `labels: Vec<String>` and `assignees: Vec<String>`,
+  parsed from `gh --json labels,assignees`'s nested `[{"name": …}]`/
+  `[{"login": …}]` shapes and flattened to plain strings.
 
 ### Changed
 -

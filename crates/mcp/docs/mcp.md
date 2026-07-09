@@ -77,6 +77,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_info` | — | `{ backend, root, cwd, forge }` — git/jj, the repo root, the working dir, and the configured forge (or null). |
 | `repo_status` | — | The working-copy changes (added/modified/deleted/renamed paths). |
 | `repo_diff_stat` | — | Aggregate insertion/deletion/file counts for the working copy. |
+| `repo_log` | `{ revspec_or_revset, max }` | Up to `max` commits reachable from `revspec_or_revset` (a git revspec or jj revset), most-recent-first. `author`/`date` are null on jj. |
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |

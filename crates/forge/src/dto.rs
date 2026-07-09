@@ -172,12 +172,20 @@ pub struct ForgePr {
     /// and GitLab report it; Gitea always reports `false` here (`tea`'s PR list
     /// doesn't carry the draft flag).
     pub draft: bool,
+    /// Labels attached to the PR/MR. GitHub and GitLab both report them; Gitea
+    /// is always empty here — `tea`'s PR list/view has no labels column.
+    pub labels: Vec<String>,
+    /// Usernames/logins of assigned users. GitHub and GitLab both report them
+    /// (GitHub `gh --json assignees` → `login`, GitLab `assignees` → `username`);
+    /// Gitea is always empty here — `tea`'s PR list/view has no assignees column.
+    pub assignees: Vec<String>,
 }
 
 impl ForgePr {
-    /// A PR/MR with the given number, title, and state; empty branches/url, not a
-    /// draft — chain the setters. Lets a custom [`ForgeApi`](crate::ForgeApi) backend
-    /// or a test build one despite the `#[non_exhaustive]`.
+    /// A PR/MR with the given number, title, and state; empty branches/url/
+    /// labels/assignees, not a draft — chain the setters. Lets a custom
+    /// [`ForgeApi`](crate::ForgeApi) backend or a test build one despite the
+    /// `#[non_exhaustive]`.
     pub fn new(number: u64, title: impl Into<String>, state: ForgePrState) -> Self {
         Self {
             number,
@@ -187,6 +195,8 @@ impl ForgePr {
             target_branch: String::new(),
             url: String::new(),
             draft: false,
+            labels: Vec::new(),
+            assignees: Vec::new(),
         }
     }
 
@@ -211,6 +221,18 @@ impl ForgePr {
     /// Mark it a draft.
     pub fn draft(mut self) -> Self {
         self.draft = true;
+        self
+    }
+
+    /// Set the labels.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
+        self
+    }
+
+    /// Set the assignee usernames/logins.
+    pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
+        self.assignees = assignees.into();
         self
     }
 }
@@ -303,11 +325,20 @@ pub struct ForgeIssue {
     /// Web URL. Populated by both [`issue_list`](crate::Forge::issue_list) and
     /// [`issue_view`](crate::Forge::issue_view) on every forge.
     pub url: String,
+    /// Labels attached to the issue. GitHub and GitLab both report them; Gitea
+    /// is always empty here — `tea`'s issue list/view has no labels column.
+    pub labels: Vec<String>,
+    /// Usernames/logins of assigned users. GitHub and GitLab both report them
+    /// (GitHub `gh --json assignees` → `login`, GitLab `assignees` → `username`);
+    /// Gitea is always empty here — `tea`'s issue list/view has no assignees
+    /// column.
+    pub assignees: Vec<String>,
 }
 
 impl ForgeIssue {
-    /// An issue with the given number, title, and state; empty body/url — chain the
-    /// setters. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    /// An issue with the given number, title, and state; empty body/url/labels/
+    /// assignees — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi)
+    /// backend or test.
     pub fn new(number: u64, title: impl Into<String>, state: ForgeIssueState) -> Self {
         Self {
             number,
@@ -315,6 +346,8 @@ impl ForgeIssue {
             state,
             body: String::new(),
             url: String::new(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
         }
     }
 
@@ -327,6 +360,18 @@ impl ForgeIssue {
     /// Set the web URL.
     pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
+        self
+    }
+
+    /// Set the labels.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
+        self
+    }
+
+    /// Set the assignee usernames/logins.
+    pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
+        self.assignees = assignees.into();
         self
     }
 }
@@ -846,7 +891,9 @@ mod tests {
             .source_branch("feature")
             .target_branch("main")
             .url("https://x/pr/7")
-            .draft();
+            .draft()
+            .labels(vec!["bug".to_string()])
+            .assignees(vec!["octocat".to_string()]);
         assert_eq!(pr.number, 7);
         assert_eq!(pr.title, "Add widget");
         assert_eq!(pr.state, ForgePrState::Open);
@@ -854,6 +901,8 @@ mod tests {
         assert_eq!(pr.target_branch, "main");
         assert_eq!(pr.url, "https://x/pr/7");
         assert!(pr.draft);
+        assert_eq!(pr.labels, vec!["bug".to_string()]);
+        assert_eq!(pr.assignees, vec!["octocat".to_string()]);
 
         let repo = ForgeRepo::new("proj", "acme")
             .default_branch("main")
@@ -867,12 +916,16 @@ mod tests {
 
         let issue = ForgeIssue::new(3, "Bug", ForgeIssueState::Closed)
             .body("desc")
-            .url("https://x/i/3");
+            .url("https://x/i/3")
+            .labels(vec!["wontfix".to_string()])
+            .assignees(vec!["andyfeller".to_string()]);
         assert_eq!(issue.number, 3);
         assert_eq!(issue.title, "Bug");
         assert_eq!(issue.state, ForgeIssueState::Closed);
         assert_eq!(issue.body, "desc");
         assert_eq!(issue.url, "https://x/i/3");
+        assert_eq!(issue.labels, vec!["wontfix".to_string()]);
+        assert_eq!(issue.assignees, vec!["andyfeller".to_string()]);
 
         let rel = ForgeRelease::new("v1.0")
             .title("First")
@@ -1029,11 +1082,15 @@ mod serde_tests {
             target_branch: "main".into(),
             url: "u".into(),
             draft: false,
+            labels: vec!["bug".into()],
+            assignees: vec!["octocat".into()],
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert_eq!(v["number"], 7);
         assert_eq!(v["state"], "Merged"); // enum → variant name
         assert_eq!(v["source_branch"], "feat");
+        assert_eq!(v["labels"], serde_json::json!(["bug"]));
+        assert_eq!(v["assignees"], serde_json::json!(["octocat"]));
     }
 
     // The Wave-A DTOs are part of vcs-mcp's JSON wire format — pin their shape:
@@ -1047,11 +1104,15 @@ mod serde_tests {
             state: ForgeIssueState::Closed,
             body: "b".into(),
             url: "u".into(),
+            labels: vec!["wontfix".into()],
+            assignees: Vec::new(),
         };
         let v = serde_json::to_value(&issue).unwrap();
         assert_eq!(v["number"], 3);
         assert_eq!(v["state"], "Closed");
         assert_eq!(v["body"], "b");
+        assert_eq!(v["labels"], serde_json::json!(["wontfix"]));
+        assert_eq!(v["assignees"], serde_json::json!([]));
 
         let release = ForgeRelease {
             tag: "v1".into(),
