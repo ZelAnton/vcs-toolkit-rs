@@ -692,6 +692,17 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// The content of `path` as it exists at `rev` (git revspec / jj revset), e.g.
+    /// `HEAD:src/lib.rs` on git or `@-` + a fileset on jj — both normalise
+    /// backslash path separators and return the file's bytes verbatim (including
+    /// any trailing newline).
+    pub async fn show_file(&self, rev: &str, path: &str) -> Result<String> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::show_file(g, &self.cwd, rev, path).await,
+            Backend::Jj(j) => jj_backend::show_file(j, &self.cwd, rev, path).await,
+        }
+    }
+
     /// A batched [`RepoSnapshot`] of the common repo state — branch, upstream,
     /// ahead/behind, dirtiness, change count, and operation state — in a **small
     /// fixed** number of spawns instead of a call per field (git: `status
@@ -1092,6 +1103,7 @@ facade_trait! {
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
+        fn show_file(rev: &str, path: &str) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[String], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
@@ -2632,6 +2644,25 @@ mod tests {
         assert_eq!(commits[0].description, "wip");
         assert_eq!(commits[0].author, None);
         assert_eq!(commits[0].date, None);
+    }
+
+    // `Repo::show_file` on git dispatches to `GitApi::show_file` and forwards its
+    // content verbatim.
+    #[tokio::test]
+    async fn git_show_file_dispatches_to_git_backend() {
+        let repo = git_repo(ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")));
+        let content = repo.show_file("HEAD", "src/main.rs").await.unwrap();
+        assert_eq!(content, "fn main() {}\n");
+    }
+
+    // `Repo::show_file` on jj dispatches to `JjApi::file_show` and forwards its
+    // content verbatim.
+    #[tokio::test]
+    async fn jj_show_file_dispatches_to_jj_backend() {
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "file", "show"], Reply::ok("fn main() {}\n")));
+        let content = repo.show_file("@-", "src/main.rs").await.unwrap();
+        assert_eq!(content, "fn main() {}\n");
     }
 
     // On jj, abort/continue are reporting no-ops (nothing is ever paused).

@@ -157,6 +157,16 @@ pub struct LogParams {
     pub max: usize,
 }
 
+/// Read a file's content at a revision.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ShowFileParams {
+    /// The revspec (git) / revset (jj) to read the file from, e.g. `"HEAD"` (git)
+    /// or `"@-"` (jj).
+    pub rev: String,
+    /// Repo-relative path of the file to read.
+    pub path: String,
+}
+
 /// A pull/merge request by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrNumberParams {
@@ -495,6 +505,23 @@ impl VcsMcpServer {
             &self
                 .repo
                 .log(&p.revspec_or_revset, p.max)
+                .await
+                .map_err(core_err)?,
+        )
+    }
+
+    #[tool(
+        description = "The content of a file at a revision (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@-\"). Returns the file's bytes verbatim (including any trailing newline).",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_show_file(
+        &self,
+        Parameters(p): Parameters<ShowFileParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .repo
+                .show_file(&p.rev, &p.path)
                 .await
                 .map_err(core_err)?,
         )
@@ -1022,6 +1049,25 @@ mod tests {
         assert!(json.contains("deadbeef"), "{json}");
         assert!(json.contains("Fix bug"), "{json}");
         assert!(json.contains("Jane"), "{json}");
+    }
+
+    // `repo_show_file` is a read tool (no write gate) that surfaces the facade's
+    // file content verbatim.
+    #[tokio::test]
+    async fn repo_show_file_returns_content() {
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")),
+            WriteGate::None,
+        );
+        let out = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "src/main.rs".into(),
+            }))
+            .await
+            .expect("repo_show_file ok");
+        let json = result_json(&out);
+        assert!(json.contains("fn main"), "{json}");
     }
 
     // A mutation tool is gated when writes are disabled — it errors WITHOUT
