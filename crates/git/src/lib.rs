@@ -831,6 +831,15 @@ pub trait GitApi: Send + Sync {
     /// these paths" contract. Mirrors
     /// [`JjApi::log_paths`](../vcs_jj/trait.JjApi.html#tymethod.log_paths), which
     /// takes filesets instead of pathspecs.
+    ///
+    /// Unlike [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths), git's
+    /// `log` has no `--pathspec-from-file` support, so a `paths` set that would
+    /// risk exceeding the OS argv limit is instead split into multiple `git log`
+    /// calls, each within budget; the per-call results are merged (deduplicated
+    /// by hash — a commit can touch paths spread across more than one chunk),
+    /// reordered by author instant descending, and capped at `max` (T-052). A
+    /// `paths` set that fits in one call is unaffected — same single
+    /// invocation, same order, as before.
     async fn log_paths(
         &self,
         dir: &Path,
@@ -847,7 +856,13 @@ pub trait GitApi: Send + Sync {
     async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Initialise a repository (`git init`).
     async fn init(&self, dir: &Path) -> Result<()>;
-    /// Stage `paths` (`git add -- <paths>`).
+    /// Stage `paths` (`git add -- <paths>`). A path set whose combined length
+    /// would risk exceeding the OS command-line limit (`ARGV_PATHSPEC_BUDGET`;
+    /// Windows' `CreateProcess` caps out around 32,767 characters) instead goes
+    /// over stdin via `--pathspec-from-file=- --pathspec-file-nul`, with
+    /// `--literal-pathspecs` so a path containing `*`/`?`/`[]` matches literally
+    /// rather than as pathspec glob magic — the paths never touch argv at all in
+    /// that case, so there is no upper bound left to exceed (T-052).
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()>;
     /// Commit staged changes (`git commit -m`).
     async fn commit(&self, dir: &Path, message: &str) -> Result<()>;
@@ -860,6 +875,11 @@ pub trait GitApi: Send + Sync {
     async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
     /// Commit exactly the spec's paths' working-tree content, ignoring the index
     /// (`git commit [--amend] -m <message> --only -- <paths>`); see [`CommitPaths`].
+    /// Like [`add`](GitApi::add), a path set that would risk exceeding the OS
+    /// argv limit is instead routed over stdin (`--pathspec-from-file=-
+    /// --pathspec-file-nul`, `--literal-pathspecs`) — always as a **single**
+    /// `git commit` invocation either way, so the one-atomic-commit contract is
+    /// unaffected by the path set's size (T-052).
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
     /// The last commit's full message (`git log -1 --format=%B`) — e.g. to
     /// pre-fill an amend.
@@ -1332,21 +1352,38 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             ));
         }
         let n = format!("-n{max}");
-        let mut command = self.core.command_in(
-            dir,
-            [
-                "log",
-                revspec.as_str(),
-                n.as_str(),
-                "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
-                "--",
-            ],
-        );
-        for path in paths {
-            command = command.arg(path);
+        let chunks = chunk_pathspecs(paths);
+        if chunks.len() <= 1 {
+            // The common case: everything fits one call — byte-identical to the
+            // pre-T-052 behavior (order included).
+            let command =
+                self.log_paths_command(dir, revspec, &n, paths.iter().map(String::as_str));
+            return self.core.parse(command, parse::parse_log).await;
         }
-        self.core.parse(command, parse::parse_log).await
+        // Large path set (T-052): `git log` has no `--pathspec-from-file`
+        // support (unlike `add`/`commit_paths`), so split the pathspecs across
+        // multiple argv-budget-sized calls and merge the results: dedup by hash
+        // (a commit can touch paths spread across more than one chunk), then
+        // reorder by author instant descending and cap at `max`. Requesting
+        // `-n max` per chunk is enough to guarantee the merged top-`max` is
+        // correct: any commit within the true (merged) top `max` has at most
+        // `max - 1` newer commits in the *entire* union of chunk results, so it
+        // has at most that many newer commits within its own chunk too — i.e.
+        // it always ranks within that chunk's own top `max`.
+        let mut merged: Vec<Commit> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for chunk in &chunks {
+            let command = self.log_paths_command(dir, revspec, &n, chunk.iter().copied());
+            let commits = self.core.parse(command, parse::parse_log).await?;
+            for commit in commits {
+                if seen.insert(commit.hash.clone()) {
+                    merged.push(commit);
+                }
+            }
+        }
+        merged.sort_by_cached_key(|c| std::cmp::Reverse(author_instant_key(&c.date)));
+        merged.truncate(max);
+        Ok(merged)
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
@@ -1386,6 +1423,28 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()> {
+        if pathspec_argv_len(paths.iter().map(|p| p.as_os_str())) > ARGV_PATHSPEC_BUDGET {
+            // Large path set (T-052): route over stdin instead of argv, so
+            // there is no OS command-line limit left to exceed.
+            // `--literal-pathspecs` matches each path byte-for-byte instead of
+            // treating `*`/`?`/`[]` as pathspec glob magic.
+            let stdin = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+                paths.iter().map(|p| p.as_os_str()),
+            )?);
+            let command = self
+                .core
+                .command_in(
+                    dir,
+                    [
+                        "--literal-pathspecs",
+                        "add",
+                        "--pathspec-from-file=-",
+                        "--pathspec-file-nul",
+                    ],
+                )
+                .stdin(stdin);
+            return self.core.run_unit(command).await;
+        }
         // `--` separates the pathspecs so a path can never be read as an option.
         let mut command = self.core.command_in(dir, ["add", "--"]);
         for path in paths {
@@ -1440,6 +1499,28 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `--only -- <paths>` commits exactly these paths' working-tree content
         // regardless of the index; `--` keeps a path from being read as an option.
         // C locale: a failure's output feeds `is_nothing_to_commit`.
+        if pathspec_argv_len(spec.paths.iter().map(|p| p.as_os_str())) > ARGV_PATHSPEC_BUDGET {
+            // Large path set (T-052): same NUL-safe stdin transport as `add`'s
+            // twin branch. Still exactly one `git commit` invocation either
+            // way — the atomic-commit contract never depends on the path
+            // set's size, since no chunking is ever needed here.
+            let stdin = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+                spec.paths.iter().map(|p| p.as_os_str()),
+            )?);
+            let mut command =
+                c_locale(self.core.command_in(dir, ["--literal-pathspecs", "commit"]));
+            if spec.amend {
+                command = command.arg("--amend");
+            }
+            command = command
+                .arg("-m")
+                .arg(spec.message)
+                .arg("--only")
+                .arg("--pathspec-from-file=-")
+                .arg("--pathspec-file-nul")
+                .stdin(stdin);
+            return self.core.run_unit(command).await;
+        }
         let mut command = c_locale(self.core.command_in(dir, ["commit"]));
         if spec.amend {
             command = command.arg("--amend");
@@ -2314,6 +2395,35 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 }
 
+impl<R: ProcessRunner> Git<R> {
+    /// Build one `git log <revspec> -n<max> -z --format=… -- <paths>` call — the
+    /// single-invocation shape both the direct [`GitApi::log_paths`] call and
+    /// each chunk of its large-path-set fallback (T-052) share.
+    fn log_paths_command<'a>(
+        &self,
+        dir: &Path,
+        revspec: &RevSpec,
+        n: &str,
+        paths: impl IntoIterator<Item = &'a str>,
+    ) -> Command {
+        let mut command = self.core.command_in(
+            dir,
+            [
+                "log",
+                revspec.as_str(),
+                n,
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+            ],
+        );
+        for path in paths {
+            command = command.arg(path);
+        }
+        command
+    }
+}
+
 // --- Internal helpers --------------------------------------------------------
 //
 // The error classifiers (`is_merge_conflict`/`is_nothing_to_commit`/
@@ -2358,6 +2468,158 @@ fn c_locale(cmd: processkit::Command) -> processkit::Command {
 /// ~45 call sites stay `reject_flag_like(what, value)`.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+// --- Large path-set transport (T-052) ----------------------------------------
+//
+// `add`/`commit_paths` build one `git` argv per call whether their path set has
+// three entries or three hundred thousand. Windows' `CreateProcess` rejects a
+// command line longer than roughly 32,767 UTF-16 code units (`OS error 206`);
+// POSIX's `ARG_MAX` is typically far larger but shared with the environment
+// block. [`ARGV_PATHSPEC_BUDGET`] is a conservative byte budget for the *paths*
+// portion of such a call (not counting the program name, subcommand, or
+// flags — negligible next to this), chosen with a wide margin under the
+// tighter Windows ceiling so an ordinary call (a handful of paths) never
+// crosses it. Crossing it switches `add`/`commit_paths` to the NUL-safe
+// `--pathspec-from-file=- --pathspec-file-nul` transport ([`pathspec_nul_bytes`])
+// — unbounded, since the paths then never touch argv at all — and switches
+// `log_paths` (for which git has no `--pathspec-from-file` support) to chunked
+// invocations ([`chunk_pathspecs`]) merged back into one result.
+
+/// Conservative byte budget for the *pathspec* portion of a `git` argv — see
+/// the module-level comment above this constant for the reasoning.
+const ARGV_PATHSPEC_BUDGET: usize = 6_000;
+
+/// Sum of each path's encoded byte length plus one (a stand-in for the
+/// separating argv-slot overhead), compared against [`ARGV_PATHSPEC_BUDGET`]
+/// to decide whether a path set is too large for one plain-argv invocation.
+fn pathspec_argv_len<'a>(paths: impl IntoIterator<Item = &'a std::ffi::OsStr>) -> usize {
+    paths
+        .into_iter()
+        .map(|p| p.as_encoded_bytes().len() + 1)
+        .sum()
+}
+
+/// Build the NUL-delimited pathspec payload for `--pathspec-from-file=-
+/// --pathspec-file-nul` from `paths`, entirely in memory before anything is
+/// spawned. A path embedding a NUL byte — impossible on a real filesystem, but
+/// checked anyway as defense-in-depth — would silently split into two
+/// pathspecs on that separator, one of them possibly matching an unintended
+/// file; refusing it here, before the command is built, keeps input
+/// preparation atomic: either every path is valid and the one `git` invocation
+/// runs, or none of it does (no partially-applied result to unwind). Returns
+/// the raw bytes (rather than a [`processkit::Stdin`] directly) so this pure
+/// step stays unit-testable — wrap the result in
+/// [`processkit::Stdin::from_bytes`] at the call site.
+fn pathspec_nul_bytes<'a>(paths: impl IntoIterator<Item = &'a std::ffi::OsStr>) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    for path in paths {
+        let bytes = path.as_encoded_bytes();
+        if bytes.contains(&0) {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "path contains an embedded NUL byte, which the \
+                     --pathspec-file-nul transport uses as its separator — \
+                     refusing before spawning rather than silently splitting \
+                     it into two pathspecs",
+                ),
+            ));
+        }
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+    }
+    Ok(buf)
+}
+
+/// Split `paths` into groups whose combined length (each entry's byte length
+/// plus one, matching [`pathspec_argv_len`]) stays within
+/// [`ARGV_PATHSPEC_BUDGET`] — every group gets at least one path (a single path
+/// already over budget still gets its own singleton group; nothing shorter is
+/// possible). Preserves `paths`' order, both within and across groups.
+fn chunk_pathspecs(paths: &[String]) -> Vec<Vec<&str>> {
+    let mut chunks: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut current_len = 0usize;
+    for path in paths {
+        let len = path.len() + 1;
+        if !current.is_empty() && current_len + len > ARGV_PATHSPEC_BUDGET {
+            chunks.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+        current.push(path.as_str());
+        current_len += len;
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// Approximate a commit's author instant (UTC seconds since the Unix epoch)
+/// from `%aI` — strict ISO-8601 with either a trailing `Z` or a numeric
+/// `±HH:MM` offset (verified against real `git log` output; there is no third
+/// form). Used only to reorder [`chunk_pathspecs`]'s merged, multi-call
+/// `log_paths` results back into one chronological list — a single call never
+/// needs this, since it already comes back in git's own order. Malformed input
+/// (should not happen — this always parses our own fixed `--format`) sorts
+/// last (`i64::MIN`) rather than panicking or silently landing near the top.
+fn author_instant_key(date: &str) -> i64 {
+    parse_iso8601_utc_seconds(date).unwrap_or(i64::MIN)
+}
+
+/// Parse `%aI`'s strict ISO-8601 form (`YYYY-MM-DDTHH:MM:SS` + `Z` or
+/// `±HH:MM`) into UTC seconds since the Unix epoch. See [`author_instant_key`].
+fn parse_iso8601_utc_seconds(date: &str) -> Option<i64> {
+    let bytes = date.as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let year: i64 = date.get(0..4)?.parse().ok()?;
+    let month: u32 = date.get(5..7)?.parse().ok()?;
+    let day: u32 = date.get(8..10)?.parse().ok()?;
+    let hour: i64 = date.get(11..13)?.parse().ok()?;
+    let minute: i64 = date.get(14..16)?.parse().ok()?;
+    let second: i64 = date.get(17..19)?.parse().ok()?;
+    let rest = date.get(19..)?;
+    let offset_seconds: i64 = if rest == "Z" {
+        0
+    } else {
+        let sign = match rest.as_bytes().first()? {
+            b'+' => 1,
+            b'-' => -1,
+            _ => return None,
+        };
+        if rest.len() != 6 || rest.as_bytes()[3] != b':' {
+            return None;
+        }
+        let off_h: i64 = rest.get(1..3)?.parse().ok()?;
+        let off_m: i64 = rest.get(4..6)?.parse().ok()?;
+        sign * (off_h * 3600 + off_m * 60)
+    };
+    let days = days_from_civil(year, month, day);
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset_seconds)
+}
+
+/// Days since the Unix epoch (1970-01-01) for a Gregorian calendar date —
+/// Howard Hinnant's public-domain `days_from_civil` algorithm (the truncating
+/// `/ 400` trick relies on truncation-toward-zero division, which Rust's `/`
+/// on signed integers already is — same as the C++ original).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = (i64::from(m) + 9) % 12; // [0, 11]: Mar=0 .. Feb=11
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -3139,6 +3401,31 @@ mod tests {
             .expect("add should build `add -- <paths>`");
     }
 
+    // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` must route
+    // through the NUL-safe `--pathspec-from-file=- --pathspec-file-nul`
+    // transport instead of the plain `add -- <paths>` argv: no per-path argv
+    // entries, the payload travels over stdin instead (T-052).
+    #[tokio::test]
+    async fn add_large_path_set_uses_pathspec_from_file_stdin() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let paths: Vec<PathBuf> = (0..2_000)
+            .map(|i| PathBuf::from(format!("dir/file_{i:05}.txt")))
+            .collect();
+        git.add(Path::new("."), &paths).await.expect("add");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "--literal-pathspecs",
+                "add",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ]
+        );
+        assert!(call.has_stdin, "paths must travel over stdin, not argv");
+    }
+
     #[tokio::test]
     async fn worktree_list_parses_porcelain() {
         let git = Git::with_runner(ScriptedRunner::new().on(
@@ -3279,6 +3566,39 @@ mod tests {
         );
     }
 
+    // Same transport switch as `add`'s twin test: a path set over
+    // `ARGV_PATHSPEC_BUDGET` commits through `--pathspec-from-file=-
+    // --pathspec-file-nul` (paths over stdin) instead of a plain `-- <paths>`
+    // argv tail — and it is still exactly **one** `git commit` call (T-052).
+    #[tokio::test]
+    async fn commit_paths_large_path_set_uses_pathspec_from_file_stdin() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let paths: Vec<PathBuf> = (0..2_000)
+            .map(|i| PathBuf::from(format!("dir/file_{i:05}.txt")))
+            .collect();
+        git.commit_paths(Path::new("."), CommitPaths::new(paths, "msg").amend())
+            .await
+            .expect("commit_paths");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "must be a single atomic commit invocation");
+        let call = &calls[0];
+        assert_eq!(
+            call.args_str(),
+            [
+                "--literal-pathspecs",
+                "commit",
+                "--amend",
+                "-m",
+                "msg",
+                "--only",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ]
+        );
+        assert!(call.has_stdin, "paths must travel over stdin, not argv");
+    }
+
     // is_unborn maps the rev-parse exit code: 0 → has commits (false), 1 →
     // unborn (true), anything else is a structured error.
     #[tokio::test]
@@ -3361,6 +3681,156 @@ mod tests {
             .expect_err("empty paths must be refused");
         assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
         assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` splits
+    // `log` into per-chunk calls (`git log` has no `--pathspec-from-file`
+    // support, unlike `add`/`commit_paths`) and merges the results: dedup by
+    // hash (the "shared" commit appears in both chunks' canned output),
+    // reordered by author instant descending, capped at `max` (T-052).
+    #[tokio::test]
+    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_date() {
+        // Two paths, each already over budget alone once paired — `chunk_pathspecs`
+        // puts each in its own singleton chunk.
+        let path_a = "a".repeat(4_000);
+        let path_b = "b".repeat(4_000);
+        let common = [
+            "git",
+            "log",
+            "HEAD",
+            "-n5",
+            "-z",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--",
+        ];
+        let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_a_args.push(path_a.clone());
+        let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_b_args.push(path_b.clone());
+
+        // Chunk A: "newer-a" (2026-01-02) + "shared" (2026-01-01).
+        let reply_a = Reply::ok(
+            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\0"
+                .to_string(),
+        );
+        // Chunk B: "newest-b" (2026-01-03, the true global newest) + the SAME
+        // "shared" commit again (touches a path in both chunks).
+        let reply_b = Reply::ok(
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\0"
+                .to_string(),
+        );
+
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(chunk_a_args, reply_a)
+                .on(chunk_b_args, reply_b),
+        );
+
+        let commits = git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[path_a, path_b])
+            .await
+            .expect("log_paths");
+
+        assert_eq!(
+            commits.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(),
+            ["bbb1", "aaa1", "shar"],
+            "expected newest-first across chunks, with the shared commit deduplicated"
+        );
+    }
+
+    // --- T-052 pure-helper tests ----------------------------------------------
+
+    #[test]
+    fn pathspec_argv_len_sums_bytes_plus_one_per_path() {
+        use std::ffi::OsStr;
+        let paths = [OsStr::new("a.rs"), OsStr::new("dir/b.rs")];
+        // "a.rs" (4) + 1, "dir/b.rs" (8) + 1.
+        assert_eq!(pathspec_argv_len(paths), 5 + 9);
+        assert_eq!(pathspec_argv_len(std::iter::empty()), 0);
+    }
+
+    // Each path lands verbatim between NUL separators, in order — including a
+    // leading dash, embedded spaces, and a glob-magic character (the whole
+    // point of the `--literal-pathspecs` + NUL transport: no argv/shell layer
+    // to mis-parse them, and git is told not to treat them as pathspec magic
+    // either).
+    #[test]
+    fn pathspec_nul_bytes_joins_paths_literally_in_order() {
+        use std::ffi::OsStr;
+        let paths = [
+            OsStr::new("-weird.txt"),
+            OsStr::new("has space.txt"),
+            OsStr::new("glob[1].txt"),
+        ];
+        let bytes = pathspec_nul_bytes(paths).expect("no embedded NUL");
+        assert_eq!(bytes, b"-weird.txt\0has space.txt\0glob[1].txt\0".to_vec());
+    }
+
+    // An embedded NUL byte would silently truncate a pathspec-file-nul entry,
+    // splitting one path into two on the very separator the transport relies
+    // on — refused before anything is built, so `commit_paths`'s "no partial
+    // result" contract holds even for this input-prep failure.
+    #[test]
+    fn pathspec_nul_bytes_rejects_embedded_nul() {
+        use std::ffi::OsStr;
+        // A real filesystem path can't contain a NUL byte, but the guard must
+        // still catch a pathological caller-constructed one.
+        let bad = unsafe { OsStr::from_encoded_bytes_unchecked(b"a\0b") };
+        let err = pathspec_nul_bytes([bad]).expect_err("embedded NUL must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn chunk_pathspecs_packs_under_budget_and_splits_over_it() {
+        let short = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(chunk_pathspecs(&short), vec![vec!["a", "b", "c"]]);
+
+        // Two paths that individually fit but together exceed the budget split
+        // into two singleton chunks, in order.
+        let big_a = "a".repeat(ARGV_PATHSPEC_BUDGET - 100);
+        let big_b = "b".repeat(ARGV_PATHSPEC_BUDGET - 100);
+        let big = vec![big_a.clone(), big_b.clone()];
+        assert_eq!(
+            chunk_pathspecs(&big),
+            vec![vec![big_a.as_str()], vec![big_b.as_str()]]
+        );
+
+        // A single path already over budget on its own still gets a (singleton)
+        // chunk — nothing shorter is possible.
+        let huge = vec!["z".repeat(ARGV_PATHSPEC_BUDGET * 2)];
+        assert_eq!(chunk_pathspecs(&huge), vec![vec![huge[0].as_str()]]);
+
+        assert!(chunk_pathspecs(&[]).is_empty());
+    }
+
+    #[test]
+    fn parses_iso8601_utc_and_offset_forms() {
+        // UTC form ("Z") — verified against real `git log --format=%aI` output.
+        assert_eq!(parse_iso8601_utc_seconds("1970-01-01T00:00:00Z"), Some(0));
+        // A positive offset moves the UTC instant *earlier* than the naive
+        // wall-clock reading (2026-07-10T11:10:10+02:00 is 2026-07-10T09:10:10Z).
+        let with_offset = parse_iso8601_utc_seconds("2026-07-10T11:10:10+02:00");
+        let utc_equivalent = parse_iso8601_utc_seconds("2026-07-10T09:10:10Z");
+        assert_eq!(with_offset, utc_equivalent);
+        assert!(with_offset.is_some());
+        // A negative offset.
+        assert_eq!(
+            parse_iso8601_utc_seconds("2026-07-10T05:10:10-04:00"),
+            utc_equivalent
+        );
+        // Malformed input parses to `None` (and `author_instant_key` falls back
+        // to sort-last rather than panicking).
+        assert_eq!(parse_iso8601_utc_seconds("not a date"), None);
+        assert_eq!(author_instant_key("not a date"), i64::MIN);
+    }
+
+    #[test]
+    fn author_instant_key_orders_newer_after_older() {
+        let older = author_instant_key("2026-01-01T00:00:00Z");
+        let newer = author_instant_key("2026-01-02T00:00:00Z");
+        assert!(newer > older);
     }
 
     #[tokio::test]

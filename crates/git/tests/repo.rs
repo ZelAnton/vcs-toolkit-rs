@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
-    AnnotatedTag, CheckoutTarget, Git, GitApi, MergeCheck, MergeCommit, RefName, RevSpec,
-    WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, CheckoutTarget, CommitPaths, Git, GitApi, MergeCheck, MergeCommit, RefName,
+    RevSpec, WorktreeAdd, WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
 
@@ -978,4 +978,57 @@ async fn conflict_model_resolves_a_real_conflict() {
             .is_empty(),
         "conflict cleared after writing the resolution"
     );
+}
+
+// T-052: `add` and `commit_paths` must accept a path set whose combined length
+// is definitely longer than Windows' `CreateProcess` argv ceiling (~32,767
+// UTF-16 code units — building it as one plain `add -- <paths>`/`commit --only
+// -- <paths>` argv used to fail there with `OS error 206`). Both route through
+// the NUL-safe `--pathspec-from-file=-` transport instead once the path set
+// crosses this crate's own (much smaller) internal budget, so neither ever
+// builds an oversized argv in the first place.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn add_and_commit_paths_survive_an_oversized_argv() {
+    let tmp = TempDir::new("huge-pathspec");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // ~5,000 files of ~15 characters each — comfortably past the 32,767-char
+    // Windows argv ceiling if ever built as one plain-argv pathspec list.
+    let count = 5_000usize;
+    let mut paths = Vec::with_capacity(count);
+    let mut total_pathspec_len = 0usize;
+    for i in 0..count {
+        let name = format!("f_{i:05}.txt");
+        std::fs::write(dir.join(&name), "x").expect("write file");
+        total_pathspec_len += name.len() + 1;
+        paths.push(PathBuf::from(name));
+    }
+    assert!(
+        total_pathspec_len > 32_767,
+        "test paths must exceed the Windows argv ceiling, got {total_pathspec_len}"
+    );
+
+    git.add(dir, &paths)
+        .await
+        .expect("add must not exceed the OS argv limit");
+    let status = git.status(dir).await.expect("status");
+    assert_eq!(status.len(), count, "every file must be staged");
+    assert!(
+        status.iter().all(|e| e.code == "A "),
+        "all staged as new files"
+    );
+
+    git.commit_paths(dir, CommitPaths::new(paths, "huge commit"))
+        .await
+        .expect("commit_paths must not exceed the OS argv limit");
+    assert!(
+        git.status(dir).await.expect("status").is_empty(),
+        "commit_paths must leave a clean tree"
+    );
+    let log = git.log(dir, &rv("HEAD"), 1).await.expect("log");
+    assert_eq!(log[0].subject, "huge commit");
 }
