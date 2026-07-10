@@ -1033,6 +1033,87 @@ async fn add_and_commit_paths_survive_an_oversized_argv() {
     assert_eq!(log[0].subject, "huge commit");
 }
 
+// T-052/R-04: `log_paths`'s large-path-set fallback resolves the (here
+// symbolic) `revspec` via a real `git rev-parse` exactly once, before any of
+// the several chunk calls and the commit-order oracle call it then makes —
+// exercised end-to-end against the real binary (the hermetic tests in
+// `src/lib.rs` script this same sequence, but can't confirm the real
+// `git rev-parse HEAD` output is actually consumable by the subsequent real
+// `git log <resolved> ...` calls the way the scripted tests assume). Two real
+// commits, each touching a different half of a path set too large for one
+// `git log` call, must still come back newest-first — proving the chunk
+// merge + oracle reorder + one-time revspec resolution all agree with what a
+// single unchunked call would have produced.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn log_paths_large_path_set_resolves_head_and_reorders_across_real_commits() {
+    let tmp = TempDir::new("log-paths-chunked");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // Each half is already comfortably past `log_paths`'s internal
+    // (much-smaller-than-Windows'-32,767) argv budget on its own, so querying
+    // both together below forces `log_paths` down its chunked path.
+    let count = 500usize;
+    let make_chunk = |dir: &Path, prefix: &str| -> Vec<String> {
+        (0..count)
+            .map(|i| {
+                let name = format!("{prefix}_{i:05}.txt");
+                std::fs::write(dir.join(&name), prefix).expect("write file");
+                name
+            })
+            .collect()
+    };
+
+    let paths_a = make_chunk(dir, "chunk_a");
+    git.add(
+        dir,
+        &paths_a
+            .iter()
+            .map(|s| PathBuf::from(s.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("add chunk a");
+    git.commit(dir, "commit a").await.expect("commit a");
+
+    let paths_b = make_chunk(dir, "chunk_b");
+    git.add(
+        dir,
+        &paths_b
+            .iter()
+            .map(|s| PathBuf::from(s.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("add chunk b");
+    git.commit(dir, "commit b").await.expect("commit b");
+
+    let mut all_paths = paths_a;
+    all_paths.extend(paths_b);
+    let total_len: usize = all_paths.iter().map(|p| p.len() + 1).sum();
+    assert!(
+        total_len > 12_000,
+        "path set must be large enough to force multiple `log_paths` chunks, \
+         got {total_len} bytes"
+    );
+
+    let commits = git
+        .log_paths(dir, &rv("HEAD"), 10, &all_paths)
+        .await
+        .expect("log_paths");
+    let subjects: Vec<&str> = commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(
+        subjects,
+        ["commit b", "commit a"],
+        "log_paths must report both real commits, newest first, once the \
+         chunked calls (over the resolved `HEAD`) are merged and reordered \
+         by the commit-order oracle"
+    );
+}
+
 // R-01/R-02: `add`, `commit_paths`, and `log_paths` must treat a pathspec
 // glob-magic character (`[]`) literally, not as glob magic — even for a small
 // path set that never goes anywhere near the T-052 chunking/stdin transport.
