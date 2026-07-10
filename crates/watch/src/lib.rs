@@ -57,6 +57,13 @@
 //!   [`skipped`](WatcherStats::skipped) with flat [`changes`](WatcherStats::changes)
 //!   means a wedged repo — poll it from a health check rather than inferring
 //!   health from event silence.
+//! - **[`Error`]** — a setup/build failure: a [`Vcs`](Error::Vcs) baseline
+//!   re-query error, an [`Io`](Error::Io) filesystem error, or a
+//!   [`Notify`](Error::Notify) filesystem-watch backend failure. The watch
+//!   backend is a **private** dependency, so its failures are the opaque
+//!   [`WatchError`] — classify them (`is_path_not_found` / `is_watch_limit` /
+//!   `io_error`) and source-chain them through `vcs-watch` alone, with no direct
+//!   dependency on the third-party watch crate to keep version-matched.
 //!
 //! # Recipes
 //!
@@ -126,7 +133,7 @@ use vcs_core::{BackendKind, VcsRepo};
 mod error;
 mod event;
 
-pub use error::{Error, Result};
+pub use error::{Error, Result, WatchError};
 pub use event::{RepoChange, RepoEvent};
 // Re-export the snapshot types a consumer reads off a `RepoChange`, so depending
 // on `vcs-watch` alone suffices.

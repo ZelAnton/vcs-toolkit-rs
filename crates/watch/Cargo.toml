@@ -33,8 +33,13 @@ processkit.workspace = true
 
 [features]
 # Emit a `tracing` debug event when a re-query is skipped (e.g. a transient
-# mid-operation failure). Off by default; pulls in `tracing` only when enabled.
-tracing = ["dep:tracing"]
+# mid-operation failure), AND forward to `vcs-core/tracing` so the underlying
+# git/jj/processkit commands each re-query issues are traced too — otherwise the
+# watcher's own line would be the only visible event and the re-query that
+# produced it would be invisible. `vcs-core/tracing` fans out to
+# `vcs-git`/`vcs-jj` (and through them `processkit`). Off by default; pulls in
+# `tracing` and turns on the forwarded features only when enabled.
+tracing = ["dep:tracing", "vcs-core/tracing"]
 # `impl futures_core::Stream for RepoWatcher`, so the watcher drops into
 # `select!`/stream combinators. Off by default; pulls in only the tiny
 # `futures-core` trait crate (already in the workspace's dependency graph).
