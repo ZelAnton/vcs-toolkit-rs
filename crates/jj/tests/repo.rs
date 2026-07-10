@@ -465,3 +465,71 @@ async fn conflict_model_resolves_a_real_conflict() {
         "conflict cleared after writing the resolution"
     );
 }
+
+// T-040: `status`/`diff_summary` must report the same, root-relative paths
+// regardless of the directory the client is bound to — the workspace root or
+// a nested subdirectory. Backslash separators never leak into the paths (on
+// Windows jj's `--summary` uses the OS-native separator), and a caller bound
+// to a nested dir must never see a `..`-prefixed, cwd-relative path.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn status_paths_are_root_relative_from_a_nested_directory() {
+    let sandbox = JjSandbox::init("nested-status");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    let nested = dir.join("sub").join("deep");
+    std::fs::create_dir_all(&nested).expect("mkdir nested");
+    std::fs::write(dir.join("top.rs"), "top\n").expect("write top");
+    std::fs::write(nested.join("bottom.rs"), "bottom\n").expect("write nested");
+
+    let from_root = jj.status(dir).await.expect("status from root");
+    let from_nested = jj.status(&nested).await.expect("status from nested dir");
+
+    assert_eq!(
+        from_root, from_nested,
+        "status must be identical regardless of the bound working directory"
+    );
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.as_str()).collect();
+    assert!(paths.contains(&"top.rs"), "got {paths:?}");
+    assert!(paths.contains(&"sub/deep/bottom.rs"), "got {paths:?}");
+    assert!(
+        paths.iter().all(|p| !p.contains('\\') && !p.contains("..")),
+        "paths must be forward-slash, workspace-root-relative: {paths:?}"
+    );
+}
+
+// `diff_summary` (an explicit `from..to` revset range) must show the same
+// root-relative-path contract as `status`, independent of the bound directory.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn diff_summary_paths_are_root_relative_from_a_nested_directory() {
+    let sandbox = JjSandbox::init("nested-diff-summary");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    std::fs::create_dir_all(dir.join("pkg")).expect("mkdir pkg");
+    std::fs::write(dir.join("root.rs"), "root\n").expect("write root");
+    std::fs::write(dir.join("pkg").join("mod.rs"), "mod\n").expect("write pkg/mod.rs");
+
+    let from_root = jj
+        .diff_summary(dir, &rv("root()"), &rv("@"))
+        .await
+        .expect("diff_summary from root");
+    let from_nested = jj
+        .diff_summary(&dir.join("pkg"), &rv("root()"), &rv("@"))
+        .await
+        .expect("diff_summary from nested dir");
+
+    assert_eq!(
+        from_root, from_nested,
+        "diff_summary must be identical regardless of the bound working directory"
+    );
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.as_str()).collect();
+    assert!(paths.contains(&"root.rs"), "got {paths:?}");
+    assert!(paths.contains(&"pkg/mod.rs"), "got {paths:?}");
+    assert!(
+        paths.iter().all(|p| !p.contains('\\') && !p.contains("..")),
+        "paths must be forward-slash, workspace-root-relative: {paths:?}"
+    );
+}

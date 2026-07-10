@@ -951,6 +951,53 @@ vcs_cli_support::managed_client! {
     pub struct Jj => BINARY
 }
 
+/// Validate and canonically format paths emitted from the workspace root.
+fn normalize_changed_paths(entries: Vec<ChangedPath>) -> Result<Vec<ChangedPath>> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            entry.path = normalize_workspace_path(&entry.path)?;
+            entry.old_path = entry
+                .old_path
+                .as_deref()
+                .map(normalize_workspace_path)
+                .transpose()?;
+            Ok(entry)
+        })
+        .collect()
+}
+
+fn normalize_workspace_path(path: &str) -> Result<String> {
+    let path = path.replace('\\', "/");
+    let bytes = path.as_bytes();
+    if path.starts_with('/') || (bytes.len() >= 2 && bytes[1] == b':') {
+        return Err(Error::parse(
+            BINARY,
+            format!("summary path is not workspace-relative: {path:?}"),
+        ));
+    }
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                return Err(Error::parse(
+                    BINARY,
+                    format!("summary path escapes the workspace root: {path:?}"),
+                ));
+            }
+            _ => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        return Err(Error::parse(
+            BINARY,
+            format!("summary path is empty after normalisation: {path:?}"),
+        ));
+    }
+    Ok(parts.join("/"))
+}
+
 impl<R: ProcessRunner> Jj<R> {
     /// Retry **lock-contention** failures (another process holds jj's working-copy
     /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
@@ -1033,12 +1080,33 @@ impl<R: ProcessRunner> Jj<R> {
     async fn status_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<ChangedPath>> {
         // `diff -r @ --summary` is the machine-stable form of the working-copy
         // changes that `jj status` renders for humans: one `<letter> <path>` line.
-        self.core
+        // jj renders those paths relative to its cwd, so first resolve the
+        // workspace and run the machine query at its root. This also means jj can
+        // never legitimately emit a path that walks above the workspace.
+        //
+        // The root lookup itself must honour `wc`: a plain (snapshotting)
+        // `self.root(dir)` here would defeat `status_ignoring_working_copy`'s
+        // whole point by recording an operation as a side effect of resolving
+        // the path prefix.
+        let root = self.root_wc(dir, wc).await?;
+        let entries = self
+            .core
             .parse(
-                self.cmd_in_wc(dir, ["diff", "-r", "@", "--summary"], wc),
+                self.cmd_in_wc(&root, ["diff", "-r", "@", "--summary"], wc),
                 parse::parse_diff_summary,
             )
-            .await
+            .await?;
+        normalize_changed_paths(entries)
+    }
+
+    /// Shared core of [`root`](JjApi::root): resolves the workspace root,
+    /// honouring `wc` so an ignoring-working-copy caller (e.g.
+    /// [`status_wc`](Self::status_wc) on [`WorkingCopy::Ignore`]) does not have
+    /// this lookup itself snapshot the working copy.
+    async fn root_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<PathBuf> {
+        Ok(PathBuf::from(
+            self.core.run(self.cmd_in_wc(dir, ["root"], wc)).await?,
+        ))
     }
 
     /// Shared core of [`bookmarks`](JjApi::bookmarks) /
@@ -1333,9 +1401,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn root(&self, dir: &Path) -> Result<PathBuf> {
-        Ok(PathBuf::from(
-            self.core.run(self.cmd_in(dir, ["root"])).await?,
-        ))
+        self.root_wc(dir, WorkingCopy::Snapshot).await
     }
 
     async fn current_bookmark(&self, dir: &Path) -> Result<Option<String>> {
@@ -1436,12 +1502,17 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // Parenthesise each endpoint so a compound revset (e.g. `x | y`) keeps its
         // meaning inside the `..` range instead of binding by operator precedence.
         let range = format!("({})..({})", from.as_str(), to.as_str());
-        self.core
+        // `jj diff --summary` makes paths relative to its cwd. Run it at the
+        // workspace root so this API has one stable, root-relative path contract.
+        let root = self.root(dir).await?;
+        let entries = self
+            .core
             .parse(
-                self.cmd_in(dir, ["diff", "-r", range.as_str(), "--summary"]),
+                self.cmd_in(&root, ["diff", "-r", range.as_str(), "--summary"]),
                 parse::parse_diff_summary,
             )
-            .await
+            .await?;
+        normalize_changed_paths(entries)
     }
 
     async fn diff_stat(&self, dir: &Path, revset: &RevsetExpr) -> Result<DiffStat> {
@@ -2735,9 +2806,14 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
 
-        // Each pair: the default (snapshotting) form, then its read-only twin.
+        // `status`/`status_ignoring_working_copy` each resolve the workspace
+        // root first (T-040), so each form issues *two* calls (`root`, then
+        // `diff --summary`) rather than one — both carrying (or not) the same
+        // `--ignore-working-copy` flag.
         jj.status(dir).await.unwrap();
         jj.status_ignoring_working_copy(dir).await.unwrap();
+        // The remaining pairs: the default (snapshotting) form, then its
+        // read-only twin — a single call each.
         jj.bookmarks(dir).await.unwrap();
         jj.bookmarks_ignoring_working_copy(dir).await.unwrap();
         jj.reachable_bookmarks(dir).await.unwrap();
@@ -2752,8 +2828,32 @@ mod tests {
             .unwrap();
 
         let calls = rec.calls();
-        assert_eq!(calls.len(), 8, "four (default, read-only) pairs");
-        for pair in calls.chunks(2) {
+        assert_eq!(
+            calls.len(),
+            10,
+            "status's two-call pairs (root, diff) x2 forms, plus three single-call pairs"
+        );
+
+        // status: [root, diff], then [root+ignore, diff+ignore] — check each
+        // underlying call gets the flag, not just the pair as a whole.
+        let (status_calls, rest) = calls.split_at(4);
+        let (live, read_only) = status_calls.split_at(2);
+        for (live_call, read_only_call) in live.iter().zip(read_only) {
+            let live_args = live_call.args_str();
+            let read_only_args = read_only_call.args_str();
+            assert!(
+                !live_args.iter().any(|a| a == "--ignore-working-copy"),
+                "the default form must snapshot the working copy (no flag): {live_args:?}"
+            );
+            let mut expected = live_args.clone();
+            expected.push("--ignore-working-copy".to_string());
+            assert_eq!(
+                read_only_args, expected,
+                "status's read-only twin must be the default argv + --ignore-working-copy"
+            );
+        }
+
+        for pair in rest.chunks(2) {
             let live = pair[0].args_str();
             let read_only = pair[1].args_str();
             assert!(
@@ -3152,14 +3252,37 @@ mod tests {
     // Parsed status() is backed by `diff -r @ --summary`, not `jj status`.
     #[tokio::test]
     async fn status_parses_diff_summary() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(
-            ["jj", "diff", "-r", "@", "--summary"],
-            Reply::ok("M a.rs\nA b.rs\n"),
-        ));
+        let jj = Jj::with_runner(
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(
+                    ["jj", "diff", "-r", "@", "--summary"],
+                    Reply::ok("M a.rs\nA b.rs\n"),
+                ),
+        );
         let entries = jj.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].status, 'M');
         assert_eq!(entries[1].path, "b.rs");
+    }
+
+    #[test]
+    fn summary_paths_normalise_windows_and_reject_workspace_escapes() {
+        let paths = normalize_changed_paths(vec![ChangedPath {
+            status: 'R',
+            path: "src\\.\\new.rs".into(),
+            old_path: Some("src\\old.rs".into()),
+        }])
+        .expect("normalise");
+        assert_eq!(paths[0].path, "src/new.rs");
+        assert_eq!(paths[0].old_path.as_deref(), Some("src/old.rs"));
+        let err = normalize_changed_paths(vec![ChangedPath {
+            status: 'M',
+            path: "../outside.rs".into(),
+            old_path: None,
+        }])
+        .expect_err("must reject a path outside the workspace");
+        assert!(err.to_string().contains("escapes the workspace root"));
     }
 
     #[tokio::test]
