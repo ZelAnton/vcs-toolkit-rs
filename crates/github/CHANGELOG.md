@@ -26,6 +26,13 @@ crates; tag releases as `vcs-github-v<version>`.
   undeterminable host is a diagnosable error (`GitHubHost::new`/`from_remote_url`
   return `Err`), never a silent fall back to the github.com token. Without a host
   binding the client is unchanged (github.com / `GH_TOKEN`).
+- **Host-keyed credential providers.** A `GitHub::with_host(host)`-bound client now
+  also carries the (canonical) host in every operation's `CredentialRequest`, so a
+  **host-keyed** `CredentialProvider` returns the secret for *that* instance and
+  nothing else — one provider safely serves several host-bound clients without
+  cross-injecting a neighbour's token. A provider `Err` is fail-closed (the op aborts
+  before `gh` spawns) and `Ok(None)` defers to ambient auth, for read and write
+  alike. Without a host binding the request carries no host (unchanged). (T-045.)
 - `PullRequest`/`Issue` gained `labels: Vec<String>` and `assignees: Vec<String>`,
   parsed from `gh --json labels,assignees`'s nested `[{"name": …}]`/
   `[{"login": …}]` shapes and flattened to plain strings.

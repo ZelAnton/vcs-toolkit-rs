@@ -1195,13 +1195,20 @@ impl<R: ProcessRunner> Git<R> {
     /// that host, so a redirect/submodule to another host can't extract it).
     /// Callers that know the operation's target host — e.g. `clone` from its URL —
     /// pass it; the others pass `None` (the helper is ungated, as before).
+    ///
+    /// The same `expect_host` is **also** passed as the [`CredentialRequest`]'s host,
+    /// so a **host-keyed** provider selects the secret for that host — one `Git`
+    /// client cloning several hosts draws each host's own token, never a
+    /// neighbour's. A `None` host lets such a provider defer to ambient auth rather
+    /// than hand back the wrong host's secret (the fail-closed / ambient policy is
+    /// on [`ManagedClient::resolve_credential`](vcs_cli_support::ManagedClient::resolve_credential)).
     async fn remote_credentials(
         &self,
         expect_host: Option<&str>,
     ) -> Result<(Vec<String>, Vec<(String, Secret)>)> {
         match self
             .core
-            .resolve_credential(CredentialService::Git, None)
+            .resolve_credential(CredentialService::Git, expect_host)
             .await?
         {
             Some(cred) => {
@@ -4705,6 +4712,112 @@ mod tests {
         assert_eq!(user, Some("alice"), "userpass username reaches the env");
         assert_eq!(call.args_str()[0], "-c", "helper `-c` leads fetch too");
         assert!(call.args_str().contains(&"fetch".to_string()));
+    }
+
+    // ONE client, several hosts: a host-keyed provider hands each clone only its OWN
+    // host's secret — routed by the URL's host, which now reaches the
+    // `CredentialRequest` — and the inline helper is gated to that host, so a
+    // neighbouring instance's token can never leak into another host's clone. (T-045)
+    #[tokio::test]
+    async fn one_client_host_keyed_provider_isolates_tokens_across_hosts() {
+        let provider = Arc::new(provider_fn(|r: &CredentialRequest<'_>| {
+            Ok(match r.host {
+                Some("github.com") => Some(Credential::token("gh-secret")),
+                Some("gitlab.example") => Some(Credential::token("gl-secret")),
+                _ => None,
+            })
+        }));
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_credentials(provider);
+
+        // The same client clones two different hosts, back to back.
+        git.clone_repo(
+            "https://github.com/o/r.git",
+            Path::new("/dest-gh"),
+            CloneSpec::default(),
+        )
+        .await
+        .unwrap();
+        git.clone_repo(
+            "https://gitlab.example/o/r.git",
+            Path::new("/dest-gl"),
+            CloneSpec::default(),
+        )
+        .await
+        .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "two clones recorded");
+        // Clone #1 (github.com) → the github.com secret, gated to github.com.
+        assert!(calls[0].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gh-secret"));
+        assert!(calls[0].env_is("VCS_TOOLKIT_GIT_HOST", "github.com"));
+        // Clone #2 (gitlab.example) → the gitlab secret, gated to gitlab.example.
+        assert!(calls[1].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gl-secret"));
+        assert!(calls[1].env_is("VCS_TOOLKIT_GIT_HOST", "gitlab.example"));
+        // No cross-contamination: neither host's secret bleeds into the other's
+        // clone, and no secret ever reaches argv.
+        assert!(!calls[0].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gl-secret"));
+        assert!(!calls[1].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gh-secret"));
+        for c in calls.iter() {
+            assert!(
+                !c.args_str()
+                    .iter()
+                    .any(|a| a.contains("gh-secret") || a.contains("gl-secret")),
+                "secrets stay out of argv"
+            );
+        }
+    }
+
+    // Fallback policy on the git helper path, read (`fetch`) vs write (`push`):
+    // `Ok(None)` → ambient (no inline credential helper, no secret env); `Err` →
+    // fail-closed abort (git never spawns). (T-045)
+    #[tokio::test]
+    async fn git_credential_fallback_policy_for_read_and_write() {
+        // Ok(None): ambient — no helper `-c` flags lead the argv, no secret env.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec)
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))));
+        git.fetch(Path::new("/r")).await.unwrap();
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
+            .await
+            .unwrap();
+        for c in rec.calls().iter() {
+            assert!(
+                !c.has_env("VCS_TOOLKIT_GIT_PASSWORD"),
+                "ambient: no secret env on {:?}",
+                c.args_str()
+            );
+            assert_ne!(
+                c.args_str().first().map(String::as_str),
+                Some("-c"),
+                "ambient: no leading credential -c flags"
+            );
+        }
+
+        // Err: fail-closed — the op aborts and git is never spawned, for read & write.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_credentials(Arc::new(provider_fn(
+            |_r: &CredentialRequest<'_>| {
+                Err(Error::spawn(
+                    BINARY,
+                    std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault down"),
+                ))
+            },
+        )));
+        assert!(
+            git.fetch(Path::new("/r")).await.is_err(),
+            "read aborts on provider error"
+        );
+        assert!(
+            git.push(Path::new("/r"), GitPush::branch(rn("feature")))
+                .await
+                .is_err(),
+            "write aborts on provider error"
+        );
+        assert!(
+            rec.calls().is_empty(),
+            "git never spawns when the provider errored"
+        );
     }
 
     // No-provider is byte-identical for the read/clone arg-construction paths too,

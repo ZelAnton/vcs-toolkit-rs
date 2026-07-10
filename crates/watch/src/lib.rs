@@ -175,6 +175,9 @@ struct LoopConfig {
     max_wait: Duration,
     /// `None` disables the per-re-query deadline.
     requery_timeout: Option<Duration>,
+    /// Whether a re-query may snapshot the jj working copy (opt-in mutation) or
+    /// must stay read-only (the default). See [`Builder::snapshot_working_copy`].
+    snapshot_working_copy: bool,
     output_capacity: usize,
     retry_limit: u32,
     retry_backoff: Duration,
@@ -185,6 +188,7 @@ struct LoopConfig {
 pub struct Builder {
     repo: Box<dyn VcsRepo>,
     working_tree: bool,
+    snapshot_working_copy: bool,
     debounce: Duration,
     max_wait: Duration,
     requery_timeout: Option<Duration>,
@@ -198,8 +202,50 @@ impl Builder {
     ///
     /// Note: `notify` is `.gitignore`-unaware, so this also watches ignored and
     /// build directories — heavier on a large tree.
+    ///
+    /// **jj note:** on jj, a bare working-tree edit only becomes an observable
+    /// state change once *something* snapshots the working copy. The re-query is
+    /// **read-only by default** (it must not itself snapshot — see
+    /// [`snapshot_working_copy`](Self::snapshot_working_copy)), so watching the
+    /// tree alone will not surface an unsnapshotted edit as a
+    /// [`WorkingCopyChanged`](RepoEvent::WorkingCopyChanged): the event fires once
+    /// a jj command (or another watcher opted into
+    /// [`snapshot_working_copy`](Self::snapshot_working_copy)) records it. Opt into
+    /// [`snapshot_working_copy(true)`](Self::snapshot_working_copy) to have the
+    /// re-query itself snapshot, at the cost of the watcher recording jj
+    /// operations.
     pub fn working_tree(mut self, yes: bool) -> Self {
         self.working_tree = yes;
+        self
+    }
+
+    /// Whether each re-query may let **jj snapshot the working copy** — off by
+    /// default, which keeps the watcher a pure *observer*.
+    ///
+    /// By default (`false`) the re-query is **read-only**: on jj it passes
+    /// `--ignore-working-copy` (via
+    /// [`Repo::snapshot_readonly`](vcs_core::Repo::snapshot_readonly)), so
+    /// observing the repo records **no** jj operation and never moves `@`. This is
+    /// almost always what you want: an ordinary jj query snapshots the working
+    /// copy as a side effect (taking the working-copy lock, recording an
+    /// operation, possibly moving `@`), so a naive watcher would *mutate* the very
+    /// state it reports — and, worse, a [`requery_timeout`](Self::requery_timeout)
+    /// firing mid-snapshot would abort that mutation.
+    ///
+    /// The trade-off (jj only): a bare working-tree edit that no jj command has
+    /// snapshotted yet is **not** reflected until a real jj operation records it.
+    /// If your consumer genuinely needs to observe such unsnapshotted edits (e.g.
+    /// a live "dirty" indicator driven purely by filesystem edits), set this
+    /// `true`: each re-query then snapshots the working copy (via
+    /// [`Repo::snapshot`](vcs_core::Repo::snapshot)), **recording a jj operation
+    /// and possibly moving `@`** — an explicit, opt-in mutation, not a hidden side
+    /// effect of reading. Pair it with [`working_tree(true)`](Self::working_tree)
+    /// so the tree edits actually trigger a re-query.
+    ///
+    /// On **git** this knob has no effect — git's status/branch queries never
+    /// record operations or move refs, so both modes behave identically.
+    pub fn snapshot_working_copy(mut self, yes: bool) -> Self {
+        self.snapshot_working_copy = yes;
         self
     }
 
@@ -316,7 +362,8 @@ impl Builder {
         // fsmonitor, a network filesystem, a held jj lock) on a `Repo` built without
         // its own `default_timeout` would hang `build()` at startup, the very failure
         // the loop-side deadline exists to prevent.
-        let (snapshot, branches) = capture_baseline(&*self.repo, self.requery_timeout).await?;
+        let (snapshot, branches) =
+            capture_baseline(&*self.repo, self.requery_timeout, self.snapshot_working_copy).await?;
         let baseline = snapshot.clone();
         let prev = event::WatchState::from_snapshot(&snapshot, branches);
 
@@ -324,6 +371,7 @@ impl Builder {
             debounce: self.debounce,
             max_wait: self.max_wait,
             requery_timeout: self.requery_timeout,
+            snapshot_working_copy: self.snapshot_working_copy,
             output_capacity: OUTPUT_CAPACITY,
             retry_limit: REQUERY_RETRY_LIMIT,
             retry_backoff: REQUERY_RETRY_BACKOFF,
@@ -489,6 +537,9 @@ impl RepoWatcher {
         Builder {
             repo: Box::new(repo),
             working_tree: false,
+            // Read-only re-query by default: an observer must not snapshot the jj
+            // working copy (record an operation / move `@`) merely by looking.
+            snapshot_working_copy: false,
             debounce: DEFAULT_DEBOUNCE,
             max_wait: DEFAULT_MAX_WAIT,
             requery_timeout: Some(DEFAULT_REQUERY_TIMEOUT),
@@ -564,20 +615,45 @@ impl Drop for RepoWatcher {
     }
 }
 
+/// The batched state read a re-query (and the startup baseline) performs: the
+/// snapshot plus the local-branch set. Routed through the **read-only** facade
+/// methods by default (`snapshot_working_copy == false`) so an observer never
+/// snapshots the jj working copy — no operation recorded, `@` unmoved. When the
+/// consumer opts into [`Builder::snapshot_working_copy`], it uses the ordinary
+/// (working-copy-snapshotting) facade methods instead, an explicit mutation.
+///
+/// The two calls are sequenced (branches after the snapshot) so both reflect the
+/// same observation, matching the previous behaviour.
+async fn read_state(
+    repo: &dyn VcsRepo,
+    snapshot_working_copy: bool,
+) -> vcs_core::Result<(vcs_core::RepoSnapshot, Vec<String>)> {
+    if snapshot_working_copy {
+        let snapshot = repo.snapshot().await?;
+        let branches = repo.local_branches().await?;
+        Ok((snapshot, branches))
+    } else {
+        let snapshot = repo.snapshot_readonly().await?;
+        let branches = repo.local_branches_readonly().await?;
+        Ok((snapshot, branches))
+    }
+}
+
 /// Capture the startup baseline (snapshot + local branches) under `requery_timeout`
 /// (R4). A `Some(limit)` bounds the whole capture with `tokio::time::timeout`; on
 /// expiry it returns [`Error::Io`] `TimedOut` and dropping the future kills the
 /// underlying process (kill-on-drop), exactly as the loop does for a re-query — so a
 /// wedged snapshot can't hang `build()` forever. `None` leaves it unbounded.
+///
+/// `snapshot_working_copy` picks the read-only vs working-copy-snapshotting facade
+/// methods (see [`read_state`]), so the baseline is captured under the **same**
+/// observation contract the loop then uses for every re-query.
 async fn capture_baseline(
     repo: &dyn VcsRepo,
     requery_timeout: Option<Duration>,
+    snapshot_working_copy: bool,
 ) -> Result<(vcs_core::RepoSnapshot, Vec<String>)> {
-    let query = async {
-        let snapshot = repo.snapshot().await?;
-        let branches = repo.local_branches().await?;
-        Ok::<_, Error>((snapshot, branches))
-    };
+    let query = async { read_state(repo, snapshot_working_copy).await.map_err(Error::from) };
     match requery_timeout {
         Some(limit) => match tokio::time::timeout(limit, query).await {
             Ok(result) => result,
@@ -660,18 +736,40 @@ async fn watch_loop(
         // spawned process tree (processkit's kill-on-drop group), so a timed-out
         // query leaves no orphan. Failures and overruns are transient skips:
         // counted, traced, and retried with bounded exponential backoff.
+        //
+        // Deadline safety (jj): the default re-query is **read-only**
+        // (`snapshot_working_copy == false` → `snapshot_readonly`/
+        // `local_branches_readonly`, i.e. jj `--ignore-working-copy`), so it takes
+        // no working-copy lock and records no operation — a `requery_timeout`
+        // kill-on-drop can only interrupt a pure read, never a working-copy
+        // snapshot mid-write. Only the explicit opt-in
+        // (`snapshot_working_copy == true`) runs a mutating snapshot here, and that
+        // is the caller's documented choice, not a read masquerading as read-only.
         let mut retry = 0;
         let (snapshot, branches) = loop {
             stats.note_requery();
             let requery = async {
-                let snapshot = repo
-                    .snapshot()
-                    .await
-                    .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
-                let branches = repo
-                    .local_branches()
-                    .await
-                    .map_err(|e| (WatcherErrorKind::Branches, e))?;
+                let (snapshot, branches) = if config.snapshot_working_copy {
+                    let snapshot = repo
+                        .snapshot()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
+                    let branches = repo
+                        .local_branches()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Branches, e))?;
+                    (snapshot, branches)
+                } else {
+                    let snapshot = repo
+                        .snapshot_readonly()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
+                    let branches = repo
+                        .local_branches_readonly()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Branches, e))?;
+                    (snapshot, branches)
+                };
                 Ok::<_, (WatcherErrorKind, vcs_core::Error)>((snapshot, branches))
             };
             let outcome = match config.requery_timeout {
@@ -1117,6 +1215,10 @@ mod pipeline_tests {
             debounce: Duration::from_millis(250),
             max_wait: Duration::from_secs(1),
             requery_timeout: Some(Duration::from_secs(30)),
+            // The hermetic pipeline drives a git-backed scripted repo, where
+            // read-only and snapshotting re-queries issue the same commands; the
+            // default (read-only) mirrors production.
+            snapshot_working_copy: false,
             output_capacity: 64,
             retry_limit: REQUERY_RETRY_LIMIT,
             retry_backoff: REQUERY_RETRY_BACKOFF,
@@ -1640,7 +1742,7 @@ mod pipeline_tests {
                 head: "bbb",
             }),
         );
-        let err = capture_baseline(&repo, Some(Duration::from_secs(5)))
+        let err = capture_baseline(&repo, Some(Duration::from_secs(5)), false)
             .await
             .expect_err("a wedged baseline must time out, not hang");
         assert!(
@@ -1654,7 +1756,7 @@ mod pipeline_tests {
         // With no deadline the same query completes (Sleepy still returns, just late);
         // advancing the clock lets it finish so we prove the timeout — not the repo —
         // is what produced the error above.
-        let ok = capture_baseline(&repo, None).await;
+        let ok = capture_baseline(&repo, None, false).await;
         assert!(ok.is_ok(), "an unbounded baseline still succeeds: {ok:?}");
     }
 
