@@ -71,14 +71,15 @@ let res = jj.run_raw_args(&["status"]).await?;              // ProcessResult<Str
 
 ### `transaction` — op-log rollback
 
-Run a closure with op-log rollback: capture the current operation
-([`op_head`]), run `f` against a bound `JjAt`, and on `Err` restore the repo to
-that operation ([`op_restore`]) before propagating the error.
+Run a closure with concurrency-safe op-log rollback: capture the current operation
+([`op_head`]), run `f` against a bound `JjAt`, and on `Err` roll the repo back to
+that operation ([`rollback_to`]), reporting what the rollback did on the returned
+`TransactionError`.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::Jj;
-# async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
+# use vcs_jj::{Jj, TransactionError};
+# async fn demo(jj: &Jj, repo: &Path) -> Result<(), TransactionError> {
 jj.transaction(repo, |tx| async move {
     tx.describe("wip").await?;
     tx.new_change("next").await        // an Err here rolls back the describe
@@ -90,7 +91,11 @@ jj.transaction(repo, |tx| async move {
 Signature:
 
 ```rust,ignore
-pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
+pub async fn transaction<'a, T, F, Fut>(
+    &'a self,
+    dir: &'a Path,
+    f: F,
+) -> Result<T, TransactionError>
 where
     F: FnOnce(JjAt<'a, R>) -> Fut,
     Fut: Future<Output = Result<T>> + 'a;
@@ -99,16 +104,23 @@ where
 Inherent (not on the object-safe trait): the closure parameter is generic, which
 `mockall`/trait objects can't express. `JjAt::transaction(f)` is the bound form.
 
-**Caveats** (see the rustdoc for the full wording): it is **single-actor** — the
-rollback is `op_restore <pre>`, which restores the *whole* repo view, so a change
-another jj process landed between the `op_head` capture and the restore is reverted
-too. Rollback runs on `Err` only — **not** on panic or a dropped future (no async
-`Drop`); convert panics to `Err` inside `f` if you need that. A **cancelled `f` also
-cancels the rollback**: if `f`'s `Err` is a fired `default_cancel_on` token, the
-restore short-circuits before spawning and is skipped — run it yourself on a
-token-free client if it must survive cancellation. If the restore itself fails, the
-*original* error is returned and the repo may be left mid-transaction — re-probe
-[`op_head`] to detect that.
+On the closure's `Err`, the `TransactionError` preserves that error as `cause` and
+carries the `rollback` outcome (`Rollback`: `Restored` / `SkippedDiverged` /
+`Failed` / `NotAttempted`) — so a failed or refused rollback is visible, not
+swallowed. Use `TransactionError::into_cause()` for just the old closure error.
+
+**Caveats** (see the rustdoc for the full wording): it is **single-actor**, but no
+longer silent about it — the rollback restores the *whole* repo view, so if another
+jj process advances the op log between the [`op_head`] capture and the restore, the
+rollback now **detects** the divergence and **refuses** to revert (returning
+`Rollback::SkippedDiverged`) rather than clobbering that foreign work. Rollback runs
+on `Err` only — **not** on panic or a dropped future (no async `Drop`); convert
+panics to `Err` inside `f` if you need that. A **cancelled `f` no longer cancels the
+rollback**: the cleanup runs on a fresh cancellation context with its own deadline,
+so a fired `default_cancel_on` token does not short-circuit the restore. If the
+restore itself fails, the closure's error is still returned as `cause` and the
+failure is surfaced as `Rollback::Failed` (no longer discarded); the repo may be
+left mid-transaction.
 
 ---
 
@@ -852,6 +864,7 @@ before spawning.
 
 [`op_head`]: #operation-log
 [`op_restore`]: #operation-log
+[`rollback_to`]: #operation-log
 [`Error::Spawn`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`ProcessResult`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`Change`]: #change

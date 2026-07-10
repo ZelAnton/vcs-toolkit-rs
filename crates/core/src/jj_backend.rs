@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
-use vcs_jj::{BookmarkName, ChangedPath, Jj, JjApi, JjFileset, RevsetExpr, WorkspaceAdd};
+use vcs_jj::{BookmarkName, ChangedPath, Jj, JjApi, JjFileset, RevsetExpr, Rollback, WorkspaceAdd};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
@@ -329,13 +329,17 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
         }
     }
     .await;
-    // Always roll back — also when the merge or the probe errored.
-    let restored = jj.op_restore(dir, &pre_op).await;
+    // Always roll back — also when the merge or the probe errored. Uses the shared
+    // concurrency-safe protocol (`Jj::rollback_to`): the cleanup survives a cancelled
+    // operation and refuses to clobber a concurrent process's work, rather than the
+    // bare `op_restore` this used to run (T-036 — one rollback protocol, not two).
+    let rollback = jj.rollback_to(dir, &pre_op).await;
     match (merged, probe) {
         (Ok(()), Ok(conflicts)) => {
             // The probe is only trustworthy if the rollback actually happened —
-            // a `Clean`/`Conflicts` with the probe commit still present lies.
-            restored?;
+            // a `Clean`/`Conflicts` with the probe commit still present (a failed or
+            // divergence-refused rollback) lies.
+            rollback_result(rollback)?;
             Ok(match conflicts {
                 Some(files) => MergeProbe::Conflicts(files),
                 None => MergeProbe::Clean,
@@ -346,12 +350,23 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
         // condition the caller must act on (mirrors the git path's abort-failure
         // propagation); otherwise surface the probe error.
         (Ok(()), Err(err)) => {
-            restored?;
+            rollback_result(rollback)?;
             Err(err.into())
         }
         // The merge itself failed — that's the root cause; a secondary
         // restore/probe failure must not mask it.
         (Err(err), _) => Err(err.into()),
+    }
+}
+
+/// Turn a [`Rollback`] outcome into a facade [`Result`]: a completed (or unneeded)
+/// rollback is `Ok`; a **failed** restore or a **divergence-refused** one is a
+/// [`Error::Rollback`], carrying the structured outcome so the caller can tell them
+/// apart. Used by [`try_merge`] to decide whether its probe result is trustworthy.
+fn rollback_result(rollback: Rollback) -> Result<()> {
+    match rollback {
+        Rollback::Restored | Rollback::NotAttempted => Ok(()),
+        diverged_or_failed => Err(Error::Rollback(diverged_or_failed)),
     }
 }
 

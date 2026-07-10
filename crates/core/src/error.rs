@@ -34,6 +34,16 @@ pub enum Error {
     Io(std::io::Error),
     /// An underlying `vcs-git` / `vcs-jj` (i.e. `processkit`) error.
     Vcs(processkit::Error),
+    /// A concurrency-safe op-log rollback could not restore the repository to its
+    /// captured pre-operation state: the `op restore` failed, or a **concurrent** jj
+    /// process advanced the operation log so reverting would have clobbered its work
+    /// (see [`vcs_jj::Rollback`]). Raised by
+    /// [`Repo::try_merge`](crate::Repo::try_merge) on the jj backend when its
+    /// trial-merge rollback cannot complete cleanly — the trial merge may remain
+    /// materialized, so the probe result would be untrustworthy. The structured
+    /// [`vcs_jj::Rollback`] carries which case it was (and, for a failed restore, the
+    /// underlying cause).
+    Rollback(vcs_jj::Rollback),
 }
 
 impl Error {
@@ -136,6 +146,9 @@ impl std::fmt::Display for Error {
             }
             Error::Io(e) => write!(f, "{e}"),
             Error::Vcs(e) => write!(f, "{e}"),
+            Error::Rollback(r) => {
+                write!(f, "operation rollback did not complete cleanly: {r}")
+            }
         }
     }
 }
@@ -145,6 +158,9 @@ impl std::error::Error for Error {
         match self {
             Error::Io(e) => Some(e),
             Error::Vcs(e) => Some(e),
+            // A failed restore carries the underlying cause; a divergence-skip has
+            // no wrapped error to chain.
+            Error::Rollback(r) => r.failure().map(|e| e as &(dyn std::error::Error + 'static)),
             _ => None,
         }
     }
