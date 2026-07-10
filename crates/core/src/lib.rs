@@ -2621,13 +2621,19 @@ mod tests {
 
     // On an unborn git repo (no commits) diff_stat probes is_unborn and stats
     // against the empty tree instead of the unresolvable HEAD, so a fresh working
-    // tree reports its additions rather than erroring.
+    // tree reports its additions rather than erroring. The empty-tree id is
+    // resolved from git (`hash-object`), so it tracks the repo's object format
+    // rather than being a hard-coded SHA-1 value.
     #[tokio::test]
     async fn git_diff_stat_unborn_uses_empty_tree() {
         use processkit::testing::RecordingRunner;
+        // A SHA-256 repo's empty-tree id (64 hex): the value `hash-object` returns,
+        // which `diff_stat` must then target verbatim.
+        let oid = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(["git", "rev-parse"], Reply::fail(1, "")) // HEAD unborn
+                .on(["git", "hash-object"], Reply::ok(format!("{oid}\n")))
                 .on(
                     ["git", "diff", "--shortstat"],
                     Reply::ok(" 1 file changed, 2 insertions(+)\n"),
@@ -2639,8 +2645,8 @@ mod tests {
         assert!(
             rec.calls()
                 .iter()
-                .any(|c| c.args_str() == ["diff", "--shortstat", vcs_git::EMPTY_TREE, "--"]),
-            "diff_stat should target the empty tree on an unborn repo: {:?}",
+                .any(|c| c.args_str() == ["diff", "--shortstat", oid, "--"]),
+            "diff_stat should target the resolved empty tree on an unborn repo: {:?}",
             rec.calls()
         );
     }

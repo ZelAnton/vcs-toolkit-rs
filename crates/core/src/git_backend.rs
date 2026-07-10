@@ -104,15 +104,19 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Res
     // (`git diff HEAD` errors), so stat against the empty tree — a fresh repo's
     // working copy then reports its files as additions instead of hard-failing,
     // matching `changed_files()` (status-based) and `git.diff_text(WorkingTree)`.
-    // `git.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
-    let range = if git.is_unborn(dir).await? {
-        vcs_git::EMPTY_TREE
+    // The empty tree's id depends on the repo's object format, so ask git for the
+    // format-correct one (`empty_tree_oid`) rather than a hard-coded SHA-1 value,
+    // which doesn't exist in a SHA-256 repo. `git.diff_stat` already returns the
+    // shared `vcs_diff::DiffStat` — no remap.
+    let range: String = if git.is_unborn(dir).await? {
+        git.empty_tree_oid(dir).await?
     } else {
-        "HEAD"
+        "HEAD".to_string()
     };
-    // `range` here is always a fixed literal (`HEAD`/the empty-tree oid), so the
-    // conversion never fails; it goes through the newtype for a uniform boundary.
-    git.diff_stat(dir, &RevSpec::new(range)?)
+    // `range` here is always `HEAD` or a resolved empty-tree oid (no flag-like or
+    // pathspec input), so the conversion never fails; it goes through the newtype
+    // for a uniform boundary.
+    git.diff_stat(dir, &RevSpec::new(&range)?)
         .await
         .map_err(Into::into)
 }

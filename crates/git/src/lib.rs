@@ -1750,9 +1750,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             DiffSpec::WorkingTree => {
                 // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
                 // diff against the empty tree so a pre-first-commit working tree
-                // still yields its additions instead of a hard failure.
+                // still yields its additions instead of a hard failure. The empty
+                // tree's id depends on the repo's object format (the SHA-1
+                // `EMPTY_TREE_SHA1` doesn't exist in a SHA-256 repo), so resolve it
+                // from git rather than hard-coding — see `empty_tree_oid`.
                 if self.is_unborn(dir).await? {
-                    EMPTY_TREE.to_string()
+                    self.empty_tree_oid(dir).await?
                 } else {
                     "HEAD".to_string()
                 }
@@ -2318,10 +2321,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 // guard now live in the shared `vcs-cli-support` crate (re-exported at the top of
 // this module); what remains here is git-specific.
 
-/// Git's well-known empty-tree object id — a stable stand-in for `HEAD` when
-/// diffing the working tree of an unborn (no-commits-yet) repository. Public so a
-/// caller can diff/stat a pre-first-commit working tree against it directly.
-pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// Git's well-known **SHA-1** empty-tree object id. This value exists **only in a
+/// SHA-1 repository**: a repo created with `extensions.objectFormat=sha256` has a
+/// different empty-tree id (and this SHA-1 one resolves to no object there), so
+/// this constant is *not* a universal stand-in for `HEAD` when diffing an unborn
+/// working tree. For the id that matches a repository's active object format, use
+/// [`Git::empty_tree_oid`], which asks git for it — that is what
+/// [`diff_text`](GitApi::diff_text)`(DiffSpec::WorkingTree)` uses on an unborn repo.
+pub const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Total attempts / fixed backoff for a transient-retried `fetch` — the shared
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
@@ -2403,6 +2410,26 @@ impl<R: ProcessRunner> Git<R> {
     ) -> Result<ProcessResult<String>> {
         self.core
             .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// The empty-tree object id for the repository at `dir`, matching its **active
+    /// object format** — the format-correct stand-in for `HEAD` when diffing/stat-ing
+    /// the working tree of an unborn (no-commits-yet) repository.
+    ///
+    /// Computed with `git hash-object -t tree --stdin` fed an empty stdin: an empty
+    /// tree object is empty content, so git returns its id under whichever hash the
+    /// repo uses (`4b825dc…` for SHA-1, a 64-hex digest for `extensions.objectFormat=
+    /// sha256`). This asks git rather than hard-coding [`EMPTY_TREE_SHA1`], which is
+    /// wrong in a SHA-256 repo. `--stdin` (not `-w`) only *computes* the id — nothing
+    /// is written to the object database.
+    pub async fn empty_tree_oid(&self, dir: &Path) -> Result<String> {
+        self.core
+            .run(
+                self.core
+                    .command_in(dir, ["hash-object", "-t", "tree", "--stdin"])
+                    .stdin(processkit::Stdin::empty()),
+            )
             .await
     }
 
@@ -3391,19 +3418,42 @@ mod tests {
 
     // On an unborn repo the working-tree diff targets the empty tree instead of
     // the unresolvable `HEAD`, so it returns additions rather than erroring. The
-    // diff rule only matches the empty-tree argv, so a `HEAD` target would miss it.
+    // empty-tree id is resolved from git (`hash-object`, so it is object-format
+    // correct — not the hard-coded SHA-1 id), and the diff rule only matches that
+    // resolved argv, so a `HEAD` target would miss it.
     #[tokio::test]
     async fn diff_text_working_tree_uses_empty_tree_when_unborn() {
+        // A stand-in id `empty_tree_oid` "computes"; the diff must target exactly it.
+        let oid = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
         let git = Git::with_runner(
             ScriptedRunner::new()
                 .on(["git", "rev-parse"], Reply::fail(1, "")) // unborn: HEAD doesn't resolve
-                .on(["git", "diff", EMPTY_TREE], Reply::ok("EMPTY")),
+                .on(["git", "hash-object"], Reply::ok(format!("{oid}\n")))
+                .on(["git", "diff", oid], Reply::ok("EMPTY")),
         );
         let out = git
             .diff_text(Path::new("."), DiffSpec::WorkingTree)
             .await
             .expect("diff_text");
         assert_eq!(out, "EMPTY");
+    }
+
+    // `empty_tree_oid` asks git to hash an empty tree (`hash-object -t tree
+    // --stdin`), so the id tracks the repo's object format instead of being a
+    // hard-coded SHA-1 constant. The `--stdin` (not `-w`) form only computes it.
+    #[tokio::test]
+    async fn empty_tree_oid_hashes_an_empty_tree() {
+        let rec = RecordingRunner::replying(Reply::ok(format!("{EMPTY_TREE_SHA1}\n")));
+        let git = Git::with_runner(&rec);
+        let oid = git
+            .empty_tree_oid(Path::new("."))
+            .await
+            .expect("empty_tree_oid");
+        assert_eq!(oid, EMPTY_TREE_SHA1);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["hash-object", "-t", "tree", "--stdin"]
+        );
     }
 
     // Hermetic: real diff() arg-building (`Rev`) + the ported parser against
