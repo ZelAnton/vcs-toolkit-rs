@@ -195,7 +195,11 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     /// The branch (git) or first bookmark (jj) on it; `None` when detached/none.
     pub branch: Option<String>,
-    /// The checked-out commit; `None` when unavailable (e.g. a bare git entry).
+    /// The checked-out commit's **full** object id (git `HEAD` oid / jj `@` commit
+    /// id) on both backends — the same identity a [`RepoSnapshot::head`] carries, so
+    /// the two can be compared directly to tell whether a worktree sits on the
+    /// snapshotted commit. Not a display-truncated prefix (which could collide);
+    /// truncate for display. `None` when unavailable (e.g. a bare git entry).
     pub commit: Option<String>,
     /// A bare git worktree entry (always `false` for jj).
     pub is_bare: bool,
@@ -334,7 +338,9 @@ impl UpstreamTracking {
 pub struct RepoSnapshot {
     /// The working-copy commit's **full** object id (git `HEAD` oid / jj `@`
     /// commit id) on both backends; `None` on an unborn git repo. Truncate for
-    /// display.
+    /// display. Carries the full id (not a short prefix) so it can be
+    /// cross-referenced against a [`WorktreeInfo::commit`] or a git oid without a
+    /// short-prefix collision.
     pub head: Option<String>,
     /// Current branch (git) / bookmark (jj). On jj this is the nearest bookmark
     /// reachable from `@` (`heads(::@ & bookmarks())`), so it stays set across a
