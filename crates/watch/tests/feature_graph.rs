@@ -23,7 +23,14 @@ fn cargo_tree(args: &[&str]) -> String {
     let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
 
     let mut cmd = Command::new(cargo);
-    cmd.args(["tree", "--locked", "--manifest-path", manifest, "-p", "vcs-watch"]);
+    cmd.args([
+        "tree",
+        "--locked",
+        "--manifest-path",
+        manifest,
+        "-p",
+        "vcs-watch",
+    ]);
     cmd.args(args);
 
     let out = cmd

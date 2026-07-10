@@ -251,7 +251,9 @@ mod tests {
         let e: Error = notify::Error::path_not_found()
             .add_path(PathBuf::from("/repo/.git"))
             .into();
-        let w = e.watch_error().expect("a Notify error exposes its WatchError");
+        let w = e
+            .watch_error()
+            .expect("a Notify error exposes its WatchError");
         assert!(w.is_path_not_found());
         assert!(!w.is_watch_limit());
         assert!(w.io_error().is_none());
