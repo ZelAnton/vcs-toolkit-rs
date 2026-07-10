@@ -112,6 +112,12 @@ current branch) / `.target(b)` (`--target-branch`; `None` = the project default)
 setters. Public fields: `title: String`, `body: String`, `source: Option<String>`,
 `target: Option<String>`.
 
+A `body` that is *exactly* `"-"` is refused before glab ever spawns
+(`Error::Spawn` with `io::ErrorKind::InvalidInput`): glab treats a bare `-` as a
+request to open `$EDITOR`/read from stdin rather than the literal string, which
+would hang a headless caller indefinitely. The same guard covers `mr_edit`'s
+body, `issue_create`'s body, and `mr_comment`'s message.
+
 `mr_diff` returns the MR's diff as one [`FileDiff`] per changed file, parsed
 through the same unified-diff parser
 [`vcs-git`](https://docs.rs/vcs-git/latest/vcs_git/guide/)/[`vcs-jj`](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)

@@ -47,7 +47,12 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   side effects). The default (neither set) is unchanged: the plain immediate merge.
 
 ### Fixed
--
+- `mr_create`, `mr_edit`, `issue_create`, and `mr_comment` now refuse a
+  description/comment body that is *exactly* `"-"` before spawning glab,
+  surfacing an `Error::Spawn` with `io::ErrorKind::InvalidInput` — glab treats
+  a bare `-` as a request to open `$EDITOR`/read from stdin rather than the
+  literal string, which would otherwise hang a headless caller indefinitely
+  (glab has no timeout of its own on the prompt).
 
 ## [0.5.2] - 2026-07-06
 

@@ -237,6 +237,10 @@ impl Default for MrEdit {
 /// is [`release_view`](GitLabApi::release_view)'s bare `<tag>` positional, which
 /// is guarded with `reject_flag_like` (mirroring `vcs-github`'s
 /// `api`/`release_view`); guard any future bare positional the same way.
+/// Separately, the description/body/comment flag-VALUE fields (`mr_create`,
+/// `mr_edit`, `issue_create`, `mr_comment`) are guarded with
+/// `reject_dash_sentinel` against glab's *own* `"-"` stdin/editor sentinel —
+/// unrelated to argv injection, but the same "refuse before spawning" shape.
 pub const BINARY: &str = "glab";
 
 /// Injection guard for bare positional argv slots: a caller-supplied value with
@@ -246,6 +250,35 @@ pub const BINARY: &str = "glab";
 /// the next token verbatim there.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// Guard against glab's dash-sentinel quirk: a description/comment body that is
+/// *exactly* `"-"` makes glab treat the flag as "read from stdin"/"open
+/// `$EDITOR`" instead of the literal string — a headless caller would hang
+/// waiting on input that never comes (no `glab` timeout of its own). This is
+/// **not** the shared `reject_flag_like` injection guard (these fields ride in
+/// flag-VALUE positions, so a leading `-` is not parsed as a flag) — it is a
+/// glab-specific value with special meaning to the CLI itself, so it lives here
+/// rather than in `vcs-cli-support`. Refuse the bare `"-"` before anything
+/// spawns, surfacing an `Error::Spawn` whose source is
+/// `io::ErrorKind::InvalidInput`, naming `what` in the message. A caller who
+/// needs a literal single-dash body must pick a different, non-sentinel
+/// representation (e.g. `"-\u{200B}"` or wrap it) — there is no way to make
+/// glab itself accept a byte-exact `"-"` non-interactively.
+fn reject_dash_sentinel(what: &str, value: &str) -> Result<()> {
+    if value == "-" {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} is a literal \"-\", which glab treats as a request to open an \
+                     editor or read from stdin — refusing to pass it through non-interactively"
+                ),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// How [`GitLabApi::mr_merge`] merges the MR. GitLab's default is a merge commit;
@@ -404,7 +437,11 @@ pub trait GitLabApi: Send + Sync {
     /// Open a merge request, returning the command's output (the MR URL on
     /// success) (`glab mr create`). The [`MrCreate`] spec carries the title,
     /// body, and the optional source (`None` = the current branch) and target
-    /// (`None` = the project default) branches.
+    /// (`None` = the project default) branches. A body that is *exactly* `"-"`
+    /// is glab's own stdin/editor sentinel (not the literal string) — refused
+    /// with an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput`
+    /// before anything spawns, so a headless caller never hangs waiting on an
+    /// editor/stdin that never comes.
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String>;
     /// Merge a merge request **immediately** (`glab mr merge <id> --yes
     /// --auto-merge=false [--squash|--rebase]`) — `--auto-merge=false` overrides
@@ -431,7 +468,11 @@ pub trait GitLabApi: Send + Sync {
     }
     /// Add a comment to a merge request, returning the command's output
     /// (`glab mr note <id> -m <message>`). The note body rides in a
-    /// flag-VALUE position, so no argv-guard is needed. **Defaulted** to
+    /// flag-VALUE position, so no argv-injection guard is needed — but a body
+    /// that is *exactly* `"-"` is glab's stdin/editor sentinel, refused with
+    /// an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput` before
+    /// anything spawns (same rule as [`mr_create`](GitLabApi::mr_create)).
+    /// **Defaulted** to
     /// `Error::Unsupported` so external implementers keep compiling when the
     /// crate bumps.
     #[allow(unused_variables)]
@@ -444,7 +485,11 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
     /// At least one of `title` or `body` must be `Some` — the facade rejects
     /// both-`None` before reaching the wrapper. `--yes` skips glab's
-    /// confirmation prompt. **Defaulted** to `Error::Unsupported`.
+    /// confirmation prompt. A `Some` body that is *exactly* `"-"` is glab's
+    /// stdin/editor sentinel, refused with an `Error::Spawn` whose source is
+    /// `io::ErrorKind::InvalidInput` before anything spawns (same rule as
+    /// [`mr_create`](GitLabApi::mr_create)). **Defaulted** to
+    /// `Error::Unsupported`.
     #[allow(unused_variables)]
     async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
         Err(Error::Unsupported {
@@ -469,7 +514,9 @@ pub trait GitLabApi: Send + Sync {
     /// Open an issue, returning the command's output (the issue URL on success)
     /// (`glab issue create --title <t> --description <d> --yes`). `--yes` skips
     /// glab's interactive submission prompt — mirrors
-    /// [`mr_create`](GitLabApi::mr_create).
+    /// [`mr_create`](GitLabApi::mr_create), including the same `"-"`
+    /// dash-sentinel guard on `body` (refused with an `Error::Spawn` whose
+    /// source is `io::ErrorKind::InvalidInput` before anything spawns).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
     /// Releases for `dir` (`glab release list --per-page 100 --output json`).
     /// Returns up to 100 (100 is the GitLab API per-page max); use
@@ -586,6 +633,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String> {
+        // A literal `-` description is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("description", spec.body.as_str())?;
         // `--yes` skips glab's interactive submission confirmation (a headless run
         // would otherwise hang waiting on the prompt).
         let mut args = vec![
@@ -672,6 +722,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // No `--yes` here: `mr note` is non-destructive in spirit (adds a
         // comment, doesn't change the MR's state) and doesn't trigger the
         // submission prompt `mr create` does.
+        // A literal `-` note body is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("comment body", body)?;
         let id = number.to_string();
         self.core
             .run(
@@ -682,8 +735,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
-        // `--title` and `--description` are flag-VALUE positions: no argv-guard
-        // needed. `--yes` skips the confirmation prompt `mr update` would
+        // `--title` and `--description` are flag-VALUE positions: no argv-injection
+        // guard needed. `--yes` skips the confirmation prompt `mr update` would
         // otherwise show when neither --fill nor --ready is passed.
         let id = number.to_string();
         let mut args = vec!["mr", "update", id.as_str()];
@@ -692,6 +745,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             args.push(title);
         }
         if let Some(body) = edit.body.as_deref() {
+            // A literal `-` description is glab's stdin/editor sentinel, not the
+            // string itself — refuse it before spawning.
+            reject_dash_sentinel("description", body)?;
             args.push("--description");
             args.push(body);
         }
@@ -752,6 +808,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
+        // A literal `-` description is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("description", body)?;
         // `--yes` skips glab's interactive submission confirmation (a headless
         // run would otherwise hang on the prompt) — same as `mr_create`.
         self.core
@@ -1183,6 +1242,67 @@ mod tests {
                 "B",
                 "--yes"
             ]
+        );
+    }
+
+    // A literal `-` description/comment body is glab's stdin/editor sentinel —
+    // every entry point that carries one must refuse it BEFORE any spawn (the
+    // scripted runner has no rule, so a leak-through would fail differently),
+    // and a non-sentinel value (even one that merely contains a dash) must go
+    // through untouched.
+    #[tokio::test]
+    async fn dash_sentinel_body_rejected_before_spawn_everywhere() {
+        let no_run = || GitLab::with_runner(ScriptedRunner::new());
+
+        let err = no_run()
+            .mr_create(Path::new("/repo"), MrCreate::new("T", "-"))
+            .await
+            .expect_err("mr_create must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .mr_edit(Path::new("/repo"), 1, MrEdit::new().body("-"))
+            .await
+            .expect_err("mr_edit must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .issue_create(Path::new("/repo"), "T", "-")
+            .await
+            .expect_err("issue_create must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .mr_comment(Path::new("/repo"), 1, "-")
+            .await
+            .expect_err("mr_comment must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        // A value that merely *contains* a dash (not exactly "-") is a real,
+        // literal body — it must pass through untouched, byte-exact.
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/9\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_create(Path::new("/repo"), MrCreate::new("T", "- not a sentinel"))
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach argv byte-exact"
         );
     }
 
