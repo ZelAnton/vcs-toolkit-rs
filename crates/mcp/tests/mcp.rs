@@ -16,7 +16,7 @@ fn inner(r: &rmcp::model::CallToolResult) -> serde_json::Value {
     let text = r
         .content
         .first()
-        .and_then(|c| c.raw.as_text())
+        .and_then(|c| c.as_text())
         .map(|t| t.text.clone())
         .expect("text content");
     serde_json::from_str(&text).expect("the tool returns JSON")

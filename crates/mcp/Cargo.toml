@@ -16,7 +16,7 @@ categories = ["command-line-utilities","development-tools","asynchronous"]
 # The official MCP Rust SDK: the server runtime, the #[tool] macros, the stdio
 # transport an agent harness talks to, and the re-exported `schemars` used to
 # derive tool input schemas.
-rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "2", features = ["server", "macros", "transport-io"] }
 # The git/jj facade (`Repo`) and the forge facade (`Forge`), with their `serde`
 # feature on so the DTOs the tools return serialize to JSON.
 vcs-core = { path = "../core", version = "0.7", features = ["serde"] }
@@ -40,7 +40,7 @@ path = "src/main.rs"
 [dev-dependencies]
 # Drive the server with an in-process MCP client for hermetic wiring tests
 # (`client` + an in-memory duplex transport for the round-trip).
-rmcp = { version = "1", features = ["server", "client", "macros", "transport-io"] }
+rmcp = { version = "2", features = ["server", "client", "macros", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
 # The `ScriptedRunner` test seam to back a `Repo` with canned output (hermetic
 # tool tests — no real git needed).

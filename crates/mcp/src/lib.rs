@@ -99,7 +99,7 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::schemars;
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use serde::Deserialize;
@@ -468,7 +468,7 @@ fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> 
             None,
         )
     })?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
 /// Map a `vcs-core` error into an MCP error. The facade reports a refused
@@ -1766,7 +1766,7 @@ mod tests {
         let text = out
             .content
             .first()
-            .and_then(|c| c.raw.as_text())
+            .and_then(|c| c.as_text())
             .map(|t| t.text.clone())
             .expect("text content");
         let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
@@ -1833,7 +1833,7 @@ mod tests {
         let text = out
             .content
             .first()
-            .and_then(|c| c.raw.as_text())
+            .and_then(|c| c.as_text())
             .map(|t| t.text.clone())
             .expect("text content");
         let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
@@ -1880,7 +1880,7 @@ mod tests {
         let text = out
             .content
             .first()
-            .and_then(|c| c.raw.as_text())
+            .and_then(|c| c.as_text())
             .map(|t| t.text.clone())
             .expect("text content");
         let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
@@ -1995,7 +1995,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| c.raw.as_text())
+            .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
             .expect("text content");
         assert!(text.contains("main"), "{text}");
