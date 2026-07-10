@@ -404,6 +404,29 @@ jobs:
       # (against the local path deps), and the release workflow verify-builds each
       # against the local tree (or the published deps) at release time.
 
+  package-license:
+    name: packaged MIT licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # `license-file = "LICENSE"` makes Cargo include each crate-local
+      # LICENSE in the package. Check every publishable crate explicitly: the
+      # local file must remain byte-identical to the root MIT text, and Cargo's
+      # final package list must contain it.
+      - name: Verify every published package carries the root MIT license
+        shell: bash
+        run: |
+          set -euo pipefail
+          crates=(
+            vcs-cli-support vcs-core vcs-diff vcs-forge vcs-git vcs-gitea
+            vcs-github vcs-gitlab vcs-jj vcs-mcp vcs-testkit vcs-watch
+          )
+          for crate in "${crates[@]}"; do
+            dir="crates/${crate#vcs-}"
+            cmp --silent LICENSE "$dir/LICENSE"
+            cargo package --list -p "$crate" --locked | grep -qx 'LICENSE'
+          done
   # Report-only SemVer check (cargo-semver-checks). Every crate is 0.x and may break
   # its API freely pre-1.0, so this must NOT gate — `continue-on-error: true` keeps it
   # advisory: it surfaces accidental breaking changes against each crate's crates.io

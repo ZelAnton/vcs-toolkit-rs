@@ -28,6 +28,11 @@
 # macOS's bash 3.2, which has no associative arrays — since the same file is run
 # by `scripts/gate` locally.
 
+# Packaging convention: every crate named by `release_order` has a local LICENSE
+# byte-identical to the workspace root and sets `license-file = "LICENSE"`.
+# Cargo consequently includes LICENSE in every .crate; CI checks the package list
+# and byte identity before this release logic can publish it.
+#
 # The 12 publishable crates, in publish ORDER: every crate appears AFTER all of
 # its in-workspace dependencies. Foundational crates first (vcs-diff,
 # vcs-cli-support — the wrappers/facades depend on them), then the wrappers, the

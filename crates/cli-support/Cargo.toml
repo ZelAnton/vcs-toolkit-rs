@@ -5,6 +5,7 @@ description = "Shared plumbing for CLI-wrapping crates: an argv injection guard,
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"

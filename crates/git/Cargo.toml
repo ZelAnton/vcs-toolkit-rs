@@ -5,6 +5,7 @@ description = "Automate Git from Rust: a typed, async wrapper that drives the re
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"

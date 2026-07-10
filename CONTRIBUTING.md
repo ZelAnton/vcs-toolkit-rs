@@ -47,6 +47,11 @@ trait, so tests need no real binary, temp repo, or network.
   `Cargo.lock` stays committed.
 - **Each crate has its own `CHANGELOG.md`** ([Keep a Changelog](https://keepachangelog.com/));
   curate the `[Unreleased]` section as you work when a change is user-facing.
+- **Published crates carry the full MIT text.** Keep a byte-identical `LICENSE` in
+  every crate directory, set `license-file = "LICENSE"`, and do not add a
+  restrictive `include` list that omits it. CI runs `cargo package --list` for all
+  published crates and compares each local copy with the root `LICENSE`; add the same
+  file and explicit field before publishing a new crate.
 - **Multi-option commands take a builder/spec** rather than a long positional list —
   the trigger is **≥2 options, or any bare `bool`** (a bare boolean at a call site is
   ambiguous, so it becomes a presence-only setter or a spec field).
