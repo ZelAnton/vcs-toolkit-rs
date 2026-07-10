@@ -11,6 +11,13 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: host-keyed credential resolution for remote ops. When the operation's
+  target host is known — `clone` derives it from the URL — it is now passed as the
+  `CredentialRequest`'s host (alongside the existing `credential.helper` host gate),
+  so a **host-keyed** `CredentialProvider` hands each op only that host's secret. One
+  `Git` client can safely drive several hosts (each clone draws its own token, never
+  a neighbour's); a provider `Err` is fail-closed (the op aborts before git spawns),
+  while `Ok(None)` defers to ambient auth. (T-045.)
 - feat: add `Git::empty_tree_oid` — the empty-tree object id for a repository's
   **active object format**, computed via `git hash-object -t tree --stdin` (an
   empty tree is empty content; `--stdin`, not `-w`, only computes the id). This is

@@ -854,10 +854,14 @@ impl<R: ProcessRunner> GitHub<R> {
     /// Compose with [`with_credentials`](GitHub::with_credentials) /
     /// [`with_token`](GitHub::with_token) / [`with_env_token`](GitHub::with_env_token)
     /// in either order — the host selects the env var, the provider supplies the
-    /// secret. For several hosts, build **one client per host**: each injects only
-    /// its own host's token, so a broken or missing credential for one host can't
-    /// leak into another. Without a host binding the client behaves exactly as
-    /// before — github.com semantics, credential injected as `GH_TOKEN`.
+    /// secret. The bound host also travels in each operation's [`CredentialRequest`],
+    /// so a **host-keyed** provider returns the secret for *this* host and never a
+    /// neighbouring instance's. For several hosts, build **one client per host**:
+    /// each injects only its own host's token, so a broken or missing credential for
+    /// one host can't leak into another. Without a host binding the client behaves
+    /// exactly as before — github.com semantics, credential injected as `GH_TOKEN`,
+    /// and the request carries no host (a host-keyed provider that can't place it
+    /// defers to ambient auth).
     ///
     /// `GH_HOST` only steers gh's host inference for commands with **no repository
     /// context**; a repo-scoped command still resolves its host from the working
@@ -868,6 +872,11 @@ impl<R: ProcessRunner> GitHub<R> {
         self.core = self
             .core
             .with_token_env(CredentialService::GitHub, host.token_env_var())
+            // Carry the (canonical, lower-cased) host into every operation's
+            // `CredentialRequest`, so a host-keyed `CredentialProvider` resolves the
+            // secret for *this* host and nothing else — one instance's token can't
+            // land in another host's `gh` command.
+            .with_expected_host(host.as_str())
             .default_env("GH_HOST", host.as_str());
         self
     }
@@ -2247,6 +2256,127 @@ mod tests {
         let cs = rec_saas.only_call();
         assert!(cs.env_is("GH_TOKEN", "tok-saas") && cs.env_is("GH_HOST", "github.com"));
         assert!(!cs.has_env("GH_ENTERPRISE_TOKEN"));
+    }
+
+    // A HOST-KEYED provider on a host-bound client injects ONLY that host's secret,
+    // into the env gh reads for it — and a client bound to a *different* host draws a
+    // different secret from the SAME provider, so one instance's token never lands in
+    // another's command. (T-045: the bound host now reaches the CredentialRequest, so
+    // the provider can tell SaaS from a self-hosted GHES instance.)
+    #[tokio::test]
+    async fn host_keyed_provider_injects_only_the_bound_hosts_token() {
+        // Typed as the trait object so `Arc::clone` yields `Arc<dyn …>` directly
+        // (the unsized coercion doesn't flow back through `Arc::clone`'s inference).
+        let provider: Arc<dyn CredentialProvider> =
+            Arc::new(provider_fn(|r: &CredentialRequest<'_>| {
+                Ok(match r.host {
+                    Some("github.com") => Some(Credential::token("saas-secret")),
+                    Some("ghe.example.com") => Some(Credential::token("ent-secret")),
+                    _ => None,
+                })
+            }));
+
+        // SaaS client → GH_TOKEN carries the github.com secret, never the ent one.
+        let rec_saas = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_saas)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::clone(&provider))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let cs = rec_saas.only_call();
+        assert!(cs.env_is("GH_TOKEN", "saas-secret"));
+        assert!(!cs.has_env("GH_ENTERPRISE_TOKEN"));
+        assert!(!cs.args_str().iter().any(|a| a.contains("saas-secret")));
+
+        // Enterprise client → the ENT secret in GH_ENTERPRISE_TOKEN only, from the
+        // very same provider; the github.com token env is untouched.
+        let rec_ent = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_ent)
+            .with_host(GitHubHost::new("ghe.example.com").unwrap())
+            .with_credentials(Arc::clone(&provider))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let ce = rec_ent.only_call();
+        assert!(ce.env_is("GH_ENTERPRISE_TOKEN", "ent-secret"));
+        assert!(
+            !ce.has_env("GH_TOKEN"),
+            "the enterprise command must not carry the github.com token env"
+        );
+        assert!(!ce.args_str().iter().any(|a| a.contains("ent-secret")));
+    }
+
+    // Fallback policy, read vs write — `Ok(None)` (a host-keyed provider with nothing
+    // for this host) leaves the command on ambient gh auth (no token env injected)
+    // for BOTH a read (`pr_list`) and a write (`pr_merge`). (T-045)
+    #[tokio::test]
+    async fn provider_none_defers_to_ambient_for_read_and_write() {
+        let rec_read = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_read)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let cr = rec_read.only_call();
+        assert!(
+            !cr.has_env("GH_TOKEN") && !cr.has_env("GH_ENTERPRISE_TOKEN"),
+            "read defers to ambient on Ok(None)"
+        );
+
+        let rec_write = RecordingRunner::replying(Reply::ok(""));
+        GitHub::with_runner(&rec_write)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))))
+            .pr_merge(Path::new("/r"), 7, PrMerge::squash())
+            .await
+            .unwrap();
+        let cw = rec_write.only_call();
+        assert!(
+            !cw.has_env("GH_TOKEN") && !cw.has_env("GH_ENTERPRISE_TOKEN"),
+            "write defers to ambient on Ok(None)"
+        );
+    }
+
+    // Fallback policy, read vs write — a provider `Err` is FAIL-CLOSED: it aborts the
+    // operation rather than silently running on ambient auth, proven separately for a
+    // read (`pr_list`) and a write (`pr_merge`). gh is never spawned: the error
+    // surfaces in `prepare`, before the process. (T-045)
+    #[tokio::test]
+    async fn provider_error_aborts_read_and_write_fail_closed() {
+        fn boom() -> Arc<dyn CredentialProvider> {
+            Arc::new(provider_fn(|_r: &CredentialRequest<'_>| {
+                Err(Error::spawn(
+                    BINARY,
+                    std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault down"),
+                ))
+            }))
+        }
+
+        let rec_read = RecordingRunner::replying(Reply::ok("[]"));
+        let read = GitHub::with_runner(&rec_read)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(boom())
+            .pr_list(Path::new("/r"))
+            .await;
+        assert!(read.is_err(), "a provider error must abort the read");
+        assert!(
+            rec_read.calls().is_empty(),
+            "gh must not spawn when the provider errored (read)"
+        );
+
+        let rec_write = RecordingRunner::replying(Reply::ok(""));
+        let write = GitHub::with_runner(&rec_write)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(boom())
+            .pr_merge(Path::new("/r"), 7, PrMerge::squash())
+            .await;
+        assert!(write.is_err(), "a provider error must abort the write");
+        assert!(
+            rec_write.calls().is_empty(),
+            "gh must not spawn when the provider errored (write)"
+        );
     }
 
     // auth_status_for pins `--hostname <host>` and reflects the exit code as a bool.

@@ -544,6 +544,13 @@ impl<R: ProcessRunner> GitLab<R> {
     /// Supply credentials per operation via a [`CredentialProvider`] — opt-in, off
     /// by default (ambient `glab` auth). The resolved token is injected as
     /// `GITLAB_TOKEN` on every `glab` invocation, overriding the ambient login.
+    ///
+    /// This client has **no host binding** yet, so each [`CredentialRequest`] carries
+    /// no host. A simple provider ([`StaticCredential`] / [`EnvToken`]) is unaffected;
+    /// a *host-keyed* provider sees `None` and should defer to ambient for a host it
+    /// can't place (per [`ManagedClient::resolve_credential`](vcs_cli_support::ManagedClient::resolve_credential)),
+    /// rather than substitute a default secret — so a self-hosted-vs-SaaS provider
+    /// stays safe until GitLab grows an explicit host binding (as `vcs-github` has).
     #[must_use]
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.core = self.core.with_credentials(provider);

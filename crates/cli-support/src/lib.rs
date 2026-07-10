@@ -704,7 +704,12 @@ where
 ///    (e.g. `GH_TOKEN`). Backends that inject the secret differently (git's
 ///    `credential.helper`) instead call
 ///    [`resolve_credential`](ManagedClient::resolve_credential) at the command
-///    site. Resolution happens once per call, before the retry loop.
+///    site. Resolution happens once per call, before the retry loop. A
+///    [`with_expected_host`](ManagedClient::with_expected_host) binding travels as
+///    the request's host so a **host-keyed** provider selects the right instance's
+///    secret; the `Ok(None)` / `Err` fallback (defer to ambient vs. fail-closed
+///    abort) is defined on
+///    [`resolve_credential`](ManagedClient::resolve_credential).
 ///
 /// Both default to inert, so a client with neither configured behaves exactly
 /// like a bare `CliClient`.
@@ -715,6 +720,14 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// When set, the token is auto-injected into this env var on every command,
     /// resolved for this service. Used by the forge clients (`GH_TOKEN`, …).
     token_env: Option<(CredentialService, &'static str)>,
+    /// The remote host this client targets, set when a forge `with_host` builder
+    /// bound one. It becomes the [`CredentialRequest`]'s host on the auto-injected
+    /// token-env path (the forge case), so a **host-keyed** provider selects the
+    /// secret for *this* host and never a neighbouring instance's. `None` leaves the
+    /// request host unset — a host-keyed provider that can't place the request
+    /// returns `Ok(None)` and the command falls back to ambient auth, rather than
+    /// being handed the wrong host's secret.
+    expected_host: Option<String>,
     /// A copy of the [`default_cancel_on`](Self::default_cancel_on) token, kept here
     /// (as well as on `inner`, which bounds the spawned *process*) so the retry loop
     /// can cut a lock-contention backoff short the instant cancellation fires,
@@ -731,6 +744,9 @@ impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
             // whether one is configured, plus the token-env binding.
             .field("credentials", &self.credentials.is_some())
             .field("token_env", &self.token_env)
+            // A hostname, not a secret — safe to render; helps distinguish a
+            // host-bound client's `{:?}` from an unbound one.
+            .field("expected_host", &self.expected_host)
             // The token itself is not meaningfully renderable; whether one is set
             // matches `inner`'s own `has_default_cancel`, kept explicit here too.
             .field("has_cancel", &self.cancel.is_some())
@@ -747,6 +763,7 @@ impl ManagedClient<JobRunner> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            expected_host: None,
             cancel: None,
         }
     }
@@ -760,6 +777,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            expected_host: None,
             cancel: None,
         }
     }
@@ -801,6 +819,19 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self
     }
 
+    /// Bind the remote host this client targets (set by a forge `with_host`): it
+    /// travels as the [`CredentialRequest`]'s host whenever the token-env path
+    /// resolves a credential, so a **host-keyed** [`CredentialProvider`] returns the
+    /// secret for *this* host and nothing else — one client can't inject a
+    /// neighbouring instance's token. Without it the request host is unset (the
+    /// pre-host-context behaviour). No effect without a provider and a
+    /// [`with_token_env`](Self::with_token_env) binding.
+    #[must_use]
+    pub fn with_expected_host(mut self, host: impl Into<String>) -> Self {
+        self.expected_host = Some(host.into());
+        self
+    }
+
     /// Whether a credential provider is configured.
     #[must_use]
     pub fn has_credentials(&self) -> bool {
@@ -811,6 +842,22 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// `Ok(None)` if no provider is set or it defers to ambient auth. Backends
     /// that inject the secret at the command site (git's `credential.helper`) call
     /// this directly; the forge token-env path uses it internally.
+    ///
+    /// **Fallback policy (identical for read and write operations):**
+    /// - **No provider**, or the provider returns **`Ok(None)`** → `Ok(None)`:
+    ///   defer to the CLI's ambient auth, exactly as if no provider were configured.
+    /// - A credential whose secret is **empty / whitespace-only** → treated as
+    ///   `Ok(None)` (ambient): injecting an empty token would *override* the ambient
+    ///   login with nothing instead of deferring to it.
+    /// - The provider returns **`Err`** → the error propagates and **aborts** the
+    ///   operation (**fail-closed**). A provider that cannot resolve (a vault outage)
+    ///   is never silently downgraded to ambient auth.
+    ///
+    /// Passing the operation's `host` is what lets a **host-keyed** provider return
+    /// the secret for *that* host (or `Ok(None)` for one it does not handle) — so it
+    /// never hands back a neighbouring instance's token when the host is known, and
+    /// an unknown/absent host defers to ambient rather than substituting a default
+    /// secret.
     pub async fn resolve_credential(
         &self,
         service: CredentialService,
@@ -836,12 +883,26 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// [`with_token_env`](ManagedClient::with_token_env) binding and a provider
     /// are both configured. The single place the auto-injection happens, shared by
     /// every retrying verb.
+    ///
+    /// The request carries this client's
+    /// [`expected_host`](ManagedClient::with_expected_host) (when a forge `with_host`
+    /// set one), so a host-keyed provider picks the secret for that host. The
+    /// resolution follows the [`resolve_credential`](ManagedClient::resolve_credential)
+    /// fallback policy: `Ok(None)` (nothing for this host, or an empty secret) leaves
+    /// the command on ambient auth — no env is set — while an `Err` **aborts** the
+    /// command (fail-closed, via `?`). A provider that can't resolve is never
+    /// silently downgraded to ambient, and a wrong host's secret is never
+    /// substituted. This holds identically for read and write verbs (both route
+    /// through here).
     async fn prepare(&self, call: impl IntoCommand<R>) -> Result<Command> {
         let cmd = call.into_command(&self.inner);
         let Some((service, var)) = self.token_env else {
             return Ok(cmd);
         };
-        match self.resolve_credential(service, None).await? {
+        match self
+            .resolve_credential(service, self.expected_host.as_deref())
+            .await?
+        {
             Some(cred) => Ok(cmd.env(var, cred.secret().expose())),
             None => Ok(cmd),
         }
@@ -1584,6 +1645,76 @@ mod tests {
                     "blank secret {blank:?} → ambient (None) for {service:?}"
                 );
             }
+        }
+    }
+
+    // The resolved request carries the operation's host, so a HOST-KEYED provider
+    // returns the secret for exactly that host — and `Ok(None)` (deferring to
+    // ambient) for a host it does not place or an absent one, never a wrong-host
+    // secret. This is the seam `prepare` (forge token-env) and git's
+    // `remote_credentials` both feed the target host into. (T-045)
+    #[tokio::test]
+    async fn resolve_credential_routes_on_request_host() {
+        let provider = provider_fn(|r: &CredentialRequest<'_>| {
+            Ok(match r.host {
+                Some("github.com") => Some(Credential::token("saas")),
+                Some("ghe.example.com") => Some(Credential::token("ent")),
+                // An unknown or absent host defers to ambient rather than a default.
+                _ => None,
+            })
+        });
+        let client = ManagedClient::new("gh").with_credentials(Arc::new(provider));
+        let resolve =
+            |host: Option<&'static str>| client.resolve_credential(CredentialService::GitHub, host);
+
+        assert_eq!(
+            resolve(Some("github.com"))
+                .await
+                .unwrap()
+                .unwrap()
+                .secret()
+                .expose(),
+            "saas"
+        );
+        assert_eq!(
+            resolve(Some("ghe.example.com"))
+                .await
+                .unwrap()
+                .unwrap()
+                .secret()
+                .expose(),
+            "ent"
+        );
+        assert!(
+            resolve(Some("other.example")).await.unwrap().is_none(),
+            "a host the provider doesn't place → ambient (None), not a wrong secret"
+        );
+        assert!(
+            resolve(None).await.unwrap().is_none(),
+            "an absent host → ambient (None)"
+        );
+    }
+
+    // Fail-closed: a provider `Err` propagates out of `resolve_credential` (and so
+    // aborts the command in `prepare` / `remote_credentials`) for any host — it is
+    // never swallowed into a silent ambient fallback. (T-045 fallback policy)
+    #[tokio::test]
+    async fn resolve_credential_propagates_provider_error_fail_closed() {
+        let provider = provider_fn(|_r: &CredentialRequest<'_>| {
+            Err(Error::spawn(
+                "vault",
+                std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault unreachable"),
+            ))
+        });
+        let client = ManagedClient::new("gh").with_credentials(Arc::new(provider));
+        for host in [Some("github.com"), None] {
+            assert!(
+                client
+                    .resolve_credential(CredentialService::GitHub, host)
+                    .await
+                    .is_err(),
+                "provider error must propagate (fail-closed), host={host:?}"
+            );
         }
     }
 }
