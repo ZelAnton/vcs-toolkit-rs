@@ -71,10 +71,11 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_list(dir)` | `glab mr list --output json` | `Vec<MergeRequest>` |
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
 | `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |
-| `mr_merge(dir, id, strategy)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
+| `mr_merge(dir, id, merge)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
 | `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
 | `mr_checks(dir, id)` | `glab mr view <id> --output json` (reads `head_pipeline.status`) | [`CiStatus`] |
+| `mr_diff(dir, id)` | `glab mr diff <id> --color never` | `Vec<`[`FileDiff`]`>` |
 
 `MergeRequest` carries `iid` (the project-scoped id the commands take), `title`,
 `state` (GitLab's `"opened"`/`"closed"`/`"merged"`/`"locked"`), `source_branch`,
@@ -82,7 +83,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
+# use vcs_gitlab::{GitLab, GitLabApi, MrCreate, MrMerge};
 # async fn demo(glab: &GitLab, repo: &Path) -> Result<(), processkit::Error> {
 for mr in glab.mr_list(repo).await? {
     println!("!{} [{}] {} — {}", mr.iid, mr.state, mr.title, mr.web_url);
@@ -91,20 +92,38 @@ let url = glab
     .mr_create(repo, MrCreate::new("Add streaming", "Implements …")
         .source("feat/streaming").target("main"))
     .await?;
-glab.mr_merge(repo, 12, MergeStrategy::Squash).await?;
+glab.mr_merge(repo, 12, MrMerge::squash()).await?;
 # let _ = url; Ok(()) }
 ```
 
-[`MergeStrategy`] is `Merge` (glab's default merge commit), `Squash`, or `Rebase`.
-`mr_merge` passes `--auto-merge=false` so it merges **immediately** rather than
-enabling glab's default merge-when-pipeline-succeeds. [`CiStatus`] buckets the
-pipeline into `Passing` / `Failing` / `Pending` / `None`.
+`mr_merge` takes an [`MrMerge`] spec — a [`MergeStrategy`] (`Merge` = glab's
+default merge commit, `Squash`, `Rebase`) built through
+`MrMerge::merge()`/`squash()`/`rebase()`. It passes `--auto-merge=false` so it
+merges **immediately** rather than enabling glab's default
+merge-when-pipeline-succeeds. The gh-style `.auto()` / `.delete_branch()` options
+are **not expressible on `glab`** through this wrapper (glab's own `--auto-merge`
+is a different, merge-when-pipeline contract), so setting either makes `mr_merge`
+return `Error::Unsupported` rather than silently dropping it. [`CiStatus`] buckets
+the pipeline into `Passing` / `Failing` / `Pending` / `None`.
 
 `mr_create` takes an [`MrCreate`] spec — build it through `MrCreate::new(title,
 body)` and chain the optional `.source(b)` (`--source-branch`; `None` = the
 current branch) / `.target(b)` (`--target-branch`; `None` = the project default)
 setters. Public fields: `title: String`, `body: String`, `source: Option<String>`,
 `target: Option<String>`.
+
+A `body` that is *exactly* `"-"` is refused before glab ever spawns
+(`Error::Spawn` with `io::ErrorKind::InvalidInput`): glab treats a bare `-` as a
+request to open `$EDITOR`/read from stdin rather than the literal string, which
+would hang a headless caller indefinitely. The same guard covers `mr_edit`'s
+body, `issue_create`'s body, and `mr_comment`'s message.
+
+`mr_diff` returns the MR's diff as one [`FileDiff`] per changed file, parsed
+through the same unified-diff parser
+[`vcs-git`](https://docs.rs/vcs-git/latest/vcs_git/guide/)/[`vcs-jj`](https://docs.rs/vcs-jj/latest/vcs_jj/guide/)
+use — `glab mr diff` emits the same git-format diff `git diff` does, so
+`vcs-gitlab` re-exports [`FileDiff`] (and [`ChangeKind`], [`Hunk`], [`DiffLine`])
+rather than depending on `vcs-diff` directly for the type alone.
 
 ## Issues & releases
 
@@ -152,13 +171,17 @@ for rel in glab.release_list(repo).await? {
 `run(args)` / `run_raw(args)` (and the inherent `run_args(&[&str])` /
 `run_raw_args`) drive any unmodelled `glab` command; `run` returns trimmed stdout
 and errors on a non-zero exit, `run_raw` hands back the captured `ProcessResult`.
-These run in the **process's current directory** — the raw hatch supplies the whole
-argv, so target a specific repo with `-R group/project`; the bound `at(dir)` view
-does *not* re-bind them.
+On the **client** (`glab.run(…)`) these run in the **process's current
+directory** — the raw hatch supplies the whole argv, so target a specific repo
+with `-R group/project`. On the **bound view** (`glab.at(dir).run(…)`) they are
+instead bound to `dir` (T-035): the view forwards to the client's dir-taking
+`run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in`, so a raw call through the
+handle runs in the bound project's cwd, like every other `GitLabAt` method. Reach
+for the client's `run` when you deliberately want the process cwd.
 `api(dir, endpoint)` is the `glab api <endpoint>` shortcut for any REST/GraphQL
 endpoint (mirrors `vcs-github`'s `api`), with the `endpoint` guarded against flag
-injection. Unlike `run`, it **is** dir-bound, so a relative endpoint resolves the
-project against `dir`'s remote (its `at(dir)` form is `api(endpoint)`).
+injection. Like the bound raw hatches, it **is** dir-bound, so a relative endpoint
+resolves the project against `dir`'s remote (its `at(dir)` form is `api(endpoint)`).
 
 ## See also
 

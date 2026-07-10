@@ -10,13 +10,126 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- feat: add `JjApi::log_paths` — like `log`, but scoped to changes that
+  touched the given filesets (`jj log -r <revset> <filesets>`), built with
+  `JjFileset::path` (same primitive as `commit_paths`/`squash_paths`) and a
+  refusal of an empty fileset list before spawning.
+- feat: add `Jj::rollback_to(dir, pre)` — the concurrency-safe op-log rollback
+  primitive `transaction` runs, exposed for non-closure / FFI callers. It runs the
+  cleanup on a **fresh cancellation context** with its own deadline (so a cancelled
+  or timed-out operation no longer disables its own rollback) and **detects a
+  concurrent op-log divergence** — refusing to revert (returning
+  `Rollback::SkippedDiverged`) when another jj process advanced the operation log,
+  rather than silently clobbering that work. Returns the structured `Rollback`
+  outcome (`Restored` / `SkippedDiverged` / `Failed` / `NotAttempted`).
+- feat: add the `Rollback` enum and `TransactionError` struct describing a
+  transaction's rollback outcome and preserving the closure's cause.
 
 ### Changed
--
+
+- **Breaking:** path-carrying results are now lossless for non-UTF-8 names.
+  `ChangedPath.path` / `ChangedPath.old_path` are `PathBuf` / `Option<PathBuf>` (were
+  `String` / `Option<String>`), and `JjApi::resolve_list` returns `Vec<PathBuf>` (was
+  `Vec<String>`). `status` / `diff_summary` / `resolve_list` now parse `jj diff
+  --summary` / `resolve --list` output from **raw bytes** (`parse_diff_summary` /
+  `parse_resolve_list` consume `&[u8]`) via `ManagedClient::parse_bytes`, so a
+  non-UTF-8 filename (legal on Unix) survives byte-for-byte instead of being flattened
+  by `String::from_utf8_lossy`. `workspace_root` / `workspace_roots` likewise now build
+  their returned `PathBuf` from raw `jj workspace root` stdout (via `parse_bytes` /
+  `processkit::output_all_bytes`), so a workspace root that is not valid UTF-8 survives
+  losslessly into the facade's `WorktreeInfo.path` — and only the trailing line
+  terminator is stripped now, so a root path ending in a space/tab is preserved rather
+  than trimmed. Text-only templated output (change/commit ids, bookmark/workspace
+  names, descriptions) still decodes as `String`. (Note: jj's fileset language is text,
+  so committing a non-UTF-8 path via `commit_paths` remains bounded by jj itself; the
+  byte-faithful round trip is exercised on git.) (T-050.)
 
 ### Fixed
--
+
+- A locally-deleted bookmark that a remote still tracks (a **tombstone**) no
+  longer masquerades as a live local bookmark: `bookmarks()` — and through it the
+  facade's `local_branches`/`branch_exists` — now filters it out. `bookmark list`
+  renders such a bookmark as a `present=0` local row plus a `present=1`
+  remote-tracking row; both are dropped, while a *conflicted* bookmark
+  (`present=1`, no single target) is correctly kept. (T-041.)
+
+### Changed
+
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- Machine templates now follow one **framing/escaping contract**: free-text
+  fields (descriptions, bookmark/workspace names, the op-log user) are rendered
+  with jj's `.escape_json()` and decoded on parse, and per-commit/-workspace
+  bookmark lists are space-joined escaped names instead of comma/space-joined raw
+  ones. Names/descriptions carrying spaces, commas, tabs, quotes, or newlines now
+  round-trip unambiguously instead of mangling the row (e.g. a git-imported
+  `co,mma` bookmark, or a workspace name with a tab). (T-041.)
+- Identity/cross-reference commit ids are now the **full** id, not a short prefix:
+  `Bookmark::target`, `BookmarkRef::target`, and `Workspace::commit` (and thus the
+  facade's `WorktreeInfo.commit`) carry the full commit id so they can be matched
+  against a git oid / `RepoSnapshot.head` without a short-prefix collision. The
+  history-display `Change` (change/commit id) stays short by design. (T-041.)
+- **Breaking:** `blocking::workspace_name_for_path` now returns
+  `io::Result<Option<String>>` instead of `Option<String>`, so a `Drop`-guard caller
+  can tell a genuine "no such workspace" (`Ok(None)`) from a probe that could not
+  answer (`Err`: `jj` missing / failed to spawn, `workspace list` exited non-zero, or
+  a registered workspace did not resolve via `workspace root --name`). The old
+  `Option` folded every failure into `None`, silently skipping cleanup that a real
+  error should have surfaced.
+- **Breaking:** the raw escape hatches on the bound view (`JjAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `jj.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository than the one it was bound to. New dir-taking
+  client methods `Jj::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim — like the process-cwd `run`, they do
+  **not** inject `--color never`; only the cwd is bound). The **process-cwd** escape
+  hatch is unchanged and still reached by calling `run`/`run_raw`/… on `Jj` itself
+  (`jj.run(…)`) — migrate a caller that relied on `jj.at(dir).run(…)` running in the
+  process cwd to `jj.run(…)`. (T-035.)
+- **Breaking:** bookmark names and revsets are now taken as the validated newtypes
+  `BookmarkName` (new — jj's equivalent of a branch) and `RevsetExpr` (previously
+  constructible but accepted by no method). Every `JjApi` op that names a bookmark
+  to create/move/rename/delete/track/fetch/push now takes `&BookmarkName`; every op
+  that resolves a revset takes `&RevsetExpr`; the option structs follow
+  (`BookmarkMove::new(BookmarkName, RevsetExpr)`, `SquashInto::new(RevsetExpr)`,
+  `SquashPaths::new(RevsetExpr, RevsetExpr)`, `WorkspaceAdd::new(name, RevsetExpr,
+  path)`, `git_push(Option<BookmarkName>)`, `new_merge(msg, Vec<RevsetExpr>)`,
+  `file_annotate(path, Option<RevsetExpr>)`, `absorb(Option<RevsetExpr>, …)`). A
+  flag-like or malformed value is now rejected at construction, before it can reach
+  an argv slot, as a classifiable `Error::is_invalid_input`. Migrate by wrapping
+  the string: `jj.edit(dir, "@-")` → `jj.edit(dir, &RevsetExpr::new("@-")?)`,
+  `jj.bookmark_create(dir, "feat", "@")` →
+  `jj.bookmark_create(dir, &BookmarkName::new("feat")?, &RevsetExpr::new("@")?)`.
+  Remaining bare-positional `&str` inputs that are not bookmarks/revsets (remote
+  names, operation ids, workspace names) keep their internal guard.
+- **Breaking:** replace the trailing positional `bool` on three `JjApi` methods
+  with named specs, so the flag reads at the call site: `bookmark_move(dir, name,
+  to, allow_backwards)` → `bookmark_move(dir, BookmarkMove::new(name,
+  to)[.allow_backwards()])`, `squash_into(dir, into, use_destination_message)` →
+  `squash_into(dir, SquashInto::new(into)[.use_destination_message()])`, and
+  `git_clone(url, dest, colocate)` → `git_clone(url, dest,
+  GitClone::colocated()|GitClone::separate())` (the colocation choice is still
+  always explicit — there is deliberately no default). The `JjAt` bound view moves
+  to the same specs.
+- **Breaking:** `Jj::transaction` / `JjAt::transaction` now return
+  `Result<T, TransactionError>` instead of `Result<T>`. On the closure's `Err` the
+  `TransactionError` preserves that error as `cause` **and** reports what the
+  rollback did in `rollback` — so a failed or refused rollback is visible instead of
+  swallowed. Migrate a caller that only wants the old closure error with
+  `.map_err(TransactionError::into_cause)`.
+
+### Fixed
+
+- fix: make the `transaction` op-log rollback safe under cancellation and
+  concurrency. Previously a *fired* cancellation of the closure (on a client with
+  `default_cancel_on`) also cancelled the `op_restore`, leaving the repo
+  mid-transaction; the rollback now runs on a fresh cancellation context with its
+  own deadline. A concurrent jj process's operation landing between the savepoint
+  capture and the restore was silently reverted; the rollback now detects the
+  op-log divergence and refuses (`Rollback::SkippedDiverged`). A failing
+  `op_restore` was discarded (`let _ = …`); it is now surfaced as
+  `Rollback::Failed`. See `Jj::rollback_to`.
 
 ## [0.9.2] - 2026-07-06
 

@@ -45,7 +45,8 @@
 //!   when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`CommitPaths`],
 //!   [`MergeCommit`] / [`MergeNoCommit`], [`GitPush`], [`CloneSpec`],
-//!   [`WorktreeAdd`], [`AnnotatedTag`], [`MergeCheck`] — each `#[non_exhaustive]`, built
+//!   [`WorktreeAdd`], [`AnnotatedTag`], [`MergeCheck`], [`BranchDelete`],
+//!   [`StashPush`], [`WorktreeRemove`] — each `#[non_exhaustive]`, built
 //!   with a constructor + chained setters, named after the flags they emit.
 //! - **[`conflict`]** — a typed conflict-marker model: parse marker soup into
 //!   structured regions, re-render byte-exact, and resolve to a chosen side.
@@ -71,12 +72,13 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_git::{CommitPaths, Git, GitApi, GitPush};
+//! use vcs_git::{CommitPaths, Git, GitApi, GitPush, RefName};
 //! # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 //! let dir = Path::new(".");
 //! git.fetch(dir).await?;
 //! git.commit_paths(dir, CommitPaths::new(["src/a.rs"], "wip")).await?;
-//! git.push(dir, GitPush::branch("feature").set_upstream()).await?;
+//! // Ref/revision inputs are validated newtypes — build them at the boundary.
+//! git.push(dir, GitPush::branch(RefName::new("feature")?).set_upstream()).await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -91,11 +93,18 @@
 //!
 //! # Safety
 //!
-//! Every caller value placed in a bare positional argv slot is refused before
-//! spawning if it is empty or starts with `-` (git would parse it as a flag);
-//! flag-value slots (`-b <name>`) are consumed verbatim and don't need it. For
-//! eager validation at an input boundary, the [`RefName`] / [`RevSpec`] newtypes
-//! validate up front. Paths always go through `--` / pathspec.
+//! Every operation that takes a caller-supplied **reference name** or **revision
+//! expression** now does so through a validated newtype — [`RefName`] for
+//! branch/tag/ref names, [`RevSpec`] for revisions/ranges — so a flag-like or
+//! malformed value is rejected at construction, *before* it can reach an argv
+//! slot (a classifiable [`vcs_cli_support::is_invalid_input`] failure). The one
+//! context-dependent special value, git's `-` "previous branch", is modelled
+//! explicitly as [`CheckoutTarget::Previous`] rather than smuggled through a
+//! newtype. Remaining bare-positional inputs that are **not** refs/revisions
+//! (remote names, URLs, config keys) keep an internal
+//! [`reject_flag_like`](vcs_cli_support::reject_flag_like) guard — refused before
+//! spawning if empty or starting with `-`. Flag-value slots (`-b <name>`) are
+//! consumed verbatim; paths always go through `--` / pathspec.
 //!
 //! # In-depth guide
 //!
@@ -131,9 +140,9 @@ pub use vcs_diff::{
 // `vcs_git::is_merge_conflict`, … still resolve.
 use vcs_cli_support::git_credential_helper;
 pub use vcs_cli_support::{
-    Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, RetryPolicy,
-    Secret, StaticCredential, is_lock_contention, is_merge_conflict, is_nothing_to_commit,
-    is_transient_fetch_error, provider_fn,
+    Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, OutputBudget,
+    RetryPolicy, Secret, StaticCredential, is_lock_contention, is_merge_conflict,
+    is_nothing_to_commit, is_transient_fetch_error, provider_fn,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -150,9 +159,9 @@ pub struct WorktreeAdd {
     pub path: PathBuf,
     /// Create and check out this new branch (`-b <name>`); `None` checks out an
     /// existing ref.
-    pub new_branch: Option<String>,
+    pub new_branch: Option<RefName>,
     /// The commit/branch to base the worktree on; `None` defaults to `HEAD`.
-    pub commitish: Option<String>,
+    pub commitish: Option<RevSpec>,
     /// Register the worktree without populating its files (`--no-checkout`) — the
     /// caller fills the working tree itself (e.g. a copy-on-write clone).
     pub no_checkout: bool,
@@ -161,26 +170,22 @@ pub struct WorktreeAdd {
 impl WorktreeAdd {
     /// A worktree at `path` checking out an existing `commitish` (e.g. a branch):
     /// `git worktree add <path> <commitish>`.
-    pub fn checkout(path: impl Into<PathBuf>, commitish: impl Into<String>) -> Self {
+    pub fn checkout(path: impl Into<PathBuf>, commitish: RevSpec) -> Self {
         Self {
             path: path.into(),
             new_branch: None,
-            commitish: Some(commitish.into()),
+            commitish: Some(commitish),
             no_checkout: false,
         }
     }
 
     /// A worktree at `path` creating a new branch `name` based on `commitish`:
     /// `git worktree add -b <name> <path> <commitish>`.
-    pub fn create_branch(
-        path: impl Into<PathBuf>,
-        name: impl Into<String>,
-        commitish: impl Into<String>,
-    ) -> Self {
+    pub fn create_branch(path: impl Into<PathBuf>, name: RefName, commitish: RevSpec) -> Self {
         Self {
             path: path.into(),
-            new_branch: Some(name.into()),
-            commitish: Some(commitish.into()),
+            new_branch: Some(name),
+            commitish: Some(commitish),
             no_checkout: false,
         }
     }
@@ -210,20 +215,22 @@ pub struct GitPush {
 
 impl GitPush {
     /// Push branch `name` to `origin` under the same name (`git push origin <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    pub fn branch(name: RefName) -> Self {
         Self {
             remote: "origin".to_string(),
-            refspec: name.into(),
+            refspec: name.as_str().to_string(),
             set_upstream: false,
         }
     }
 
     /// Push `local` to a differently-named `remote_branch`
-    /// (`git push origin <local>:<remote_branch>`).
-    pub fn refspec(local: impl AsRef<str>, remote_branch: impl AsRef<str>) -> Self {
+    /// (`git push origin <local>:<remote_branch>`). Both sides are validated
+    /// [`RefName`]s, so the single `:` is always the API-inserted separator — a
+    /// caller cannot smuggle an extra ref or a force (`+`) through them.
+    pub fn refspec(local: &RefName, remote_branch: &RefName) -> Self {
         Self {
             remote: "origin".to_string(),
-            refspec: format!("{}:{}", local.as_ref(), remote_branch.as_ref()),
+            refspec: format!("{}:{}", local.as_str(), remote_branch.as_str()),
             set_upstream: false,
         }
     }
@@ -324,39 +331,37 @@ impl CommitPaths {
 /// [`into_base`](MergeCheckPartial::into_base) to name the base it must be merged into.
 #[derive(Debug, Clone)]
 pub struct MergeCheckPartial {
-    branch: String,
+    branch: RefName,
 }
 
 impl MergeCheckPartial {
-    /// The base branch/ref `branch` should be fully merged **into**.
-    pub fn into_base(self, base: impl Into<String>) -> MergeCheck {
+    /// The base commit-ish `branch` should be fully merged **into**.
+    pub fn into_base(self, base: RevSpec) -> MergeCheck {
         MergeCheck {
             branch: self.branch,
-            base: base.into(),
+            base,
         }
     }
 }
 
 /// A "is `branch` fully merged into `base`?" check for [`GitApi::is_merged`].
 ///
-/// Built as `MergeCheck::branch("feature").into_base("main")` — the two same-typed
+/// Built as `MergeCheck::branch(RefName::new("feature")?).into_base(RevSpec::new("main")?)` — the two same-typed
 /// refs are named across **two** builder steps, so they can't be silently transposed
 /// (a swap would *invert* the answer). `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct MergeCheck {
     /// The branch/ref being tested for having been merged.
-    pub branch: String,
-    /// The base branch/ref it should be fully merged into.
-    pub base: String,
+    pub branch: RefName,
+    /// The base commit-ish it should be fully merged into.
+    pub base: RevSpec,
 }
 
 impl MergeCheck {
     /// Name the `branch` to test; chain [`into_base`](MergeCheckPartial::into_base).
-    pub fn branch(name: impl Into<String>) -> MergeCheckPartial {
-        MergeCheckPartial {
-            branch: name.into(),
-        }
+    pub fn branch(name: RefName) -> MergeCheckPartial {
+        MergeCheckPartial { branch: name }
     }
 }
 
@@ -367,8 +372,8 @@ impl MergeCheck {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct MergeCommit {
-    /// The branch to merge in.
-    pub branch: String,
+    /// The commit-ish to merge in.
+    pub branch: RevSpec,
     /// Always create a merge commit, even when a fast-forward was possible
     /// (`--no-ff`).
     pub no_ff: bool,
@@ -378,11 +383,11 @@ pub struct MergeCommit {
 }
 
 impl MergeCommit {
-    /// Merge `name` taking the default merge message non-interactively
-    /// (`git merge --no-edit <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    /// Merge `target` taking the default merge message non-interactively
+    /// (`git merge --no-edit <target>`).
+    pub fn branch(target: RevSpec) -> Self {
         Self {
-            branch: name.into(),
+            branch: target,
             no_ff: false,
             message: None,
         }
@@ -409,8 +414,8 @@ impl MergeCommit {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct MergeNoCommit {
-    /// The branch to merge in.
-    pub branch: String,
+    /// The commit-ish to merge in.
+    pub branch: RevSpec,
     /// Stage the squashed result without recording `MERGE_HEAD` (`--squash`);
     /// takes precedence over `no_ff` (git rejects the pair).
     pub squash: bool,
@@ -420,10 +425,10 @@ pub struct MergeNoCommit {
 }
 
 impl MergeNoCommit {
-    /// Merge `name` but stop before committing (`git merge --no-commit <name>`).
-    pub fn branch(name: impl Into<String>) -> Self {
+    /// Merge `target` but stop before committing (`git merge --no-commit <target>`).
+    pub fn branch(target: RevSpec) -> Self {
         Self {
-            branch: name.into(),
+            branch: target,
             squash: false,
             no_ff: false,
         }
@@ -451,40 +456,127 @@ impl MergeNoCommit {
 #[non_exhaustive]
 pub struct AnnotatedTag {
     /// The tag name.
-    pub name: String,
+    pub name: RefName,
     /// The tag message (`-m`).
     pub message: String,
     /// The revision to tag (`<rev>`); `None` tags `HEAD`.
-    pub rev: Option<String>,
+    pub rev: Option<RevSpec>,
 }
 
 impl AnnotatedTag {
     /// An annotated tag `name` with `message` at `HEAD`
     /// (`git tag -a <name> -m <message>`).
-    pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(name: RefName, message: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            name,
             message: message.into(),
             rev: None,
         }
     }
 
     /// Tag `r` instead of `HEAD`.
-    pub fn rev(mut self, r: impl Into<String>) -> Self {
-        self.rev = Some(r.into());
+    pub fn rev(mut self, r: RevSpec) -> Self {
+        self.rev = Some(r);
         self
     }
 }
 
-/// A pre-validated git reference name (branch/tag/remote), for callers that
-/// accept names from untrusted input (UIs, bots, agents) and want to fail
-/// early with a clear error. The dir-taking methods stay `&str` — they apply
-/// the same flag-injection guard internally — so this type is **optional**
-/// up-front validation, not a required wrapper.
+/// Options for [`GitApi::delete_branch`] (`git branch -d`/`-D`).
+///
+/// `#[non_exhaustive]`, so build it through [`BranchDelete::new`] and the chained
+/// [`force`](BranchDelete::force) setter rather than a struct literal — a bare
+/// `bool` at the call site (`delete_branch(name, true)`) doesn't say what `true`
+/// means, and this leaves room to add options without a breaking signature change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BranchDelete {
+    /// The local branch name to delete.
+    pub name: RefName,
+    /// Delete even if not fully merged — `git branch -D` vs `-d`.
+    pub force: bool,
+}
+
+impl BranchDelete {
+    /// Delete branch `name`; not forced (git refuses an unmerged branch).
+    pub fn new(name: RefName) -> Self {
+        Self { name, force: false }
+    }
+
+    /// Delete even if not fully merged (`-D`).
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
+/// Options for [`GitApi::stash_push`] (`git stash push`).
+///
+/// `#[non_exhaustive]`, so build it through [`StashPush::new`] and the chained
+/// [`include_untracked`](StashPush::include_untracked) setter rather than a bare
+/// `bool` (`stash_push(dir, true)` doesn't say what `true` selects).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StashPush {
+    /// Also stash untracked files (`--include-untracked`).
+    pub include_untracked: bool,
+}
+
+impl StashPush {
+    /// Stash the tracked working-tree changes only.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Also stash untracked files (`--include-untracked`).
+    pub fn include_untracked(mut self) -> Self {
+        self.include_untracked = true;
+        self
+    }
+}
+
+/// Options for [`GitApi::worktree_remove`] (`git worktree remove`).
+///
+/// `#[non_exhaustive]`, so build it through [`WorktreeRemove::new`] and the chained
+/// [`force`](WorktreeRemove::force) setter rather than a struct literal — a bare
+/// `bool` (`worktree_remove(path, true)`) doesn't say what `true` means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorktreeRemove {
+    /// The attached worktree path to remove.
+    pub path: PathBuf,
+    /// Remove even when the worktree has uncommitted changes (`--force`).
+    pub force: bool,
+}
+
+impl WorktreeRemove {
+    /// Remove the worktree at `path`; not forced (git refuses a dirty one).
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            force: false,
+        }
+    }
+
+    /// Remove even when the worktree has uncommitted changes (`--force`).
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
+/// A validated git reference name (branch/tag/remote-tracking ref). Every
+/// [`GitApi`] operation that names a branch, tag, or ref to **create, delete,
+/// rename, or look up by exact name** takes a `RefName` (directly or inside its
+/// options struct), so a name from untrusted input (UIs, bots, agents) is
+/// validated once, at construction, and the type — not an internal guard — is
+/// the argv-injection barrier from then on. For a general commit-ish or range
+/// (`checkout`, `reset_hard`, `log`, `diff` ranges, …) use the more permissive
+/// [`RevSpec`] instead.
 ///
 /// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
 /// no leading `-` or `.`, no `..`, no control characters or space, none of
-/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`.
+/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`. A rejected name is an
+/// [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RefName(String);
 
@@ -525,11 +617,14 @@ impl std::fmt::Display for RefName {
     }
 }
 
-/// A pre-validated revision/range expression (`HEAD~2`, `main..feature`).
+/// A validated revision/range expression (`HEAD~2`, `main..feature`). Every
+/// [`GitApi`] operation that resolves a general **commit-ish or range** takes a
+/// `RevSpec`, so an untrusted revision is validated once, at construction.
 /// Deliberately *minimal* — git's revision grammar is too rich to validate
 /// here — it only guarantees the expression is non-empty and cannot be parsed
-/// as a flag (no leading `-`), matching the internal guard the dir-taking
-/// methods apply anyway. Optional up-front validation for untrusted input.
+/// as a flag (no leading `-`). For a value that must be a genuine ref **name**
+/// (to create/delete/rename a branch or tag) use the stricter [`RefName`]. A
+/// rejected expression is an [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RevSpec(String);
 
@@ -550,6 +645,62 @@ impl RevSpec {
 impl std::fmt::Display for RevSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for RefName {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+impl std::str::FromStr for RevSpec {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+/// What [`GitApi::checkout`] switches to: a validated ref/revision, or git's `-`
+/// "previous branch" shortcut.
+///
+/// `-` is the one place a leading-`-` token is legitimate — it is git's
+/// `@{-1}` shorthand, not caller-controlled argv — so it is modelled as a
+/// distinct [`Previous`](CheckoutTarget::Previous) variant emitting a fixed
+/// literal, rather than punching a hole in [`RevSpec`]'s no-leading-`-`
+/// invariant (which the other commit-ish operations rely on).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutTarget {
+    /// Check out this validated ref or revision.
+    Ref(RevSpec),
+    /// Check out the previous branch (`git checkout -`).
+    Previous,
+}
+
+impl CheckoutTarget {
+    /// Check out a validated ref/revision.
+    pub fn rev(rev: RevSpec) -> Self {
+        Self::Ref(rev)
+    }
+
+    /// Check out the previous branch (`git checkout -`).
+    pub fn previous() -> Self {
+        Self::Previous
+    }
+
+    /// The single argv token this target expands to.
+    fn as_arg(&self) -> &str {
+        match self {
+            Self::Ref(rev) => rev.as_str(),
+            Self::Previous => "-",
+        }
+    }
+}
+
+impl From<RevSpec> for CheckoutTarget {
+    fn from(rev: RevSpec) -> Self {
+        Self::Ref(rev)
     }
 }
 
@@ -604,23 +755,29 @@ impl GitCapabilities {
 /// The Git operations this crate exposes — the interface consumers code against
 /// and mock in tests.
 ///
-/// **Injection safety:** every method that places a caller-supplied name,
-/// revision, range, remote, or URL in a positional argv slot rejects a value
-/// that is empty or begins with `-` (it would be parsed as a flag) with an
-/// [`Error::Spawn`] *before* spawning. Flag-value slots (`-m <msg>`,
-/// `--branch <b>`), filesystem path arguments (`--`-separated pathspecs, plus
-/// worktree paths and clone destinations — typed `Path`, caller-trusted), and
-/// the `run`/`run_raw` escape hatches are not guarded. For eager validation at
-/// an input boundary, see [`RefName`] / [`RevSpec`].
+/// **Injection safety:** reference names and revision expressions are taken as
+/// the validated [`RefName`] / [`RevSpec`] newtypes (directly or inside an
+/// options struct), so a flag-like or malformed value is rejected at
+/// construction, before it can reach an argv slot. The remaining
+/// caller-supplied bare positionals that are *not* refs/revisions — remote
+/// names and URLs — keep an internal `reject_flag_like` guard: a value that is
+/// empty or begins with `-` is rejected with an [`Error::Spawn`] *before*
+/// spawning. Flag-value slots (`-m <msg>`, `--branch <b>`), filesystem path
+/// arguments (`--`-separated pathspecs, plus worktree paths and clone
+/// destinations — typed `Path`, caller-trusted), and the `run`/`run_raw`
+/// escape hatches are not guarded. The one context-dependent special value,
+/// git's `-` "previous branch", is [`CheckoutTarget::Previous`].
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GitApi: Send + Sync {
     /// Run `git <args>` **in the process's current directory**, returning trimmed
     /// stdout (throws on a non-zero exit). A raw escape hatch for unmodelled commands
     /// — you supply the whole argv, so target a specific repo with `-C <dir>` in the
-    /// args. The `at(dir)` bound view does **not** re-bind `run`/`run_args` (they and
-    /// the other `run*` hatches stay process-cwd, unlike every modelled `GitAt`
-    /// method); pass `-C dir` explicitly if you need the bound repo (M15).
+    /// args. This method on the client is the **process-cwd** escape hatch; the
+    /// `at(dir)` bound view's [`run`](GitAt::run) is instead **bound to `dir`** (it
+    /// forwards to [`Git::run_in`], so `git.at(dir).run(…)` runs in the bound repo).
+    /// Use `git.at(dir).run(…)` (or [`Git::run_in`]) for the bound repo; use this for
+    /// the process cwd (T-035, was M15).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -647,7 +804,9 @@ pub trait GitApi: Send + Sync {
     async fn branch_status(&self, dir: &Path) -> Result<BranchStatus>;
     /// Paths with unresolved merge conflicts, repo-relative with `/` separators
     /// (`git diff --name-only --diff-filter=U -z`). Empty when there are none.
-    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
+    /// Returns [`PathBuf`]s built from the raw `-z` bytes, so a non-UTF-8
+    /// conflicted path survives losslessly.
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>>;
     /// Current branch name, or `None` on a **detached HEAD**
     /// (`git symbolic-ref --quiet --short HEAD`). Returns the branch name for a
     /// normal branch **and for an unborn branch** (a fresh `init`/`clone` before the
@@ -662,30 +821,97 @@ pub trait GitApi: Send + Sync {
     /// (`git log <revspec>`). Pass `"HEAD"` for the current branch's history, or
     /// a range like `"main..HEAD"` / `"origin/main..HEAD"` to scope it. Mirrors
     /// [`JjApi::log`](../vcs_jj/trait.JjApi.html#tymethod.log)'s revset argument,
-    /// so cross-backend code uses one signature. The `revspec` is guarded against
-    /// being parsed as a flag.
-    async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>>;
+    /// so cross-backend code uses one signature. The `revspec` is a validated
+    /// [`RevSpec`], so it can never be parsed as a flag.
+    async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
+    /// Like [`log`](GitApi::log), but scoped to commits that touched `paths`
+    /// (`git --literal-pathspecs log <revspec> -n <max> -- <paths>`) — e.g. "who
+    /// changed this module". `--literal-pathspecs` matches a path containing
+    /// `*`/`?`/`[]` literally rather than as pathspec glob magic (R-02); the `--`
+    /// separator keeps a path from being read as a flag (same convention as
+    /// [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths)). An empty
+    /// `paths` is refused *before spawning*: silently falling back to
+    /// [`log`](GitApi::log)'s unrestricted history would defeat the "scoped to
+    /// these paths" contract. Mirrors
+    /// [`JjApi::log_paths`](../vcs_jj/trait.JjApi.html#tymethod.log_paths), which
+    /// takes filesets instead of pathspecs.
+    ///
+    /// Unlike [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths), git's
+    /// `log` has no `--pathspec-from-file` support, so a `paths` set that would
+    /// risk exceeding the OS argv limit is instead split into multiple `git log`
+    /// calls, each within budget; the per-call results are merged (deduplicated
+    /// by hash — a commit can touch paths spread across more than one chunk)
+    /// and restored to git's own commit order using a separate, pathless `git
+    /// log <revspec> --format=%H` oracle call (T-052/R-03): pathspec filtering
+    /// only drops non-matching commits, it never reorders the ones that
+    /// remain, so the oracle's order — over the *same* revspec, unrestricted
+    /// by paths — gives the exact relative order a single, hypothetical
+    /// unchunked call would have produced. Unlike sorting by a parsed date
+    /// field, this needs no assumption about author-vs-committer timestamps or
+    /// same-second ties (git log dates have no sub-second precision). A
+    /// `paths` set that fits in one call is unaffected — same single
+    /// invocation, same order, as before.
+    ///
+    /// Before any of that, `revspec` (which may be symbolic, e.g. `HEAD`, or a
+    /// range, e.g. `main..feature`) is resolved exactly once via `git
+    /// rev-parse` into a fixed set of commit ids that every chunk call and the
+    /// oracle call then reuse verbatim (T-052/R-04): without this, each of
+    /// those several independent invocations would re-resolve the same
+    /// symbolic text on its own, so a concurrent commit/reset/ref-move landing
+    /// between any two of them could make them see different repository
+    /// snapshots, silently omitting a newer matching commit, including one no
+    /// longer reachable, or interleaving two different histories into the
+    /// merged result. This resolution only happens on the chunked path (more
+    /// than one invocation); the single-call fast path is unaffected. Also
+    /// before any of that, every individual path is checked against the argv
+    /// budget on its own (T-052/R-05): `git log` has no NUL-safe transport to
+    /// fall back to the way `add`/`commit_paths` do, so a single path that by
+    /// itself cannot fit in argv is rejected up front with a clear error
+    /// rather than silently forwarded as an over-budget singleton chunk.
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revspec: &RevSpec,
+        max: usize,
+        paths: &[String],
+    ) -> Result<Vec<Commit>>;
     /// Resolve a revision to a full hash (`git rev-parse --verify <rev>`). `--verify`
     /// requires `rev` to name exactly one object, so a non-revision (e.g. a filename)
     /// errors instead of being echoed back as a fake id.
-    async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Resolve a revision to its abbreviated hash (`git rev-parse --short <rev>`) —
     /// e.g. to label a detached HEAD.
-    async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Initialise a repository (`git init`).
     async fn init(&self, dir: &Path) -> Result<()>;
-    /// Stage `paths` (`git add -- <paths>`).
+    /// Stage `paths` (`git --literal-pathspecs add -- <paths>`) —
+    /// `--literal-pathspecs` applies regardless of path-set size, so a path
+    /// containing `*`/`?`/`[]` always matches literally rather than as pathspec
+    /// glob magic (R-01). A path set whose combined length would risk exceeding
+    /// the OS command-line limit (`ARGV_PATHSPEC_BUDGET`; Windows' `CreateProcess`
+    /// caps out around 32,767 characters) instead goes over stdin via
+    /// `--pathspec-from-file=- --pathspec-file-nul` — the paths never touch argv
+    /// at all in that case, so there is no upper bound left to exceed (T-052).
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()>;
     /// Commit staged changes (`git commit -m`).
     async fn commit(&self, dir: &Path, message: &str) -> Result<()>;
     /// Create a branch without switching to it (`git branch <name>`).
-    async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
-    /// Switch to a branch or revision (`git checkout <reference>`).
-    async fn checkout(&self, dir: &Path, reference: &str) -> Result<()>;
+    async fn create_branch(&self, dir: &Path, name: &RefName) -> Result<()>;
+    /// Switch to a branch/revision, or the previous branch (`git checkout
+    /// <target>`); see [`CheckoutTarget`].
+    async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()>;
     /// Check out a commit as a detached HEAD (`git checkout --detach <commit>`).
-    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
+    async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
     /// Commit exactly the spec's paths' working-tree content, ignoring the index
-    /// (`git commit [--amend] -m <message> --only -- <paths>`); see [`CommitPaths`].
+    /// (`git --literal-pathspecs commit [--amend] -m <message> --only -- <paths>`);
+    /// see [`CommitPaths`]. `--literal-pathspecs` applies regardless of path-set
+    /// size, so a glob-magic character (`*`/`?`/`[]`) in a path is matched
+    /// literally rather than expanded — otherwise `commit_paths`'s "exactly these
+    /// paths" contract could be violated (R-01). Like [`add`](GitApi::add), a
+    /// path set that would risk exceeding the OS argv limit is instead routed
+    /// over stdin (`--pathspec-from-file=- --pathspec-file-nul`) — always as a
+    /// **single** `git commit` invocation either way, so the one-atomic-commit
+    /// contract is unaffected by the path set's size (T-052).
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
     /// The last commit's full message (`git log -1 --format=%B`) — e.g. to
     /// pre-fill an amend.
@@ -707,21 +933,22 @@ pub trait GitApi: Send + Sync {
     async fn git_dir(&self, dir: &Path) -> Result<PathBuf>;
     /// Resolve a revision to a commit hash, peeling tags
     /// (`rev-parse --verify <rev>^{commit}`).
-    async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String>;
+    async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// The remote's default branch from `symbolic-ref refs/remotes/origin/HEAD`
     /// (short name only); `None` when `origin/HEAD` is unset.
     async fn remote_head_branch(&self, dir: &Path) -> Result<Option<String>>;
     /// Whether a local branch exists (`show-ref --verify --quiet refs/heads/<name>`).
-    async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
+    async fn branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// Whether `origin` has `name`, without fetching (`ls-remote origin
     /// refs/heads/<name>` — the fully-qualified ref, so `foo` can't tail-match
     /// `bar/foo`). Runs with `GIT_TERMINAL_PROMPT=0` and a 10s timeout so a missing
     /// credential or a flaky network can't hang the call.
-    async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
+    async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// A remote's URL (`remote get-url <remote>`).
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
-    /// The current branch's upstream, e.g. `Some("origin/main")`
+    /// The current attached branch's upstream, e.g. `Some("origin/main")`
     /// (`rev-parse --abbrev-ref --symbolic-full-name @{u}`); `None` when unset.
+    /// A detached HEAD or a directory outside a repository is an error.
     async fn upstream(&self, dir: &Path) -> Result<Option<String>>;
     /// Branch names on `remote`, without fetching
     /// (`ls-remote --heads <remote>`).
@@ -731,23 +958,23 @@ pub trait GitApi: Send + Sync {
 
     /// Whether the [`MergeCheck`]'s `branch` is fully merged into its `base`
     /// (`branch --merged <base>`). Build it as
-    /// `MergeCheck::branch("feature").into_base("main")` so the two refs can't be
-    /// transposed (a swap would invert the answer).
+    /// `MergeCheck::branch(RefName::new("feature")?).into_base(RevSpec::new("main")?)`
+    /// so the two refs can't be transposed (a swap would invert the answer).
     async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>;
     /// Set `branch`'s upstream to `upstream` (e.g. `origin/main`)
     /// (`branch --set-upstream-to=<upstream> <branch>`).
-    async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
-    /// Delete a local branch (`branch -d`, or `-D` when `force`).
-    async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>;
+    async fn set_upstream(&self, dir: &Path, branch: &RefName, upstream: &RefName) -> Result<()>;
+    /// Delete a local branch (`branch -d`, or `-D` when forced); see [`BranchDelete`].
+    async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()>;
     /// Rename a local branch (`branch -m <old> <new>`).
-    async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
+    async fn rename_branch(&self, dir: &Path, old: &RefName, new: &RefName) -> Result<()>;
     /// Count commits in a range (`rev-list --count <range>`).
-    async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize>;
+    async fn rev_list_count(&self, dir: &Path, range: &RevSpec) -> Result<usize>;
     /// Whether a diff range is empty (`diff --quiet <range>`).
-    async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool>;
+    async fn diff_range_is_empty(&self, dir: &Path, range: &RevSpec) -> Result<bool>;
     /// Aggregate change stats for a range (`diff --shortstat <range>`). Named to
     /// match `vcs_jj::JjApi::diff_stat`.
-    async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
+    async fn diff_stat(&self, dir: &Path, range: &RevSpec) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec`
     /// (`diff <spec> --no-color --no-ext-diff -M`) — stable machine output, returned
     /// **verbatim** (a trailing blank context line is preserved, so the last hunk
@@ -769,6 +996,18 @@ pub trait GitApi: Send + Sync {
     /// Distinct from a rebase, which shares the `rebase-apply` dir but without the
     /// `applying` marker — aborting an am needs `am --abort`, not `rebase --abort`.
     async fn is_am_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a cherry-pick is in progress (`CHERRY_PICK_HEAD` under the git dir).
+    /// A cherry-pick conflict writes `CHERRY_PICK_HEAD`, **not** `MERGE_HEAD`, so
+    /// this is distinct from a merge and is aborted/continued with
+    /// `cherry-pick --abort` / `--continue`, not `merge --abort`.
+    async fn is_cherry_pick_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a revert is in progress (`REVERT_HEAD` under the git dir). Like a
+    /// cherry-pick, a revert conflict writes its own head file, not `MERGE_HEAD`;
+    /// it is driven with `revert --abort` / `--continue`.
+    async fn is_revert_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a `git bisect` session is in progress (`BISECT_LOG` under the git
+    /// dir). Ended with `bisect reset` (there is no `--continue`).
+    async fn is_bisect_in_progress(&self, dir: &Path) -> Result<bool>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -782,11 +1021,11 @@ pub trait GitApi: Send + Sync {
     /// Fetch a single branch from `origin` into its remote-tracking ref
     /// (`fetch --quiet origin refs/heads/<b>:refs/remotes/origin/<b>`), with
     /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried (3×, 500 ms).
-    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn fetch_branch(&self, dir: &Path, branch: &RefName) -> Result<()>;
     /// Push to a remote (`push [-u] <remote> <refspec>`); see [`GitPush`].
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
     /// Stage a branch's changes without committing (`merge --squash <branch>`).
-    async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()>;
     /// Merge a branch (`merge [--no-ff] [-m <msg> | --no-edit] <branch>`); with no
     /// message it takes the default merge message non-interactively (`--no-edit`).
     /// See [`MergeCommit`].
@@ -811,10 +1050,10 @@ pub trait GitApi: Send + Sync {
     /// where there is no `MERGE_HEAD` for `merge_abort` to act on.
     async fn reset_merge(&self, dir: &Path) -> Result<()>;
     /// Hard-reset the working tree to a revision (`reset --hard <rev>`).
-    async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn reset_hard(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Rebase the current branch onto `onto` (`rebase <onto>`); the editor is
     /// suppressed (`GIT_EDITOR=true`) so it never hangs a headless caller.
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
+    async fn rebase(&self, dir: &Path, onto: &RevSpec) -> Result<()>;
     /// Abort an in-progress rebase (`rebase --abort`).
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
     /// Abort an in-progress `git am` (`am --abort`), restoring the pre-`am` HEAD.
@@ -823,8 +1062,8 @@ pub trait GitApi: Send + Sync {
     /// editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never hangs.
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
     /// Stash the working tree (`stash push`, `--include-untracked` when asked) —
-    /// e.g. to save state before a copy-on-write restore.
-    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
+    /// e.g. to save state before a copy-on-write restore. See [`StashPush`].
+    async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>;
     /// Restore the most recent stash and drop it (`stash pop`).
     async fn stash_pop(&self, dir: &Path) -> Result<()>;
 
@@ -834,8 +1073,8 @@ pub trait GitApi: Send + Sync {
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
     /// Add a worktree (`worktree add [-b <branch>] <path> [<commitish>]`).
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
-    /// Remove a worktree (`worktree remove [--force] <path>`).
-    async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()>;
+    /// Remove a worktree (`worktree remove [--force] <path>`); see [`WorktreeRemove`].
+    async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()>;
     /// Move a worktree (`worktree move <from> <to>`).
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
     /// Prune stale worktree admin entries (`worktree prune`).
@@ -847,20 +1086,20 @@ pub trait GitApi: Send + Sync {
     /// Runs without a working directory — pass an **absolute** `dest`.
     async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
     /// Create a lightweight tag at `rev` (`tag <name> [<rev>]`; `None` = HEAD).
-    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()>;
+    async fn tag_create(&self, dir: &Path, name: &RefName, rev: Option<RevSpec>) -> Result<()>;
     /// Create an annotated tag (`tag -a <name> -m <message> [<rev>]`); see
     /// [`AnnotatedTag`].
     async fn tag_create_annotated(&self, dir: &Path, spec: AnnotatedTag) -> Result<()>;
     /// Tag names, sorted by git's default ordering (`tag --list`).
     async fn tag_list(&self, dir: &Path) -> Result<Vec<String>>;
     /// Delete a tag (`tag -d <name>`).
-    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()>;
+    async fn tag_delete(&self, dir: &Path, name: &RefName) -> Result<()>;
     /// A file's content at a revision (`git show <rev>:<path>`). `path` is
     /// repo-relative; backslashes are normalised to `/` (git requires it).
     /// Content is decoded **lossily** — binary files come back mangled rather
     /// than erroring — and returned **verbatim**: the blob's trailing newline(s)
     /// are preserved (not trimmed), so a read-modify-write round-trip is byte-exact.
-    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String>;
+    async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String>;
     /// The value of a config key, or `None` when unset (`config --get <key>`,
     /// whose exit 1 covers both "unset" and "no such section" — git doesn't
     /// distinguish). A multi-valued key errors; read those via `run`.
@@ -878,19 +1117,38 @@ pub trait GitApi: Send + Sync {
     async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
     /// Per-line authorship of `path` (`blame --line-porcelain [<rev>] -- <path>`;
     /// `None` = the working tree's HEAD).
-    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>>;
 
     // --- Sequencer -------------------------------------------------------------
 
     /// Apply a commit onto the current branch (`cherry-pick <rev>`). A conflict
     /// surfaces as an error classified by [`is_merge_conflict`].
-    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn cherry_pick(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Revert a commit with the default message (`revert --no-edit <rev>`).
-    async fn revert(&self, dir: &Path, rev: &str) -> Result<()>;
+    async fn revert(&self, dir: &Path, rev: &RevSpec) -> Result<()>;
     /// Skip the current patch of a paused rebase (`rebase --skip`). Mainly for
     /// the `apply` backend's "nothing to commit" stop — the default `merge`
     /// backend auto-drops emptied patches on `--continue`.
     async fn rebase_skip(&self, dir: &Path) -> Result<()>;
+    /// Abort an in-progress cherry-pick (`cherry-pick --abort`), restoring the
+    /// pre-cherry-pick state.
+    async fn cherry_pick_abort(&self, dir: &Path) -> Result<()>;
+    /// Continue a cherry-pick after resolving conflicts (`cherry-pick --continue`);
+    /// the editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never
+    /// hangs a headless caller. On a multi-commit pick it can stop again on the
+    /// next commit's conflict (exit non-zero) — a conflict, not a hard error.
+    async fn cherry_pick_continue(&self, dir: &Path) -> Result<()>;
+    /// Abort an in-progress revert (`revert --abort`), restoring the pre-revert
+    /// state.
+    async fn revert_abort(&self, dir: &Path) -> Result<()>;
+    /// Continue a revert after resolving conflicts (`revert --continue`); the
+    /// editor is suppressed like [`cherry_pick_continue`](GitApi::cherry_pick_continue),
+    /// and it too can stop on the next commit's conflict.
+    async fn revert_continue(&self, dir: &Path) -> Result<()>;
+    /// End a `git bisect` session (`bisect reset`), returning to the branch/commit
+    /// that was checked out before it started. This is the "abort" for a bisect;
+    /// bisect has no `--continue`.
+    async fn bisect_reset(&self, dir: &Path) -> Result<()>;
 }
 
 vcs_cli_support::managed_client! {
@@ -970,13 +1228,20 @@ impl<R: ProcessRunner> Git<R> {
     /// that host, so a redirect/submodule to another host can't extract it).
     /// Callers that know the operation's target host — e.g. `clone` from its URL —
     /// pass it; the others pass `None` (the helper is ungated, as before).
+    ///
+    /// The same `expect_host` is **also** passed as the [`CredentialRequest`]'s host,
+    /// so a **host-keyed** provider selects the secret for that host — one `Git`
+    /// client cloning several hosts draws each host's own token, never a
+    /// neighbour's. A `None` host lets such a provider defer to ambient auth rather
+    /// than hand back the wrong host's secret (the fail-closed / ambient policy is
+    /// on [`ManagedClient::resolve_credential`](vcs_cli_support::ManagedClient::resolve_credential)).
     async fn remote_credentials(
         &self,
         expect_host: Option<&str>,
     ) -> Result<(Vec<String>, Vec<(String, Secret)>)> {
         match self
             .core
-            .resolve_credential(CredentialService::Git, None)
+            .resolve_credential(CredentialService::Git, expect_host)
             .await?
         {
             Some(cred) => {
@@ -985,6 +1250,130 @@ impl<R: ProcessRunner> Git<R> {
             }
             None => Ok((Vec::new(), Vec::new())),
         }
+    }
+}
+
+impl<R: ProcessRunner> Git<R> {
+    /// [`diff_text`](GitApi::diff_text) with an explicit per-call
+    /// [`OutputBudget`], instead of this client's
+    /// [`default_output_budget`](Git::default_output_budget). Use it to read a
+    /// legitimately large diff past a tighter client default
+    /// ([`OutputBudget::unlimited`], or a higher byte cap), or to tighten the cap
+    /// for one call. Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff.
+    pub async fn diff_text_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_budgeted(dir, spec, budget).await
+    }
+
+    /// [`diff`](GitApi::diff) with an explicit per-call [`OutputBudget`] — the
+    /// parsed-model counterpart of [`diff_text_within`](Git::diff_text_within).
+    pub async fn diff_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_budgeted(dir, spec, budget).await?;
+        Ok(parse_diff(&text))
+    }
+
+    /// Shared body of [`diff_text`](GitApi::diff_text) /
+    /// [`diff_text_within`](Git::diff_text_within): builds the `git diff` and runs
+    /// it under `budget` (a fail-loud byte ceiling; unbounded when the budget is
+    /// [`OutputBudget::unlimited`]).
+    async fn diff_text_budgeted(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // The target is a single positional arg: `HEAD` for the working tree, or
+        // the caller's revision/range. `-M` enables rename detection; `--no-color`
+        // / `--no-ext-diff` keep the output stable and machine-parseable.
+        let target = match spec {
+            DiffSpec::WorkingTree => {
+                // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
+                // diff against the empty tree so a pre-first-commit working tree
+                // still yields its additions instead of a hard failure. The empty
+                // tree's id depends on the repo's object format (the SHA-1
+                // `EMPTY_TREE_SHA1` doesn't exist in a SHA-256 repo), so resolve it
+                // from git rather than hard-coding — see `empty_tree_oid`.
+                if self.is_unborn(dir).await? {
+                    self.empty_tree_oid(dir).await?
+                } else {
+                    "HEAD".to_string()
+                }
+            }
+            DiffSpec::Rev(rev) => {
+                reject_flag_like("revision", &rev)?;
+                rev
+            }
+        };
+        // The explicit prefixes pin the `a/`…`b/` form the shared parser extracts
+        // paths from — a user's `diff.noprefix` / `diff.mnemonicPrefix` config
+        // would otherwise change the headers and make every file silently vanish
+        // from the parse. (Command-line prefixes override both config options.)
+        // `run_untrimmed_within`: trimming the diff would drop a trailing blank
+        // context line, desyncing the last hunk from its `@@` line count for a
+        // consumer that re-applies or re-parses it (H7); the budget bounds it.
+        // Trailing `--`: pin `target` as a revision, never a pathspec — without it
+        // a `Rev` that happens to name a tracked path would diff the working tree
+        // for that path instead of the intended commit (the C2/M13 collision
+        // class). `reject_flag_like` already blocks a leading `-`; `--` closes the
+        // path-collision half.
+        self.core
+            .run_untrimmed_within(
+                self.core.command_in(
+                    dir,
+                    [
+                        "diff",
+                        target.as_str(),
+                        "--no-color",
+                        "--no-ext-diff",
+                        "-M",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
+                        "--",
+                    ],
+                ),
+                budget,
+            )
+            .await
+    }
+
+    /// [`show_file`](GitApi::show_file) with an explicit per-call
+    /// [`OutputBudget`], instead of this client's
+    /// [`default_output_budget`](Git::default_output_budget). Reads a blob's bytes
+    /// under `budget`: past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] rather than
+    /// buffering an unbounded file.
+    pub async fn show_file_within(
+        &self,
+        dir: &Path,
+        rev: &RevSpec,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        let rev = rev.as_str();
+        // git rejects backslash separators in the `<rev>:<path>` spec ("exists on
+        // disk, but not in <rev>") — normalise for Windows callers. Only on Windows:
+        // on Unix a backslash is a legal filename byte, and rewriting it would make
+        // a literal `a\b.txt` unresolvable.
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
+        let spec = format!("{rev}:{path}");
+        // `run_untrimmed_within`: a blob's trailing newline(s) are part of its
+        // content — trimming them corrupts a read-modify-write round-trip (H7); the
+        // budget bounds it.
+        self.core
+            .run_untrimmed_within(self.core.command_in(dir, ["show", spec.as_str()]), budget)
+            .await
     }
 }
 
@@ -1021,8 +1410,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
+        // `parse_bytes`: `-z` paths are raw bytes that may not be valid UTF-8 on
+        // Unix, so parse from the byte stream — a lossy `String` decode would
+        // corrupt a non-ASCII/non-UTF-8 filename before it reaches the caller.
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["status", "--porcelain=v1", "-z"]),
                 parse::parse_porcelain,
@@ -1054,7 +1446,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
         self.core
-            .parse(
+            .parse_bytes(
                 self.core.command_in(
                     dir,
                     ["status", "--porcelain=v1", "-z", "--untracked-files=no"],
@@ -1064,10 +1456,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>> {
-        // `-z` keeps special-character paths literal (no C-style quoting).
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        // `-z` keeps special-character paths literal (no C-style quoting); parse
+        // from raw bytes so a non-UTF-8 conflicted path survives losslessly.
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["diff", "--name-only", "--diff-filter=U", "-z"]),
                 parse::parse_nul_paths,
@@ -1115,8 +1508,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn log(&self, dir: &Path, revspec: &str, max: usize) -> Result<Vec<Commit>> {
-        reject_flag_like("revspec", revspec)?;
+    async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>> {
         let n = format!("-n{max}");
         self.core
             .parse(
@@ -1124,7 +1516,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     dir,
                     [
                         "log",
-                        revspec,
+                        revspec.as_str(),
                         n.as_str(),
                         "-z",
                         "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
@@ -1135,20 +1527,158 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revspec: &RevSpec,
+        max: usize,
+        paths: &[String],
+    ) -> Result<Vec<Commit>> {
+        // An empty `paths` would build `git log <revspec> -n <max> -- ` — no
+        // pathspecs after `--` is the same as no `--` at all, i.e. an
+        // UNRESTRICTED log. That's the opposite of "scoped to these paths",
+        // so refuse before spawning (mirrors `JjApi::commit_paths`'s
+        // empty-fileset guard).
+        if paths.is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "log_paths requires at least one path — an empty list would log \
+                     unrestricted history, not history scoped to the named paths",
+                ),
+            ));
+        }
+        // R-05: a single path this long can never be transmitted at all — `git
+        // log` has no `--pathspec-from-file`/NUL-safe transport to fall back
+        // to (unlike `add`/`commit_paths`, verified against real git: the flag
+        // is rejected with "unrecognized argument"), so no chunking scheme can
+        // help it. Reject up front, before `chunk_pathspecs` would otherwise
+        // emit it as an over-budget singleton chunk that `git`/the OS would
+        // then fail on anyway, with a much less legible spawn error.
+        if let Some(oversized) = paths.iter().find(|p| p.len() + 1 > ARGV_PATHSPEC_BUDGET) {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "log_paths: a single path is {} bytes, exceeding the \
+                         {ARGV_PATHSPEC_BUDGET}-byte argv pathspec budget on its own — \
+                         `git log` has no NUL-safe pathspec-from-file transport (unlike \
+                         `add`/`commit_paths`), so this path cannot be transmitted at all: \
+                         {oversized:?}",
+                        oversized.len() + 1,
+                    ),
+                ),
+            ));
+        }
+        let n = format!("-n{max}");
+        let chunks = chunk_pathspecs(paths);
+        if chunks.len() <= 1 {
+            // The common case: everything fits one call — byte-identical to the
+            // pre-T-052 behavior (order included). A single invocation can't
+            // observe a moving repository state mid-operation, so `revspec` is
+            // forwarded as-is — no R-04 resolution needed here.
+            let command = self.log_paths_command(
+                dir,
+                [revspec.as_str()],
+                &n,
+                paths.iter().map(String::as_str),
+            );
+            return self.core.parse(command, parse::parse_log).await;
+        }
+        // Large path set (T-052): `git log` has no `--pathspec-from-file`
+        // support (unlike `add`/`commit_paths`), so split the pathspecs across
+        // multiple argv-budget-sized calls and merge the results: dedup by hash
+        // (a commit can touch paths spread across more than one chunk), then
+        // reorder and cap at `max`. Requesting `-n max` per chunk is enough to
+        // guarantee the merged top-`max` is correct: any commit within the true
+        // (merged) top `max` has at most `max - 1` newer commits in the *entire*
+        // union of chunk results, so it has at most that many newer commits
+        // within its own chunk too — i.e. it always ranks within that chunk's
+        // own top `max`. This bound is about *how many* qualifying commits can
+        // precede another, not about how they are ordered, so it holds
+        // regardless of the ordering mechanism below.
+        //
+        // R-04: this branch makes several independent `git` invocations (one
+        // per chunk, plus the order oracle below), each of which would
+        // otherwise re-resolve `revspec` on its own — a symbolic name like
+        // `HEAD` can move (or a range's endpoints can) between any two of
+        // them. Resolve it exactly once, up front, into the fixed set of
+        // commit ids `git log` would internally expand it to (a plain rev
+        // resolves to one id; a range like `A..B` resolves to two tokens, the
+        // excluded side `^`-prefixed — `git rev-parse` performs the same
+        // expansion `git log` does internally, so forwarding its output
+        // verbatim is behavior-preserving for what a single, hypothetical
+        // unchunked call would have seen). Every call below then reuses this
+        // one fixed snapshot, so no ref movement during the operation can make
+        // two of them disagree about what "`revspec`" names.
+        let resolved_revspec: Vec<String> = self
+            .core
+            .run(self.core.command_in(dir, ["rev-parse", revspec.as_str()]))
+            .await?
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+        let mut merged: Vec<Commit> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for chunk in &chunks {
+            let command = self.log_paths_command(
+                dir,
+                resolved_revspec.iter().map(String::as_str),
+                &n,
+                chunk.iter().copied(),
+            );
+            let commits = self.core.parse(command, parse::parse_log).await?;
+            for commit in commits {
+                if seen.insert(commit.hash.clone()) {
+                    merged.push(commit);
+                }
+            }
+        }
+        // Merging per-chunk call results loses git's own single-call order, so
+        // restore it (R-03) via a hash-order oracle: one extra, pathless `git
+        // log <revspec> --format=%H` call over the *same*, now-frozen revspec
+        // (cheap — no per-path diff computation, just hashes) gives the exact
+        // relative order a single unchunked call would have produced, since
+        // pathspec filtering only drops non-matching commits without
+        // reordering the ones that remain. A commit absent from the oracle
+        // (should not happen — it always names a commit `log_paths` itself
+        // just returned as reachable from `revspec`) sorts after every ranked
+        // commit rather than panicking.
+        let order_command = self.log_paths_order_command(dir, &resolved_revspec);
+        let order = self.core.parse(order_command, parse_commit_order).await?;
+        let rank: std::collections::HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(index, hash)| (hash.as_str(), index))
+            .collect();
+        merged.sort_by_key(|commit| {
+            rank.get(commit.hash.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+        merged.truncate(max);
+        Ok(merged)
+    }
+
+    async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `--verify`: without it, `git rev-parse Makefile` echoes the *filename* back
         // as a fake object id (exit 0), so a caller resolving an untrusted revision
         // could get a non-hash. `--verify` requires `rev` to name exactly one object,
         // erroring otherwise — a valid revision still resolves to the same full hash
         // (M13; matches `rev_parse_short`/`resolve_commit`, which already `--verify`).
         self.core
-            .run(self.core.command_in(dir, ["rev-parse", "--verify", rev]))
+            .run(
+                self.core
+                    .command_in(dir, ["rev-parse", "--verify", rev.as_str()]),
+            )
             .await
     }
 
-    async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `--verify` (matching `rev_parse`/`resolve_commit`): require `rev` to name
         // exactly one object, erroring otherwise. Unlike bare `rev-parse` — which
         // echoes a filename back as a fake id (the M13 bug) — `--short` already
@@ -1159,7 +1689,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core
             .run(
                 self.core
-                    .command_in(dir, ["rev-parse", "--verify", "--short", rev]),
+                    .command_in(dir, ["rev-parse", "--verify", "--short", rev.as_str()]),
             )
             .await
     }
@@ -1171,8 +1701,36 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()> {
-        // `--` separates the pathspecs so a path can never be read as an option.
-        let mut command = self.core.command_in(dir, ["add", "--"]);
+        if pathspec_argv_len(paths.iter().map(|p| p.as_os_str())) > ARGV_PATHSPEC_BUDGET {
+            // Large path set (T-052): route over stdin instead of argv, so
+            // there is no OS command-line limit left to exceed.
+            // `--literal-pathspecs` matches each path byte-for-byte instead of
+            // treating `*`/`?`/`[]` as pathspec glob magic.
+            let stdin = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+                paths.iter().map(|p| p.as_os_str()),
+            )?);
+            let command = self
+                .core
+                .command_in(
+                    dir,
+                    [
+                        "--literal-pathspecs",
+                        "add",
+                        "--pathspec-from-file=-",
+                        "--pathspec-file-nul",
+                    ],
+                )
+                .stdin(stdin);
+            return self.core.run_unit(command).await;
+        }
+        // `--literal-pathspecs`: same "exactly these paths, literally" contract
+        // as the stdin branch above — without it, a path containing `*`/`?`/`[]`
+        // would be read as pathspec glob magic instead of matched byte-for-byte
+        // (R-01). `--` separates the pathspecs so a path can never be read as an
+        // option.
+        let mut command = self
+            .core
+            .command_in(dir, ["--literal-pathspecs", "add", "--"]);
         for path in paths {
             command = command.arg(path);
         }
@@ -1188,30 +1746,36 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn create_branch(&self, dir: &Path, name: &str) -> Result<()> {
-        reject_flag_like("branch name", name)?;
+    async fn create_branch(&self, dir: &Path, name: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", name]))
+            .run_unit(self.core.command_in(dir, ["branch", name.as_str()]))
             .await
     }
 
-    async fn checkout(&self, dir: &Path, reference: &str) -> Result<()> {
-        reject_flag_like("reference", reference)?;
-        // The trailing `--` marks the end of revisions with no pathspecs
-        // following, so git resolves `reference` as a ref *only*. Without it a
-        // `reference` that doesn't name a ref but names a tracked path silently
-        // falls into pathspec mode and restores that path from the index,
-        // discarding unstaged edits (verified: `git checkout notes.txt` →
-        // "Updated 1 path", exit 0; `git checkout notes.txt --` → hard error).
+    async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()> {
+        // `target.as_arg()` is either a validated `RevSpec` or the fixed `-`
+        // literal ([`CheckoutTarget::Previous`]) — never caller-controlled argv,
+        // so no flag can be injected here. The trailing `--` marks the end of
+        // revisions with no pathspecs following, so git resolves the target as a
+        // ref *only*. Without it a target that doesn't name a ref but names a
+        // tracked path silently falls into pathspec mode and restores that path
+        // from the index, discarding unstaged edits (verified: `git checkout
+        // notes.txt` → "Updated 1 path", exit 0; `git checkout notes.txt --` →
+        // hard error).
         self.core
-            .run_unit(self.core.command_in(dir, ["checkout", reference, "--"]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["checkout", target.as_arg(), "--"]),
+            )
             .await
     }
 
-    async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()> {
-        reject_flag_like("commit", commit)?;
+    async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["checkout", "--detach", commit]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["checkout", "--detach", commit.as_str()]),
+            )
             .await
     }
 
@@ -1219,7 +1783,34 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `--only -- <paths>` commits exactly these paths' working-tree content
         // regardless of the index; `--` keeps a path from being read as an option.
         // C locale: a failure's output feeds `is_nothing_to_commit`.
-        let mut command = c_locale(self.core.command_in(dir, ["commit"]));
+        if pathspec_argv_len(spec.paths.iter().map(|p| p.as_os_str())) > ARGV_PATHSPEC_BUDGET {
+            // Large path set (T-052): same NUL-safe stdin transport as `add`'s
+            // twin branch. Still exactly one `git commit` invocation either
+            // way — the atomic-commit contract never depends on the path
+            // set's size, since no chunking is ever needed here.
+            let stdin = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+                spec.paths.iter().map(|p| p.as_os_str()),
+            )?);
+            let mut command =
+                c_locale(self.core.command_in(dir, ["--literal-pathspecs", "commit"]));
+            if spec.amend {
+                command = command.arg("--amend");
+            }
+            command = command
+                .arg("-m")
+                .arg(spec.message)
+                .arg("--only")
+                .arg("--pathspec-from-file=-")
+                .arg("--pathspec-file-nul")
+                .stdin(stdin);
+            return self.core.run_unit(command).await;
+        }
+        // `--literal-pathspecs`: same "exactly these paths, literally" contract
+        // as the stdin branch above — without it, a glob-magic character
+        // (`*`/`?`/`[]`) in a path would be expanded as a pathspec pattern
+        // instead of matched byte-for-byte, which could commit the wrong files
+        // and violate `commit_paths`'s "exactly these paths" contract (R-01).
+        let mut command = c_locale(self.core.command_in(dir, ["--literal-pathspecs", "commit"]));
         if spec.amend {
             command = command.arg("--amend");
         }
@@ -1273,10 +1864,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         ))
     }
 
-    async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String> {
-        reject_flag_like("revision", rev)?;
+    async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
         // `^{commit}` peels an annotated tag down to the commit it points at.
-        let spec = format!("{rev}^{{commit}}");
+        let spec = format!("{}^{{commit}}", rev.as_str());
         self.core
             .run(
                 self.core
@@ -1317,8 +1907,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         }
     }
 
-    async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
-        let refname = format!("refs/heads/{name}");
+    async fn branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool> {
+        let refname = format!("refs/heads/{}", name.as_str());
         // `show-ref --verify --quiet` is an exit-code answer: 0 = exists, 1 = not.
         self.core
             .probe(
@@ -1328,7 +1918,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn remote_branch_exists(&self, dir: &Path, name: &str) -> Result<bool> {
+    async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool> {
+        // `RefName` already forbids the glob/control/`:` characters this probe
+        // must exclude (its `check-ref-format` rules are a strict superset), so
+        // the value is safe to interpolate into the `refs/heads/<name>` ref below.
+        let name = name.as_str();
         // No credential prompt, bounded wait: a missing helper or a flaky network
         // must not hang the call. `output_string` reports a timeout as a flagged result
         // (non-zero exit) rather than erroring, so an unreachable remote reads as
@@ -1361,13 +1955,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn upstream(&self, dir: &Path) -> Result<Option<String>> {
-        // `@{u}` resolves the configured upstream; with no upstream the command
-        // exits **128** — but so does a genuine failure (detached HEAD, not a repo),
-        // and git gives them all the same exit code, so a *non-zero exit* maps to
-        // `None` (the documented "no upstream"). A **timeout/signal** (no exit code
-        // at all), however, is a real failure and must surface — not be reported as
-        // "no upstream" — so it goes through `ensure_success` like the other
-        // exit-code-mapping sites.
+        // Validate that HEAD is attached before asking for `@{u}`. Git otherwise
+        // uses exit 128 both for "no upstream" and for detached HEAD/not-a-repo,
+        // so the upstream query alone cannot distinguish those states.
+        let head = self
+            .core
+            .output_string(
+                self.core
+                    .command_in(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+            )
+            .await?;
+        let _ = head.ensure_success()?;
+
+        // Once HEAD is known to be an attached branch, exit 128 is the documented
+        // "no upstream configured" case. Every other failure, including a timeout
+        // or signal (which has no exit code), remains a real error.
         let res = self
             .core
             .output_string(self.core.command_in(
@@ -1380,10 +1982,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 let name = res.stdout().trim();
                 Ok((!name.is_empty()).then(|| name.to_string()))
             }
-            Some(_) => Ok(None), // any non-zero exit ⇒ no upstream configured
-            None => {
-                let _ = res.ensure_success()?; // timeout/signal ⇒ a real error
-                Ok(None) // unreachable: ensure_success errors on a no-code outcome
+            Some(128) => Ok(None),
+            _ => {
+                let _ = res.ensure_success()?;
+                Ok(None) // unreachable: every remaining outcome is unsuccessful
             }
         }
     }
@@ -1406,8 +2008,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool> {
-        reject_flag_like("branch", &spec.branch)?;
-        reject_flag_like("base", &spec.base)?;
         // `--no-column` + `--no-color`: under `column.ui = always` git would pack
         // several names per line and under `color.{ui,branch} = always` it would
         // inject ANSI escapes — both even when piped, so the marker-stripping
@@ -1434,35 +2034,40 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .any(|b| b == spec.branch.as_str()))
     }
 
-    async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()> {
-        reject_flag_like("branch name", branch)?;
-        let flag = format!("--set-upstream-to={upstream}");
+    async fn set_upstream(&self, dir: &Path, branch: &RefName, upstream: &RefName) -> Result<()> {
+        let flag = format!("--set-upstream-to={}", upstream.as_str());
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", flag.as_str(), branch]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", flag.as_str(), branch.as_str()]),
+            )
             .await
     }
 
-    async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()> {
-        reject_flag_like("branch name", name)?;
-        let flag = if force { "-D" } else { "-d" };
+    async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()> {
+        let flag = if spec.force { "-D" } else { "-d" };
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", flag, name]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", flag, spec.name.as_str()]),
+            )
             .await
     }
 
-    async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
-        reject_flag_like("branch name", old)?;
-        reject_flag_like("branch name", new)?;
+    async fn rename_branch(&self, dir: &Path, old: &RefName, new: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["branch", "-m", old, new]))
+            .run_unit(
+                self.core
+                    .command_in(dir, ["branch", "-m", old.as_str(), new.as_str()]),
+            )
             .await
     }
 
-    async fn rev_list_count(&self, dir: &Path, range: &str) -> Result<usize> {
-        reject_flag_like("range", range)?;
+    async fn rev_list_count(&self, dir: &Path, range: &RevSpec) -> Result<usize> {
         self.core
             .try_parse(
-                self.core.command_in(dir, ["rev-list", "--count", range]),
+                self.core
+                    .command_in(dir, ["rev-list", "--count", range.as_str()]),
                 |s| {
                     s.trim()
                         .parse::<usize>()
@@ -1472,8 +2077,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool> {
-        reject_flag_like("range", range)?;
+    async fn diff_range_is_empty(&self, dir: &Path, range: &RevSpec) -> Result<bool> {
         // `diff --quiet <range>`: 0 = empty range, 1 = has changes.
         // The trailing `--` forces `range` to be read as a revision/range, not a
         // pathspec: without it `git diff --quiet Makefile` diffs the *working
@@ -1482,12 +2086,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (the C2/M13 pathspec-collision class). With `--`, an unresolvable
         // revision exits 128, which `probe` surfaces as an honest error.
         self.core
-            .probe(self.core.command_in(dir, ["diff", "--quiet", range, "--"]))
+            .probe(
+                self.core
+                    .command_in(dir, ["diff", "--quiet", range.as_str(), "--"]),
+            )
             .await
     }
 
-    async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat> {
-        reject_flag_like("range", range)?;
+    async fn diff_stat(&self, dir: &Path, range: &RevSpec) -> Result<DiffStat> {
         // `LC_ALL=C`: git's `--shortstat` summary ("N file(s) changed, …") is
         // gettext-translated, but `parse_shortstat` keys on the English
         // "file"/"insertion"/"deletion" — without C locale a non-English git
@@ -1499,7 +2105,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .parse(
                 c_locale(
                     self.core
-                        .command_in(dir, ["diff", "--shortstat", range, "--"]),
+                        .command_in(dir, ["diff", "--shortstat", range.as_str(), "--"]),
                 ),
                 parse::parse_shortstat,
             )
@@ -1507,51 +2113,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String> {
-        // The target is a single positional arg: `HEAD` for the working tree, or
-        // the caller's revision/range. `-M` enables rename detection; `--no-color`
-        // / `--no-ext-diff` keep the output stable and machine-parseable.
-        let target = match spec {
-            DiffSpec::WorkingTree => {
-                // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
-                // diff against the empty tree so a pre-first-commit working tree
-                // still yields its additions instead of a hard failure.
-                if self.is_unborn(dir).await? {
-                    EMPTY_TREE.to_string()
-                } else {
-                    "HEAD".to_string()
-                }
-            }
-            DiffSpec::Rev(rev) => {
-                reject_flag_like("revision", &rev)?;
-                rev
-            }
-        };
-        // The explicit prefixes pin the `a/`…`b/` form the shared parser extracts
-        // paths from — a user's `diff.noprefix` / `diff.mnemonicPrefix` config
-        // would otherwise change the headers and make every file silently vanish
-        // from the parse. (Command-line prefixes override both config options.)
-        // `run_untrimmed`: trimming the diff would drop a trailing blank context
-        // line, desyncing the last hunk from its `@@` line count for a consumer
-        // that re-applies or re-parses it (H7).
-        // Trailing `--`: pin `target` as a revision, never a pathspec — without it
-        // a `Rev` that happens to name a tracked path would diff the working tree
-        // for that path instead of the intended commit (the C2/M13 collision
-        // class). `reject_flag_like` already blocks a leading `-`; `--` closes the
-        // path-collision half.
-        self.core
-            .run_untrimmed(self.core.command_in(
-                dir,
-                [
-                    "diff",
-                    target.as_str(),
-                    "--no-color",
-                    "--no-ext-diff",
-                    "-M",
-                    "--src-prefix=a/",
-                    "--dst-prefix=b/",
-                    "--",
-                ],
-            ))
+        self.diff_text_budgeted(dir, spec, self.core.output_budget())
             .await
     }
 
@@ -1597,6 +2159,32 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .exists())
     }
 
+    async fn is_cherry_pick_in_progress(&self, dir: &Path) -> Result<bool> {
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("CHERRY_PICK_HEAD")
+            .exists())
+    }
+
+    async fn is_revert_in_progress(&self, dir: &Path) -> Result<bool> {
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("REVERT_HEAD")
+            .exists())
+    }
+
+    async fn is_bisect_in_progress(&self, dir: &Path) -> Result<bool> {
+        // `BISECT_LOG` is git's own canonical "a bisect is running" marker (it also
+        // drives `git bisect log`); the other BISECT_* files are session details.
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("BISECT_LOG")
+            .exists())
+    }
+
     async fn fetch(&self, dir: &Path) -> Result<()> {
         // `GIT_TERMINAL_PROMPT=0` so a remote needing credentials fails fast
         // rather than blocking on an interactive prompt — matching the other
@@ -1608,7 +2196,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet"].map(String::from));
-        let cmd = apply_secret_env(
+        // `budget_diagnostics`: bound the retained failure/progress output (a
+        // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
+        // still classifies the tail-preserved message). Unbounded by default.
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 // On a per-client timeout, terminate gracefully (then hard-kill
@@ -1616,7 +2207,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
@@ -1630,28 +2221,31 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", remote].map(String::from));
-        let cmd = apply_secret_env(
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
-    async fn fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
+    async fn fetch_branch(&self, dir: &Path, branch: &RefName) -> Result<()> {
+        // `RefName` already forbids the glob/control/`:` characters this refspec
+        // must exclude (a strict superset), so both interpolations below are safe.
+        let branch = branch.as_str();
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", "origin", refspec.as_str()].map(String::from));
-        let cmd = apply_secret_env(
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
@@ -1703,19 +2297,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(cmd).await
     }
 
-    async fn merge_squash(&self, dir: &Path, branch: &str) -> Result<()> {
-        reject_flag_like("branch", branch)?;
+    async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()> {
         // C locale: a conflict's output feeds `is_merge_conflict` (same reason as
         // `merge_commit`/`merge_no_commit`). `--squash` never commits, so no editor.
         self.core
             .run_unit(c_locale(
-                self.core.command_in(dir, ["merge", "--squash", branch]),
+                self.core
+                    .command_in(dir, ["merge", "--squash", branch.as_str()]),
             ))
             .await
     }
 
     async fn merge_commit(&self, dir: &Path, spec: MergeCommit) -> Result<()> {
-        reject_flag_like("branch", &spec.branch)?;
         let mut args: Vec<&str> = vec!["merge"];
         if spec.no_ff {
             args.push("--no-ff");
@@ -1728,7 +2321,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             // instead of opening `$EDITOR` (which would hang a headless caller).
             args.push("--no-edit");
         }
-        args.push(&spec.branch);
+        args.push(spec.branch.as_str());
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(c_locale(self.core.command_in(dir, args)))
@@ -1736,7 +2329,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_no_commit(&self, dir: &Path, spec: MergeNoCommit) -> Result<()> {
-        reject_flag_like("branch", &spec.branch)?;
         let mut args: Vec<&str> = vec!["merge", "--no-commit"];
         // `--squash` and `--no-ff` are mutually exclusive (git rejects the pair);
         // a squash never fast-forwards anyway, so it takes precedence.
@@ -1745,7 +2337,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         } else if spec.no_ff {
             args.push("--no-ff");
         }
-        args.push(&spec.branch);
+        args.push(spec.branch.as_str());
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(c_locale(self.core.command_in(dir, args)))
@@ -1776,21 +2368,19 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn reset_hard(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn reset_hard(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["reset", "--hard", rev]))
+            .run_unit(self.core.command_in(dir, ["reset", "--hard", rev.as_str()]))
             .await
     }
 
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
-        reject_flag_like("rebase target", onto)?;
+    async fn rebase(&self, dir: &Path, onto: &RevSpec) -> Result<()> {
         // Force a no-op editor so a rebase that would open `$EDITOR` (reword, or
         // the message-confirm on `--continue`) never hangs a headless caller.
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["rebase", onto]),
+                self.core.command_in(dir, ["rebase", onto.as_str()]),
             )))
             .await
     }
@@ -1815,9 +2405,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()> {
+    async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()> {
         let mut command = self.core.command_in(dir, ["stash", "push"]);
-        if include_untracked {
+        if spec.include_untracked {
             command = command.arg("--include-untracked");
         }
         self.core.run_unit(command).await
@@ -1833,8 +2423,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
+        // `parse_bytes`: the porcelain `worktree <path>` value is a filesystem path
+        // that need not be valid UTF-8 on Unix, so parse from raw stdout bytes — a
+        // lossy `String` decode would corrupt a non-UTF-8 worktree name to `U+FFFD`
+        // and leak a wrong path into the facade's `WorktreeInfo.path`. (Deliberately
+        // no `-z`: `worktree list --porcelain -z` is git ≥ 2.36, above this crate's
+        // 2.31 support floor; newline framing already covers the non-UTF-8 case.)
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["worktree", "list", "--porcelain"]),
                 parse::parse_worktree_porcelain,
@@ -1843,32 +2439,26 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
-        if let Some(name) = spec.new_branch.as_deref() {
-            reject_flag_like("branch name", name)?;
-        }
-        if let Some(commitish) = spec.commitish.as_deref() {
-            reject_flag_like("commit-ish", commitish)?;
-        }
         let mut command = self.core.command_in(dir, ["worktree", "add"]);
-        if let Some(name) = spec.new_branch.as_deref() {
-            command = command.arg("-b").arg(name);
+        if let Some(name) = spec.new_branch.as_ref() {
+            command = command.arg("-b").arg(name.as_str());
         }
         if spec.no_checkout {
             command = command.arg("--no-checkout");
         }
         command = command.arg(&spec.path);
-        if let Some(commitish) = spec.commitish.as_deref() {
-            command = command.arg(commitish);
+        if let Some(commitish) = spec.commitish.as_ref() {
+            command = command.arg(commitish.as_str());
         }
         self.core.run_unit(command).await
     }
 
-    async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()> {
+    async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()> {
         let mut command = self.core.command_in(dir, ["worktree", "remove"]);
-        if force {
+        if spec.force {
             command = command.arg("--force");
         }
-        command = command.arg(path);
+        command = command.arg(&spec.path);
         self.core.run_unit(command).await
     }
 
@@ -1912,7 +2502,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         if spec.bare {
             command = command.arg("--bare");
         }
-        let command = apply_secret_env(
+        // `budget_diagnostics`: bound the retained clone progress/failure output
+        // (a drop-oldest tail — never `OutputTooLarge`, so a real failure stays a
+        // classifiable `Error::Exit`). Unbounded by default.
+        let command = self.core.budget_diagnostics(apply_secret_env(
             command
                 .arg(url)
                 .arg(dest)
@@ -1921,7 +2514,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 // a grace window). No-op without a deadline (matches `fetch`).
                 .timeout_grace(FETCH_TIMEOUT_GRACE),
             &envs,
-        );
+        ));
 
         // R7: git populates `dest` incrementally, so a failed clone (timeout, network,
         // auth) can leave a **partial, non-empty** `dest` that blocks a retry with
@@ -1945,26 +2538,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         result
     }
 
-    async fn tag_create(&self, dir: &Path, name: &str, rev: Option<String>) -> Result<()> {
-        reject_flag_like("tag name", name)?;
-        if let Some(rev) = rev.as_deref() {
-            reject_flag_like("revision", rev)?;
-        }
-        let mut args = vec!["tag", name];
-        if let Some(rev) = rev.as_deref() {
-            args.push(rev);
+    async fn tag_create(&self, dir: &Path, name: &RefName, rev: Option<RevSpec>) -> Result<()> {
+        let mut args = vec!["tag", name.as_str()];
+        if let Some(rev) = rev.as_ref() {
+            args.push(rev.as_str());
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn tag_create_annotated(&self, dir: &Path, spec: AnnotatedTag) -> Result<()> {
-        reject_flag_like("tag name", &spec.name)?;
-        if let Some(rev) = spec.rev.as_deref() {
-            reject_flag_like("revision", rev)?;
-        }
-        let mut args = vec!["tag", "-a", &spec.name, "-m", &spec.message];
-        if let Some(rev) = spec.rev.as_deref() {
-            args.push(rev);
+        let mut args = vec!["tag", "-a", spec.name.as_str(), "-m", &spec.message];
+        if let Some(rev) = spec.rev.as_ref() {
+            args.push(rev.as_str());
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
@@ -1979,28 +2564,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         Ok(out.lines().map(str::to_string).collect())
     }
 
-    async fn tag_delete(&self, dir: &Path, name: &str) -> Result<()> {
-        reject_flag_like("tag name", name)?;
+    async fn tag_delete(&self, dir: &Path, name: &RefName) -> Result<()> {
         self.core
-            .run_unit(self.core.command_in(dir, ["tag", "-d", name]))
+            .run_unit(self.core.command_in(dir, ["tag", "-d", name.as_str()]))
             .await
     }
 
-    async fn show_file(&self, dir: &Path, rev: &str, path: &str) -> Result<String> {
-        // A leading-`-` rev makes the whole `<rev>:<path>` token start with `-`,
-        // so git would parse it as a flag — guard it before building the spec.
-        reject_flag_like("revision", rev)?;
-        // git rejects backslash separators in the `<rev>:<path>` spec ("exists
-        // on disk, but not in <rev>") — normalise for Windows callers. Only on
-        // Windows: on Unix a backslash is a legal filename byte, and rewriting
-        // it would make a literal `a\b.txt` unresolvable.
-        #[cfg(windows)]
-        let path = path.replace('\\', "/");
-        let spec = format!("{rev}:{path}");
-        // `run_untrimmed`: a blob's trailing newline(s) are part of its content —
-        // trimming them corrupts a read-modify-write round-trip (H7).
-        self.core
-            .run_untrimmed(self.core.command_in(dir, ["show", spec.as_str()]))
+    async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String> {
+        self.show_file_within(dir, rev, path, self.core.output_budget())
             .await
     }
 
@@ -2050,13 +2621,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn blame(&self, dir: &Path, path: &str, rev: Option<String>) -> Result<Vec<BlameLine>> {
+    async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>> {
         let mut args = vec!["blame", "--line-porcelain"];
-        if let Some(rev) = rev.as_deref() {
-            // A standalone positional rev with a leading `-` would be any blame
-            // flag (`-s`, `--reverse`, `-L…`) — guard before the `--`.
-            reject_flag_like("revision", rev)?;
-            args.push(rev);
+        if let Some(rev) = rev.as_ref() {
+            args.push(rev.as_str());
         }
         args.push("--");
         args.push(path);
@@ -2068,22 +2636,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn cherry_pick(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn cherry_pick(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         // No editor opens non-interactively, but keep the headless backstop.
         // C locale: a conflict's output feeds `is_merge_conflict`.
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["cherry-pick", rev]),
+                self.core.command_in(dir, ["cherry-pick", rev.as_str()]),
             )))
             .await
     }
 
-    async fn revert(&self, dir: &Path, rev: &str) -> Result<()> {
-        reject_flag_like("revision", rev)?;
+    async fn revert(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["revert", "--no-edit", rev]),
+                self.core
+                    .command_in(dir, ["revert", "--no-edit", rev.as_str()]),
             )))
             .await
     }
@@ -2095,6 +2662,105 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             )))
             .await
     }
+
+    async fn cherry_pick_abort(&self, dir: &Path) -> Result<()> {
+        // No editor on --abort, but keep the C locale so any failure output still
+        // feeds the classifiers uniformly with the rest of the sequencer.
+        self.core
+            .run_unit(c_locale(
+                self.core.command_in(dir, ["cherry-pick", "--abort"]),
+            ))
+            .await
+    }
+
+    async fn cherry_pick_continue(&self, dir: &Path) -> Result<()> {
+        // `--continue` re-commits the resolved pick and may open the editor to
+        // confirm the message — force a no-op editor so a headless caller can't
+        // hang. C locale: a re-conflict's output feeds `is_merge_conflict`.
+        self.core
+            .run_unit(no_editor(c_locale(
+                self.core.command_in(dir, ["cherry-pick", "--continue"]),
+            )))
+            .await
+    }
+
+    async fn revert_abort(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(self.core.command_in(dir, ["revert", "--abort"])))
+            .await
+    }
+
+    async fn revert_continue(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(no_editor(c_locale(
+                self.core.command_in(dir, ["revert", "--continue"]),
+            )))
+            .await
+    }
+
+    async fn bisect_reset(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(self.core.command_in(dir, ["bisect", "reset"])))
+            .await
+    }
+}
+
+impl<R: ProcessRunner> Git<R> {
+    /// Build one `git --literal-pathspecs log <revs...> -n<max> -z --format=…
+    /// -- <paths>` call — used both for the common case (everything fits one
+    /// invocation, the direct [`GitApi::log_paths`] call, where `revs` is the
+    /// single, as-given `revspec.as_str()`) and for each chunk of its
+    /// large-path-set fallback (T-052; the two need no different format,
+    /// since chunked order is restored afterwards by
+    /// [`Self::log_paths_order_command`], not by anything embedded in each
+    /// chunk's own output — R-03). On the chunked path, `revs` is instead the
+    /// caller's already-resolved, fixed commit-id tokens (T-052/R-04; see
+    /// [`GitApi::log_paths`]) — one for a plain rev, two (tip + `^`-prefixed
+    /// exclusion) for a range — reused verbatim across every chunk so none of
+    /// them can observe a differently-moved ref than another.
+    /// `--literal-pathspecs` matches a path containing `*`/`?`/`[]` literally
+    /// rather than as pathspec glob magic (R-02).
+    fn log_paths_command<'a>(
+        &self,
+        dir: &Path,
+        revs: impl IntoIterator<Item = &'a str>,
+        n: &str,
+        paths: impl IntoIterator<Item = &'a str>,
+    ) -> Command {
+        let mut command = self.core.command_in(dir, ["--literal-pathspecs", "log"]);
+        for rev in revs {
+            command = command.arg(rev);
+        }
+        command = command
+            .arg(n)
+            .arg("-z")
+            .arg("--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s")
+            .arg("--");
+        for path in paths {
+            command = command.arg(path);
+        }
+        command
+    }
+
+    /// Build the pathless `git log <revs...> -z --format=%H` commit-order
+    /// oracle used to restore git's own order across `log_paths`'s merged
+    /// chunk results (T-052/R-03; see [`GitApi::log_paths`]). `revs` is the
+    /// same already-resolved, fixed commit-id tokens the chunk calls used
+    /// (T-052/R-04) — resolving the revspec independently here, after the
+    /// chunk calls already ran, would reopen exactly the race that resolving
+    /// it once up front closes. No `-n` cap: a commit surviving
+    /// path-filtering into the merged top-`max` can sit arbitrarily far back
+    /// in the *unrestricted* history (many untouched commits between it and
+    /// the tip), so the oracle must be able to rank it — capping this call
+    /// risks an unranked commit outside the map. No paths, so no
+    /// `--literal-pathspecs` is needed here. Parsed by [`parse_commit_order`].
+    fn log_paths_order_command(&self, dir: &Path, revs: &[String]) -> Command {
+        let mut command = self.core.command_in(dir, ["log"]);
+        for rev in revs {
+            command = command.arg(rev);
+        }
+        command.arg("-z").arg("--format=%H")
+    }
 }
 
 // --- Internal helpers --------------------------------------------------------
@@ -2104,10 +2770,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 // guard now live in the shared `vcs-cli-support` crate (re-exported at the top of
 // this module); what remains here is git-specific.
 
-/// Git's well-known empty-tree object id — a stable stand-in for `HEAD` when
-/// diffing the working tree of an unborn (no-commits-yet) repository. Public so a
-/// caller can diff/stat a pre-first-commit working tree against it directly.
-pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// Git's well-known **SHA-1** empty-tree object id. This value exists **only in a
+/// SHA-1 repository**: a repo created with `extensions.objectFormat=sha256` has a
+/// different empty-tree id (and this SHA-1 one resolves to no object there), so
+/// this constant is *not* a universal stand-in for `HEAD` when diffing an unborn
+/// working tree. For the id that matches a repository's active object format, use
+/// [`Git::empty_tree_oid`], which asks git for it — that is what
+/// [`diff_text`](GitApi::diff_text)`(DiffSpec::WorkingTree)` uses on an unborn repo.
+pub const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Total attempts / fixed backoff for a transient-retried `fetch` — the shared
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
@@ -2139,6 +2809,105 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
+// --- Large path-set transport (T-052) ----------------------------------------
+//
+// `add`/`commit_paths` build one `git` argv per call whether their path set has
+// three entries or three hundred thousand. Windows' `CreateProcess` rejects a
+// command line longer than roughly 32,767 UTF-16 code units (`OS error 206`);
+// POSIX's `ARG_MAX` is typically far larger but shared with the environment
+// block. [`ARGV_PATHSPEC_BUDGET`] is a conservative byte budget for the *paths*
+// portion of such a call (not counting the program name, subcommand, or
+// flags — negligible next to this), chosen with a wide margin under the
+// tighter Windows ceiling so an ordinary call (a handful of paths) never
+// crosses it. Crossing it switches `add`/`commit_paths` to the NUL-safe
+// `--pathspec-from-file=- --pathspec-file-nul` transport ([`pathspec_nul_bytes`])
+// — unbounded, since the paths then never touch argv at all — and switches
+// `log_paths` (for which git has no `--pathspec-from-file` support) to chunked
+// invocations ([`chunk_pathspecs`]) merged back into one result.
+
+/// Conservative byte budget for the *pathspec* portion of a `git` argv — see
+/// the module-level comment above this constant for the reasoning.
+const ARGV_PATHSPEC_BUDGET: usize = 6_000;
+
+/// Sum of each path's encoded byte length plus one (a stand-in for the
+/// separating argv-slot overhead), compared against [`ARGV_PATHSPEC_BUDGET`]
+/// to decide whether a path set is too large for one plain-argv invocation.
+fn pathspec_argv_len<'a>(paths: impl IntoIterator<Item = &'a std::ffi::OsStr>) -> usize {
+    paths
+        .into_iter()
+        .map(|p| p.as_encoded_bytes().len() + 1)
+        .sum()
+}
+
+/// Build the NUL-delimited pathspec payload for `--pathspec-from-file=-
+/// --pathspec-file-nul` from `paths`, entirely in memory before anything is
+/// spawned. A path embedding a NUL byte — impossible on a real filesystem, but
+/// checked anyway as defense-in-depth — would silently split into two
+/// pathspecs on that separator, one of them possibly matching an unintended
+/// file; refusing it here, before the command is built, keeps input
+/// preparation atomic: either every path is valid and the one `git` invocation
+/// runs, or none of it does (no partially-applied result to unwind). Returns
+/// the raw bytes (rather than a [`processkit::Stdin`] directly) so this pure
+/// step stays unit-testable — wrap the result in
+/// [`processkit::Stdin::from_bytes`] at the call site.
+fn pathspec_nul_bytes<'a>(paths: impl IntoIterator<Item = &'a std::ffi::OsStr>) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    for path in paths {
+        let bytes = path.as_encoded_bytes();
+        if bytes.contains(&0) {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "path contains an embedded NUL byte, which the \
+                     --pathspec-file-nul transport uses as its separator — \
+                     refusing before spawning rather than silently splitting \
+                     it into two pathspecs",
+                ),
+            ));
+        }
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+    }
+    Ok(buf)
+}
+
+/// Split `paths` into groups whose combined length (each entry's byte length
+/// plus one, matching [`pathspec_argv_len`]) stays within
+/// [`ARGV_PATHSPEC_BUDGET`] — every group gets at least one path (a single path
+/// already over budget still gets its own singleton group; nothing shorter is
+/// possible). Preserves `paths`' order, both within and across groups.
+fn chunk_pathspecs(paths: &[String]) -> Vec<Vec<&str>> {
+    let mut chunks: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut current_len = 0usize;
+    for path in paths {
+        let len = path.len() + 1;
+        if !current.is_empty() && current_len + len > ARGV_PATHSPEC_BUDGET {
+            chunks.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+        current.push(path.as_str());
+        current_len += len;
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// Parse [`Git::log_paths_order_command`]'s `git log -z --format=%H` output
+/// into an ordered list of hashes — git's own commit order for the queried
+/// revspec, used as the ranking oracle that restores order across
+/// `log_paths`'s merged chunk results (T-052/R-03; see [`GitApi::log_paths`]).
+fn parse_commit_order(output: &str) -> Vec<String> {
+    output
+        .split('\0')
+        .filter(|rec| !rec.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl<R: ProcessRunner> Git<R> {
     /// Run `git <args>` over string slices — `git.run_args(&["status", "-s"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
@@ -2152,6 +2921,64 @@ impl<R: ProcessRunner> Git<R> {
     /// (mirrors [`GitApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
         self.core.output_string(args).await
+    }
+
+    /// Run `git <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](GitApi::run). This is what [`GitAt::run`] forwards to;
+    /// call [`run`](GitApi::run) on the client for the process-cwd escape hatch.
+    /// Argv is forwarded verbatim (the same unguarded escape hatch — only the
+    /// working directory is bound, no `-C`/extra flag is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Git::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GitApi::run_raw). What [`GitAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// Like [`run_args`](Git::run_args) but **bound to `dir`** — the `&[&str]` twin
+    /// of [`run_in`](Git::run_in). What [`GitAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Git::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Git::run_raw_in). What
+    /// [`GitAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// The empty-tree object id for the repository at `dir`, matching its **active
+    /// object format** — the format-correct stand-in for `HEAD` when diffing/stat-ing
+    /// the working tree of an unborn (no-commits-yet) repository.
+    ///
+    /// Computed with `git hash-object -t tree --stdin` fed an empty stdin: an empty
+    /// tree object is empty content, so git returns its id under whichever hash the
+    /// repo uses (`4b825dc…` for SHA-1, a 64-hex digest for `extensions.objectFormat=
+    /// sha256`). This asks git rather than hard-coding [`EMPTY_TREE_SHA1`], which is
+    /// wrong in a SHA-256 repo. `--stdin` (not `-w`) only *computes* the id — nothing
+    /// is written to the object database.
+    pub async fn empty_tree_oid(&self, dir: &Path) -> Result<String> {
+        self.core
+            .run(
+                self.core
+                    .command_in(dir, ["hash-object", "-t", "tree", "--stdin"])
+                    .stdin(processkit::Stdin::empty()),
+            )
+            .await
     }
 
     /// Bind this client to `dir`, returning a [`GitAt`] handle whose methods omit
@@ -2323,11 +3150,11 @@ impl<R: ProcessRunner> Git<R> {
     ///
     /// Inherent (not on the object-safe trait): a composed operation, not a 1:1
     /// CLI verb — mock the underlying `status`/`stash_*`/`checkout` instead.
-    pub async fn switch_with_stash(&self, dir: &Path, branch: &str) -> Result<()> {
+    pub async fn switch_with_stash(&self, dir: &Path, target: &CheckoutTarget) -> Result<()> {
         // Untracked-inclusive guard to match `stash push -u`: "dirty" must mean
         // the same thing to the guard and to the stash. Fast path for a clean tree.
         if self.status(dir).await?.is_empty() {
-            return self.checkout(dir, branch).await;
+            return self.checkout(dir, target).await;
         }
         // `stash push` exits 0 having saved **nothing** when the only dirt is
         // unstashable (e.g. a submodule-only change that `status` still reports), so a
@@ -2336,14 +3163,15 @@ impl<R: ProcessRunner> Git<R> {
         // saved, and only pop when it did. (Single-actor contract: a concurrent
         // `stash push`/`pop` by another process between our two calls is out of scope.)
         let depth_before = self.stash_depth(dir).await?;
-        self.stash_push(dir, true).await?;
+        self.stash_push(dir, StashPush::new().include_untracked())
+            .await?;
         if self.stash_depth(dir).await? <= depth_before {
             // Nothing was stashed — switch as-is rather than pop someone else's entry.
-            return self.checkout(dir, branch).await;
+            return self.checkout(dir, target).await;
         }
         // `--index` restores the staged/unstaged split faithfully; a bare `pop` would
         // bring everything back UNSTAGED, silently flattening the index.
-        match self.checkout(dir, branch).await {
+        match self.checkout(dir, target).await {
             Ok(()) => self.stash_pop_index(dir).await,
             Err(err) => {
                 // A failed checkout is atomic — we are still on the original branch, so
@@ -2427,10 +3255,6 @@ impl<R: ProcessRunner> Copy for GitAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GitAt, git, "Git",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn capabilities() -> Result<GitCapabilities>;
         fn clone_repo(url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
@@ -2440,80 +3264,98 @@ vcs_cli_support::at_forwarders! {
         fn status_text() -> Result<String>;
         fn status_tracked() -> Result<Vec<StatusEntry>>;
         fn branch_status() -> Result<BranchStatus>;
-        fn conflicted_files() -> Result<Vec<String>>;
+        fn conflicted_files() -> Result<Vec<PathBuf>>;
         fn current_branch() -> Result<Option<String>>;
         fn branches() -> Result<Vec<Branch>>;
-        fn log(revspec: &str, max: usize) -> Result<Vec<Commit>>;
-        fn rev_parse(rev: &str) -> Result<String>;
-        fn rev_parse_short(rev: &str) -> Result<String>;
+        fn log(revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
+        fn log_paths(revspec: &RevSpec, max: usize, paths: &[String]) -> Result<Vec<Commit>>;
+        fn rev_parse(rev: &RevSpec) -> Result<String>;
+        fn rev_parse_short(rev: &RevSpec) -> Result<String>;
         fn init() -> Result<()>;
         fn add(paths: &[PathBuf]) -> Result<()>;
         fn commit(message: &str) -> Result<()>;
-        fn create_branch(name: &str) -> Result<()>;
-        fn checkout(reference: &str) -> Result<()>;
-        fn checkout_detach(commit: &str) -> Result<()>;
+        fn create_branch(name: &RefName) -> Result<()>;
+        fn checkout(target: &CheckoutTarget) -> Result<()>;
+        fn checkout_detach(commit: &RevSpec) -> Result<()>;
         fn commit_paths(spec: CommitPaths) -> Result<()>;
         fn last_commit_message() -> Result<String>;
         fn is_unborn() -> Result<bool>;
         fn diff_is_empty() -> Result<bool>;
         fn common_dir() -> Result<PathBuf>;
         fn git_dir() -> Result<PathBuf>;
-        fn resolve_commit(rev: &str) -> Result<String>;
+        fn resolve_commit(rev: &RevSpec) -> Result<String>;
         fn remote_head_branch() -> Result<Option<String>>;
-        fn branch_exists(name: &str) -> Result<bool>;
-        fn remote_branch_exists(name: &str) -> Result<bool>;
+        fn branch_exists(name: &RefName) -> Result<bool>;
+        fn remote_branch_exists(name: &RefName) -> Result<bool>;
         fn remote_url(remote: &str) -> Result<String>;
         fn upstream() -> Result<Option<String>>;
         fn remote_branches(remote: &str) -> Result<Vec<String>>;
         fn is_merged(spec: MergeCheck) -> Result<bool>;
-        fn set_upstream(branch: &str, upstream: &str) -> Result<()>;
-        fn delete_branch(name: &str, force: bool) -> Result<()>;
-        fn rename_branch(old: &str, new: &str) -> Result<()>;
-        fn rev_list_count(range: &str) -> Result<usize>;
-        fn diff_range_is_empty(range: &str) -> Result<bool>;
-        fn diff_stat(range: &str) -> Result<DiffStat>;
+        fn set_upstream(branch: &RefName, upstream: &RefName) -> Result<()>;
+        fn delete_branch(spec: BranchDelete) -> Result<()>;
+        fn rename_branch(old: &RefName, new: &RefName) -> Result<()>;
+        fn rev_list_count(range: &RevSpec) -> Result<usize>;
+        fn diff_range_is_empty(range: &RevSpec) -> Result<bool>;
+        fn diff_stat(range: &RevSpec) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
         fn diff(spec: DiffSpec) -> Result<Vec<FileDiff>>;
         fn staged_is_empty() -> Result<bool>;
         fn is_rebase_in_progress() -> Result<bool>;
         fn is_merge_in_progress() -> Result<bool>;
         fn is_am_in_progress() -> Result<bool>;
+        fn is_cherry_pick_in_progress() -> Result<bool>;
+        fn is_revert_in_progress() -> Result<bool>;
+        fn is_bisect_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
-        fn fetch_branch(branch: &str) -> Result<()>;
+        fn fetch_branch(branch: &RefName) -> Result<()>;
         fn push(spec: GitPush) -> Result<()>;
-        fn merge_squash(branch: &str) -> Result<()>;
+        fn merge_squash(branch: &RevSpec) -> Result<()>;
         fn merge_commit(spec: MergeCommit) -> Result<()>;
         fn merge_no_commit(spec: MergeNoCommit) -> Result<()>;
         fn merge_abort() -> Result<()>;
         fn merge_continue() -> Result<()>;
         fn reset_merge() -> Result<()>;
-        fn reset_hard(rev: &str) -> Result<()>;
-        fn rebase(onto: &str) -> Result<()>;
+        fn reset_hard(rev: &RevSpec) -> Result<()>;
+        fn rebase(onto: &RevSpec) -> Result<()>;
         fn rebase_abort() -> Result<()>;
         fn am_abort() -> Result<()>;
         fn rebase_continue() -> Result<()>;
-        fn stash_push(include_untracked: bool) -> Result<()>;
+        fn stash_push(spec: StashPush) -> Result<()>;
         fn stash_pop() -> Result<()>;
-        fn switch_with_stash(branch: &str) -> Result<()>;
+        fn switch_with_stash(target: &CheckoutTarget) -> Result<()>;
         fn worktree_list() -> Result<Vec<Worktree>>;
         fn worktree_add(spec: WorktreeAdd) -> Result<()>;
-        fn worktree_remove(path: &Path, force: bool) -> Result<()>;
+        fn worktree_remove(spec: WorktreeRemove) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
-        fn tag_create(name: &str, rev: Option<String>) -> Result<()>;
+        fn tag_create(name: &RefName, rev: Option<RevSpec>) -> Result<()>;
         fn tag_create_annotated(spec: AnnotatedTag) -> Result<()>;
         fn tag_list() -> Result<Vec<String>>;
-        fn tag_delete(name: &str) -> Result<()>;
-        fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn tag_delete(name: &RefName) -> Result<()>;
+        fn show_file(rev: &RevSpec, path: &str) -> Result<String>;
         fn config_get(key: &str) -> Result<Option<String>>;
         fn config_set(key: &str, value: &str) -> Result<()>;
         fn remote_add(name: &str, url: &str) -> Result<()>;
         fn remote_set_url(name: &str, url: &str) -> Result<()>;
-        fn blame(path: &str, rev: Option<String>) -> Result<Vec<BlameLine>>;
-        fn cherry_pick(rev: &str) -> Result<()>;
-        fn revert(rev: &str) -> Result<()>;
+        fn blame(path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>>;
+        fn cherry_pick(rev: &RevSpec) -> Result<()>;
+        fn revert(rev: &RevSpec) -> Result<()>;
         fn rebase_skip() -> Result<()>;
+        fn cherry_pick_abort() -> Result<()>;
+        fn cherry_pick_continue() -> Result<()>;
+        fn revert_abort() -> Result<()>;
+        fn revert_continue() -> Result<()>;
+        fn bisect_reset() -> Result<()>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `git.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Git` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -2524,14 +3366,15 @@ pub mod blocking {
     use std::path::Path;
     use std::process::Command;
 
-    /// Remove a worktree synchronously (`git worktree remove [--force] <path>`).
-    pub fn worktree_remove(dir: &Path, path: &Path, force: bool) -> std::io::Result<()> {
+    /// Remove a worktree synchronously (`git worktree remove [--force] <path>`);
+    /// see [`WorktreeRemove`](super::WorktreeRemove).
+    pub fn worktree_remove(dir: &Path, spec: super::WorktreeRemove) -> std::io::Result<()> {
         let mut cmd = Command::new(super::BINARY);
         cmd.current_dir(dir).args(["worktree", "remove"]);
-        if force {
+        if spec.force {
             cmd.arg("--force");
         }
-        cmd.arg(path);
+        cmd.arg(&spec.path);
         let status = cmd.status()?;
         if status.success() {
             Ok(())
@@ -2546,6 +3389,22 @@ pub mod blocking {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Terse constructors for the validated newtypes in test call sites; the
+    // literals here are always valid, so `unwrap` is fine in tests.
+    fn rn(s: &str) -> RefName {
+        RefName::new(s).unwrap()
+    }
+    fn rv(s: &str) -> RevSpec {
+        RevSpec::new(s).unwrap()
+    }
+    fn ct(s: &str) -> CheckoutTarget {
+        if s == "-" {
+            CheckoutTarget::Previous
+        } else {
+            CheckoutTarget::Ref(rv(s))
+        }
+    }
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
@@ -2572,27 +3431,27 @@ mod tests {
         let git = Git::with_runner(&rec);
 
         // A method with trailing args (dir injected first).
-        git.merge_commit(dir, MergeCommit::branch("feat").no_ff())
+        git.merge_commit(dir, MergeCommit::branch(rv("feat")).no_ff())
             .await
             .unwrap();
         git.at(dir)
-            .merge_commit(MergeCommit::branch("feat").no_ff())
+            .merge_commit(MergeCommit::branch(rv("feat")).no_ff())
             .await
             .unwrap();
         // A method taking a path arg after dir.
-        git.worktree_remove(dir, Path::new("/wt"), true)
+        git.worktree_remove(dir, WorktreeRemove::new("/wt").force())
             .await
             .unwrap();
         git.at(dir)
-            .worktree_remove(Path::new("/wt"), true)
+            .worktree_remove(WorktreeRemove::new("/wt").force())
             .await
             .unwrap();
         // One of the new query methods.
         git.conflicted_files(dir).await.unwrap();
         git.at(dir).conflicted_files().await.unwrap();
         // One of the §4 additions.
-        git.tag_delete(dir, "v1").await.unwrap();
-        git.at(dir).tag_delete("v1").await.unwrap();
+        git.tag_delete(dir, &rn("v1")).await.unwrap();
+        git.at(dir).tag_delete(&rn("v1")).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
@@ -2602,6 +3461,47 @@ mod tests {
         // The bound calls also carried the bound dir as their working directory.
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
         assert_eq!(calls[3].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`git.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd. Guards that a bound handle's raw call
+    // can no longer silently target another repo, and that the explicit process-cwd
+    // hatch is preserved.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        git.at(dir).run(&["status".to_string()]).await.unwrap();
+        let _ = git.at(dir).run_raw(&["status".to_string()]).await.unwrap();
+        git.at(dir).run_args(&["status"]).await.unwrap();
+        let _ = git.at(dir).run_raw_args(&["status"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        git.run(&["status".to_string()]).await.unwrap();
+        let _ = git.run_raw(&["status".to_string()]).await.unwrap();
+        git.run_args(&["status"]).await.unwrap();
+        let _ = git.run_raw_args(&["status"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
     }
 
     // Hermetic: the real status() command-building + porcelain parsing run
@@ -2615,7 +3515,7 @@ mod tests {
         let entries = git.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].code, " M");
-        assert_eq!(entries[1].path, "b.rs");
+        assert_eq!(entries[1].path, Path::new("b.rs"));
     }
 
     // `status_tracked` is `status` minus untracked files — same parser, extra flag.
@@ -2677,7 +3577,10 @@ mod tests {
             .conflicted_files(Path::new("."))
             .await
             .expect("conflicted_files");
-        assert_eq!(paths, ["a.rs", "sub/spaced name.rs"]);
+        assert_eq!(
+            paths,
+            [PathBuf::from("a.rs"), PathBuf::from("sub/spaced name.rs")]
+        );
         assert_eq!(
             rec.only_call().args_str(),
             ["diff", "--name-only", "--diff-filter=U", "-z"]
@@ -2688,7 +3591,10 @@ mod tests {
     async fn rev_parse_short_builds_short_flag() {
         let rec = RecordingRunner::replying(Reply::ok("a1b2c3d\n"));
         let git = Git::with_runner(&rec);
-        let out = git.rev_parse_short(Path::new("/r"), "HEAD").await.unwrap();
+        let out = git
+            .rev_parse_short(Path::new("/r"), &rv("HEAD"))
+            .await
+            .unwrap();
         assert_eq!(out, "a1b2c3d");
         assert_eq!(
             rec.only_call().args_str(),
@@ -2702,7 +3608,7 @@ mod tests {
     async fn rev_parse_verifies_the_revision() {
         let rec = RecordingRunner::replying(Reply::ok("deadbeef\n"));
         let git = Git::with_runner(&rec);
-        let out = git.rev_parse(Path::new("/r"), "HEAD").await.unwrap();
+        let out = git.rev_parse(Path::new("/r"), &rv("HEAD")).await.unwrap();
         assert_eq!(out, "deadbeef");
         assert_eq!(
             rec.only_call().args_str(),
@@ -2744,6 +3650,49 @@ mod tests {
         );
     }
 
+    // T-044: the sequencer states each key off their own git-dir marker, and a
+    // cherry-pick/revert conflict does NOT write `MERGE_HEAD` — so none of them is
+    // mistaken for a merge (which would dispatch `merge --abort` on a real repo).
+    #[tokio::test]
+    async fn detects_cherry_pick_revert_and_bisect_markers() {
+        use vcs_testkit::TempDir;
+        let gd = TempDir::new("t044-seq");
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "rev-parse", "--git-dir"],
+            Reply::ok(gd.path().to_str().unwrap()),
+        ));
+        let d = Path::new("/r");
+        let touch = |name: &str| std::fs::write(gd.path().join(name), b"x\n").unwrap();
+        let rm = |name: &str| std::fs::remove_file(gd.path().join(name)).unwrap();
+
+        // A cherry-pick: CHERRY_PICK_HEAD present, and crucially NOT read as a merge.
+        touch("CHERRY_PICK_HEAD");
+        assert!(git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_merge_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_bisect_in_progress(d).await.unwrap());
+        rm("CHERRY_PICK_HEAD");
+
+        // A revert.
+        touch("REVERT_HEAD");
+        assert!(git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_merge_in_progress(d).await.unwrap());
+        rm("REVERT_HEAD");
+
+        // A bisect (keyed off BISECT_LOG).
+        touch("BISECT_LOG");
+        assert!(git.is_bisect_in_progress(d).await.unwrap());
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        rm("BISECT_LOG");
+
+        // Clean git dir → none fire.
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_bisect_in_progress(d).await.unwrap());
+    }
+
     // A non-zero exit surfaces as a structured `Error::Exit`.
     #[tokio::test]
     async fn nonzero_exit_is_structured_error() {
@@ -2783,13 +3732,42 @@ mod tests {
     }
 
     // `add` must insert `--` before the pathspecs so a path can never be parsed
-    // as an option. No fallback rule: the run only matches if `add --` was built.
+    // as an option, and `--literal-pathspecs` so a glob-magic character in a
+    // path matches literally (R-01). No fallback rule: the run only matches if
+    // `--literal-pathspecs add --` was built.
     #[tokio::test]
     async fn add_inserts_pathspec_separator() {
-        let git = Git::with_runner(ScriptedRunner::new().on(["git", "add", "--"], Reply::ok("")));
+        let git = Git::with_runner(
+            ScriptedRunner::new().on(["git", "--literal-pathspecs", "add", "--"], Reply::ok("")),
+        );
         git.add(Path::new("."), &[PathBuf::from("f.rs")])
             .await
-            .expect("add should build `add -- <paths>`");
+            .expect("add should build `--literal-pathspecs add -- <paths>`");
+    }
+
+    // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` must route
+    // through the NUL-safe `--pathspec-from-file=- --pathspec-file-nul`
+    // transport instead of the plain `add -- <paths>` argv: no per-path argv
+    // entries, the payload travels over stdin instead (T-052).
+    #[tokio::test]
+    async fn add_large_path_set_uses_pathspec_from_file_stdin() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let paths: Vec<PathBuf> = (0..2_000)
+            .map(|i| PathBuf::from(format!("dir/file_{i:05}.txt")))
+            .collect();
+        git.add(Path::new("."), &paths).await.expect("add");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "--literal-pathspecs",
+                "add",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ]
+        );
+        assert!(call.has_stdin, "paths must travel over stdin, not argv");
     }
 
     #[tokio::test]
@@ -2812,7 +3790,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.worktree_add(
             Path::new("/repo"),
-            WorktreeAdd::create_branch("/wt", "feature", "main"),
+            WorktreeAdd::create_branch("/wt", rn("feature"), rv("main")),
         )
         .await
         .expect("worktree add");
@@ -2826,13 +3804,24 @@ mod tests {
     async fn worktree_remove_passes_force_then_path() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.worktree_remove(Path::new("/repo"), Path::new("/wt"), true)
+        git.worktree_remove(Path::new("/repo"), WorktreeRemove::new("/wt").force())
             .await
             .expect("remove");
         assert_eq!(
             rec.only_call().args_str(),
             ["worktree", "remove", "--force", "/wt"]
         );
+    }
+
+    // The default (un-forced) spec omits `--force`.
+    #[tokio::test]
+    async fn worktree_remove_default_omits_force() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.worktree_remove(Path::new("/repo"), WorktreeRemove::new("/wt"))
+            .await
+            .expect("remove");
+        assert_eq!(rec.only_call().args_str(), ["worktree", "remove", "/wt"]);
     }
 
     // `--no-checkout` must land between `-b <name>` and the path.
@@ -2842,7 +3831,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.worktree_add(
             Path::new("/repo"),
-            WorktreeAdd::checkout("/wt", "main").no_checkout(),
+            WorktreeAdd::checkout("/wt", rv("main")).no_checkout(),
         )
         .await
         .expect("worktree add");
@@ -2856,7 +3845,7 @@ mod tests {
     async fn checkout_detach_builds_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.checkout_detach(Path::new("."), "abc123")
+        git.checkout_detach(Path::new("."), &rv("abc123"))
             .await
             .expect("detach");
         assert_eq!(
@@ -2902,7 +3891,9 @@ mod tests {
         assert!(not_repo.current_branch(Path::new(".")).await.is_err());
     }
 
-    // Partial amend commit must build `commit --amend -m <msg> --only -- <paths>`.
+    // Partial amend commit must build `--literal-pathspecs commit --amend -m
+    // <msg> --only -- <paths>` — `--literal-pathspecs` so a glob-magic
+    // character in a path matches literally (R-01).
     #[tokio::test]
     async fn commit_paths_builds_only_amend_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -2916,9 +3907,50 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             [
-                "commit", "--amend", "-m", "msg", "--only", "--", "a.rs", "b.rs"
+                "--literal-pathspecs",
+                "commit",
+                "--amend",
+                "-m",
+                "msg",
+                "--only",
+                "--",
+                "a.rs",
+                "b.rs"
             ]
         );
+    }
+
+    // Same transport switch as `add`'s twin test: a path set over
+    // `ARGV_PATHSPEC_BUDGET` commits through `--pathspec-from-file=-
+    // --pathspec-file-nul` (paths over stdin) instead of a plain `-- <paths>`
+    // argv tail — and it is still exactly **one** `git commit` call (T-052).
+    #[tokio::test]
+    async fn commit_paths_large_path_set_uses_pathspec_from_file_stdin() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let paths: Vec<PathBuf> = (0..2_000)
+            .map(|i| PathBuf::from(format!("dir/file_{i:05}.txt")))
+            .collect();
+        git.commit_paths(Path::new("."), CommitPaths::new(paths, "msg").amend())
+            .await
+            .expect("commit_paths");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "must be a single atomic commit invocation");
+        let call = &calls[0];
+        assert_eq!(
+            call.args_str(),
+            [
+                "--literal-pathspecs",
+                "commit",
+                "--amend",
+                "-m",
+                "msg",
+                "--only",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ]
+        );
+        assert!(call.has_stdin, "paths must travel over stdin, not argv");
     }
 
     // is_unborn maps the rev-parse exit code: 0 → has commits (false), 1 →
@@ -2944,7 +3976,9 @@ mod tests {
     async fn log_builds_revspec_and_format() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.log(Path::new("."), "main..HEAD", 5).await.expect("log");
+        git.log(Path::new("."), &rv("main..HEAD"), 5)
+            .await
+            .expect("log");
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -2957,15 +3991,405 @@ mod tests {
         );
     }
 
+    // `log_paths` must insert `--literal-pathspecs` (R-02) and `--` exactly
+    // once, right before the pathspecs, after the same revspec/count/format
+    // arguments `log` builds.
+    #[tokio::test]
+    async fn log_paths_builds_revspec_format_and_pathspec_separator() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.log_paths(
+            Path::new("."),
+            &rv("main..HEAD"),
+            5,
+            &["src/a.rs".to_string(), "src/b.rs".to_string()],
+        )
+        .await
+        .expect("log_paths");
+        let args = rec.only_call().args_str();
+        assert_eq!(
+            args,
+            [
+                "--literal-pathspecs",
+                "log",
+                "main..HEAD",
+                "-n5",
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+                "src/a.rs",
+                "src/b.rs",
+            ]
+        );
+        assert_eq!(args.iter().filter(|a| *a == "--").count(), 1);
+    }
+
+    // An empty `paths` slice must NOT degrade to an unrestricted `git log` —
+    // it's refused before any spawn (mirrors `commit_paths_refuses_empty_*` in
+    // vcs-jj).
+    #[tokio::test]
+    async fn log_paths_refuses_empty_paths_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[])
+            .await
+            .expect_err("empty paths must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` splits
+    // `log` into per-chunk calls (`git log` has no `--pathspec-from-file`
+    // support, unlike `add`/`commit_paths`; each chunk call also carries
+    // `--literal-pathspecs`, R-02) and merges the results: dedup by hash (the
+    // "shared" commit appears in both chunks' canned output), reordered to
+    // match a separate, pathless oracle call's commit order, capped at `max`
+    // (T-052/R-03).
+    //
+    // All three commits share the exact same (second-resolution) author date
+    // — a date-based sort would have no signal to order them at all and
+    // could only fall back to arbitrary/input order — yet the oracle still
+    // produces a definite, correct order, because it comes from git's own
+    // traversal rather than from parsed timestamps. This is exactly the case
+    // R-03 flagged as unfixable by refining the date sort further.
+    #[tokio::test]
+    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_oracle_order() {
+        // Two paths, each already over budget alone once paired — `chunk_pathspecs`
+        // puts each in its own singleton chunk.
+        let path_a = "a".repeat(4_000);
+        let path_b = "b".repeat(4_000);
+        // R-04: the chunked path resolves `revspec` once via `git rev-parse`
+        // before any chunk/oracle call, then reuses the resolved token
+        // (deliberately distinct from the literal `"HEAD"` text) everywhere
+        // below — proving every one of those calls used the frozen snapshot,
+        // not the original symbolic name.
+        let common = [
+            "git",
+            "--literal-pathspecs",
+            "log",
+            "resolved-head-sha",
+            "-n5",
+            "-z",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--",
+        ];
+        let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_a_args.push(path_a.clone());
+        let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_b_args.push(path_b.clone());
+
+        // Chunk A: "newer-a" + "shared", both dated 2026-01-02.
+        let reply_a = Reply::ok(
+            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
+                .to_string(),
+        );
+        // Chunk B: "newest-b" (also dated 2026-01-02) + the SAME "shared"
+        // commit again (touches a path in both chunks).
+        let reply_b = Reply::ok(
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-02T00:00:00Z\u{1f}newest-b\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
+                .to_string(),
+        );
+        // The oracle: git's real, unrestricted commit order for the same
+        // revspec — puts "shared" between the other two, an order no sort of
+        // the (identical) merged timestamps could ever reproduce.
+        let order_reply = Reply::ok("bbb1\0shar\0aaa1\0".to_string());
+
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "rev-parse", "HEAD"],
+                    Reply::ok("resolved-head-sha\n".to_string()),
+                )
+                .on(chunk_a_args, reply_a)
+                .on(chunk_b_args, reply_b)
+                .on(
+                    ["git", "log", "resolved-head-sha", "-z", "--format=%H"],
+                    order_reply,
+                ),
+        );
+
+        let commits = git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[path_a, path_b])
+            .await
+            .expect("log_paths");
+
+        assert_eq!(
+            commits.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(),
+            ["bbb1", "shar", "aaa1"],
+            "expected the oracle's commit order across chunks, with the shared \
+             commit deduplicated"
+        );
+    }
+
+    // The single-call path (small path sets) must return byte-identical order
+    // to what a chunked call over the same commits produces via the oracle —
+    // i.e. chunking never changes which order callers see for a path set
+    // that happens to be small (T-052/R-03 regression guard).
+    #[tokio::test]
+    async fn log_paths_single_call_and_chunked_call_agree_on_order() {
+        let single_reply = Reply::ok(
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0\
+             aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0",
+        );
+        let single_call_git = Git::with_runner(ScriptedRunner::new().on(
+            [
+                "git",
+                "--literal-pathspecs",
+                "log",
+                "HEAD",
+                "-n5",
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+                "src/a.rs",
+                "src/b.rs",
+            ],
+            single_reply,
+        ));
+        let single_commits = single_call_git
+            .log_paths(
+                Path::new("."),
+                &rv("HEAD"),
+                5,
+                &["src/a.rs".to_string(), "src/b.rs".to_string()],
+            )
+            .await
+            .expect("log_paths");
+
+        let path_a = "a".repeat(4_000);
+        let path_b = "b".repeat(4_000);
+        let common = [
+            "git",
+            "--literal-pathspecs",
+            "log",
+            "HEAD",
+            "-n5",
+            "-z",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--",
+        ];
+        let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_a_args.push(path_a.clone());
+        let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_b_args.push(path_b.clone());
+        let reply_a =
+            Reply::ok("aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0".to_string());
+        let reply_b =
+            Reply::ok("bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0".to_string());
+        // The oracle agrees with the single-call order: "newest-b" before
+        // "newer-a".
+        let order_reply = Reply::ok("bbb1\0aaa1\0".to_string());
+        let chunked_git = Git::with_runner(
+            ScriptedRunner::new()
+                // R-04: the chunked path resolves `revspec` once via `git
+                // rev-parse` before the chunk/oracle calls below.
+                .on(
+                    ["git", "rev-parse", "HEAD"],
+                    Reply::ok("HEAD\n".to_string()),
+                )
+                .on(chunk_a_args, reply_a)
+                .on(chunk_b_args, reply_b)
+                .on(["git", "log", "HEAD", "-z", "--format=%H"], order_reply),
+        );
+        let chunked_commits = chunked_git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[path_a, path_b])
+            .await
+            .expect("log_paths");
+
+        assert_eq!(
+            single_commits
+                .iter()
+                .map(|c| c.hash.as_str())
+                .collect::<Vec<_>>(),
+            chunked_commits
+                .iter()
+                .map(|c| c.hash.as_str())
+                .collect::<Vec<_>>(),
+            "single-call and chunked-call order must agree when the oracle \
+             agrees with the single-call order"
+        );
+    }
+
+    // R-04: a range revspec (`A..B`) resolves via `git rev-parse` to *two*
+    // tokens — the tip and a `^`-prefixed exclusion — and both chunk calls
+    // plus the oracle call must forward both tokens verbatim, not just the
+    // original `"main..feature"` text. This is exactly the expansion `git
+    // log` would perform internally, so it's behavior-preserving while also
+    // fixing the moving-ref race (a concurrent `main` or `feature` move
+    // between chunk/oracle calls can no longer change what any of them see,
+    // since all of them now share the one resolution taken up front).
+    #[tokio::test]
+    async fn log_paths_range_revspec_is_resolved_once_and_reused_across_chunks() {
+        let path_a = "a".repeat(4_000);
+        let path_b = "b".repeat(4_000);
+        let common = [
+            "git",
+            "--literal-pathspecs",
+            "log",
+            "feature-sha",
+            "^main-sha",
+            "-n5",
+            "-z",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--",
+        ];
+        let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_a_args.push(path_a.clone());
+        let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_b_args.push(path_b.clone());
+        let reply_a =
+            Reply::ok("aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0".to_string());
+        let reply_b =
+            Reply::ok("bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0".to_string());
+        let order_reply = Reply::ok("bbb1\0aaa1\0".to_string());
+
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "rev-parse", "main..feature"],
+                    Reply::ok("feature-sha\n^main-sha\n".to_string()),
+                )
+                .on(chunk_a_args, reply_a)
+                .on(chunk_b_args, reply_b)
+                .on(
+                    [
+                        "git",
+                        "log",
+                        "feature-sha",
+                        "^main-sha",
+                        "-z",
+                        "--format=%H",
+                    ],
+                    order_reply,
+                ),
+        );
+
+        let commits = git
+            .log_paths(Path::new("."), &rv("main..feature"), 5, &[path_a, path_b])
+            .await
+            .expect("log_paths");
+        assert_eq!(
+            commits.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(),
+            ["bbb1", "aaa1"]
+        );
+    }
+
+    // R-05: `git log` has no NUL-safe fallback transport the way
+    // `add`/`commit_paths` do, so a single path that alone exceeds the argv
+    // budget must be refused up front — never spawned as an over-budget
+    // singleton chunk.
+    #[tokio::test]
+    async fn log_paths_rejects_individually_oversized_path_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let huge = "z".repeat(ARGV_PATHSPEC_BUDGET + 1);
+        let err = git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[huge])
+            .await
+            .expect_err("an individually oversized path must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // --- T-052 pure-helper tests ----------------------------------------------
+
+    #[test]
+    fn pathspec_argv_len_sums_bytes_plus_one_per_path() {
+        use std::ffi::OsStr;
+        let paths = [OsStr::new("a.rs"), OsStr::new("dir/b.rs")];
+        // "a.rs" (4) + 1, "dir/b.rs" (8) + 1.
+        assert_eq!(pathspec_argv_len(paths), 5 + 9);
+        assert_eq!(pathspec_argv_len(std::iter::empty()), 0);
+    }
+
+    // Each path lands verbatim between NUL separators, in order — including a
+    // leading dash, embedded spaces, and a glob-magic character (the whole
+    // point of the `--literal-pathspecs` + NUL transport: no argv/shell layer
+    // to mis-parse them, and git is told not to treat them as pathspec magic
+    // either).
+    #[test]
+    fn pathspec_nul_bytes_joins_paths_literally_in_order() {
+        use std::ffi::OsStr;
+        let paths = [
+            OsStr::new("-weird.txt"),
+            OsStr::new("has space.txt"),
+            OsStr::new("glob[1].txt"),
+        ];
+        let bytes = pathspec_nul_bytes(paths).expect("no embedded NUL");
+        assert_eq!(bytes, b"-weird.txt\0has space.txt\0glob[1].txt\0".to_vec());
+    }
+
+    // An embedded NUL byte would silently truncate a pathspec-file-nul entry,
+    // splitting one path into two on the very separator the transport relies
+    // on — refused before anything is built, so `commit_paths`'s "no partial
+    // result" contract holds even for this input-prep failure.
+    #[test]
+    fn pathspec_nul_bytes_rejects_embedded_nul() {
+        use std::ffi::OsStr;
+        // A real filesystem path can't contain a NUL byte, but the guard must
+        // still catch a pathological caller-constructed one.
+        let bad = unsafe { OsStr::from_encoded_bytes_unchecked(b"a\0b") };
+        let err = pathspec_nul_bytes([bad]).expect_err("embedded NUL must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn chunk_pathspecs_packs_under_budget_and_splits_over_it() {
+        let short = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(chunk_pathspecs(&short), vec![vec!["a", "b", "c"]]);
+
+        // Two paths that individually fit but together exceed the budget split
+        // into two singleton chunks, in order.
+        let big_a = "a".repeat(ARGV_PATHSPEC_BUDGET - 100);
+        let big_b = "b".repeat(ARGV_PATHSPEC_BUDGET - 100);
+        let big = vec![big_a.clone(), big_b.clone()];
+        assert_eq!(
+            chunk_pathspecs(&big),
+            vec![vec![big_a.as_str()], vec![big_b.as_str()]]
+        );
+
+        // A single path already over budget on its own still gets a (singleton)
+        // chunk — nothing shorter is possible.
+        let huge = vec!["z".repeat(ARGV_PATHSPEC_BUDGET * 2)];
+        assert_eq!(chunk_pathspecs(&huge), vec![vec![huge[0].as_str()]]);
+
+        assert!(chunk_pathspecs(&[]).is_empty());
+    }
+
+    #[test]
+    fn parse_commit_order_splits_on_nul_and_drops_trailing_empty() {
+        assert_eq!(
+            parse_commit_order("aaa1\0bbb2\0ccc3\0"),
+            vec!["aaa1", "bbb2", "ccc3"]
+        );
+        assert!(parse_commit_order("").is_empty());
+    }
+
     #[tokio::test]
     async fn stash_push_adds_include_untracked() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.stash_push(Path::new("."), true).await.expect("stash");
+        git.stash_push(Path::new("."), StashPush::new().include_untracked())
+            .await
+            .expect("stash");
         assert_eq!(
             rec.only_call().args_str(),
             ["stash", "push", "--include-untracked"]
         );
+    }
+
+    // The default spec stashes tracked changes only — no `--include-untracked`.
+    #[tokio::test]
+    async fn stash_push_default_omits_include_untracked() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.stash_push(Path::new("."), StashPush::new())
+            .await
+            .expect("stash");
+        assert_eq!(rec.only_call().args_str(), ["stash", "push"]);
     }
 
     // `diff_text` for the working tree must build `diff HEAD` plus the stable
@@ -2999,19 +4423,42 @@ mod tests {
 
     // On an unborn repo the working-tree diff targets the empty tree instead of
     // the unresolvable `HEAD`, so it returns additions rather than erroring. The
-    // diff rule only matches the empty-tree argv, so a `HEAD` target would miss it.
+    // empty-tree id is resolved from git (`hash-object`, so it is object-format
+    // correct — not the hard-coded SHA-1 id), and the diff rule only matches that
+    // resolved argv, so a `HEAD` target would miss it.
     #[tokio::test]
     async fn diff_text_working_tree_uses_empty_tree_when_unborn() {
+        // A stand-in id `empty_tree_oid` "computes"; the diff must target exactly it.
+        let oid = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
         let git = Git::with_runner(
             ScriptedRunner::new()
                 .on(["git", "rev-parse"], Reply::fail(1, "")) // unborn: HEAD doesn't resolve
-                .on(["git", "diff", EMPTY_TREE], Reply::ok("EMPTY")),
+                .on(["git", "hash-object"], Reply::ok(format!("{oid}\n")))
+                .on(["git", "diff", oid], Reply::ok("EMPTY")),
         );
         let out = git
             .diff_text(Path::new("."), DiffSpec::WorkingTree)
             .await
             .expect("diff_text");
         assert_eq!(out, "EMPTY");
+    }
+
+    // `empty_tree_oid` asks git to hash an empty tree (`hash-object -t tree
+    // --stdin`), so the id tracks the repo's object format instead of being a
+    // hard-coded SHA-1 constant. The `--stdin` (not `-w`) form only computes it.
+    #[tokio::test]
+    async fn empty_tree_oid_hashes_an_empty_tree() {
+        let rec = RecordingRunner::replying(Reply::ok(format!("{EMPTY_TREE_SHA1}\n")));
+        let git = Git::with_runner(&rec);
+        let oid = git
+            .empty_tree_oid(Path::new("."))
+            .await
+            .expect("empty_tree_oid");
+        assert_eq!(oid, EMPTY_TREE_SHA1);
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["hash-object", "-t", "tree", "--stdin"]
+        );
     }
 
     // Hermetic: real diff() arg-building (`Rev`) + the ported parser against
@@ -3025,17 +4472,21 @@ mod tests {
             .await
             .expect("diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
     }
 
     #[tokio::test]
     async fn branch_exists_maps_exit_codes() {
         let yes = Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::ok("")));
-        assert!(yes.branch_exists(Path::new("."), "main").await.unwrap());
+        assert!(
+            yes.branch_exists(Path::new("."), &rn("main"))
+                .await
+                .unwrap()
+        );
         let no =
             Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::fail(1, "")));
-        assert!(!no.branch_exists(Path::new("."), "nope").await.unwrap());
+        assert!(!no.branch_exists(Path::new("."), &rn("nope")).await.unwrap());
     }
 
     // The full ref prefix is stripped but a slashed default branch survives; an
@@ -3086,7 +4537,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("abc123\trefs/heads/main\n"));
         let git = Git::with_runner(&rec);
         assert!(
-            git.remote_branch_exists(Path::new("/repo"), "main")
+            git.remote_branch_exists(Path::new("/repo"), &rn("main"))
                 .await
                 .unwrap()
         );
@@ -3101,9 +4552,44 @@ mod tests {
         let empty = Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::ok("")));
         assert!(
             !empty
-                .remote_branch_exists(Path::new("."), "x")
+                .remote_branch_exists(Path::new("."), &rn("x"))
                 .await
                 .unwrap()
+        );
+    }
+
+    // The glob/control/`:`/space names `remote_branch_exists` must exclude are now
+    // refused at `RefName` construction — an invalid value can't reach the method
+    // at all, so the exclusion is enforced by the type rather than an ad-hoc guard.
+    #[test]
+    fn remote_branch_invalid_names_rejected_at_refname() {
+        for name in [
+            "",
+            "feature/*",
+            "feature/?",
+            "feature/[a]",
+            "a:b",
+            "two words",
+            "bad\nname",
+        ] {
+            let err = RefName::new(name).expect_err("invalid remote branch name must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&err), "{name:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_branch_exists_accepts_valid_names() {
+        let rec = RecordingRunner::replying(Reply::ok("abc123\trefs/heads/feature/T-010_fix\n"));
+        let git = Git::with_runner(&rec);
+
+        assert!(
+            git.remote_branch_exists(Path::new("/repo"), &rn("feature/T-010_fix"))
+                .await
+                .expect("valid remote branch name")
+        );
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["ls-remote", "origin", "refs/heads/feature/T-010_fix"]
         );
     }
 
@@ -3121,7 +4607,8 @@ mod tests {
     async fn remote_branch_exists_bounded_wait_resolves_a_hung_remote() {
         let git =
             Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::pending()));
-        let probe = git.remote_branch_exists(Path::new("/r"), "main");
+        let name = rn("main");
+        let probe = git.remote_branch_exists(Path::new("/r"), &name);
         let exists = tokio::time::timeout(std::time::Duration::from_secs(3600), probe)
             .await
             .expect("the per-command 10 s timeout must resolve a hung ls-remote")
@@ -3135,7 +4622,10 @@ mod tests {
             ["git", "diff", "--shortstat"],
             Reply::ok(" 2 files changed, 5 insertions(+), 1 deletion(-)\n"),
         ));
-        let stat = git.diff_stat(Path::new("."), "main..HEAD").await.unwrap();
+        let stat = git
+            .diff_stat(Path::new("."), &rv("main..HEAD"))
+            .await
+            .unwrap();
         assert_eq!(
             (stat.files_changed, stat.insertions, stat.deletions),
             (2, 5, 1)
@@ -3149,7 +4639,7 @@ mod tests {
     async fn diff_range_verbs_terminate_revisions_with_dashes() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.diff_range_is_empty(Path::new("/r"), "main..HEAD")
+        git.diff_range_is_empty(Path::new("/r"), &rv("main..HEAD"))
             .await
             .expect("diff_range_is_empty");
         assert_eq!(
@@ -3159,7 +4649,7 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(" 0 files changed\n"));
         let git = Git::with_runner(&rec);
-        git.diff_stat(Path::new("/r"), "main..HEAD")
+        git.diff_stat(Path::new("/r"), &rv("main..HEAD"))
             .await
             .expect("diff_stat");
         assert_eq!(
@@ -3191,7 +4681,9 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.merge_commit(
             Path::new("/r"),
-            MergeCommit::branch("feature").no_ff().message("merge it"),
+            MergeCommit::branch(rv("feature"))
+                .no_ff()
+                .message("merge it"),
         )
         .await
         .unwrap();
@@ -3206,7 +4698,7 @@ mod tests {
     async fn merge_commit_without_message_uses_no_edit() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.merge_commit(Path::new("/r"), MergeCommit::branch("feature"))
+        git.merge_commit(Path::new("/r"), MergeCommit::branch(rv("feature")))
             .await
             .unwrap();
         assert_eq!(
@@ -3220,7 +4712,7 @@ mod tests {
     async fn rebase_suppresses_editor() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.rebase(Path::new("/r"), "main").await.unwrap();
+        git.rebase(Path::new("/r"), &rv("main")).await.unwrap();
         let call = rec.only_call();
         assert_eq!(call.args_str(), ["rebase", "main"]);
         assert!(call.envs.iter().any(|(k, v)| {
@@ -3235,7 +4727,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.push(
             Path::new("/r"),
-            GitPush::refspec("feat", "feature").set_upstream(),
+            GitPush::refspec(&rn("feat"), &rn("feature")).set_upstream(),
         )
         .await
         .unwrap();
@@ -3251,7 +4743,7 @@ mod tests {
     async fn push_bare_branch_builds_origin_branch_prompt_off() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3268,17 +4760,24 @@ mod tests {
     async fn push_rejects_force_and_multiref_metacharacters() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        for bad in ["+main", "+main:main", "a:b:c"] {
-            assert!(
-                git.push(Path::new("/r"), GitPush::branch(bad))
-                    .await
-                    .is_err(),
-                "{bad:?} must be rejected"
-            );
+        // A `:` (an extra ref) is not a legal `RefName` character, so a multi-ref
+        // refspec is refused at construction — it can never reach `GitPush`.
+        for bad in ["+main:main", "a:b:c", "main:prod"] {
+            assert!(RefName::new(bad).is_err(), "{bad:?} carries a `:`");
         }
-        // A legitimate `local:remote` refspec still works (one `:`, no `+`).
+        // A leading `+` (force) IS a legal ref character, so it passes `RefName` —
+        // but the push refspec guard still refuses it before spawning. A force-push
+        // must be explicit via `run`.
         assert!(
-            git.push(Path::new("/r"), GitPush::refspec("main", "prod"))
+            git.push(Path::new("/r"), GitPush::branch(rn("+main")))
+                .await
+                .is_err(),
+            "a force refspec must be refused before spawning"
+        );
+        // A legitimate `local:remote` refspec still works (the single `:` is the
+        // API-inserted separator between two validated `RefName`s).
+        assert!(
+            git.push(Path::new("/r"), GitPush::refspec(&rn("main"), &rn("prod")))
                 .await
                 .is_ok()
         );
@@ -3296,7 +4795,7 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.push(
             Path::new("/r"),
-            GitPush::branch("feature").remote("upstream"),
+            GitPush::branch(rn("feature")).remote("upstream"),
         )
         .await
         .unwrap();
@@ -3311,7 +4810,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec)
             .with_credentials(Arc::new(StaticCredential::token("ghp_secret123")));
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3353,7 +4852,7 @@ mod tests {
     async fn default_client_injects_no_credential_helper() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.push(Path::new("/r"), GitPush::branch("feature"))
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
             .await
             .unwrap();
         let call = rec.only_call();
@@ -3451,6 +4950,112 @@ mod tests {
         assert!(call.args_str().contains(&"fetch".to_string()));
     }
 
+    // ONE client, several hosts: a host-keyed provider hands each clone only its OWN
+    // host's secret — routed by the URL's host, which now reaches the
+    // `CredentialRequest` — and the inline helper is gated to that host, so a
+    // neighbouring instance's token can never leak into another host's clone. (T-045)
+    #[tokio::test]
+    async fn one_client_host_keyed_provider_isolates_tokens_across_hosts() {
+        let provider = Arc::new(provider_fn(|r: &CredentialRequest<'_>| {
+            Ok(match r.host {
+                Some("github.com") => Some(Credential::token("gh-secret")),
+                Some("gitlab.example") => Some(Credential::token("gl-secret")),
+                _ => None,
+            })
+        }));
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_credentials(provider);
+
+        // The same client clones two different hosts, back to back.
+        git.clone_repo(
+            "https://github.com/o/r.git",
+            Path::new("/dest-gh"),
+            CloneSpec::default(),
+        )
+        .await
+        .unwrap();
+        git.clone_repo(
+            "https://gitlab.example/o/r.git",
+            Path::new("/dest-gl"),
+            CloneSpec::default(),
+        )
+        .await
+        .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "two clones recorded");
+        // Clone #1 (github.com) → the github.com secret, gated to github.com.
+        assert!(calls[0].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gh-secret"));
+        assert!(calls[0].env_is("VCS_TOOLKIT_GIT_HOST", "github.com"));
+        // Clone #2 (gitlab.example) → the gitlab secret, gated to gitlab.example.
+        assert!(calls[1].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gl-secret"));
+        assert!(calls[1].env_is("VCS_TOOLKIT_GIT_HOST", "gitlab.example"));
+        // No cross-contamination: neither host's secret bleeds into the other's
+        // clone, and no secret ever reaches argv.
+        assert!(!calls[0].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gl-secret"));
+        assert!(!calls[1].env_is("VCS_TOOLKIT_GIT_PASSWORD", "gh-secret"));
+        for c in calls.iter() {
+            assert!(
+                !c.args_str()
+                    .iter()
+                    .any(|a| a.contains("gh-secret") || a.contains("gl-secret")),
+                "secrets stay out of argv"
+            );
+        }
+    }
+
+    // Fallback policy on the git helper path, read (`fetch`) vs write (`push`):
+    // `Ok(None)` → ambient (no inline credential helper, no secret env); `Err` →
+    // fail-closed abort (git never spawns). (T-045)
+    #[tokio::test]
+    async fn git_credential_fallback_policy_for_read_and_write() {
+        // Ok(None): ambient — no helper `-c` flags lead the argv, no secret env.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec)
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))));
+        git.fetch(Path::new("/r")).await.unwrap();
+        git.push(Path::new("/r"), GitPush::branch(rn("feature")))
+            .await
+            .unwrap();
+        for c in rec.calls().iter() {
+            assert!(
+                !c.has_env("VCS_TOOLKIT_GIT_PASSWORD"),
+                "ambient: no secret env on {:?}",
+                c.args_str()
+            );
+            assert_ne!(
+                c.args_str().first().map(String::as_str),
+                Some("-c"),
+                "ambient: no leading credential -c flags"
+            );
+        }
+
+        // Err: fail-closed — the op aborts and git is never spawned, for read & write.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).with_credentials(Arc::new(provider_fn(
+            |_r: &CredentialRequest<'_>| {
+                Err(Error::spawn(
+                    BINARY,
+                    std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault down"),
+                ))
+            },
+        )));
+        assert!(
+            git.fetch(Path::new("/r")).await.is_err(),
+            "read aborts on provider error"
+        );
+        assert!(
+            git.push(Path::new("/r"), GitPush::branch(rn("feature")))
+                .await
+                .is_err(),
+            "write aborts on provider error"
+        );
+        assert!(
+            rec.calls().is_empty(),
+            "git never spawns when the provider errored"
+        );
+    }
+
     // No-provider is byte-identical for the read/clone arg-construction paths too,
     // not only `push` (fetch uses `command_in`+extend; clone uses `command`+chain).
     #[tokio::test]
@@ -3502,24 +5107,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upstream_maps_unset_to_none() {
+    async fn upstream_distinguishes_no_upstream_from_errors() {
         let set = Git::with_runner(
-            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("origin/main\n")),
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::ok("origin/main\n")),
         );
         assert_eq!(
             set.upstream(Path::new(".")).await.unwrap().as_deref(),
             Some("origin/main")
         );
-        // No upstream configured exits 128 (indistinguishable from a real failure by
-        // code, since git uses 128 for both) → None.
-        let unset =
-            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(128, "")));
+        // On a valid attached branch, exit 128 from `@{u}` means no upstream.
+        let unset = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::fail(128, "")),
+        );
         assert!(unset.upstream(Path::new(".")).await.unwrap().is_none());
-        // A timeout (no exit code) is a real failure — it must surface, not read as
-        // "no upstream".
-        let timed_out =
-            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::timeout()));
+
+        // Detached HEAD is rejected by the attached-branch probe.
+        let detached =
+            Git::with_runner(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::fail(1, "")));
+        assert!(detached.upstream(Path::new(".")).await.is_err());
+
+        // A directory outside a repository is a real error too.
+        let not_repo = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "symbolic-ref"],
+            Reply::fail(128, "fatal: not a git repository"),
+        ));
+        assert!(not_repo.upstream(Path::new(".")).await.is_err());
+
+        // Other numeric failures and no-code outcomes must not read as "unset".
+        let broken = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::fail(1, "corrupt config")),
+        );
+        assert!(broken.upstream(Path::new(".")).await.is_err());
+
+        let timed_out = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::timeout()),
+        );
         assert!(timed_out.upstream(Path::new(".")).await.is_err());
+
+        let signalled = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::signalled(Some(9))),
+        );
+        assert!(signalled.upstream(Path::new(".")).await.is_err());
     }
 
     // remote_head_branch maps the `symbolic-ref --quiet` exit code: 0 → the branch
@@ -3564,7 +5202,7 @@ mod tests {
     async fn set_upstream_builds_branch_flag() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.set_upstream(Path::new("/r"), "feat", "origin/feature")
+        git.set_upstream(Path::new("/r"), &rn("feat"), &rn("origin/feature"))
             .await
             .unwrap();
         assert_eq!(
@@ -3587,10 +5225,21 @@ mod tests {
     async fn delete_branch_force_uses_capital_d() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.delete_branch(Path::new("/r"), "old", true)
+        git.delete_branch(Path::new("/r"), BranchDelete::new(rn("old")).force())
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["branch", "-D", "old"]);
+    }
+
+    // The default (un-forced) spec uses lowercase `-d`.
+    #[tokio::test]
+    async fn delete_branch_default_uses_lowercase_d() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.delete_branch(Path::new("/r"), BranchDelete::new(rn("old")))
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["branch", "-d", "old"]);
     }
 
     // `branch --merged` marks the current branch with `*` and a branch checked out
@@ -3603,16 +5252,19 @@ mod tests {
         ));
         for name in ["main", "feature", "wt-branch"] {
             assert!(
-                git.is_merged(Path::new("."), MergeCheck::branch(name).into_base("main"))
-                    .await
-                    .unwrap(),
+                git.is_merged(
+                    Path::new("."),
+                    MergeCheck::branch(rn(name)).into_base(rv("main"))
+                )
+                .await
+                .unwrap(),
                 "{name} should be reported merged"
             );
         }
         assert!(
             !git.is_merged(
                 Path::new("."),
-                MergeCheck::branch("absent").into_base("main")
+                MergeCheck::branch(rn("absent")).into_base(rv("main"))
             )
             .await
             .unwrap()
@@ -3625,15 +5277,15 @@ mod tests {
     #[tokio::test]
     async fn merge_check_names_branch_and_base_without_transposition() {
         use processkit::testing::RecordingRunner;
-        let spec = MergeCheck::branch("feature").into_base("main");
-        assert_eq!(spec.branch, "feature");
-        assert_eq!(spec.base, "main");
+        let spec = MergeCheck::branch(rn("feature")).into_base(rv("main"));
+        assert_eq!(spec.branch.as_str(), "feature");
+        assert_eq!(spec.base.as_str(), "main");
 
         let rec = RecordingRunner::replying(Reply::ok("  feature\n* main\n"));
         let merged = Git::with_runner(&rec)
             .is_merged(
                 Path::new("/repo"),
-                MergeCheck::branch("feature").into_base("main"),
+                MergeCheck::branch(rn("feature")).into_base(rv("main")),
             )
             .await
             .unwrap();
@@ -3778,102 +5430,100 @@ mod tests {
         );
     }
 
-    // The injection guard: a flag-shaped value in any exposed positional slot
-    // must be refused BEFORE anything spawns.
+    // The injection barrier now has two tiers:
+    //  1. ref-name / revision inputs are validated NEWTYPES, so a flag-like or
+    //     malformed value is rejected at *construction* — it can never reach an
+    //     argv slot (migration tests below); and
+    //  2. the remaining bare-positional `&str` inputs that are not refs/revisions
+    //     (remote names, URLs, config keys) keep the internal `reject_flag_like`
+    //     guard, refused before anything spawns.
+
+    // Tier 1 — the newtypes reject the flag-like / malformed values the typed ops
+    // would otherwise have received, as a classifiable invalid-input error.
+    #[test]
+    fn validated_ref_and_rev_newtypes_reject_bad_values() {
+        // RefName: the load-bearing core of `check-ref-format`.
+        for ok in ["main", "feature/x", "origin/main", "v1.2.3", "a-b_c"] {
+            assert!(RefName::new(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "", "-evil", "--force", "-D", "-bad", ".hidden", "a..b", "a b", "a~b", "a^b", "a:b",
+            "a?b", "a*b", "a[b", "a\\b", "end/", "x.lock",
+        ] {
+            let err = RefName::new(bad).expect_err(&format!("{bad:?} must be rejected"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{bad:?} must classify as invalid input"
+            );
+        }
+        // RevSpec: non-empty and not flag-shaped (git's revision grammar is
+        // otherwise too rich to validate here), so `-` special values are refused.
+        for ok in ["HEAD", "HEAD~2", "main..feature", "@{-1}", "abc123"] {
+            assert!(RevSpec::new(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "-evil", "-i", "-n", "-s"] {
+            let err = RevSpec::new(bad).expect_err(&format!("{bad:?} must be rejected"));
+            assert!(vcs_cli_support::is_invalid_input(&err), "{bad:?}");
+        }
+    }
+
+    // Tier 2 — the ops that still take a bare `&str` (remote names, URLs, config
+    // keys) refuse a flag-like value BEFORE anything spawns. `DiffSpec::Rev` is a
+    // shared cross-backend `String`, so it keeps the same internal guard.
     #[tokio::test]
-    async fn flag_like_positionals_are_rejected_before_spawning() {
+    async fn str_positionals_are_rejected_before_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         let dir = Path::new("/r");
 
-        assert!(git.checkout(dir, "-evil").await.is_err());
-        assert!(git.create_branch(dir, "--force").await.is_err());
-        assert!(git.delete_branch(dir, "-D", false).await.is_err());
-        assert!(git.rename_branch(dir, "ok", "-bad").await.is_err());
-        assert!(
-            git.merge_commit(dir, MergeCommit::branch("-evil"))
-                .await
-                .is_err()
-        );
-        assert!(
-            git.merge_no_commit(dir, MergeNoCommit::branch("-evil").no_ff())
-                .await
-                .is_err()
-        );
-        assert!(git.merge_squash(dir, "-evil").await.is_err());
-        assert!(git.rebase(dir, "-i").await.is_err());
-        assert!(git.cherry_pick(dir, "-n").await.is_err());
-        assert!(git.revert(dir, "-evil").await.is_err());
-        assert!(git.tag_create(dir, "-d", None).await.is_err());
-        assert!(
-            git.tag_create(dir, "ok", Some("-evil".into()))
-                .await
-                .is_err()
-        );
-        assert!(git.tag_delete(dir, "-evil").await.is_err());
-        assert!(git.remote_add(dir, "-evil", "url").await.is_err());
-        assert!(git.remote_set_url(dir, "-evil", "url").await.is_err());
-        assert!(git.set_upstream(dir, "-evil", "origin/x").await.is_err());
-        assert!(git.log(dir, "-evil", 5).await.is_err());
-        assert!(git.rev_list_count(dir, "-evil").await.is_err());
-        assert!(git.diff_stat(dir, "-evil").await.is_err());
-        assert!(git.diff_range_is_empty(dir, "-evil").await.is_err());
-        assert!(
-            git.diff_text(dir, DiffSpec::Rev("-evil".into()))
-                .await
-                .is_err()
-        );
-        assert!(git.rev_parse(dir, "-evil").await.is_err());
-        assert!(git.rev_parse_short(dir, "-evil").await.is_err());
-        assert!(git.resolve_commit(dir, "-evil").await.is_err());
-        assert!(git.reset_hard(dir, "-evil").await.is_err());
-        assert!(git.checkout_detach(dir, "-evil").await.is_err());
         assert!(git.config_set(dir, "-evil", "v").await.is_err());
-        assert!(
-            git.push(dir, GitPush::branch("-evil")).await.is_err(),
-            "refspec guard"
-        );
-        // Embedded-token-prefix and standalone-rev positionals:
-        assert!(git.show_file(dir, "-evil", "f.txt").await.is_err());
-        assert!(git.blame(dir, "f.txt", Some("-s".into())).await.is_err());
+        assert!(git.config_get(dir, "-evil").await.is_err());
         assert!(git.remote_url(dir, "-evil").await.is_err());
         assert!(git.remote_branches(dir, "-evil").await.is_err());
         assert!(git.fetch_from(dir, "--upload-pack=x").await.is_err());
-        // URL positionals (a leading-`-` url is an RCE-class flag injection).
+        assert!(git.remote_add(dir, "-evil", "url").await.is_err());
+        assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
+        assert!(git.remote_set_url(dir, "-evil", "url").await.is_err());
+        assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
+        // A leading-`-` url is an RCE-class flag injection.
         assert!(
             git.clone_repo("--upload-pack=x", Path::new("/d"), CloneSpec::new())
                 .await
                 .is_err()
         );
-        assert!(git.remote_add(dir, "ok", "--upload-pack=x").await.is_err());
-        assert!(git.remote_set_url(dir, "ok", "-evil").await.is_err());
+        // `DiffSpec::Rev` carries a raw (internally-guarded) revision string.
         assert!(
-            git.is_merged(dir, MergeCheck::branch("-evil").into_base("main"))
+            git.diff_text(dir, DiffSpec::Rev("-evil".into()))
                 .await
                 .is_err()
         );
-        assert!(git.config_get(dir, "-evil").await.is_err());
-        assert!(
-            git.worktree_add(
-                dir,
-                WorktreeAdd::create_branch(Path::new("/wt"), "-evil", "HEAD")
-            )
-            .await
-            .is_err()
-        );
-        // Empty values are refused too.
-        assert!(git.checkout(dir, "").await.is_err());
 
         assert!(
             rec.calls().is_empty(),
             "nothing may spawn: {:?}",
             rec.calls()
         );
+    }
 
-        // …and legitimate values still pass through unchanged (with the trailing
-        // `--` that keeps a path-like ref out of pathspec mode — C2).
-        git.checkout(dir, "feature/x").await.expect("checkout");
+    // A legitimate ref/revision still flows through the typed path unchanged (with
+    // the trailing `--` that keeps a path-like ref out of pathspec mode — C2), and
+    // git's `-` "previous branch" is carried safely as `CheckoutTarget::Previous`
+    // (a fixed literal, not caller-controlled argv).
+    #[tokio::test]
+    async fn typed_checkout_targets_pass_through() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.checkout(Path::new("/r"), &CheckoutTarget::Ref(rv("feature/x")))
+            .await
+            .expect("checkout");
         assert_eq!(rec.only_call().args_str(), ["checkout", "feature/x", "--"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.checkout(Path::new("/r"), &CheckoutTarget::Previous)
+            .await
+            .expect("checkout -");
+        assert_eq!(rec.only_call().args_str(), ["checkout", "-", "--"]);
     }
 
     // The hardened profile lands its env pairs/removals on EVERY command, and
@@ -4169,14 +5819,16 @@ mod tests {
     async fn tag_methods_build_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.tag_create(Path::new("/r"), "v1", None).await.unwrap();
-        git.tag_create(Path::new("/r"), "v1", Some("abc".into()))
+        git.tag_create(Path::new("/r"), &rn("v1"), None)
             .await
             .unwrap();
-        git.tag_create_annotated(Path::new("/r"), AnnotatedTag::new("v2", "notes"))
+        git.tag_create(Path::new("/r"), &rn("v1"), Some(rv("abc")))
             .await
             .unwrap();
-        git.tag_delete(Path::new("/r"), "v1").await.unwrap();
+        git.tag_create_annotated(Path::new("/r"), AnnotatedTag::new(rn("v2"), "notes"))
+            .await
+            .unwrap();
+        git.tag_delete(Path::new("/r"), &rn("v1")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["tag", "v1"]);
         assert_eq!(calls[1].args_str(), ["tag", "v1", "abc"]);
@@ -4202,9 +5854,12 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.branches(Path::new(".")).await.unwrap();
-        git.is_merged(Path::new("."), MergeCheck::branch("b").into_base("main"))
-            .await
-            .unwrap();
+        git.is_merged(
+            Path::new("."),
+            MergeCheck::branch(rn("b")).into_base(rv("main")),
+        )
+        .await
+        .unwrap();
         git.tag_list(Path::new(".")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["branch", "--no-column", "--no-color"]);
@@ -4222,14 +5877,14 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.commit(Path::new("."), "msg").await.unwrap();
-        git.merge_commit(Path::new("."), MergeCommit::branch("b"))
+        git.merge_commit(Path::new("."), MergeCommit::branch(rv("b")))
             .await
             .unwrap();
-        git.merge_squash(Path::new("."), "b").await.unwrap();
-        git.merge_no_commit(Path::new("."), MergeNoCommit::branch("b"))
+        git.merge_squash(Path::new("."), &rv("b")).await.unwrap();
+        git.merge_no_commit(Path::new("."), MergeNoCommit::branch(rv("b")))
             .await
             .unwrap();
-        git.cherry_pick(Path::new("."), "abc").await.unwrap();
+        git.cherry_pick(Path::new("."), &rv("abc")).await.unwrap();
         git.stash_pop(Path::new(".")).await.unwrap();
         git.fetch(Path::new(".")).await.unwrap();
         for call in rec.calls() {
@@ -4252,7 +5907,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("content\n"));
         let git = Git::with_runner(&rec);
         let out = git
-            .show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
+            .show_file(Path::new("/r"), &rv("HEAD"), "sub\\dir\\f.txt")
             .await
             .expect("show_file");
         // The blob's trailing newline is preserved verbatim (H7) — not trimmed.
@@ -4268,7 +5923,7 @@ mod tests {
             let rec = RecordingRunner::replying(Reply::ok(raw));
             let git = Git::with_runner(&rec);
             let out = git
-                .show_file(Path::new("/r"), "HEAD", "f.txt")
+                .show_file(Path::new("/r"), &rv("HEAD"), "f.txt")
                 .await
                 .expect("show_file");
             assert_eq!(out, raw, "show_file returns bytes verbatim");
@@ -4293,10 +5948,120 @@ mod tests {
     async fn show_file_keeps_backslashes_on_unix() {
         let rec = RecordingRunner::replying(Reply::ok("content\n"));
         let git = Git::with_runner(&rec);
-        git.show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
+        git.show_file(Path::new("/r"), &rv("HEAD"), "sub\\dir\\f.txt")
             .await
             .expect("show_file");
         assert_eq!(rec.only_call().args_str(), ["show", "HEAD:sub\\dir\\f.txt"]);
+    }
+
+    // T-049: a content read (`diff_text`) whose output exceeds the client's default
+    // OutputBudget is refused with a structured `OutputTooLarge` carrying the actual
+    // (`total_bytes`) and allowed (`max_bytes`) sizes — never a silently truncated
+    // diff handed back as if complete. The huge output is drained but NOT retained
+    // (the error carries only counts, not the multi-KiB blob): the bounded-memory
+    // contract.
+    #[tokio::test]
+    async fn diff_text_over_budget_errors_output_too_large() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match git
+            .diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+            .await
+        {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "git");
+                assert_eq!(max_bytes, Some(64 * 1024), "the allowed ceiling");
+                assert!(
+                    total_bytes > 64 * 1024,
+                    "the actual size ({total_bytes}) exceeds the allowed cap"
+                );
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // Below the budget the full diff comes back verbatim — the ceiling only fires on
+    // an over-cap read, so ordinary diffs are unaffected.
+    #[tokio::test]
+    async fn diff_text_under_budget_returns_full_output() {
+        let diff = "diff --git a/f b/f\n@@ -1,2 +1,2 @@\n-x\n+y\n \n";
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(diff)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert_eq!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await
+                .expect("under-budget diff_text"),
+            diff
+        );
+    }
+
+    // The per-call override reads a legitimately large diff past a tight client
+    // default: `diff_text_within(..., unlimited())` returns the full output the
+    // default budget would have refused.
+    #[tokio::test]
+    async fn diff_text_within_override_reads_past_the_default() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        // The default budget would refuse it…
+        assert!(matches!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        // …but an explicit unlimited override reads it in full.
+        let got = git
+            .diff_text_within(
+                Path::new("/r"),
+                DiffSpec::Rev("HEAD".into()),
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large diff");
+        assert_eq!(got, big);
+    }
+
+    // A blob read (`show_file`) honours the same budget and its per-call override.
+    #[tokio::test]
+    async fn show_file_over_budget_errors_and_override_reads() {
+        let big = "x".repeat(200_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "show"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            git.show_file(Path::new("/r"), &rv("HEAD"), "big.bin").await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let got = git
+            .show_file_within(
+                Path::new("/r"),
+                &rv("HEAD"),
+                "big.bin",
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large blob");
+        assert_eq!(got, big);
+    }
+
+    // A client with no budget set keeps the pre-budget behaviour: even a huge diff
+    // is returned in full (the default is unlimited, never `OutputTooLarge`).
+    #[tokio::test]
+    async fn default_client_has_no_budget() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)));
+        assert_eq!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await
+                .expect("unbudgeted client returns the full diff"),
+            big
+        );
     }
 
     // config --get: exit 0 → Some(value), exit 1 → None (unset), other → error.
@@ -4342,7 +6107,7 @@ mod tests {
     async fn blame_builds_rev_before_pathspec_separator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.blame(Path::new("/r"), "src/lib.rs", Some("HEAD~1".into()))
+        git.blame(Path::new("/r"), "src/lib.rs", Some(rv("HEAD~1")))
             .await
             .unwrap();
         git.blame(Path::new("/r"), "src/lib.rs", None)
@@ -4364,8 +6129,8 @@ mod tests {
     async fn sequencer_methods_suppress_editors() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.revert(Path::new("/r"), "abc").await.unwrap();
-        git.cherry_pick(Path::new("/r"), "abc").await.unwrap();
+        git.revert(Path::new("/r"), &rv("abc")).await.unwrap();
+        git.cherry_pick(Path::new("/r"), &rv("abc")).await.unwrap();
         git.rebase_skip(Path::new("/r")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["revert", "--no-edit", "abc"]);
@@ -4382,6 +6147,36 @@ mod tests {
         }
     }
 
+    // T-044: each sequencer abort/continue/reset issues its OWN git subcommand, and
+    // the two `--continue` variants (which can re-open the commit-message editor)
+    // suppress it so a headless caller never hangs.
+    #[tokio::test]
+    async fn sequencer_abort_continue_reset_commands() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let d = Path::new("/r");
+        git.cherry_pick_abort(d).await.unwrap();
+        git.cherry_pick_continue(d).await.unwrap();
+        git.revert_abort(d).await.unwrap();
+        git.revert_continue(d).await.unwrap();
+        git.bisect_reset(d).await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["cherry-pick", "--abort"]);
+        assert_eq!(calls[1].args_str(), ["cherry-pick", "--continue"]);
+        assert_eq!(calls[2].args_str(), ["revert", "--abort"]);
+        assert_eq!(calls[3].args_str(), ["revert", "--continue"]);
+        assert_eq!(calls[4].args_str(), ["bisect", "reset"]);
+        // Only the `--continue` commits can prompt an editor; those must suppress it.
+        let has_editor = |idx: usize| {
+            calls[idx]
+                .envs
+                .iter()
+                .any(|(k, _)| k.to_str() == Some("GIT_EDITOR"))
+        };
+        assert!(has_editor(1), "cherry-pick --continue suppresses editor");
+        assert!(has_editor(3), "revert --continue suppresses editor");
+    }
+
     // harden() scrubs GIT_EDITOR/GIT_SEQUENCE_EDITOR from the inherited
     // environment, but a sequencer command sets its own `GIT_EDITOR=true` per call
     // (no_editor). `command_in` applies the client-level removal eagerly, so the env
@@ -4394,7 +6189,7 @@ mod tests {
     async fn hardened_sequencer_keeps_its_no_op_editor() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec).harden();
-        git.revert(Path::new("/r"), "abc").await.unwrap();
+        git.revert(Path::new("/r"), &rv("abc")).await.unwrap();
         let call = rec.only_call();
         // Resolve each editor var the way the OS does: last op for the key wins.
         let effective = |var: &str| {
@@ -4456,7 +6251,7 @@ mod tests {
                 .on(["git", "stash", "pop"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         let calls = rec.calls();
@@ -4490,7 +6285,7 @@ mod tests {
                 .on(["git", "checkout"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         assert!(
@@ -4512,7 +6307,7 @@ mod tests {
                 .on(["git", "checkout"], Reply::ok("")),
         );
         let git = Git::with_runner(&rec);
-        git.switch_with_stash(Path::new("/r"), "feature")
+        git.switch_with_stash(Path::new("/r"), &ct("feature"))
             .await
             .expect("switch");
         let calls = rec.calls();
@@ -4540,7 +6335,7 @@ mod tests {
         );
         let git = Git::with_runner(&rec);
         let err = git
-            .switch_with_stash(Path::new("/r"), "nope")
+            .switch_with_stash(Path::new("/r"), &ct("nope"))
             .await
             .expect_err("checkout error must surface");
         assert!(matches!(err, Error::Exit { .. }));
@@ -4572,6 +6367,43 @@ mod tests {
         let git = Git::with_runner(&failing);
         assert!(git.fetch_from(Path::new("/r"), "upstream").await.is_err());
         assert_eq!(failing.calls().len(), FETCH_ATTEMPTS as usize);
+    }
+
+    // As with `remote_branch_exists`, the names `fetch_branch` must exclude are now
+    // refused at `RefName` construction, before the refspec is ever built.
+    #[test]
+    fn fetch_branch_invalid_names_rejected_at_refname() {
+        for branch in [
+            "",
+            "feature/*",
+            "feature/?",
+            "feature/[a]",
+            "a:b",
+            "two words",
+            "bad\tname",
+        ] {
+            let err = RefName::new(branch).expect_err("invalid fetch branch name must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&err), "{branch:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_branch_accepts_valid_names() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        git.fetch_branch(Path::new("/repo"), &rn("feature/T-010_fix"))
+            .await
+            .expect("valid fetch branch name");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "fetch",
+                "--quiet",
+                "origin",
+                "refs/heads/feature/T-010_fix:refs/remotes/origin/feature/T-010_fix"
+            ]
+        );
     }
 
     // The consumer-facing mock seam: a function depending on `&dyn GitApi` is

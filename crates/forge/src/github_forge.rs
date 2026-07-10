@@ -5,18 +5,33 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, PrCreate as GhPrCreate, PrEdit as GhPrEdit, PrMerge,
-    PullRequest, Release, RepoView,
+    CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
+    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit,
+    MergeStrategy, PrCreate, PrEdit, PrMerge,
 };
 use crate::error::Result;
 
 pub(crate) async fn auth_status<R: ProcessRunner>(gh: &GitHub<R>) -> Result<bool> {
     Ok(gh.auth_status().await?)
+}
+
+/// Probe the `gh` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `gh --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `gh`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    gh: &GitHub<R>,
+) -> Result<(Option<vcs_github::GitHubVersion>, bool)> {
+    match gh.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub(crate) async fn repo_view<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> Result<ForgeRepo> {
@@ -83,14 +98,23 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let merge = match strategy {
-        MergeStrategy::Merge => PrMerge::merge(),
-        MergeStrategy::Squash => PrMerge::squash(),
-        MergeStrategy::Rebase => PrMerge::rebase(),
+    // Map the unified spec onto gh's rich `PrMerge` — the strategy plus the two
+    // GitHub-native options (`--auto`, `--delete-branch`). The exhaustive `match`
+    // (no catch-all) makes a new `MergeStrategy` variant a compile error here.
+    let mut gh_merge = match merge.strategy {
+        MergeStrategy::Merge => GhPrMerge::merge(),
+        MergeStrategy::Squash => GhPrMerge::squash(),
+        MergeStrategy::Rebase => GhPrMerge::rebase(),
     };
-    gh.pr_merge(dir, number, merge).await?;
+    if merge.auto {
+        gh_merge = gh_merge.auto();
+    }
+    if merge.delete_branch {
+        gh_merge = gh_merge.delete_branch();
+    }
+    gh.pr_merge(dir, number, gh_merge).await?;
     Ok(())
 }
 
@@ -109,7 +133,20 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     number: u64,
     delete_branch: bool,
 ) -> Result<()> {
-    gh.pr_close(dir, number, delete_branch).await?;
+    let mut spec = GhPrClose::new();
+    if delete_branch {
+        spec = spec.delete_branch();
+    }
+    gh.pr_close(dir, number, spec).await?;
+    Ok(())
+}
+
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    gh.pr_checkout(dir, number).await?;
     Ok(())
 }
 
@@ -119,6 +156,26 @@ pub(crate) async fn pr_checks<R: ProcessRunner>(
     number: u64,
 ) -> Result<CiStatus> {
     Ok(aggregate(&gh.pr_checks(dir, number).await?))
+}
+
+// `gh.pr_diff` already returns `vcs-diff`'s model directly (gh emits the same
+// git-format diff `git diff` does), so this is a plain forward — no mapping.
+pub(crate) async fn pr_diff<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(gh.pr_diff(dir, number).await?)
+}
+
+// The per-call output-budget override — forwards to the client's `pr_diff_within`.
+pub(crate) async fn pr_diff_within<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    budget: vcs_cli_support::OutputBudget,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(gh.pr_diff_within(dir, number, budget).await?)
 }
 
 pub(crate) async fn issue_list<R: ProcessRunner>(
@@ -178,7 +235,11 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         source_branch: pr.head_ref_name,
         target_branch: pr.base_ref_name,
         url: pr.url,
-        draft: pr.is_draft,
+        // gh always reports these when requested (`--json isDraft,labels,assignees`
+        // are in PR_FIELDS), so they are confirmed values, never unknown.
+        draft: Some(pr.is_draft),
+        labels: Some(pr.labels),
+        assignees: Some(pr.assignees),
     }
 }
 
@@ -197,6 +258,9 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
+        // gh always reports labels/assignees when requested — confirmed, not unknown.
+        labels: Some(i.labels),
+        assignees: Some(i.assignees),
     }
 }
 
@@ -214,12 +278,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag_name,
         title: r.name,
-        url: r.url,
+        // The raw `url`/`body` are `Option`: `None` from the lean `release_list`
+        // (RELEASE_LIST_FIELDS omits them), `Some` from `release_view`. Drop an
+        // empty string to `None` too, so an unexpected `""` never reads as a URL.
+        url: r.url.filter(|s| !s.is_empty()),
         // gh reports an empty `publishedAt` for a draft — surface that as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
-        body: Some(r.body).filter(|s| !s.is_empty()),
-        draft: r.is_draft,
-        prerelease: r.is_prerelease,
+        body: r.body.filter(|s| !s.is_empty()),
+        // gh always reports isDraft/isPrerelease (both in the list and view field
+        // sets), so these are confirmed values.
+        draft: Some(r.is_draft),
+        prerelease: Some(r.is_prerelease),
     }
 }
 
@@ -229,7 +298,8 @@ fn map_repo(r: RepoView) -> ForgeRepo {
         owner: r.owner,
         default_branch: r.default_branch,
         url: r.url,
-        private: r.is_private,
+        // gh's `repo view` always reports `isPrivate` — a confirmed value.
+        private: Some(r.is_private),
     }
 }
 

@@ -51,6 +51,21 @@ let watcher = RepoWatcher::builder(repo)
 tokio runtime. It watches `.git`/`.jj` (jj wins when colocated) by default;
 `working_tree(true)` adds the working tree.
 
+**Errors:** `build()`/`watch()` return `vcs_watch::Error`. A watch-backend
+failure is the opaque `Error::Notify(WatchError)` — classify it
+(`is_path_not_found()` / `is_watch_limit()` / `io_error()`) and source-chain it
+through `vcs-watch` alone; the third-party watch backend is a private dependency,
+not part of the public API.
+
+## Cargo features
+
+Both optional and **off by default**:
+
+- **`tracing`** — a debug event per skipped/retried re-query, forwarded to
+  `vcs-core/tracing` so the underlying git/jj commands are traced too.
+- **`stream`** — `impl futures_core::Stream for RepoWatcher` for
+  `select!`/combinator use.
+
 ## License
 
 MIT

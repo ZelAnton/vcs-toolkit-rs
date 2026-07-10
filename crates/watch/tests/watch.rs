@@ -160,6 +160,111 @@ async fn jj_bookmark_create_emits_branch_created() {
     );
 }
 
+// T-038: the **default** jj watcher observes without mutating. On jj an ordinary
+// query snapshots the working copy — taking the lock, recording an operation, and
+// possibly moving `@` — so a naive re-query would make the observer mutate the
+// observed. The default re-query is read-only (`--ignore-working-copy`), so a
+// series of silent re-queries (driven here by bare working-tree edits, watched via
+// `working_tree(true)`) must record **no** new operation, never move `@`, and emit
+// no `WorkingCopyChanged` — the unsnapshotted edits stay invisible until something
+// records them. Both `op_head`/`at_commit` are measured read-only so the assertion
+// itself doesn't snapshot the pending edit.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the jj binary"]
+async fn jj_read_only_requery_records_no_operation_and_moves_nothing() {
+    let sandbox = JjSandbox::init("watch-jj-readonly");
+    sandbox.write("seed.txt", "seed\n");
+    sandbox.describe("initial");
+    sandbox.new_change("work"); // a fresh, empty `@` — a clean baseline
+
+    let repo = Repo::discover(sandbox.path()).expect("open");
+    let mut watcher = RepoWatcher::builder(repo)
+        .working_tree(true)
+        .debounce(Duration::from_millis(50))
+        .build()
+        .await
+        .expect("watcher");
+
+    let op_before = sandbox.op_head();
+    let at_before = sandbox.at_commit();
+    let requeries_before = watcher.stats().requeries;
+
+    // A series of bare working-tree edits (a brand-new file rewritten): each is a
+    // filesystem event driving a (read-only) re-query, but no jj command records
+    // them, so `--ignore-working-copy` never sees the new file.
+    for i in 0..5 {
+        sandbox.write("dirty.txt", &format!("edit {i}\n"));
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+
+    // Confirm the re-queries actually ran (the counter climbs), bounded so a wedged
+    // watcher fails loudly instead of hanging.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while watcher.stats().requeries <= requeries_before {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "re-queries never ran (requeries stuck at {requeries_before})"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // The read-only re-queries recorded no operation and did not move `@`.
+    assert_eq!(
+        sandbox.op_head(),
+        op_before,
+        "a read-only re-query must not record a jj operation"
+    );
+    assert_eq!(
+        sandbox.at_commit(),
+        at_before,
+        "a read-only re-query must not move `@`"
+    );
+
+    // …and, seeing no state change, it emitted nothing.
+    let quiet = timeout(Duration::from_millis(500), watcher.recv()).await;
+    assert!(
+        quiet.is_err(),
+        "the default read-only watcher must not surface an unsnapshotted bare edit \
+         as an event, got {quiet:?}"
+    );
+}
+
+// T-038 (the other branch of the contract): opting into `snapshot_working_copy`
+// makes the re-query snapshot the working copy — an explicit, documented mutation
+// — so a bare working-tree edit that no jj command recorded IS observed as a
+// `WorkingCopyChanged`. This is the escape hatch for a consumer that needs a live
+// dirty indicator driven purely by filesystem edits, accepting that the watcher
+// now records jj operations.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the jj binary"]
+async fn jj_snapshot_working_copy_opt_in_observes_bare_edit() {
+    let sandbox = JjSandbox::init("watch-jj-snapshot");
+    sandbox.write("seed.txt", "seed\n");
+    sandbox.describe("initial");
+    sandbox.new_change("work"); // a fresh, empty `@` — a clean baseline
+
+    let repo = Repo::discover(sandbox.path()).expect("open");
+    let mut watcher = RepoWatcher::builder(repo)
+        .working_tree(true)
+        .snapshot_working_copy(true)
+        .debounce(Duration::from_millis(50))
+        .build()
+        .await
+        .expect("watcher");
+
+    // A bare new-file edit — no jj command. Only a snapshotting re-query can
+    // observe it (the read-only default would not — see the paired test above).
+    sandbox.write("dirty.txt", "x\n");
+
+    assert!(
+        wait_for(&mut watcher, Duration::from_secs(10), |e| {
+            matches!(e, RepoEvent::WorkingCopyChanged { dirty: true, .. })
+        })
+        .await,
+        "opt-in snapshot_working_copy must observe a bare working-tree edit"
+    );
+}
+
 // Dropping the watcher stops the stream: `recv` returns `None` promptly.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the git binary"]

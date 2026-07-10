@@ -60,13 +60,16 @@
 //! - **[`JjAt`]** — a cwd-bound view ([`Jj::at`]) whose methods drop the leading
 //!   `dir`, so `jj.at(dir).status()` reads as `jj.status(dir)` — handy when one
 //!   client drives one checkout.
-//! - **[`Jj::transaction`]** — run a mutation sequence with op-log rollback:
-//!   capture the current operation, run a closure, and on `Err` restore the repo
-//!   to it. The op log is jj's safety net; this wraps it as a scope.
-//!   [`Jj::workspace_roots`] is a sibling inherent method — a bounded fan-out
-//!   resolving many workspace roots at once.
+//! - **[`Jj::transaction`]** — run a mutation sequence with concurrency-safe op-log
+//!   rollback: capture the current operation, run a closure, and on `Err` restore
+//!   the repo to it ([`Jj::rollback_to`]) — a rollback that survives a cancelled
+//!   closure and refuses to clobber a concurrent process's work, reporting the
+//!   outcome on [`TransactionError`] / [`Rollback`]. The op log is jj's safety net;
+//!   this wraps it as a scope. [`Jj::workspace_roots`] is a sibling inherent method
+//!   — a bounded fan-out resolving many workspace roots at once.
 //! - **Builder specs** for the multi-option commands — [`WorkspaceAdd`],
-//!   [`SquashPaths`] — each `#[non_exhaustive]`, built with a constructor +
+//!   [`SquashPaths`], [`BookmarkMove`], [`SquashInto`], [`GitClone`] — each
+//!   `#[non_exhaustive]`, built with a constructor +
 //!   chained setters, named after the flags they emit. [`JjFileset`] wraps a
 //!   workspace-root-relative path as an exact-path `root-file:"…"` fileset;
 //!   [`RevsetExpr`] is an optional up-front-validated revset newtype for untrusted input.
@@ -99,12 +102,14 @@
 //! # let _ = (current, dirty); Ok(()) }
 //! ```
 //!
-//! Mutate inside a [`transaction`](Jj::transaction) — an `Err` rolls the op log back:
+//! Mutate inside a [`transaction`](Jj::transaction) — an `Err` rolls the op log
+//! back (safely: the cleanup survives a cancelled closure and refuses to clobber a
+//! concurrent process's work — see [`TransactionError`] / [`Rollback`]):
 //!
 //! ```no_run
 //! use std::path::Path;
 //! use vcs_jj::Jj;
-//! # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
+//! # async fn demo(jj: &Jj) -> Result<(), vcs_jj::TransactionError> {
 //! let dir = Path::new(".");
 //! jj.transaction(dir, |tx| async move {
 //!     tx.describe("wip").await?;
@@ -117,8 +122,8 @@
 //! A binding (or any caller that can't pass a Rust closure) drives the same
 //! rollback imperatively with the primitives [`transaction`](Jj::transaction)
 //! wraps — [`op_head`](JjApi::op_head) to capture a savepoint and
-//! [`op_restore`](JjApi::op_restore) to roll back to it on failure (both on the
-//! object-safe [`JjApi`]).
+//! [`rollback_to`](Jj::rollback_to) to roll back to it on failure with the same
+//! cancellation-safe, divergence-checked protocol.
 //!
 //! # Testing
 //!
@@ -169,7 +174,9 @@ pub use vcs_diff::{
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
-pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_error};
+pub use vcs_cli_support::{
+    OutputBudget, RetryPolicy, is_lock_contention, is_transient_fetch_error,
+};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "jj";
@@ -215,14 +222,14 @@ impl JjFileset {
     /// path separators are normalised to jj's forward slash (so `src\a.rs` matches);
     /// **on Unix** `\` is a legitimate filename byte and is left intact — rewriting it
     /// there would corrupt a real path (matching `vcs-git`'s twin, which also gates
-    /// the rewrite on Windows). Then `"` is escaped for the string literal.
+    /// the rewrite on Windows). Then `\` and `"` are escaped for the string literal.
     pub fn path(path: impl AsRef<str>) -> Self {
         let path = path.as_ref();
         #[cfg(windows)]
         let normalised = path.replace('\\', "/");
         #[cfg(not(windows))]
         let normalised = path.to_string();
-        let escaped = normalised.replace('"', "\\\"");
+        let escaped = normalised.replace('\\', "\\\\").replace('"', "\\\"");
         JjFileset(format!("root-file:\"{escaped}\""))
     }
 
@@ -241,7 +248,7 @@ pub struct WorkspaceAdd {
     /// Name for the new workspace.
     pub name: String,
     /// Revision the workspace's working copy starts at (`-r <base>`).
-    pub base: String,
+    pub base: RevsetExpr,
     /// Filesystem path for the new workspace.
     pub path: PathBuf,
     /// How to seed the new workspace's sparse patterns (`--sparse-patterns`);
@@ -251,10 +258,10 @@ pub struct WorkspaceAdd {
 
 impl WorkspaceAdd {
     /// A workspace named `name`, based at `base`, materialised at `path`.
-    pub fn new(name: impl Into<String>, base: impl Into<String>, path: impl Into<PathBuf>) -> Self {
+    pub fn new(name: impl Into<String>, base: RevsetExpr, path: impl Into<PathBuf>) -> Self {
         Self {
             name: name.into(),
-            base: base.into(),
+            base,
             path: path.into(),
             sparse_patterns: None,
         }
@@ -276,9 +283,9 @@ impl WorkspaceAdd {
 #[non_exhaustive]
 pub struct SquashPaths {
     /// Source revision the filesets are squashed out of (`--from`).
-    pub from: String,
+    pub from: RevsetExpr,
     /// Destination revision the filesets are squashed into (`--into`).
-    pub into: String,
+    pub into: RevsetExpr,
     /// The exact filesets to move; empty squashes the whole `from` change.
     pub filesets: Vec<JjFileset>,
     /// Keep the destination's description rather than combining the two
@@ -288,10 +295,10 @@ pub struct SquashPaths {
 
 impl SquashPaths {
     /// Squash from `from` into `into`, with no filesets selected yet.
-    pub fn new(from: impl Into<String>, into: impl Into<String>) -> Self {
+    pub fn new(from: RevsetExpr, into: RevsetExpr) -> Self {
         Self {
-            from: from.into(),
-            into: into.into(),
+            from,
+            into,
             filesets: Vec::new(),
             use_destination_message: false,
         }
@@ -311,11 +318,106 @@ impl SquashPaths {
     }
 }
 
-/// The first bookmark name from a comma-joined [`BOOKMARKS_TEMPLATE`](parse::BOOKMARKS_TEMPLATE)
-/// render; `None` when the commit carries no local bookmark.
+/// Options for [`JjApi::bookmark_move`] (`jj bookmark move <name> --to <rev>`).
+///
+/// `#[non_exhaustive]`, so build it through [`BookmarkMove::new`] and the chained
+/// [`allow_backwards`](BookmarkMove::allow_backwards) setter rather than a bare
+/// `bool` (`bookmark_move(name, to, true)` doesn't say what `true` permits).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BookmarkMove {
+    /// The bookmark to move.
+    pub name: BookmarkName,
+    /// The revision to move it to (`--to`).
+    pub to: RevsetExpr,
+    /// Allow moving the bookmark to a commit that is not a descendant of its
+    /// current target (`--allow-backwards`).
+    pub allow_backwards: bool,
+}
+
+impl BookmarkMove {
+    /// Move bookmark `name` to revision `to`; a backwards move is refused.
+    pub fn new(name: BookmarkName, to: RevsetExpr) -> Self {
+        Self {
+            name,
+            to,
+            allow_backwards: false,
+        }
+    }
+
+    /// Allow moving to a commit that is not a descendant of the current target
+    /// (`--allow-backwards`).
+    pub fn allow_backwards(mut self) -> Self {
+        self.allow_backwards = true;
+        self
+    }
+}
+
+/// Options for [`JjApi::squash_into`] (`jj squash --into <rev>`).
+///
+/// `#[non_exhaustive]`, so build it through [`SquashInto::new`] and the chained
+/// [`use_destination_message`](SquashInto::use_destination_message) setter rather
+/// than a bare `bool`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SquashInto {
+    /// The destination revision the working copy is squashed into (`--into`).
+    pub into: RevsetExpr,
+    /// Keep the destination's description rather than combining the two
+    /// (`--use-destination-message`).
+    pub use_destination_message: bool,
+}
+
+impl SquashInto {
+    /// Squash the working copy into `into`, combining the two descriptions.
+    pub fn new(into: RevsetExpr) -> Self {
+        Self {
+            into,
+            use_destination_message: false,
+        }
+    }
+
+    /// Keep the destination's description (`--use-destination-message`) instead
+    /// of combining the two.
+    pub fn use_destination_message(mut self) -> Self {
+        self.use_destination_message = true;
+        self
+    }
+}
+
+/// Colocation choice for [`JjApi::git_clone`] (`jj git clone
+/// --colocate|--no-colocate`).
+///
+/// The flag is **always** passed explicitly — jj's default flipped across versions
+/// and is overridable via `git.colocate` config — so there is deliberately no
+/// default: pick [`GitClone::colocated`] or [`GitClone::separate`].
+/// `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitClone {
+    /// Create a visible `.git` alongside `.jj` (`--colocate`) rather than a
+    /// jj-only checkout (`--no-colocate`).
+    pub colocate: bool,
+}
+
+impl GitClone {
+    /// A colocated clone — a visible `.git` beside `.jj` (`--colocate`).
+    pub fn colocated() -> Self {
+        Self { colocate: true }
+    }
+
+    /// A non-colocated clone — jj-only, no `.git` (`--no-colocate`).
+    pub fn separate() -> Self {
+        Self { colocate: false }
+    }
+}
+
+/// The first bookmark name from a [`BOOKMARKS_TEMPLATE`](parse::BOOKMARKS_TEMPLATE)
+/// render (space-joined `.escape_json()` names), decoded; `None` when the commit
+/// carries no local bookmark. Delegates to [`parse::first_bookmark_name`] so the
+/// escaping contract lives in one place.
 fn first_bookmark(rendered: &str) -> Option<String> {
-    let rendered = rendered.trim();
-    (!rendered.is_empty()).then(|| rendered.split(',').next().unwrap_or(rendered).to_string())
+    parse::first_bookmark_name(rendered)
 }
 
 /// Injection guard for bare positional argv slots: a caller-supplied value
@@ -326,6 +428,12 @@ fn first_bookmark(rendered: &str) -> Option<String> {
 /// there with a clear error rather than misparsing them.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// The working-copy revset `@` as a validated [`RevsetExpr`]. Infallible — `@`
+/// is always a valid revset — for the internal helpers that query `@` directly.
+fn at_revset() -> RevsetExpr {
+    RevsetExpr::new("@").expect("`@` is a valid revset")
 }
 
 /// Wrap a caller-supplied bookmark/branch/remote name as jj's `exact:` string
@@ -341,6 +449,34 @@ fn exact(name: &str) -> String {
     format!("exact:{name}")
 }
 
+/// Injection guard for the remote segment of jj's positional `<name>@<remote>`
+/// bookmark-tracking pattern. Unlike a bare `<NAMES>`/`--remote` slot, the
+/// remote segment of this composite form is **not** itself parsed as a
+/// string-pattern: a `exact:`/`glob:` prefix on it is taken as part of the
+/// *literal* remote name instead of being interpreted (verified on jj 0.42:
+/// `bookmark track exact:main@exact:origin` warns "No matching remote
+/// bookmarks for names: main@\"exact:origin\"" and tracks nothing — a silent
+/// no-op, not an error — and `main@glob:origin` is rejected outright with
+/// "remote bookmark must be specified in bookmark@remote form"). The segment
+/// is, however, still glob-matched positionally (`main@ori?in` tracks
+/// `origin`), so a hostile/glob-bearing remote name must be rejected before
+/// spawn rather than wrapped in `exact:`.
+fn reject_glob_like(what: &str, value: &str) -> Result<()> {
+    if value.contains(['*', '?', '[', ']']) {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} contains a glob metacharacter and could fan out across \
+                     remotes — refusing to pass it as a positional argument"
+                ),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Pin `LC_ALL=C` on a command whose failure output is classified by matching
 /// **untranslated English substrings** — the transient-fetch markers
 /// (`is_transient_fetch_error`). jj's `git fetch` surfaces libc/gai/curl network
@@ -351,13 +487,15 @@ fn c_locale(cmd: processkit::Command) -> processkit::Command {
     cmd.env("LC_ALL", "C")
 }
 
-/// A pre-validated revset expression, for callers that accept revsets from
-/// untrusted input (UIs, bots, agents) and want to fail early. Deliberately
-/// *minimal* — jj's revset grammar is too rich to validate here — it only
-/// guarantees the expression is non-empty and cannot be parsed as a flag
-/// (no leading `-`), matching the internal guard the positional-revset
-/// methods apply anyway. The dir-taking methods stay `&str`; this type is
-/// **optional** up-front validation, not a required wrapper.
+/// A validated revset expression. Every [`JjApi`] operation that resolves a
+/// revision/revset takes a `RevsetExpr` (directly or inside its options struct),
+/// so a revset from untrusted input (UIs, bots, agents) is validated once, at
+/// construction, and the type is the flag-injection barrier from then on.
+/// Deliberately *minimal* — jj's revset grammar is too rich to validate here —
+/// it only guarantees the expression is non-empty and cannot be parsed as a flag
+/// (no leading `-`). A rejected expression is an [`vcs_cli_support::is_invalid_input`]
+/// failure. For a value that must be a bookmark **name** (create/move/delete a
+/// bookmark) use [`BookmarkName`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RevsetExpr(String);
 
@@ -378,6 +516,52 @@ impl RevsetExpr {
 impl std::fmt::Display for RevsetExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for RevsetExpr {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+/// A validated jj bookmark name (jj's equivalent of a git branch). Every
+/// [`JjApi`] operation that names a bookmark to create, move, rename, delete,
+/// track, fetch, or push takes a `BookmarkName`, so a name from untrusted input
+/// is validated once, at construction. jj bookmark names are permissive, so the
+/// guarantee is the load-bearing one: non-empty and not flag-shaped (no leading
+/// `-`), matching the injection guard these operations applied internally before.
+/// The typed methods additionally wrap the name in jj's `exact:` string pattern
+/// so a `*`/`?` in a name can never fan the operation out across every bookmark.
+/// A rejected name is an [`vcs_cli_support::is_invalid_input`] failure.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BookmarkName(String);
+
+impl BookmarkName {
+    /// Validate `name` as a bookmark name (non-empty, no leading `-`).
+    pub fn new(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        reject_flag_like("bookmark name", &name)?;
+        Ok(BookmarkName(name))
+    }
+
+    /// The validated name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for BookmarkName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for BookmarkName {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
     }
 }
 
@@ -429,21 +613,29 @@ impl JjCapabilities {
 /// The jj operations this crate exposes — the interface consumers code against
 /// and mock in tests.
 ///
-/// **Injection safety:** every method that places a caller-supplied bookmark
-/// name, revset, or operation id in a positional argv slot rejects a value
-/// that is empty or begins with `-` (jj would parse it as a flag) with an
-/// [`Error::Spawn`] *before* spawning. Flag-value slots (`-r <revset>`,
-/// `-m <msg>`) and the `run`/`run_raw` escape hatches are not guarded. For
-/// eager validation at an input boundary, see [`RevsetExpr`].
+/// **Injection safety:** bookmark names and revsets are taken as the validated
+/// [`BookmarkName`] / [`RevsetExpr`] newtypes (directly or inside an options
+/// struct), so a flag-like or malformed value is rejected at construction,
+/// before it can reach an argv slot. The remaining caller-supplied bare
+/// positionals that are *not* bookmarks/revsets — remote names and operation
+/// ids — keep an internal guard: a value that is empty or begins with `-` is
+/// rejected with an [`Error::Spawn`] *before* spawning. Flag-value slots
+/// (`-m <msg>`) and the `run`/`run_raw` escape hatches are not guarded.
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait JjApi: Send + Sync {
-    /// Run `jj <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `jj <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit).
     ///
     /// **Unguarded escape hatch — you own its safety.** `args` is forwarded
     /// verbatim, so never pass untrusted tokens here: jj's `--config`/
     /// `--config-toml` and user-defined aliases can reach code execution. The
     /// guarded typed methods are the safe path.
+    ///
+    /// This method on the client is the **process-cwd** escape hatch; the
+    /// `at(dir)` bound view's [`run`](JjAt::run) is instead **bound to `dir`** (it
+    /// forwards to [`Jj::run_in`], so `jj.at(dir).run(…)` runs in the bound repo).
+    /// Use `jj.at(dir).run(…)` (or [`Jj::run_in`]) for the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`JjApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`]. Same unguarded-escape-hatch caveat as
@@ -457,32 +649,82 @@ pub trait JjApi: Send + Sync {
     async fn capabilities(&self) -> Result<JjCapabilities>;
     /// Parsed working-copy changes — the files changed in `@`
     /// (`jj diff -r @ --summary`), mirroring `vcs_git` `status`.
+    ///
+    /// Like every ordinary jj command, this **snapshots the working copy first**
+    /// (recording a new operation, possibly moving `@`); for a read-only probe
+    /// that must not perturb the repo, use
+    /// [`status_ignoring_working_copy`](JjApi::status_ignoring_working_copy).
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
+    /// [`status`](JjApi::status) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so it reports the working-copy changes of the
+    /// **last recorded operation** without snapshotting — no new operation is
+    /// recorded and `@` never moves. A bare filesystem edit that jj has not yet
+    /// snapshotted is therefore **not** reflected — that is the read-only
+    /// trade-off. Built for an observer (a repo watcher / prompt) that must not
+    /// mutate the state it reads.
+    async fn status_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
     /// Raw `jj status` text (human-readable) — the unparsed counterpart of
     /// [`status`](JjApi::status), mirroring `vcs_git` `status_text`.
     async fn status_text(&self, dir: &Path) -> Result<String>;
     /// Changes matching `revset`, newest first, up to `max` (`jj log`).
-    async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
+    async fn log(&self, dir: &Path, revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
+    /// Like [`log`](JjApi::log), but scoped to changes that touched `filesets`
+    /// (`jj log -r <revset> <filesets>`) — e.g. "who changed this module".
+    /// Build filesets with [`JjFileset::path`] (same primitive as
+    /// [`commit_paths`](JjApi::commit_paths)/[`squash_paths`](JjApi::squash_paths)).
+    /// An empty `filesets` is refused *before spawning*: silently falling back
+    /// to [`log`](JjApi::log)'s unrestricted history would defeat the "scoped
+    /// to these paths" contract. Mirrors
+    /// [`GitApi::log_paths`](../vcs_git/trait.GitApi.html#tymethod.log_paths),
+    /// which takes pathspecs instead of filesets.
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        max: usize,
+        filesets: &[JjFileset],
+    ) -> Result<Vec<Change>>;
     /// The working-copy change (`jj log -r @`).
     async fn current_change(&self, dir: &Path) -> Result<Change>;
     /// Set the working-copy change's description (`jj describe -m`).
     async fn describe(&self, dir: &Path, message: &str) -> Result<()>;
     /// Set the description of an arbitrary revision (`jj describe -r <revset> -m`).
-    async fn describe_rev(&self, dir: &Path, revset: &str, message: &str) -> Result<()>;
+    async fn describe_rev(&self, dir: &Path, revset: &RevsetExpr, message: &str) -> Result<()>;
     /// Start a new change on top of the working copy (`jj new -m`).
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()>;
-    /// Local bookmarks (`jj bookmark list`).
+    /// Start a new undescribed change on top of `parent` (`jj new <parent>`).
+    async fn new_child(&self, dir: &Path, parent: &RevsetExpr) -> Result<()>;
+    /// Local bookmarks (`jj bookmark list`). Snapshots the working copy first
+    /// (records an operation); for a read-only listing use
+    /// [`bookmarks_ignoring_working_copy`](JjApi::bookmarks_ignoring_working_copy).
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
+    /// [`bookmarks`](JjApi::bookmarks) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so listing the local bookmarks records no
+    /// operation and never moves `@` (the bookmark set is independent of the
+    /// working-copy snapshot, so the result is otherwise identical).
+    async fn bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Local *and* remote-tracking bookmarks (`jj bookmark list -a`).
     async fn bookmarks_all(&self, dir: &Path) -> Result<Vec<BookmarkRef>>;
     /// Local bookmarks on the nearest commits reachable from `@`
     /// (`log -r 'heads(::@ & bookmarks())'`) — the candidate targets a commit
     /// "belongs to". A commit carrying several bookmarks yields one entry each.
+    /// Snapshots the working copy first (records an operation); for the read-only
+    /// form use
+    /// [`reachable_bookmarks_ignoring_working_copy`](JjApi::reachable_bookmarks_ignoring_working_copy).
     async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
+    /// [`reachable_bookmarks`](JjApi::reachable_bookmarks) as a **read-only**
+    /// query: adds `--ignore-working-copy`, so `@` resolves to the last recorded
+    /// operation's working-copy commit and no new operation is recorded.
+    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Track a remote bookmark (`jj bookmark track <name>@<remote>`).
-    async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()>;
+    async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
     /// Point a bookmark at `revision` (`jj bookmark set <name> -r <revision>`).
-    async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()>;
+    async fn bookmark_set(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()>;
     /// Fetch from the git remote (`jj git fetch`); transient (network) failures
     /// are retried (3 attempts, 500 ms backoff).
     async fn git_fetch(&self, dir: &Path) -> Result<()>;
@@ -490,8 +732,8 @@ pub trait JjApi: Send + Sync {
     /// transient failures are retried like [`git_fetch`](JjApi::git_fetch).
     async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
     /// Push to the git remote (`jj git push`, optionally `-b <bookmark>`). The
-    /// bookmark is owned (`Option<String>`) to keep the trait `mockall`-friendly.
-    async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()>;
+    /// bookmark is owned (`Option<BookmarkName>`) to keep the trait `mockall`-friendly.
+    async fn git_push(&self, dir: &Path, bookmark: Option<BookmarkName>) -> Result<()>;
 
     // --- Discovery / identity ------------------------------------------------
 
@@ -507,27 +749,36 @@ pub trait JjApi: Send + Sync {
     // --- Bookmarks -----------------------------------------------------------
 
     /// Create a bookmark at a revision (`bookmark create <name> -r <rev>`).
-    async fn bookmark_create(&self, dir: &Path, name: &str, revision: &str) -> Result<()>;
-    /// Rename a bookmark (`bookmark rename <old> <new>`).
-    async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
-    /// Delete a bookmark (`bookmark delete <name>`).
-    async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()>;
-    /// Move a bookmark to a revision (`bookmark move <name> --to <rev>
-    /// [--allow-backwards]`).
-    async fn bookmark_move(
+    async fn bookmark_create(
         &self,
         dir: &Path,
-        name: &str,
-        to: &str,
-        allow_backwards: bool,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
     ) -> Result<()>;
+    /// Rename a bookmark (`bookmark rename <old> <new>`).
+    async fn bookmark_rename(
+        &self,
+        dir: &Path,
+        old: &BookmarkName,
+        new: &BookmarkName,
+    ) -> Result<()>;
+    /// Delete a bookmark (`bookmark delete <name>`).
+    async fn bookmark_delete(&self, dir: &Path, name: &BookmarkName) -> Result<()>;
+    /// Move a bookmark to a revision (`bookmark move <name> --to <rev>
+    /// [--allow-backwards]`); see [`BookmarkMove`].
+    async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 
     // --- Diff / query / state ------------------------------------------------
 
     /// Per-file change summary for a range (`diff -r <from>..<to> --summary`).
-    async fn diff_summary(&self, dir: &Path, from: &str, to: &str) -> Result<Vec<ChangedPath>>;
+    async fn diff_summary(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<ChangedPath>>;
     /// Aggregate change stats for a revset (`diff -r <revset> --stat`).
-    async fn diff_stat(&self, dir: &Path, revset: &str) -> Result<DiffStat>;
+    async fn diff_stat(&self, dir: &Path, revset: &RevsetExpr) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec` (`diff -r <spec> --git`) —
     /// stable machine output, returned **verbatim** (a trailing blank context line
     /// is preserved, so the last hunk stays in sync with its `@@` line count).
@@ -535,20 +786,36 @@ pub trait JjApi: Send + Sync {
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](JjApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
     /// Count commits in a revset (`log -r <revset> --no-graph`, one id per line).
-    async fn commit_count(&self, dir: &Path, revset: &str) -> Result<usize>;
+    async fn commit_count(&self, dir: &Path, revset: &RevsetExpr) -> Result<usize>;
     /// Whether the commit a revset resolves to has a conflict.
-    async fn is_conflicted(&self, dir: &Path, revset: &str) -> Result<bool>;
+    async fn is_conflicted(&self, dir: &Path, revset: &RevsetExpr) -> Result<bool>;
     /// Whether the working copy has unresolved conflicts (`jj status`).
     async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
     /// Paths with unresolved conflicts in `revset` (`jj resolve --list -r <revset>`).
-    /// Empty when there are none.
-    async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>>;
+    /// Empty when there are none. Returns [`PathBuf`]s built from the raw bytes, so
+    /// a non-UTF-8 conflicted path survives losslessly.
+    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>>;
     /// Run an arbitrary templated `jj log` query and return raw stdout
-    /// (`log -r <revset> --no-graph [--limit n] -T <template>`).
+    /// (`log -r <revset> --no-graph [--limit n] -T <template>`). Snapshots the
+    /// working copy first (records an operation); for a read-only query use
+    /// [`template_query_ignoring_working_copy`](JjApi::template_query_ignoring_working_copy).
     async fn template_query(
         &self,
         dir: &Path,
-        revset: &str,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+    ) -> Result<String>;
+    /// [`template_query`](JjApi::template_query) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so a revset mentioning `@` resolves to the last
+    /// recorded operation's working-copy commit and the query records no new
+    /// operation and never moves `@`. A template reading working-copy-derived
+    /// keywords (`empty`, `conflict`, …) therefore reflects the last recorded
+    /// state, not a fresh snapshot of unsaved edits.
+    async fn template_query_ignoring_working_copy(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
         template: &str,
         limit: Option<usize>,
     ) -> Result<String>;
@@ -557,18 +824,18 @@ pub trait JjApi: Send + Sync {
     /// a revset matching no commit (an *invalid* revset still errors). A
     /// multi-commit revset yields only the newest commit's description
     /// (`jj log` order, `--limit 1`).
-    async fn description(&self, dir: &Path, revset: &str) -> Result<String>;
+    async fn description(&self, dir: &Path, revset: &RevsetExpr) -> Result<String>;
     /// How the commit a revset resolves to evolved, newest snapshot first, up
     /// to `max` (`jj evolog -r <revset>`) — one [`Change`] row per recorded
     /// predecessor.
-    async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>>;
+    async fn evolog(&self, dir: &Path, revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
     /// Per-line authorship of `path` (`jj file annotate <path> [-r <revset>]`;
     /// `None` = `@`): which change introduced each line.
     async fn file_annotate(
         &self,
         dir: &Path,
         path: &str,
-        revset: Option<String>,
+        revset: Option<RevsetExpr>,
     ) -> Result<Vec<AnnotationLine>>;
     /// A file's content at a revision (`jj file show -r <revset>
     /// root-file:"<path>"` — the path is wrapped as a workspace-root-relative
@@ -576,7 +843,7 @@ pub trait JjApi: Send + Sync {
     /// lossily — a binary file comes back mangled rather than erroring — and
     /// returned **verbatim**: the file's trailing newline(s) are preserved (not
     /// trimmed), so a read-modify-write round-trip is byte-exact.
-    async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String>;
+    async fn file_show(&self, dir: &Path, revset: &RevsetExpr, path: &str) -> Result<String>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -594,20 +861,15 @@ pub trait JjApi: Send + Sync {
     /// is untouched by both (it is not in `(onto..@)::`). Use
     /// [`rebase_branch`](JjApi::rebase_branch) with an explicit revset for
     /// narrower control.
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()>;
+    async fn rebase(&self, dir: &Path, onto: &RevsetExpr) -> Result<()>;
     /// Rebase a whole branch onto a destination (`rebase -b <branch> -d <dest>`).
-    async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()>;
+    async fn rebase_branch(&self, dir: &Path, branch: &RevsetExpr, dest: &RevsetExpr)
+    -> Result<()>;
     /// Move the working copy to a revision (`edit <rev>`).
-    async fn edit(&self, dir: &Path, revset: &str) -> Result<()>;
-    /// Squash the working copy into a revision (`squash --into <rev>`). When
-    /// `use_destination_message`, keep the destination's description
-    /// (`--use-destination-message`) instead of combining the two.
-    async fn squash_into(
-        &self,
-        dir: &Path,
-        into: &str,
-        use_destination_message: bool,
-    ) -> Result<()>;
+    async fn edit(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
+    /// Squash the working copy into a revision (`squash --into <rev>
+    /// [--use-destination-message]`); see [`SquashInto`].
+    async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()>;
     /// Finalise a commit from exactly these filesets (`commit -m <message>
     /// <filesets>`); the rest stay in the new working-copy change. An **empty**
     /// `filesets` slice is refused with `Error::Spawn`/`InvalidInput` before spawning
@@ -620,25 +882,30 @@ pub trait JjApi: Send + Sync {
     /// (`sparse set --clear --add <p>…`); an empty list clears the working copy.
     async fn sparse_set(&self, dir: &Path, patterns: &[String]) -> Result<()>;
     /// Create a new change with the given parents (`new -m <msg> <p1> <p2> …`).
-    async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()>;
+    async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<RevsetExpr>) -> Result<()>;
     /// Abandon a revision (`abandon <rev>`).
-    async fn abandon(&self, dir: &Path, revset: &str) -> Result<()>;
+    async fn abandon(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
     /// Fetch a single bookmark from origin (`git fetch --remote origin -b <branch>`);
     /// transient failures are retried (3×, 500 ms).
-    async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
+    async fn git_fetch_branch(&self, dir: &Path, branch: &BookmarkName) -> Result<()>;
     /// Import git refs into jj (`jj git import`) — colocated-repo sync.
     async fn git_import(&self, dir: &Path) -> Result<()>;
     /// Clone a git repository into `dest` (`jj git clone <url> <dest>
     /// --colocate|--no-colocate`). Runs without a working directory — pass an
     /// **absolute** `dest`. The flag is always passed explicitly: whether
     /// colocation (a visible `.git` alongside `.jj`) is jj's default depends
-    /// on the jj version *and* the user's `git.colocate` config, so `colocate`
-    /// decides deterministically.
-    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
+    /// on the jj version *and* the user's `git.colocate` config, so the
+    /// [`GitClone`] choice decides deterministically.
+    async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
     /// Fold working-copy edits into the mutable ancestors that introduced the
     /// touched lines (`absorb [--from <revset>] [<filesets>…]`); empty
     /// `filesets` absorbs everything.
-    async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
+    async fn absorb(
+        &self,
+        dir: &Path,
+        from: Option<RevsetExpr>,
+        filesets: &[JjFileset],
+    ) -> Result<()>;
     /// Split exactly these filesets out of `@` into their own commit described
     /// by `message` (`split -m <message> <filesets>…`); the remainder stays
     /// behind. `filesets` must be non-empty — a fileset-less split opens jj's
@@ -646,7 +913,7 @@ pub trait JjApi: Send + Sync {
     /// error before spawning.
     async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
     /// Duplicate the commits a revset resolves to (`duplicate <revset>`).
-    async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()>;
+    async fn duplicate(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
 
     // --- Operation log -------------------------------------------------------
 
@@ -688,6 +955,70 @@ vcs_cli_support::managed_client! {
     pub struct Jj => BINARY
 }
 
+/// Validate and canonically format paths emitted from the workspace root.
+fn normalize_changed_paths(entries: Vec<ChangedPath>) -> Result<Vec<ChangedPath>> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            entry.path = normalize_workspace_path(&entry.path)?;
+            entry.old_path = entry
+                .old_path
+                .as_deref()
+                .map(normalize_workspace_path)
+                .transpose()?;
+            Ok(entry)
+        })
+        .collect()
+}
+
+/// Validate that `path` is workspace-root-relative and normalise its separators,
+/// operating on the **raw path bytes** so a non-UTF-8 (Unix) filename is never
+/// corrupted by a `String` round-trip. The structural checks (`/`, `\`, `:`, `.`,
+/// `..`) are all single-byte ASCII, so byte-wise slicing is exact.
+fn normalize_workspace_path(path: &Path) -> Result<PathBuf> {
+    // `as_encoded_bytes` is the raw OS bytes on Unix (lossless) and WTF-8
+    // elsewhere; only ASCII structure is inspected, so both are safe to scan.
+    let raw = path.as_os_str().as_encoded_bytes();
+    let normalized: Vec<u8> = raw
+        .iter()
+        .map(|&b| if b == b'\\' { b'/' } else { b })
+        .collect();
+    // Absolute if it leads with `/` or carries a `X:` drive letter.
+    if normalized.first() == Some(&b'/') || (normalized.len() >= 2 && normalized[1] == b':') {
+        return Err(Error::parse(
+            BINARY,
+            format!("summary path is not workspace-relative: {path:?}"),
+        ));
+    }
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for part in normalized.split(|&b| b == b'/') {
+        match part {
+            b"" | b"." => {}
+            b".." => {
+                return Err(Error::parse(
+                    BINARY,
+                    format!("summary path escapes the workspace root: {path:?}"),
+                ));
+            }
+            _ => parts.push(part),
+        }
+    }
+    if parts.is_empty() {
+        return Err(Error::parse(
+            BINARY,
+            format!("summary path is empty after normalisation: {path:?}"),
+        ));
+    }
+    let mut joined = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            joined.push(b'/');
+        }
+        joined.extend_from_slice(part);
+    }
+    Ok(vcs_diff::path_from_bytes(&joined))
+}
+
 impl<R: ProcessRunner> Jj<R> {
     /// Retry **lock-contention** failures (another process holds jj's working-copy
     /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
@@ -706,6 +1037,31 @@ impl<R: ProcessRunner> Jj<R> {
     }
 }
 
+/// Whether a query lets jj **snapshot the working copy** before answering.
+///
+/// jj snapshots by default: it takes the working-copy lock, imports any bare
+/// filesystem edits into a fresh `@`, and **records a new operation** in the op
+/// log — so an ordinary `jj log`/`jj status`/`jj bookmark list` is a *mutation*,
+/// not a pure read. [`WorkingCopy::Ignore`] appends the global
+/// `--ignore-working-copy` flag, which reports the state of the **last recorded
+/// operation** without any of that: no lock, no new operation, `@` unmoved. That
+/// is the read-only mode an *observer* (a watcher, a prompt refresh) needs —
+/// reading the repo must not perturb the very state it reports.
+///
+/// Trade-off: because [`Ignore`](WorkingCopy::Ignore) does not snapshot, a bare
+/// working-tree edit that no jj command has recorded yet is invisible to it
+/// (state is as of the last operation). Callers that must observe such edits opt
+/// into [`Snapshot`](WorkingCopy::Snapshot) and accept the recorded operation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkingCopy {
+    /// jj's default: snapshot the working copy first (records an operation, may
+    /// move `@`).
+    Snapshot,
+    /// Pass `--ignore-working-copy`: read the last recorded operation's state,
+    /// recording no operation and never moving `@`.
+    Ignore,
+}
+
 impl<R: ProcessRunner> Jj<R> {
     /// A repo-scoped `jj` command with `--color never` forced on. jj honours
     /// `ui.color = "always"` from user config even when its output is piped, which
@@ -718,7 +1074,211 @@ impl<R: ProcessRunner> Jj<R> {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        self.core.command_in(dir, args).arg("--color").arg("never")
+        self.cmd_in_wc(dir, args, WorkingCopy::Snapshot)
+    }
+
+    /// Like [`cmd_in`](Self::cmd_in), but chooses whether jj may snapshot the
+    /// working copy first. On [`WorkingCopy::Ignore`] it also appends the global
+    /// `--ignore-working-copy` flag, so the command records no operation and never
+    /// moves `@` (a genuinely read-only query). Like `--color never`, it is a
+    /// global flag appended after the subcommand (no jj subcommand takes a
+    /// trailing `--`, so appending is safe).
+    fn cmd_in_wc<I, S>(&self, dir: &Path, args: I, wc: WorkingCopy) -> processkit::Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let cmd = self.core.command_in(dir, args).arg("--color").arg("never");
+        match wc {
+            WorkingCopy::Snapshot => cmd,
+            WorkingCopy::Ignore => cmd.arg("--ignore-working-copy"),
+        }
+    }
+
+    /// Shared core of [`status`](JjApi::status) /
+    /// [`status_ignoring_working_copy`](JjApi::status_ignoring_working_copy): the
+    /// only difference is whether jj snapshots the working copy first.
+    async fn status_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<ChangedPath>> {
+        // `diff -r @ --summary` is the machine-stable form of the working-copy
+        // changes that `jj status` renders for humans: one `<letter> <path>` line.
+        // jj renders those paths relative to its cwd, so first resolve the
+        // workspace and run the machine query at its root. This also means jj can
+        // never legitimately emit a path that walks above the workspace.
+        //
+        // The root lookup itself must honour `wc`: a plain (snapshotting)
+        // `self.root(dir)` here would defeat `status_ignoring_working_copy`'s
+        // whole point by recording an operation as a side effect of resolving
+        // the path prefix.
+        let root = self.root_wc(dir, wc).await?;
+        // `parse_bytes`: `--summary` paths are raw bytes that may not be valid
+        // UTF-8 on Unix, so parse from the byte stream rather than a lossy `String`.
+        let entries = self
+            .core
+            .parse_bytes(
+                self.cmd_in_wc(&root, ["diff", "-r", "@", "--summary"], wc),
+                parse::parse_diff_summary,
+            )
+            .await?;
+        normalize_changed_paths(entries)
+    }
+
+    /// Shared core of [`root`](JjApi::root): resolves the workspace root,
+    /// honouring `wc` so an ignoring-working-copy caller (e.g.
+    /// [`status_wc`](Self::status_wc) on [`WorkingCopy::Ignore`]) does not have
+    /// this lookup itself snapshot the working copy.
+    async fn root_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<PathBuf> {
+        Ok(PathBuf::from(
+            self.core.run(self.cmd_in_wc(dir, ["root"], wc)).await?,
+        ))
+    }
+
+    /// Shared core of [`bookmarks`](JjApi::bookmarks) /
+    /// [`bookmarks_ignoring_working_copy`](JjApi::bookmarks_ignoring_working_copy).
+    async fn bookmarks_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<Bookmark>> {
+        self.core
+            .parse(
+                self.cmd_in_wc(
+                    dir,
+                    ["bookmark", "list", "-T", parse::BOOKMARK_LIST_TEMPLATE],
+                    wc,
+                ),
+                parse::parse_bookmarks,
+            )
+            .await
+    }
+
+    /// Shared core of [`reachable_bookmarks`](JjApi::reachable_bookmarks) /
+    /// [`reachable_bookmarks_ignoring_working_copy`](JjApi::reachable_bookmarks_ignoring_working_copy).
+    async fn reachable_bookmarks_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<Bookmark>> {
+        self.core
+            .parse(
+                self.cmd_in_wc(
+                    dir,
+                    [
+                        "log",
+                        "-r",
+                        "heads(::@ & bookmarks())",
+                        "--no-graph",
+                        "-T",
+                        parse::REACHABLE_BOOKMARKS_TEMPLATE,
+                    ],
+                    wc,
+                ),
+                parse::parse_reachable_bookmarks,
+            )
+            .await
+    }
+
+    /// Shared core of [`template_query`](JjApi::template_query) /
+    /// [`template_query_ignoring_working_copy`](JjApi::template_query_ignoring_working_copy).
+    async fn template_query_wc(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+        wc: WorkingCopy,
+    ) -> Result<String> {
+        let mut args: Vec<String> = vec![
+            "log".into(),
+            "-r".into(),
+            revset.as_str().into(),
+            "--no-graph".into(),
+        ];
+        if let Some(n) = limit {
+            args.push("--limit".into());
+            args.push(n.to_string());
+        }
+        args.push("-T".into());
+        args.push(template.into());
+        // `run_untrimmed`: `template_query` is documented to return the template's
+        // **raw** stdout, so a template that deliberately ends in `\n\n` or trailing
+        // spaces (e.g. fixed-width joins) is preserved, not silently stripped (H7).
+        // Callers that want a scalar trim it themselves (see `description`).
+        self.core.run_untrimmed(self.cmd_in_wc(dir, args, wc)).await
+    }
+
+    /// [`diff_text`](JjApi::diff_text) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff.
+    pub async fn diff_text_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_budgeted(dir, spec, budget).await
+    }
+
+    /// [`diff`](JjApi::diff) with an explicit per-call [`OutputBudget`] — the
+    /// parsed-model counterpart of [`diff_text_within`](Jj::diff_text_within).
+    pub async fn diff_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_budgeted(dir, spec, budget).await?;
+        Ok(parse_diff(&text))
+    }
+
+    /// Shared body of [`diff_text`](JjApi::diff_text) /
+    /// [`diff_text_within`](Jj::diff_text_within), run under `budget`.
+    async fn diff_text_budgeted(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // `@` selects the working-copy change; otherwise the caller's revset.
+        // `--git` emits stable git-format output the shared parser understands.
+        let revset = match spec {
+            DiffSpec::WorkingTree => "@".to_string(),
+            DiffSpec::Rev(rev) => rev,
+        };
+        // `run_untrimmed_within`: trimming the diff would drop a trailing blank
+        // context line, desyncing the last hunk from its `@@` line count for a
+        // consumer that re-parses/re-applies it — same as git's `diff_text` (H7);
+        // the budget bounds it.
+        self.core
+            .run_untrimmed_within(
+                self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]),
+                budget,
+            )
+            .await
+    }
+
+    /// [`file_show`](JjApi::file_show) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
+    /// Reads a file's bytes under `budget`: past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] rather than
+    /// buffering an unbounded file.
+    pub async fn file_show_within(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // `file show` takes FILESETS, so a bare path with a fileset metacharacter
+        // (`(`, `*`, `~`, …) would be parsed as an expression — wrap it in the exact-
+        // path form. (`file annotate` is the opposite: it takes a plain PATH and
+        // rejects the `file:"…"` form.)
+        let fileset = JjFileset::path(path);
+        // `run_untrimmed_within`: a file's trailing newline(s) are part of its
+        // content; trimming corrupts a read-modify-write round-trip (H7). The budget
+        // bounds it.
+        self.core
+            .run_untrimmed_within(
+                self.cmd_in(
+                    dir,
+                    ["file", "show", "-r", revset.as_str(), fileset.as_str()],
+                ),
+                budget,
+            )
+            .await
     }
 }
 
@@ -748,21 +1308,18 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>> {
-        // `diff -r @ --summary` is the machine-stable form of the working-copy
-        // changes that `jj status` renders for humans: one `<letter> <path>` line.
-        self.core
-            .parse(
-                self.cmd_in(dir, ["diff", "-r", "@", "--summary"]),
-                parse::parse_diff_summary,
-            )
-            .await
+        self.status_wc(dir, WorkingCopy::Snapshot).await
+    }
+
+    async fn status_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<ChangedPath>> {
+        self.status_wc(dir, WorkingCopy::Ignore).await
     }
 
     async fn status_text(&self, dir: &Path) -> Result<String> {
         self.core.run(self.cmd_in(dir, ["status"])).await
     }
 
-    async fn log(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
+    async fn log(&self, dir: &Path, revset: &RevsetExpr, max: usize) -> Result<Vec<Change>> {
         let n = format!("-n{max}");
         self.core
             .parse(
@@ -771,7 +1328,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                     [
                         "log",
                         "-r",
-                        revset,
+                        revset.as_str(),
                         n.as_str(),
                         "--no-graph",
                         "-T",
@@ -783,8 +1340,45 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
+    async fn log_paths(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        max: usize,
+        filesets: &[JjFileset],
+    ) -> Result<Vec<Change>> {
+        // An empty fileset slice would degrade `jj log -r <revset> <filesets…>`
+        // to a bare `jj log -r <revset>` — UNRESTRICTED history, the opposite
+        // of "scoped to these paths". Refuse before spawning (mirrors
+        // `commit_paths`/`split_paths`).
+        if filesets.is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "log_paths requires at least one fileset — an empty set would log \
+                     unrestricted history, not history scoped to the named paths",
+                ),
+            ));
+        }
+        let n = format!("-n{max}");
+        let mut args: Vec<String> = vec![
+            "log".into(),
+            "-r".into(),
+            revset.as_str().into(),
+            n,
+            "--no-graph".into(),
+            "-T".into(),
+            parse::CHANGE_TEMPLATE.into(),
+        ];
+        args.extend(filesets.iter().map(|f| f.as_str().to_string()));
+        self.core
+            .parse(self.cmd_in(dir, args), parse::parse_changes)
+            .await
+    }
+
     async fn current_change(&self, dir: &Path) -> Result<Change> {
-        let mut changes = self.log(dir, "@", 1).await?;
+        let mut changes = self.log(dir, &at_revset(), 1).await?;
         changes
             .pop()
             .ok_or_else(|| Error::parse(BINARY, "no working-copy change found"))
@@ -796,9 +1390,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn describe_rev(&self, dir: &Path, revset: &str, message: &str) -> Result<()> {
+    async fn describe_rev(&self, dir: &Path, revset: &RevsetExpr, message: &str) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["describe", "-r", revset, "-m", message]))
+            .run_unit(self.cmd_in(dir, ["describe", "-r", revset.as_str(), "-m", message]))
             .await
     }
 
@@ -808,16 +1402,18 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+    async fn new_child(&self, dir: &Path, parent: &RevsetExpr) -> Result<()> {
         self.core
-            .parse(
-                self.cmd_in(
-                    dir,
-                    ["bookmark", "list", "-T", parse::BOOKMARK_LIST_TEMPLATE],
-                ),
-                parse::parse_bookmarks,
-            )
+            .run_unit(self.cmd_in(dir, ["new", parent.as_str()]))
             .await
+    }
+
+    async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+        self.bookmarks_wc(dir, WorkingCopy::Snapshot).await
+    }
+
+    async fn bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+        self.bookmarks_wc(dir, WorkingCopy::Ignore).await
     }
 
     async fn bookmarks_all(&self, dir: &Path) -> Result<Vec<BookmarkRef>> {
@@ -833,50 +1429,57 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
-        self.core
-            .parse(
-                self.cmd_in(
-                    dir,
-                    [
-                        "log",
-                        "-r",
-                        "heads(::@ & bookmarks())",
-                        "--no-graph",
-                        "-T",
-                        parse::REACHABLE_BOOKMARKS_TEMPLATE,
-                    ],
-                ),
-                parse::parse_reachable_bookmarks,
-            )
+        self.reachable_bookmarks_wc(dir, WorkingCopy::Snapshot)
             .await
     }
 
-    async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()> {
+    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+        self.reachable_bookmarks_wc(dir, WorkingCopy::Ignore).await
+    }
+
+    async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()> {
         // A leading-`-` name makes the whole token start with `-`, which jj
-        // parses as a global flag (e.g. `--config`); guard it. `exact:` also
-        // stops a `*`/pattern name from tracking every remote bookmark at once.
-        reject_flag_like("bookmark name", name)?;
-        let target = format!("exact:{name}@{remote}");
+        // parses as a global flag (e.g. `--config`); guard it. The bookmark
+        // segment is wrapped in `exact:` (a real string-pattern there), but
+        // the remote segment of this `<name>@<remote>` positional form is
+        // *not* itself pattern-syntax — a `exact:` prefix on it is taken as
+        // part of the literal remote name and silently matches nothing
+        // (verified on jj 0.42: see `reject_glob_like`'s doc comment) — so the
+        // remote is validated against glob metacharacters instead of wrapped.
+        reject_glob_like("remote", remote)?;
+        let target = format!("exact:{}@{remote}", name.as_str());
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
             .await
     }
 
-    async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
-        reject_flag_like("bookmark name", name)?;
+    async fn bookmark_set(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["bookmark", "set", name, "-r", revision]))
+            .run_unit(self.cmd_in(
+                dir,
+                ["bookmark", "set", name.as_str(), "-r", revision.as_str()],
+            ))
             .await
     }
 
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
         // Idempotent → `retry` replays it on a transient (network) failure.
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch"]))
-            // Graceful terminate-then-kill on a per-client timeout, so a timed-out
-            // fetch can close its connection cleanly.
-            .timeout_grace(FETCH_TIMEOUT_GRACE)
-            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        // `budget_diagnostics`: bound the retained failure/progress output (a
+        // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
+        // still classifies the tail-preserved message). Unbounded by default.
+        let cmd = self.core.budget_diagnostics(
+            c_locale(self.cmd_in(dir, ["git", "fetch"]))
+                // Graceful terminate-then-kill on a per-client timeout, so a timed-out
+                // fetch can close its connection cleanly.
+                .timeout_grace(FETCH_TIMEOUT_GRACE)
+                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+        );
         self.core.run_unit(cmd).await
     }
 
@@ -886,17 +1489,19 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // on a transient (network) failure.
         let remote_pat = exact(remote);
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
-            .timeout_grace(FETCH_TIMEOUT_GRACE)
-            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        let cmd = self.core.budget_diagnostics(
+            c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
+                .timeout_grace(FETCH_TIMEOUT_GRACE)
+                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+        );
         self.core.run_unit(cmd).await
     }
 
-    async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()> {
+    async fn git_push(&self, dir: &Path, bookmark: Option<BookmarkName>) -> Result<()> {
         let mut args = vec!["git", "push"];
         // `-b` is glob-matched, so `exact:` keeps a `*` bookmark from pushing
         // every local bookmark at once (a UI/bot-supplied `"*"`).
-        let bookmark_pat = bookmark.as_deref().map(exact);
+        let bookmark_pat = bookmark.as_ref().map(|b| exact(b.as_str()));
         if let Some(name) = bookmark_pat.as_deref() {
             args.push("-b");
             args.push(name);
@@ -909,9 +1514,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn root(&self, dir: &Path) -> Result<PathBuf> {
-        Ok(PathBuf::from(
-            self.core.run(self.cmd_in(dir, ["root"])).await?,
-        ))
+        self.root_wc(dir, WorkingCopy::Snapshot).await
     }
 
     async fn current_bookmark(&self, dir: &Path) -> Result<Option<String>> {
@@ -954,80 +1557,88 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         Ok(first_bookmark(&out))
     }
 
-    async fn bookmark_create(&self, dir: &Path, name: &str, revision: &str) -> Result<()> {
-        reject_flag_like("bookmark name", name)?;
+    async fn bookmark_create(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["bookmark", "create", name, "-r", revision]))
+            .run_unit(self.cmd_in(
+                dir,
+                ["bookmark", "create", name.as_str(), "-r", revision.as_str()],
+            ))
             .await
     }
 
-    async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
-        reject_flag_like("bookmark name", old)?;
-        reject_flag_like("bookmark name", new)?;
+    async fn bookmark_rename(
+        &self,
+        dir: &Path,
+        old: &BookmarkName,
+        new: &BookmarkName,
+    ) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["bookmark", "rename", old, new]))
+            .run_unit(self.cmd_in(dir, ["bookmark", "rename", old.as_str(), new.as_str()]))
             .await
     }
 
-    async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()> {
-        reject_flag_like("bookmark name", name)?;
-        let name_pat = exact(name);
+    async fn bookmark_delete(&self, dir: &Path, name: &BookmarkName) -> Result<()> {
+        let name_pat = exact(name.as_str());
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "delete", name_pat.as_str()]))
             .await
     }
 
-    async fn bookmark_move(
-        &self,
-        dir: &Path,
-        name: &str,
-        to: &str,
-        allow_backwards: bool,
-    ) -> Result<()> {
-        reject_flag_like("bookmark name", name)?;
+    async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()> {
         // `<NAMES>` is glob-matched, so `exact:` keeps a `*` name from moving
         // every bookmark. `to` is a revision, not a pattern — left as-is.
-        let name_pat = exact(name);
-        let mut args = vec!["bookmark", "move", name_pat.as_str(), "--to", to];
-        if allow_backwards {
+        let name_pat = exact(spec.name.as_str());
+        let mut args = vec![
+            "bookmark",
+            "move",
+            name_pat.as_str(),
+            "--to",
+            spec.to.as_str(),
+        ];
+        if spec.allow_backwards {
             args.push("--allow-backwards");
         }
         self.core.run_unit(self.cmd_in(dir, args)).await
     }
 
-    async fn diff_summary(&self, dir: &Path, from: &str, to: &str) -> Result<Vec<ChangedPath>> {
+    async fn diff_summary(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<ChangedPath>> {
         // Parenthesise each endpoint so a compound revset (e.g. `x | y`) keeps its
         // meaning inside the `..` range instead of binding by operator precedence.
-        let range = format!("({from})..({to})");
-        self.core
-            .parse(
-                self.cmd_in(dir, ["diff", "-r", range.as_str(), "--summary"]),
+        let range = format!("({})..({})", from.as_str(), to.as_str());
+        // `jj diff --summary` makes paths relative to its cwd. Run it at the
+        // workspace root so this API has one stable, root-relative path contract.
+        let root = self.root(dir).await?;
+        let entries = self
+            .core
+            .parse_bytes(
+                self.cmd_in(&root, ["diff", "-r", range.as_str(), "--summary"]),
                 parse::parse_diff_summary,
             )
-            .await
+            .await?;
+        normalize_changed_paths(entries)
     }
 
-    async fn diff_stat(&self, dir: &Path, revset: &str) -> Result<DiffStat> {
+    async fn diff_stat(&self, dir: &Path, revset: &RevsetExpr) -> Result<DiffStat> {
         self.core
             .parse(
-                self.cmd_in(dir, ["diff", "-r", revset, "--stat"]),
+                self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--stat"]),
                 parse::parse_diff_stat,
             )
             .await
     }
 
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String> {
-        // `@` selects the working-copy change; otherwise the caller's revset.
-        // `--git` emits stable git-format output the shared parser understands.
-        let revset = match spec {
-            DiffSpec::WorkingTree => "@".to_string(),
-            DiffSpec::Rev(rev) => rev,
-        };
-        // `run_untrimmed`: trimming the diff would drop a trailing blank context
-        // line, desyncing the last hunk from its `@@` line count for a consumer
-        // that re-parses/re-applies it — same as git's `diff_text` (H7).
-        self.core
-            .run_untrimmed(self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]))
+        self.diff_text_budgeted(dir, spec, self.core.output_budget())
             .await
     }
 
@@ -1036,7 +1647,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         Ok(parse_diff(&text))
     }
 
-    async fn commit_count(&self, dir: &Path, revset: &str) -> Result<usize> {
+    async fn commit_count(&self, dir: &Path, revset: &RevsetExpr) -> Result<usize> {
         self.core
             .parse(
                 self.cmd_in(
@@ -1044,7 +1655,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                     [
                         "log",
                         "-r",
-                        revset,
+                        revset.as_str(),
                         "--no-graph",
                         "-T",
                         parse::COUNT_TEMPLATE,
@@ -1055,7 +1666,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn is_conflicted(&self, dir: &Path, revset: &str) -> Result<bool> {
+    async fn is_conflicted(&self, dir: &Path, revset: &RevsetExpr) -> Result<bool> {
         let out = self
             .core
             .run(self.cmd_in(
@@ -1063,7 +1674,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                 [
                     "log",
                     "-r",
-                    revset,
+                    revset.as_str(),
                     "--no-graph",
                     "--limit",
                     "1",
@@ -1078,13 +1689,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool> {
         // Ask the template engine directly rather than string-matching localized
         // `jj status` prose: `@` is conflicted iff its `conflict` flag is set.
-        self.is_conflicted(dir, "@").await
+        self.is_conflicted(dir, &at_revset()).await
     }
 
-    async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>> {
+    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>> {
+        // `output_bytes`: a conflicted path may not be valid UTF-8 on Unix, so read
+        // raw stdout (stderr stays text for the "no conflicts" probe below).
         let res = self
             .core
-            .output_string(self.cmd_in(dir, ["resolve", "--list", "-r", revset]))
+            .output_bytes(self.cmd_in(dir, ["resolve", "--list", "-r", revset.as_str()]))
             .await?;
         match res.code() {
             Some(0) => Ok(parse::parse_resolve_list(res.stdout())),
@@ -1107,30 +1720,26 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn template_query(
         &self,
         dir: &Path,
-        revset: &str,
+        revset: &RevsetExpr,
         template: &str,
         limit: Option<usize>,
     ) -> Result<String> {
-        let mut args: Vec<String> = vec![
-            "log".into(),
-            "-r".into(),
-            revset.into(),
-            "--no-graph".into(),
-        ];
-        if let Some(n) = limit {
-            args.push("--limit".into());
-            args.push(n.to_string());
-        }
-        args.push("-T".into());
-        args.push(template.into());
-        // `run_untrimmed`: `template_query` is documented to return the template's
-        // **raw** stdout, so a template that deliberately ends in `\n\n` or trailing
-        // spaces (e.g. fixed-width joins) is preserved, not silently stripped (H7).
-        // Callers that want a scalar trim it themselves (see `description`).
-        self.core.run_untrimmed(self.cmd_in(dir, args)).await
+        self.template_query_wc(dir, revset, template, limit, WorkingCopy::Snapshot)
+            .await
     }
 
-    async fn description(&self, dir: &Path, revset: &str) -> Result<String> {
+    async fn template_query_ignoring_working_copy(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+    ) -> Result<String> {
+        self.template_query_wc(dir, revset, template, limit, WorkingCopy::Ignore)
+            .await
+    }
+
+    async fn description(&self, dir: &Path, revset: &RevsetExpr) -> Result<String> {
         // `template_query` is raw now (H7); `description` is a scalar, so strip the
         // trailing newline jj appends to the `description` keyword (preserving the
         // pre-H7 contract that this returns the description without a trailing EOL).
@@ -1140,7 +1749,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         Ok(out.trim_end().to_string())
     }
 
-    async fn evolog(&self, dir: &Path, revset: &str, max: usize) -> Result<Vec<Change>> {
+    async fn evolog(&self, dir: &Path, revset: &RevsetExpr, max: usize) -> Result<Vec<Change>> {
         // Evolog templates render in a *commit* context (bare `change_id`
         // doesn't exist there) — EVOLOG_TEMPLATE uses the `commit.` method
         // form but emits the same columns CHANGE_TEMPLATE does.
@@ -1152,7 +1761,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                     [
                         "evolog",
                         "-r",
-                        revset,
+                        revset.as_str(),
                         "--no-graph",
                         "--limit",
                         limit.as_str(),
@@ -1169,7 +1778,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         &self,
         dir: &Path,
         path: &str,
-        revset: Option<String>,
+        revset: Option<RevsetExpr>,
     ) -> Result<Vec<AnnotationLine>> {
         // `file annotate` takes a plain PATH (not a fileset — the `file:"…"`
         // form is rejected), so a leading-`-` path would be parsed as a flag.
@@ -1177,9 +1786,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // but global flags (`--color never`) MUST precede `--`, so this builds
         // the command directly instead of via `cmd_in` (which trails them).
         let mut args = vec!["file", "annotate"];
-        if let Some(revset) = revset.as_deref() {
+        if let Some(revset) = revset.as_ref() {
             args.push("-r");
-            args.push(revset);
+            args.push(revset.as_str());
         }
         args.extend([
             "-T",
@@ -1194,44 +1803,37 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn file_show(&self, dir: &Path, revset: &str, path: &str) -> Result<String> {
-        // `file show` takes FILESETS, so a bare path with a fileset
-        // metacharacter (`(`, `*`, `~`, …) would be parsed as an expression —
-        // wrap it in the exact-path form. (`file annotate` is the opposite: it
-        // takes a plain PATH and rejects the `file:"…"` form.)
-        let fileset = JjFileset::path(path);
-        // `run_untrimmed`: a file's trailing newline(s) are part of its content;
-        // trimming corrupts a read-modify-write round-trip (H7).
-        self.core
-            .run_untrimmed(self.cmd_in(dir, ["file", "show", "-r", revset, fileset.as_str()]))
+    async fn file_show(&self, dir: &Path, revset: &RevsetExpr, path: &str) -> Result<String> {
+        self.file_show_within(dir, revset, path, self.core.output_budget())
             .await
     }
 
-    async fn rebase(&self, dir: &Path, onto: &str) -> Result<()> {
+    async fn rebase(&self, dir: &Path, onto: &RevsetExpr) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["rebase", "-d", onto]))
+            .run_unit(self.cmd_in(dir, ["rebase", "-d", onto.as_str()]))
             .await
     }
 
-    async fn rebase_branch(&self, dir: &Path, branch: &str, dest: &str) -> Result<()> {
-        self.core
-            .run_unit(self.cmd_in(dir, ["rebase", "-b", branch, "-d", dest]))
-            .await
-    }
-
-    async fn edit(&self, dir: &Path, revset: &str) -> Result<()> {
-        reject_flag_like("revset", revset)?;
-        self.core.run_unit(self.cmd_in(dir, ["edit", revset])).await
-    }
-
-    async fn squash_into(
+    async fn rebase_branch(
         &self,
         dir: &Path,
-        into: &str,
-        use_destination_message: bool,
+        branch: &RevsetExpr,
+        dest: &RevsetExpr,
     ) -> Result<()> {
-        let mut command = self.cmd_in(dir, ["squash", "--into", into]);
-        if use_destination_message {
+        self.core
+            .run_unit(self.cmd_in(dir, ["rebase", "-b", branch.as_str(), "-d", dest.as_str()]))
+            .await
+    }
+
+    async fn edit(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
+        self.core
+            .run_unit(self.cmd_in(dir, ["edit", revset.as_str()]))
+            .await
+    }
+
+    async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()> {
+        let mut command = self.cmd_in(dir, ["squash", "--into", spec.into.as_str()]);
+        if spec.use_destination_message {
             command = command.arg("--use-destination-message");
         }
         self.core.run_unit(command).await
@@ -1261,9 +1863,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         let mut args: Vec<String> = vec![
             "squash".into(),
             "--from".into(),
-            spec.from,
+            spec.from.as_str().into(),
             "--into".into(),
-            spec.into,
+            spec.into.as_str().into(),
         ];
         if spec.use_destination_message {
             args.push("--use-destination-message".into());
@@ -1283,28 +1885,24 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.run_unit(self.cmd_in(dir, args)).await
     }
 
-    async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()> {
-        // Parents are bare positionals — a leading-`-` one (e.g.
-        // `--ignore-working-copy`) would be silently consumed as a flag.
-        for parent in &parents {
-            reject_flag_like("parent", parent)?;
-        }
+    async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<RevsetExpr>) -> Result<()> {
+        // Parents are bare positionals, but each is a validated `RevsetExpr`, so a
+        // leading-`-` one (e.g. `--ignore-working-copy`) can never reach the argv.
         let mut args: Vec<String> = vec!["new".into(), "-m".into(), message.into()];
-        args.extend(parents);
+        args.extend(parents.iter().map(|p| p.as_str().to_string()));
         self.core.run_unit(self.cmd_in(dir, args)).await
     }
 
-    async fn abandon(&self, dir: &Path, revset: &str) -> Result<()> {
-        reject_flag_like("revset", revset)?;
+    async fn abandon(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["abandon", revset]))
+            .run_unit(self.cmd_in(dir, ["abandon", revset.as_str()]))
             .await
     }
 
-    async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()> {
+    async fn git_fetch_branch(&self, dir: &Path, branch: &BookmarkName) -> Result<()> {
         // `-b` is glob-matched, so `exact:` keeps a `*` branch from fetching
         // every branch instead of erroring on a bogus name.
-        let branch_pat = exact(branch);
+        let branch_pat = exact(branch.as_str());
         // `c_locale`: the retry decision classifies the failure's message (M28).
         let cmd = c_locale(self.cmd_in(
             dir,
@@ -1328,7 +1926,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()> {
+    async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()> {
         // A leading-`-` url is a bare positional — guard it (a real URL never
         // leads with `-`, so no false positives).
         reject_flag_like("url", url)?;
@@ -1342,16 +1940,20 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .core
             .command(["git", "clone", url])
             .arg(dest)
-            .arg(if colocate {
+            .arg(if spec.colocate {
                 "--colocate"
             } else {
                 "--no-colocate"
             });
         // Graceful terminate-then-kill on a per-client timeout. No-op without a deadline.
-        let command = command
-            .arg("--color")
-            .arg("never")
-            .timeout_grace(FETCH_TIMEOUT_GRACE);
+        // `budget_diagnostics`: bound the retained clone progress/failure output (a
+        // drop-oldest tail — never `OutputTooLarge`). Unbounded by default.
+        let command = self.core.budget_diagnostics(
+            command
+                .arg("--color")
+                .arg("never")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+        );
 
         // R7: like `vcs_git::clone_repo`, a failed clone can leave a partial `dest`
         // that blocks a retry ("destination already exists"); `timeout_grace` can't
@@ -1370,11 +1972,16 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         result
     }
 
-    async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()> {
+    async fn absorb(
+        &self,
+        dir: &Path,
+        from: Option<RevsetExpr>,
+        filesets: &[JjFileset],
+    ) -> Result<()> {
         let mut args: Vec<String> = vec!["absorb".into()];
-        if let Some(from) = from.as_deref() {
+        if let Some(from) = from.as_ref() {
             args.push("--from".into());
-            args.push(from.into());
+            args.push(from.as_str().into());
         }
         args.extend(filesets.iter().map(|f| f.as_str().to_string()));
         self.core.run_unit(self.cmd_in(dir, args)).await
@@ -1400,10 +2007,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.run_unit(self.cmd_in(dir, args)).await
     }
 
-    async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()> {
-        reject_flag_like("revset", revset)?;
+    async fn duplicate(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["duplicate", revset]))
+            .run_unit(self.cmd_in(dir, ["duplicate", revset.as_str()]))
             .await
     }
 
@@ -1477,7 +2083,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("--name".into());
             args.push(n.to_string());
         }
-        Ok(PathBuf::from(self.core.run(self.cmd_in(dir, args)).await?))
+        // `parse_bytes`: a workspace root path need not be valid UTF-8 on Unix, so
+        // build the `PathBuf` from raw stdout bytes. The old `run` decoded stdout
+        // through `String::from_utf8_lossy`, which would flatten a non-UTF-8 root to
+        // `U+FFFD` and mis-address the workspace it feeds the facade's
+        // `WorktreeInfo.path`. Read-only like the previous `run` (no lock-retry —
+        // `--ignore-working-copy`, so lock contention is not a concern).
+        self.core
+            .parse_bytes(self.cmd_in(dir, args), parse::workspace_root_from_bytes)
+            .await
     }
 
     async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()> {
@@ -1489,7 +2103,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .command_in(dir, ["workspace", "add", "--name"])
             .arg(&spec.name)
             .arg("-r")
-            .arg(&spec.base);
+            .arg(spec.base.as_str());
         if let Some(mode) = spec.sparse_patterns {
             command = command.arg("--sparse-patterns").arg(mode.as_arg());
         }
@@ -1515,6 +2129,160 @@ const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 /// once — a cap so a repo with many workspaces doesn't spawn an unbounded burst of
 /// processes, while still overlapping the (fast, network-free) calls.
 const WORKSPACE_ROOTS_CONCURRENCY: usize = 8;
+
+/// The dedicated deadline the concurrency-safe rollback ([`Jj::rollback_to`])
+/// bounds each of its own commands with. Set explicitly (not inherited) so a
+/// cleanup that follows a *cancelled or timed-out* operation still runs on a full,
+/// fresh budget rather than a spent one — a local `op log` / `op restore` is quick,
+/// so this is a generous ceiling, not a tight bound.
+const ROLLBACK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How many recent operations the divergence probe ([`Jj::rollback_to`]) walks back
+/// through, as jj's `--limit`, looking for the captured pre-operation. Generous — a
+/// single failed transaction records a handful of operations — so an honest rollback
+/// is only ever refused for genuine divergence, not for depth. If the captured
+/// operation is not within this window the probe treats the range as unverifiable
+/// and refuses to revert (see [`Rollback::SkippedDiverged`]).
+const ROLLBACK_PROBE_LIMIT: &str = "256";
+
+/// What the concurrency-safe op-log rollback did after a mutation failed — the
+/// outcome [`Jj::rollback_to`] returns and [`Jj::transaction`] reports on its
+/// [`TransactionError`]. It lets a caller tell a completed rollback apart from one
+/// that was deliberately **refused** (a concurrent process's work would have been
+/// clobbered) or one that **failed**, instead of guessing by re-probing the op log.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Rollback {
+    /// The repo is back at the captured operation — either `op restore` ran, or the
+    /// closure failed before recording any operation, so nothing needed undoing.
+    Restored,
+    /// The rollback was **skipped** to avoid clobbering a concurrent process: the
+    /// operation log diverged between the capture and the restore (jj reconciled a
+    /// foreign operation with a "reconcile divergent operations" merge), so restoring
+    /// to the captured operation would have silently reverted that work. The repo is
+    /// left as the closure and the other process left it; the caller must reconcile.
+    /// Also returned when the captured operation is no longer within the probed
+    /// window (`ROLLBACK_PROBE_LIMIT` operations), so the range cannot be confirmed
+    /// safe to revert.
+    SkippedDiverged,
+    /// The rollback itself failed — the divergence probe or the `op restore` errored.
+    /// The repo may be left mid-transaction; the carried [`Error`] is the cause.
+    Failed(Error),
+    /// No rollback was attempted: the transaction failed before it captured a
+    /// savepoint (e.g. the initial [`op_head`](JjApi::op_head) capture itself failed),
+    /// so there was nothing to roll back.
+    NotAttempted,
+}
+
+impl Rollback {
+    /// Whether the repo was returned to (or already at) the captured operation.
+    pub fn is_restored(&self) -> bool {
+        matches!(self, Rollback::Restored)
+    }
+
+    /// The error, when the rollback itself [`Failed`](Rollback::Failed); `None`
+    /// otherwise. Reads it off without destructuring the `#[non_exhaustive]` enum.
+    pub fn failure(&self) -> Option<&Error> {
+        match self {
+            Rollback::Failed(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Rollback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Rollback::Restored => f.write_str("rolled back to the captured operation"),
+            Rollback::SkippedDiverged => f.write_str(
+                "rollback skipped: the operation log diverged (a concurrent jj process \
+                 advanced it), so reverting was refused to avoid clobbering that work",
+            ),
+            Rollback::Failed(err) => write!(f, "rollback failed: {err}"),
+            Rollback::NotAttempted => f.write_str("no rollback was attempted"),
+        }
+    }
+}
+
+/// The error [`Jj::transaction`] returns when its closure fails. It preserves the
+/// closure's own error in [`cause`](Self::cause) — the same value the previous
+/// (rollback-swallowing) `Result<T>` contract returned — and additionally records
+/// what the concurrency-safe rollback did in [`rollback`](Self::rollback), so a
+/// failed or refused rollback is **visible** to the caller instead of silently
+/// dropped (the earlier `let _ = op_restore(..)` discarded it).
+///
+/// Match [`rollback`](Self::rollback) to distinguish `Restored` / `SkippedDiverged`
+/// / `Failed`; call [`into_cause`](Self::into_cause) for a drop-in of the old
+/// "closure error only" behavior.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TransactionError {
+    /// The error the closure returned — the transaction's root cause.
+    pub cause: Error,
+    /// What the concurrency-safe rollback did in response to `cause`.
+    pub rollback: Rollback,
+}
+
+impl TransactionError {
+    /// The closure's error — the transaction's root cause (what the old `Result<T>`
+    /// contract returned).
+    pub fn cause(&self) -> &Error {
+        &self.cause
+    }
+
+    /// What the rollback did — [`Restored`](Rollback::Restored) /
+    /// [`SkippedDiverged`](Rollback::SkippedDiverged) / [`Failed`](Rollback::Failed).
+    pub fn rollback(&self) -> &Rollback {
+        &self.rollback
+    }
+
+    /// Consume, returning just the closure's error — the drop-in for code that only
+    /// wants the old "closure error" and does not act on the rollback outcome.
+    pub fn into_cause(self) -> Error {
+        self.cause
+    }
+}
+
+impl std::fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "transaction failed: {} ({})", self.cause, self.rollback)
+    }
+}
+
+impl std::error::Error for TransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // The closure's error is the root cause; a rollback failure (if any) is
+        // reachable structurally through `self.rollback`.
+        Some(&self.cause)
+    }
+}
+
+/// The rollback decision derived from the op-log divergence probe (`rows`, newest
+/// first) and the captured pre-operation `pre`. Walking from the current head toward
+/// `pre`: a `>= 2`-parent operation seen *before* reaching `pre` is a concurrent
+/// "reconcile divergent operations" merge (foreign work) → refuse; reaching `pre`
+/// means the range is our own linear work → restore; not finding `pre` within the
+/// probed window means the range can't be confirmed safe → refuse (conservative:
+/// never blindly revert what we can't verify).
+enum RollbackPlan {
+    Restore,
+    SkipDiverged,
+}
+
+fn rollback_plan(rows: &[(String, usize)], pre: &str) -> RollbackPlan {
+    for (id, parents) in rows {
+        if id == pre {
+            // Reached the savepoint with only our own single-parent ops in between.
+            return RollbackPlan::Restore;
+        }
+        if *parents >= 2 {
+            // A reconcile-divergent-operations merge landed after `pre`: a
+            // concurrent process advanced the op log. Do not clobber it.
+            return RollbackPlan::SkipDiverged;
+        }
+    }
+    RollbackPlan::SkipDiverged
+}
 
 impl<R: ProcessRunner> Jj<R> {
     /// Run `jj <args>` over string slices — `jj.run_args(&["log", "-r", "@"])`
@@ -1549,14 +2317,18 @@ impl<R: ProcessRunner> Jj<R> {
                 ],
             )
         });
-        processkit::output_all(commands, WORKSPACE_ROOTS_CONCURRENCY, self.core.runner())
+        // `output_all_bytes` (not `output_all`): a workspace root path need not be
+        // valid UTF-8 on Unix, so capture raw stdout and build the `PathBuf` from
+        // bytes — a lossy `String` decode would flatten a non-UTF-8 root to `U+FFFD`.
+        processkit::output_all_bytes(commands, WORKSPACE_ROOTS_CONCURRENCY, self.core.runner())
             .await
             .into_iter()
             .map(|r| {
                 r.and_then(|pr| pr.ensure_success())
-                    // `trim_end` (not `trim`) for exact parity with the single
-                    // `workspace_root`, which trims via `core.run`'s `trim_end`.
-                    .map(|pr| PathBuf::from(pr.stdout().trim_end()))
+                    // Raw bytes → `PathBuf`, lossless on Unix — exact parity with the
+                    // single `workspace_root` (both go through `workspace_root_from_bytes`,
+                    // which strips only the trailing line terminator jj appends).
+                    .map(|pr| parse::workspace_root_from_bytes(pr.stdout()))
             })
             .collect()
     }
@@ -1567,6 +2339,45 @@ impl<R: ProcessRunner> Jj<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `jj <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](JjApi::run). This is what [`JjAt::run`] forwards to; call
+    /// [`run`](JjApi::run) on the client for the process-cwd escape hatch. Argv is
+    /// forwarded verbatim (the same unguarded escape hatch — only the working
+    /// directory is bound; unlike the modelled methods it does **not** inject
+    /// `--color never`).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Jj::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](JjApi::run_raw). What [`JjAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// Like [`run_args`](Jj::run_args) but **bound to `dir`** — the `&[&str]` twin
+    /// of [`run_in`](Jj::run_in). What [`JjAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Jj::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Jj::run_raw_in). What [`JjAt::run_raw_args`]
+    /// forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
     /// Bind this client to `dir`, returning a [`JjAt`] handle whose methods omit
     /// the `dir` argument: `jj.at(dir).status()` runs [`status`](JjApi::status)
     /// against `dir`. The dir-taking [`JjApi`] methods stay on [`Jj`] for driving
@@ -1575,13 +2386,98 @@ impl<R: ProcessRunner> Jj<R> {
         JjAt { jj: self, dir }
     }
 
-    /// Run a mutation sequence with op-log rollback: capture the current
-    /// operation ([`op_head`](JjApi::op_head)), run `f` with a [`JjAt`] bound to
-    /// `dir`, and on `Err` restore the repo to the captured operation
-    /// ([`op_restore`](JjApi::op_restore)) before returning the error.
+    /// Build a repo-scoped `jj` command for the rollback **cleanup** that does
+    /// **not** inherit this client's [`default_cancel_on`](Jj::default_cancel_on)
+    /// token and carries its own bounded [`ROLLBACK_TIMEOUT`] deadline.
+    ///
+    /// [`cmd_in`](Self::cmd_in) gap-fills the client's cancel token; overriding it
+    /// here with a *fresh, never-fired* token means an already-fired cancellation of
+    /// the failed operation cannot also short-circuit the cleanup (the defect the old
+    /// `transaction` documented). The explicit timeout gives the cleanup a full fresh
+    /// budget even after a cancelled/timed-out main operation.
+    fn rollback_cmd_in<I, S>(&self, dir: &Path, args: I) -> processkit::Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.cmd_in(dir, args)
+            .cancel_on(CancellationToken::new())
+            .timeout(ROLLBACK_TIMEOUT)
+    }
+
+    /// The divergence probe: the recent operation log as `(id, parent-count)` pairs
+    /// (newest first), read on the detached cleanup context with
+    /// `--ignore-working-copy` so the *probe itself* records no snapshot operation.
+    async fn op_log_parents_probe(&self, dir: &Path) -> Result<Vec<(String, usize)>> {
+        let out = self
+            .core
+            .run(self.rollback_cmd_in(
+                dir,
+                [
+                    "op",
+                    "log",
+                    "--no-graph",
+                    "--ignore-working-copy",
+                    "--limit",
+                    ROLLBACK_PROBE_LIMIT,
+                    "-T",
+                    parse::OP_PARENTS_TEMPLATE,
+                ],
+            ))
+            .await?;
+        Ok(parse::parse_op_parents(&out))
+    }
+
+    /// `op restore <op_id>` on the detached cleanup context (see
+    /// [`rollback_cmd_in`](Self::rollback_cmd_in)), keeping the flag-like guard the
+    /// public [`op_restore`](JjApi::op_restore) applies.
+    async fn op_restore_detached(&self, dir: &Path, op_id: &str) -> Result<()> {
+        reject_flag_like("operation id", op_id)?;
+        self.core
+            .run_unit(self.rollback_cmd_in(dir, ["op", "restore", op_id]))
+            .await
+    }
+
+    /// Roll the repo back to `pre` — an operation id captured with
+    /// [`op_head`](JjApi::op_head) **before** a mutation — after that mutation failed.
+    /// This is the rollback [`transaction`](Self::transaction) runs, exposed for the
+    /// non-closure / FFI callers the transaction docs point at.
+    ///
+    /// Unlike a bare [`op_restore`](JjApi::op_restore) back to `pre`, it:
+    /// - runs every cleanup command on a **fresh cancellation context** with its own
+    ///   `ROLLBACK_TIMEOUT` deadline, so a *cancelled or timed-out* mutation does
+    ///   not also cancel the cleanup (a fired
+    ///   [`default_cancel_on`](Jj::default_cancel_on) token is not inherited);
+    /// - **detects a concurrent op-log divergence** first — if another jj process
+    ///   advanced the operation log between the capture and now (jj records a
+    ///   "reconcile divergent operations" merge), reverting to `pre` would silently
+    ///   discard that foreign work, so it is **refused** and
+    ///   [`Rollback::SkippedDiverged`] is returned instead of clobbering it.
+    ///
+    /// Never returns `Err`: a failure of the probe or the `op restore` is reported as
+    /// [`Rollback::Failed`], so the caller composes the rollback outcome with the
+    /// mutation's own error rather than having one mask the other.
+    pub async fn rollback_to(&self, dir: &Path, pre: &str) -> Rollback {
+        match self.op_log_parents_probe(dir).await {
+            Err(err) => Rollback::Failed(err),
+            Ok(rows) => match rollback_plan(&rows, pre) {
+                RollbackPlan::SkipDiverged => Rollback::SkippedDiverged,
+                RollbackPlan::Restore => match self.op_restore_detached(dir, pre).await {
+                    Ok(()) => Rollback::Restored,
+                    Err(err) => Rollback::Failed(err),
+                },
+            },
+        }
+    }
+
+    /// Run a mutation sequence with concurrency-safe op-log rollback: capture the
+    /// current operation ([`op_head`](JjApi::op_head)), run `f` with a [`JjAt`] bound
+    /// to `dir`, and on `Err` roll the repo back to the captured operation via
+    /// [`rollback_to`](Self::rollback_to) — reporting what the rollback did on the
+    /// returned [`TransactionError`].
     ///
     /// ```no_run
-    /// # async fn demo(jj: &vcs_jj::Jj) -> Result<(), processkit::Error> {
+    /// # async fn demo(jj: &vcs_jj::Jj) -> Result<(), vcs_jj::TransactionError> {
     /// jj.transaction(std::path::Path::new("."), |tx| async move {
     ///     tx.describe("wip").await?;
     ///     tx.new_change("next").await // an Err here rolls back the describe
@@ -1590,49 +2486,70 @@ impl<R: ProcessRunner> Jj<R> {
     /// # Ok(()) }
     /// ```
     ///
+    /// On the closure's `Err`, the returned [`TransactionError`] preserves that error
+    /// in [`cause`](TransactionError::cause) **and** carries the
+    /// [`rollback`](TransactionError::rollback) outcome — so a failed
+    /// ([`Rollback::Failed`]) or refused ([`Rollback::SkippedDiverged`]) rollback is
+    /// visible, not swallowed as it was before. Callers wanting only the previous
+    /// "closure error" behavior use [`TransactionError::into_cause`].
+    ///
     /// Inherent (not on the object-safe trait): the closure parameter is
     /// generic, which `mockall` / trait objects can't express.
     ///
     /// Caveats:
-    /// - **Single-actor.** The rollback is `op_restore <pre>`, which restores the
-    ///   **entire** repo view to the captured operation — so a change *another* jj
-    ///   process landed (a `describe`, a `bookmark move`, a commit) between the
-    ///   `op_head` capture and the restore is **also reverted**, not just `f`'s own
-    ///   work. Use this only when one actor drives the repo for the transaction's span.
+    /// - **Single-actor, but no longer silent about it.** The rollback restores the
+    ///   whole repo view to the captured operation, so it is meant for a span *one*
+    ///   actor drives. If another jj process advances the op log in the meantime, the
+    ///   rollback now **detects** the divergence and **refuses** to revert (returning
+    ///   [`Rollback::SkippedDiverged`]) rather than silently reverting that foreign
+    ///   work — the caller is told, and must reconcile.
     /// - Rollback runs on `Err` only — **not** on panic or cancellation (a
     ///   dropped future); there is no async `Drop`. Convert panics to `Err`
     ///   inside `f` if you need that safety.
-    /// - **A cancelled `f` also cancels the rollback.** If `f`'s `Err` is a *fired*
-    ///   cancellation (on a client built with `default_cancel_on`), the restore is
-    ///   dispatched to that same still-cancelled client and short-circuits before it
-    ///   spawns — so it is skipped and the repo is left mid-transaction. If you need the
-    ///   rollback to survive cancellation, run it yourself (capture `op_head`, then
-    ///   `op_restore` on a client **without** the cancel token) instead of this helper.
-    /// - If the restore itself fails, the *original* error from `f` is returned
-    ///   and the repo may be left mid-transaction; re-probe
-    ///   [`op_head`](JjApi::op_head) to detect that.
+    /// - **A cancelled `f` no longer cancels the rollback.** The cleanup runs on a
+    ///   fresh cancellation context with its own deadline (see
+    ///   [`rollback_to`](Self::rollback_to)), so a *fired* cancellation of `f` (on a
+    ///   client built with [`default_cancel_on`](Jj::default_cancel_on)) does not
+    ///   short-circuit the restore.
+    /// - If the restore itself fails, the closure's error is still returned as
+    ///   [`cause`](TransactionError::cause) and the failure is surfaced as
+    ///   [`Rollback::Failed`] (no longer discarded); the repo may be left
+    ///   mid-transaction.
     ///
     /// **Non-closure / FFI callers**: the borrowed [`JjAt`] and the `'a`-bound
     /// future this closure form takes don't cross an FFI boundary cleanly, so a
     /// language binding replicates the rollback with the public primitives this
     /// method wraps — capture [`op_head`](JjApi::op_head) before the mutations, run
     /// them (through a [`JjAt`] or the dir-taking methods), then on failure call
-    /// [`op_restore`](JjApi::op_restore) back to the captured id, best-effort
-    /// (don't let its error mask the original — the same caveats apply). Both are
-    /// on the object-safe [`JjApi`], so this also works through `&dyn JjApi`.
-    pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
+    /// [`rollback_to`](Self::rollback_to) with the captured id (it applies the same
+    /// cancellation-safe, divergence-checked protocol). [`op_head`](JjApi::op_head)
+    /// is on the object-safe [`JjApi`], so the capture also works through
+    /// `&dyn JjApi`; `rollback_to` is inherent on [`Jj`].
+    pub async fn transaction<'a, T, F, Fut>(
+        &'a self,
+        dir: &'a Path,
+        f: F,
+    ) -> std::result::Result<T, TransactionError>
     where
         F: FnOnce(JjAt<'a, R>) -> Fut,
         Fut: Future<Output = Result<T>> + 'a,
     {
-        let pre = self.op_head(dir).await?;
+        let pre = match self.op_head(dir).await {
+            Ok(pre) => pre,
+            // The savepoint capture failed before `f` ran, so nothing was mutated
+            // and there is nothing to roll back.
+            Err(cause) => {
+                return Err(TransactionError {
+                    cause,
+                    rollback: Rollback::NotAttempted,
+                });
+            }
+        };
         match f(self.at(dir)).await {
             Ok(value) => Ok(value),
-            Err(err) => {
-                // Best-effort restore; the closure's error is the cause and is
-                // what the caller must see even when the restore also fails.
-                let _ = self.op_restore(dir, &pre).await;
-                Err(err)
+            Err(cause) => {
+                let rollback = self.rollback_to(dir, &pre).await;
+                Err(TransactionError { cause, rollback })
             }
         }
     }
@@ -1664,63 +2581,61 @@ impl<R: ProcessRunner> Copy for JjAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     JjAt, jj, "Jj",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn capabilities() -> Result<JjCapabilities>;
-        fn git_clone(url: &str, dest: &Path, colocate: bool) -> Result<()>;
+        fn git_clone(url: &str, dest: &Path, spec: GitClone) -> Result<()>;
     }
     dir {
         fn status() -> Result<Vec<ChangedPath>>;
         fn status_text() -> Result<String>;
-        fn log(revset: &str, max: usize) -> Result<Vec<Change>>;
+        fn log(revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
+        fn log_paths(revset: &RevsetExpr, max: usize, filesets: &[JjFileset]) -> Result<Vec<Change>>;
         fn current_change() -> Result<Change>;
         fn describe(message: &str) -> Result<()>;
-        fn describe_rev(revset: &str, message: &str) -> Result<()>;
+        fn describe_rev(revset: &RevsetExpr, message: &str) -> Result<()>;
         fn new_change(message: &str) -> Result<()>;
+        fn new_child(parent: &RevsetExpr) -> Result<()>;
         fn bookmarks() -> Result<Vec<Bookmark>>;
         fn bookmarks_all() -> Result<Vec<BookmarkRef>>;
         fn reachable_bookmarks() -> Result<Vec<Bookmark>>;
-        fn bookmark_track(name: &str, remote: &str) -> Result<()>;
-        fn bookmark_set(name: &str, revision: &str) -> Result<()>;
+        fn bookmark_track(name: &BookmarkName, remote: &str) -> Result<()>;
+        fn bookmark_set(name: &BookmarkName, revision: &RevsetExpr) -> Result<()>;
         fn git_fetch() -> Result<()>;
         fn git_fetch_from(remote: &str) -> Result<()>;
-        fn git_push(bookmark: Option<String>) -> Result<()>;
+        fn git_push(bookmark: Option<BookmarkName>) -> Result<()>;
         fn root() -> Result<PathBuf>;
         fn current_bookmark() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
-        fn bookmark_create(name: &str, revision: &str) -> Result<()>;
-        fn bookmark_rename(old: &str, new: &str) -> Result<()>;
-        fn bookmark_delete(name: &str) -> Result<()>;
-        fn bookmark_move(name: &str, to: &str, allow_backwards: bool) -> Result<()>;
-        fn diff_summary(from: &str, to: &str) -> Result<Vec<ChangedPath>>;
-        fn diff_stat(revset: &str) -> Result<DiffStat>;
+        fn bookmark_create(name: &BookmarkName, revision: &RevsetExpr) -> Result<()>;
+        fn bookmark_rename(old: &BookmarkName, new: &BookmarkName) -> Result<()>;
+        fn bookmark_delete(name: &BookmarkName) -> Result<()>;
+        fn bookmark_move(spec: BookmarkMove) -> Result<()>;
+        fn diff_summary(from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<ChangedPath>>;
+        fn diff_stat(revset: &RevsetExpr) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
         fn diff(spec: DiffSpec) -> Result<Vec<FileDiff>>;
-        fn commit_count(revset: &str) -> Result<usize>;
-        fn is_conflicted(revset: &str) -> Result<bool>;
+        fn commit_count(revset: &RevsetExpr) -> Result<usize>;
+        fn is_conflicted(revset: &RevsetExpr) -> Result<bool>;
         fn has_workingcopy_conflict() -> Result<bool>;
-        fn resolve_list(revset: &str) -> Result<Vec<String>>;
-        fn template_query(revset: &str, template: &str, limit: Option<usize>) -> Result<String>;
-        fn description(revset: &str) -> Result<String>;
-        fn evolog(revset: &str, max: usize) -> Result<Vec<Change>>;
-        fn file_annotate(path: &str, revset: Option<String>) -> Result<Vec<AnnotationLine>>;
-        fn file_show(revset: &str, path: &str) -> Result<String>;
-        fn absorb(from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
+        fn resolve_list(revset: &RevsetExpr) -> Result<Vec<PathBuf>>;
+        fn template_query(revset: &RevsetExpr, template: &str, limit: Option<usize>) -> Result<String>;
+        fn description(revset: &RevsetExpr) -> Result<String>;
+        fn evolog(revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
+        fn file_annotate(path: &str, revset: Option<RevsetExpr>) -> Result<Vec<AnnotationLine>>;
+        fn file_show(revset: &RevsetExpr, path: &str) -> Result<String>;
+        fn absorb(from: Option<RevsetExpr>, filesets: &[JjFileset]) -> Result<()>;
         fn split_paths(filesets: &[JjFileset], message: &str) -> Result<()>;
-        fn duplicate(revset: &str) -> Result<()>;
-        fn rebase(onto: &str) -> Result<()>;
-        fn rebase_branch(branch: &str, dest: &str) -> Result<()>;
-        fn edit(revset: &str) -> Result<()>;
-        fn squash_into(into: &str, use_destination_message: bool) -> Result<()>;
+        fn duplicate(revset: &RevsetExpr) -> Result<()>;
+        fn rebase(onto: &RevsetExpr) -> Result<()>;
+        fn rebase_branch(branch: &RevsetExpr, dest: &RevsetExpr) -> Result<()>;
+        fn edit(revset: &RevsetExpr) -> Result<()>;
+        fn squash_into(spec: SquashInto) -> Result<()>;
         fn commit_paths(filesets: &[JjFileset], message: &str) -> Result<()>;
         fn squash_paths(spec: SquashPaths) -> Result<()>;
         fn sparse_set(patterns: &[String]) -> Result<()>;
-        fn new_merge(message: &str, parents: Vec<String>) -> Result<()>;
-        fn abandon(revset: &str) -> Result<()>;
-        fn git_fetch_branch(branch: &str) -> Result<()>;
+        fn new_merge(message: &str, parents: Vec<RevsetExpr>) -> Result<()>;
+        fn abandon(revset: &RevsetExpr) -> Result<()>;
+        fn git_fetch_branch(branch: &BookmarkName) -> Result<()>;
         fn git_import() -> Result<()>;
         fn op_head() -> Result<String>;
         fn op_log(limit: usize) -> Result<Vec<Operation>>;
@@ -1731,14 +2646,24 @@ vcs_cli_support::at_forwarders! {
         fn workspace_add(spec: WorkspaceAdd) -> Result<()>;
         fn workspace_forget(name: &str) -> Result<()>;
     }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `jj.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Jj` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
+    }
 }
 
 // Manual forwarder: `transaction` takes a generic closure, which the declarative
 // forwarder macro (fixed argument lists) cannot express.
 impl<'a, R: ProcessRunner> JjAt<'a, R> {
     /// Bound form of [`Jj::transaction`] (with `dir` pre-bound): run `f` with
-    /// op-log rollback on `Err`. See [`Jj::transaction`] for the caveats.
-    pub async fn transaction<T, F, Fut>(&self, f: F) -> Result<T>
+    /// concurrency-safe op-log rollback on `Err`. See [`Jj::transaction`] for the
+    /// [`TransactionError`] contract and the caveats.
+    pub async fn transaction<T, F, Fut>(&self, f: F) -> std::result::Result<T, TransactionError>
     where
         F: FnOnce(JjAt<'a, R>) -> Fut,
         Fut: Future<Output = Result<T>> + 'a,
@@ -1751,6 +2676,7 @@ impl<'a, R: ProcessRunner> JjAt<'a, R> {
 /// a `Drop` guard. They shell out through `std::process` directly (no async, no
 /// job-containment), so reserve them for short-lived cleanup.
 pub mod blocking {
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
@@ -1773,9 +2699,21 @@ pub mod blocking {
     /// for `Drop`, which can't `.await` the typed `workspace_list`/`workspace_root`.
     /// Lists workspaces (`workspace list -T name`), then matches each
     /// `workspace root --name <n>` against `path` (canonicalised, Windows
-    /// verbatim-prefix stripped). `None` when jj is missing or nothing matches —
-    /// the caller then skips the forget rather than guessing.
-    pub fn workspace_name_for_path(dir: &Path, path: &Path) -> Option<String> {
+    /// verbatim-prefix stripped).
+    ///
+    /// The three outcomes are kept **distinct** so a `Drop` caller no longer has to
+    /// treat "the probe failed" as "no such workspace" — the old `Option` return
+    /// folded both into `None`, silently skipping cleanup that a real failure should
+    /// have surfaced (and hiding a workspace that *is* registered but couldn't be
+    /// placed):
+    /// - `Ok(Some(name))` — a registered workspace's root matched `path`.
+    /// - `Ok(None)` — jj listed the workspaces cleanly and none matched `path`: a
+    ///   genuine miss, so the caller safely skips the forget (nothing to clean up).
+    /// - `Err(_)` — the probe itself could not answer: `jj` was missing / failed to
+    ///   spawn, `workspace list` exited non-zero, or one or more *registered*
+    ///   workspaces did not resolve via `workspace root --name` (so `path`'s absence
+    ///   can't be proven). The caller can report it instead of silently doing nothing.
+    pub fn workspace_name_for_path(dir: &Path, path: &Path) -> io::Result<Option<String>> {
         let target = normalize(path);
         let out = Command::new(super::BINARY)
             .current_dir(dir)
@@ -1796,11 +2734,18 @@ pub mod blocking {
                 "--color",
                 "never",
             ])
-            .output()
-            .ok()?;
+            .output()?;
         if !out.status.success() {
-            return None;
+            return Err(io::Error::other(format!(
+                "`jj workspace list` exited with {} while resolving the workspace at {}",
+                out.status,
+                path.display(),
+            )));
         }
+        // Registered workspaces whose root did not resolve via `workspace root
+        // --name` — remembered so a no-match doesn't silently hide a workspace we
+        // merely failed to place (it may be the very one at `path`).
+        let mut unresolved: Vec<String> = Vec::new();
         for name in String::from_utf8_lossy(&out.stdout).lines() {
             let name = name.trim();
             if name.is_empty() {
@@ -1818,16 +2763,28 @@ pub mod blocking {
                     "never",
                 ])
                 .output();
-            if let Ok(r) = root
-                && r.status.success()
-            {
-                let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
-                if normalize(&p) == target || p == target || p == path {
-                    return Some(name.to_string());
+            match root {
+                Ok(r) if r.status.success() => {
+                    let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
+                    if normalize(&p) == target || p == target || p == path {
+                        return Ok(Some(name.to_string()));
+                    }
                 }
+                _ => unresolved.push(name.to_string()),
             }
         }
-        None
+        if unresolved.is_empty() {
+            Ok(None)
+        } else {
+            Err(io::Error::other(format!(
+                "could not resolve the workspace at {}: {} registered workspace(s) did not \
+                 resolve via `jj workspace root --name` ({}); resolve or `jj workspace forget` \
+                 them manually",
+                path.display(),
+                unresolved.len(),
+                unresolved.join(", "),
+            )))
+        }
     }
 
     /// Canonicalise + strip the Windows verbatim prefix (`\\?\…`, which
@@ -1852,6 +2809,15 @@ mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
+    // Terse constructors for the validated newtypes in test call sites; the
+    // literals here are always valid, so `unwrap` is fine in tests.
+    fn rv(s: &str) -> RevsetExpr {
+        RevsetExpr::new(s).unwrap()
+    }
+    fn bn(s: &str) -> BookmarkName {
+        BookmarkName::new(s).unwrap()
+    }
+
     #[test]
     fn binary_name_is_jj() {
         assert_eq!(BINARY, "jj");
@@ -1872,15 +2838,23 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
 
-        jj.bookmark_move(dir, "main", "@", true).await.unwrap();
-        jj.at(dir).bookmark_move("main", "@", true).await.unwrap();
-        jj.describe_rev(dir, "feat", "msg").await.unwrap();
-        jj.at(dir).describe_rev("feat", "msg").await.unwrap();
-        jj.description(dir, "@-").await.unwrap();
-        jj.at(dir).description("@-").await.unwrap();
+        jj.bookmark_move(
+            dir,
+            BookmarkMove::new(bn("main"), rv("@")).allow_backwards(),
+        )
+        .await
+        .unwrap();
+        jj.at(dir)
+            .bookmark_move(BookmarkMove::new(bn("main"), rv("@")).allow_backwards())
+            .await
+            .unwrap();
+        jj.describe_rev(dir, &rv("feat"), "msg").await.unwrap();
+        jj.at(dir).describe_rev(&rv("feat"), "msg").await.unwrap();
+        jj.description(dir, &rv("@-")).await.unwrap();
+        jj.at(dir).description(&rv("@-")).await.unwrap();
         // One of the §4 additions.
-        jj.duplicate(dir, "@-").await.unwrap();
-        jj.at(dir).duplicate("@-").await.unwrap();
+        jj.duplicate(dir, &rv("@-")).await.unwrap();
+        jj.at(dir).duplicate(&rv("@-")).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
@@ -1890,11 +2864,126 @@ mod tests {
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
     }
 
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`jj.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd. The bound raw hatch is verbatim — no
+    // `--color never` is injected (unlike the modelled methods).
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        jj.at(dir).run(&["status".to_string()]).await.unwrap();
+        let _ = jj.at(dir).run_raw(&["status".to_string()]).await.unwrap();
+        jj.at(dir).run_args(&["status"]).await.unwrap();
+        let _ = jj.at(dir).run_raw_args(&["status"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        jj.run(&["status".to_string()]).await.unwrap();
+        let _ = jj.run_raw(&["status".to_string()]).await.unwrap();
+        jj.run_args(&["status"]).await.unwrap();
+        let _ = jj.run_raw_args(&["status"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            // Verbatim argv: no `--color never` appended.
+            assert_eq!(c.args_str(), ["status"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
+    }
+
+    // T-038: each read-only query twin issues **exactly** its snapshotting form's
+    // argv plus the global `--ignore-working-copy` flag — the flag that keeps jj
+    // from locking + snapshotting the working copy and recording an operation. The
+    // default forms must NOT carry it (they snapshot, as jj always has). Pinned via
+    // a `RecordingRunner` so the argv is asserted byte-for-byte, hermetically.
+    #[tokio::test]
+    async fn read_only_query_twins_append_ignore_working_copy() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+
+        // `status`/`status_ignoring_working_copy` each resolve the workspace
+        // root first (T-040), so each form issues *two* calls (`root`, then
+        // `diff --summary`) rather than one — both carrying (or not) the same
+        // `--ignore-working-copy` flag.
+        jj.status(dir).await.unwrap();
+        jj.status_ignoring_working_copy(dir).await.unwrap();
+        // The remaining pairs: the default (snapshotting) form, then its
+        // read-only twin — a single call each.
+        jj.bookmarks(dir).await.unwrap();
+        jj.bookmarks_ignoring_working_copy(dir).await.unwrap();
+        jj.reachable_bookmarks(dir).await.unwrap();
+        jj.reachable_bookmarks_ignoring_working_copy(dir)
+            .await
+            .unwrap();
+        jj.template_query(dir, &rv("@"), "commit_id", Some(1))
+            .await
+            .unwrap();
+        jj.template_query_ignoring_working_copy(dir, &rv("@"), "commit_id", Some(1))
+            .await
+            .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls.len(),
+            10,
+            "status's two-call pairs (root, diff) x2 forms, plus three single-call pairs"
+        );
+
+        // status: [root, diff], then [root+ignore, diff+ignore] — check each
+        // underlying call gets the flag, not just the pair as a whole.
+        let (status_calls, rest) = calls.split_at(4);
+        let (live, read_only) = status_calls.split_at(2);
+        for (live_call, read_only_call) in live.iter().zip(read_only) {
+            let live_args = live_call.args_str();
+            let read_only_args = read_only_call.args_str();
+            assert!(
+                !live_args.iter().any(|a| a == "--ignore-working-copy"),
+                "the default form must snapshot the working copy (no flag): {live_args:?}"
+            );
+            let mut expected = live_args.clone();
+            expected.push("--ignore-working-copy".to_string());
+            assert_eq!(
+                read_only_args, expected,
+                "status's read-only twin must be the default argv + --ignore-working-copy"
+            );
+        }
+
+        for pair in rest.chunks(2) {
+            let live = pair[0].args_str();
+            let read_only = pair[1].args_str();
+            assert!(
+                !live.iter().any(|a| a == "--ignore-working-copy"),
+                "the default form must snapshot the working copy (no flag): {live:?}"
+            );
+            let mut expected = live.clone();
+            expected.push("--ignore-working-copy".to_string());
+            assert_eq!(
+                read_only, expected,
+                "the read-only twin must be the default argv + --ignore-working-copy"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn workspace_list_parses_template_rows() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "workspace", "list"],
-            Reply::ok("default\te2aa3420\tmain\nws1\t12345678\t\n"),
+            Reply::ok("\"default\"\te2aa3420\t\"main\"\n\"ws1\"\t12345678\t\n"),
         ));
         let got = jj.workspace_list(Path::new(".")).await.expect("list");
         assert_eq!(got.len(), 2);
@@ -1973,9 +3062,12 @@ mod tests {
     async fn workspace_add_builds_name_base_path() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.workspace_add(Path::new("/repo"), WorkspaceAdd::new("ws1", "main", "/wt"))
-            .await
-            .expect("workspace add");
+        jj.workspace_add(
+            Path::new("/repo"),
+            WorkspaceAdd::new("ws1", rv("main"), "/wt"),
+        )
+        .await
+        .expect("workspace add");
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -1999,7 +3091,7 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         jj.workspace_add(
             Path::new("/repo"),
-            WorkspaceAdd::new("ws1", "main", "/wt").sparse(SparseMode::Empty),
+            WorkspaceAdd::new("ws1", rv("main"), "/wt").sparse(SparseMode::Empty),
         )
         .await
         .expect("workspace add");
@@ -2027,7 +3119,10 @@ mod tests {
             JjFileset::path("src/a(b).rs").as_str(),
             "root-file:\"src/a(b).rs\""
         );
-        // A literal quote is escaped for the `root-file:"…"` string literal (both platforms).
+    }
+
+    #[test]
+    fn fileset_escapes_double_quote() {
         assert_eq!(JjFileset::path("a\"b").as_str(), "root-file:\"a\\\"b\"");
     }
 
@@ -2059,10 +3154,15 @@ mod tests {
 
     #[test]
     #[cfg(not(windows))]
-    fn fileset_preserves_backslash_on_unix() {
+    fn fileset_escapes_backslashes_on_unix() {
         assert_eq!(
-            JjFileset::path("weird\\name.rs").as_str(),
-            "root-file:\"weird\\name.rs\""
+            JjFileset::path("a\\b.txt").as_str(),
+            "root-file:\"a\\\\b.txt\""
+        );
+        assert_eq!(JjFileset::path("a\\").as_str(), "root-file:\"a\\\\\"");
+        assert_eq!(
+            JjFileset::path("a\\b\"c.txt").as_str(),
+            "root-file:\"a\\\\b\\\"c.txt\""
         );
     }
 
@@ -2097,7 +3197,7 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         jj.squash_paths(
             Path::new("."),
-            SquashPaths::new("@", "feat").filesets([JjFileset::path("a.rs")]),
+            SquashPaths::new(rv("@"), rv("feat")).filesets([JjFileset::path("a.rs")]),
         )
         .await
         .expect("squash_paths");
@@ -2122,7 +3222,7 @@ mod tests {
         let jj = Jj::with_runner(&rec);
         jj.squash_paths(
             Path::new("."),
-            SquashPaths::new("@", "feat")
+            SquashPaths::new(rv("@"), rv("feat"))
                 .filesets([JjFileset::path("a.rs")])
                 .use_destination_message(),
         )
@@ -2148,7 +3248,7 @@ mod tests {
     async fn jj_new_revision_scoped_ops_build_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.describe_rev(Path::new("."), "feat", "msg")
+        jj.describe_rev(Path::new("."), &rv("feat"), "msg")
             .await
             .unwrap();
         assert_eq!(
@@ -2158,7 +3258,7 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.rebase_branch(Path::new("."), "feat", "main")
+        jj.rebase_branch(Path::new("."), &rv("feat"), &rv("main"))
             .await
             .unwrap();
         assert_eq!(
@@ -2168,7 +3268,7 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.bookmark_track(Path::new("."), "feat", "origin")
+        jj.bookmark_track(Path::new("."), &bn("feat"), "origin")
             .await
             .unwrap();
         assert_eq!(
@@ -2178,8 +3278,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bookmark_track_rejects_glob_like_remote() {
+        // Unlike the bookmark segment, the remote segment of jj's positional
+        // `<name>@<remote>` pattern isn't itself pattern-syntax — wrapping it
+        // in `exact:` would silently no-op (see `reject_glob_like`'s doc
+        // comment) rather than exact-match, so a glob-bearing remote must be
+        // rejected before spawn instead.
+        for remote in ["*", "o?igin", "[origin]"] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+            assert!(
+                jj.bookmark_track(Path::new("."), &bn("main"), remote)
+                    .await
+                    .is_err(),
+                "remote {remote:?} should be rejected before spawn"
+            );
+            assert!(
+                rec.calls().is_empty(),
+                "must not spawn for remote {remote:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn bookmarks_uses_template_and_parses_rows() {
-        let rec = RecordingRunner::replying(Reply::ok("main\tabc123\nfeature\tdef456\n"));
+        let rec = RecordingRunner::replying(Reply::ok(
+            "1\t\t\"main\"\tabc123\n1\t\t\"feature\"\tdef456\n",
+        ));
         let jj = Jj::with_runner(&rec);
         let marks = jj.bookmarks(Path::new(".")).await.unwrap();
         assert_eq!(
@@ -2203,7 +3328,7 @@ mod tests {
     async fn bookmarks_all_parses_local_and_remote() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "bookmark", "list"],
-            Reply::ok("main\t\t0\tabc123\nmain\torigin\t1\tabc123\n"),
+            Reply::ok("1\t\"main\"\t\t0\tabc123\n1\t\"main\"\torigin\t1\tabc123\n"),
         ));
         let refs = jj.bookmarks_all(Path::new(".")).await.unwrap();
         assert_eq!(refs.len(), 2);
@@ -2239,14 +3364,37 @@ mod tests {
     // Parsed status() is backed by `diff -r @ --summary`, not `jj status`.
     #[tokio::test]
     async fn status_parses_diff_summary() {
-        let jj = Jj::with_runner(ScriptedRunner::new().on(
-            ["jj", "diff", "-r", "@", "--summary"],
-            Reply::ok("M a.rs\nA b.rs\n"),
-        ));
+        let jj = Jj::with_runner(
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(
+                    ["jj", "diff", "-r", "@", "--summary"],
+                    Reply::ok("M a.rs\nA b.rs\n"),
+                ),
+        );
         let entries = jj.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].status, 'M');
-        assert_eq!(entries[1].path, "b.rs");
+        assert_eq!(entries[1].path, Path::new("b.rs"));
+    }
+
+    #[test]
+    fn summary_paths_normalise_windows_and_reject_workspace_escapes() {
+        let paths = normalize_changed_paths(vec![ChangedPath {
+            status: 'R',
+            path: "src\\.\\new.rs".into(),
+            old_path: Some("src\\old.rs".into()),
+        }])
+        .expect("normalise");
+        assert_eq!(paths[0].path, Path::new("src/new.rs"));
+        assert_eq!(paths[0].old_path.as_deref(), Some(Path::new("src/old.rs")));
+        let err = normalize_changed_paths(vec![ChangedPath {
+            status: 'M',
+            path: "../outside.rs".into(),
+            old_path: None,
+        }])
+        .expect_err("must reject a path outside the workspace");
+        assert!(err.to_string().contains("escapes the workspace root"));
     }
 
     #[tokio::test]
@@ -2272,9 +3420,12 @@ mod tests {
     async fn bookmark_move_appends_allow_backwards() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.bookmark_move(Path::new("/r"), "main", "@", true)
-            .await
-            .unwrap();
+        jj.bookmark_move(
+            Path::new("/r"),
+            BookmarkMove::new(bn("main"), rv("@")).allow_backwards(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -2290,11 +3441,70 @@ mod tests {
         );
     }
 
+    // The default spec omits `--allow-backwards`.
+    #[tokio::test]
+    async fn bookmark_move_default_omits_allow_backwards() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.bookmark_move(Path::new("/r"), BookmarkMove::new(bn("main"), rv("@")))
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "bookmark",
+                "move",
+                "exact:main",
+                "--to",
+                "@",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    // `squash_into` builds `squash --into <rev>`; the spec's setter appends
+    // `--use-destination-message` (after the forced `--color never`, which
+    // `cmd_in` adds before the trailing setter — order is functionally irrelevant
+    // to jj).
+    #[tokio::test]
+    async fn squash_into_builds_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.squash_into(Path::new("/r"), SquashInto::new(rv("@-")))
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["squash", "--into", "@-", "--color", "never"]
+        );
+
+        let flagged = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&flagged);
+        jj.squash_into(
+            Path::new("/r"),
+            SquashInto::new(rv("@-")).use_destination_message(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            flagged.only_call().args_str(),
+            [
+                "squash",
+                "--into",
+                "@-",
+                "--color",
+                "never",
+                "--use-destination-message"
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn new_merge_appends_parents() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.new_merge(Path::new("/r"), "m", vec!["p1".into(), "p2".into()])
+        jj.new_merge(Path::new("/r"), "m", vec![rv("p1"), rv("p2")])
             .await
             .unwrap();
         assert_eq!(
@@ -2306,20 +3516,23 @@ mod tests {
     #[tokio::test]
     async fn is_conflicted_reads_template_flag() {
         let yes = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("1\n")));
-        assert!(yes.is_conflicted(Path::new("."), "@").await.unwrap());
+        assert!(yes.is_conflicted(Path::new("."), &rv("@")).await.unwrap());
         let no = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("0\n")));
-        assert!(!no.is_conflicted(Path::new("."), "@").await.unwrap());
+        assert!(!no.is_conflicted(Path::new("."), &rv("@")).await.unwrap());
     }
 
     #[tokio::test]
     async fn commit_count_counts_template_lines() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("a\nb\nc\n")));
-        assert_eq!(jj.commit_count(Path::new("."), "::@").await.unwrap(), 3);
+        assert_eq!(
+            jj.commit_count(Path::new("."), &rv("::@")).await.unwrap(),
+            3
+        );
     }
 
     #[tokio::test]
     async fn reachable_bookmarks_queries_heads_revset() {
-        let rec = RecordingRunner::replying(Reply::ok("main\tabc123\n"));
+        let rec = RecordingRunner::replying(Reply::ok("\"main\"\tabc123\n"));
         let jj = Jj::with_runner(&rec);
         let got = jj.reachable_bookmarks(Path::new(".")).await.unwrap();
         assert_eq!(got.len(), 1);
@@ -2339,7 +3552,7 @@ mod tests {
             Reply::fail(2, "Error: No conflicts found at this revision"),
         ));
         assert!(
-            none.resolve_list(Path::new("."), "@")
+            none.resolve_list(Path::new("."), &rv("@"))
                 .await
                 .unwrap()
                 .is_empty()
@@ -2349,20 +3562,25 @@ mod tests {
             ["jj", "resolve"],
             Reply::fail(1, "Error: Revision `bogus` doesn't exist"),
         ));
-        assert!(bad.resolve_list(Path::new("."), "bogus").await.is_err());
+        assert!(
+            bad.resolve_list(Path::new("."), &rv("bogus"))
+                .await
+                .is_err()
+        );
         // Success with conflicts → parsed paths.
         let some = Jj::with_runner(
             ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
         );
         assert_eq!(
-            some.resolve_list(Path::new("."), "@").await.unwrap(),
-            ["a.rs"]
+            some.resolve_list(Path::new("."), &rv("@")).await.unwrap(),
+            [PathBuf::from("a.rs")]
         );
     }
 
     #[tokio::test]
     async fn current_bookmark_takes_first_or_none() {
-        let some = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\n")));
+        let some =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"main\"\n")));
         assert_eq!(
             some.current_bookmark(Path::new("."))
                 .await
@@ -2384,7 +3602,7 @@ mod tests {
     async fn current_change_parses_scripted_output() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "log"],
-            Reply::ok("kztuxlro\t38e00654\tfalse\thello jj\n"),
+            Reply::ok("kztuxlro\t38e00654\tfalse\t\"hello jj\"\n"),
         ));
         let change = jj
             .current_change(Path::new("."))
@@ -2404,7 +3622,7 @@ mod tests {
         let jj = Jj::with_runner(
             ScriptedRunner::new().on(["jj", "git", "push", "-b", "exact:feature"], Reply::ok("")),
         );
-        jj.git_push(Path::new("."), Some("feature".to_string()))
+        jj.git_push(Path::new("."), Some(bn("feature")))
             .await
             .expect("should build `git push -b exact:feature`");
     }
@@ -2423,7 +3641,9 @@ mod tests {
     async fn bookmark_delete_and_fetch_branch_use_exact() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.bookmark_delete(Path::new("."), "foo").await.unwrap();
+        jj.bookmark_delete(Path::new("."), &bn("foo"))
+            .await
+            .unwrap();
         assert_eq!(
             &rec.only_call().args_str()[..3],
             &["bookmark", "delete", "exact:foo"]
@@ -2431,7 +3651,9 @@ mod tests {
 
         let rec2 = RecordingRunner::replying(Reply::ok(""));
         let jj2 = Jj::with_runner(&rec2);
-        jj2.git_fetch_branch(Path::new("."), "foo").await.unwrap();
+        jj2.git_fetch_branch(Path::new("."), &bn("foo"))
+            .await
+            .unwrap();
         assert_eq!(
             &rec2.only_call().args_str()[..6],
             &["git", "fetch", "--remote", "origin", "-b", "exact:foo"]
@@ -2475,7 +3697,7 @@ mod tests {
             ],
         ));
         let jj = Jj::with_runner(&rec).with_retry(RetryPolicy::none().attempts(3));
-        jj.abandon(Path::new("."), "@-")
+        jj.abandon(Path::new("."), &rv("@-"))
             .await
             .expect("retried past the lock");
         assert_eq!(rec.calls().len(), 2, "one retry after the lock failure");
@@ -2489,7 +3711,7 @@ mod tests {
             ],
         ));
         let jj = Jj::with_runner(&rec);
-        assert!(jj.abandon(Path::new("."), "@-").await.is_err());
+        assert!(jj.abandon(Path::new("."), &rv("@-")).await.is_err());
         assert_eq!(rec.calls().len(), 1, "no retry without with_retry");
     }
 
@@ -2527,12 +3749,20 @@ mod tests {
     }
 
     // `transaction` captures the op head and restores it when the closure errors —
-    // and the original (closure) error is what surfaces.
+    // the closure error surfaces as `cause`, and the rollback ran (`Restored`). The
+    // first `op log` is the savepoint capture; the second is the divergence probe
+    // (which sees a clean single-parent chain back to the captured op), then restore.
     #[tokio::test]
     async fn transaction_restores_op_head_on_error() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["jj", "op", "log"], Reply::ok("abc123\n"))
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("abc123\n"),               // capture → pre
+                        Reply::ok("def456\t1\nabc123\t1\n"), // probe → clean chain to pre
+                    ],
+                )
                 .on(["jj", "op", "restore"], Reply::ok(""))
                 .on(["jj", "describe"], Reply::fail(1, "boom")),
         );
@@ -2544,15 +3774,38 @@ mod tests {
             )
             .await;
         let err = res.expect_err("closure error must surface");
-        assert!(matches!(err, Error::Exit { .. }));
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        assert!(
+            matches!(err.rollback, Rollback::Restored),
+            "rollback: {:?}",
+            err.rollback
+        );
         let calls = rec.calls();
-        assert_eq!(calls.len(), 3, "op head, mutation, restore: {calls:?}");
+        assert_eq!(
+            calls.len(),
+            4,
+            "capture, mutation, divergence probe, restore: {calls:?}"
+        );
         assert_eq!(calls[0].args_str()[..2], ["op", "log"]);
         assert_eq!(calls[1].args_str()[0], "describe");
-        assert_eq!(calls[2].args_str()[..3], ["op", "restore", "abc123"]);
+        assert_eq!(calls[2].args_str()[..2], ["op", "log"]);
+        assert!(
+            calls[2]
+                .args_str()
+                .iter()
+                .any(|a| a == "--ignore-working-copy"),
+            "the divergence probe must not snapshot the working copy: {:?}",
+            calls[2].args_str()
+        );
+        assert_eq!(calls[3].args_str()[..3], ["op", "restore", "abc123"]);
     }
 
-    // A successful transaction must NOT restore (that would undo the work).
+    // A successful transaction must NOT roll back (that would undo the work) — and
+    // never even runs the divergence probe.
     #[tokio::test]
     async fn transaction_keeps_changes_on_success() {
         let rec = RecordingRunner::new(
@@ -2568,7 +3821,7 @@ mod tests {
         .await
         .expect("transaction");
         let calls = rec.calls();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 2, "capture + mutation only: {calls:?}");
         assert!(
             calls.iter().all(|c| c.args_str()[..2] != ["op", "restore"]),
             "no restore on success: {calls:?}"
@@ -2592,47 +3845,248 @@ mod tests {
         assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir));
     }
 
-    // The injection guard: a flag-shaped value in any exposed positional slot
-    // must be refused BEFORE anything spawns.
+    // The rollback must survive an already-fired client cancellation token: the
+    // probe and the `op restore` run on a fresh cancellation context, while a bare
+    // `op_restore` on the same client short-circuits as `Cancelled`. This is the
+    // core defect T-036 fixes — a cancelled operation no longer disables its cleanup.
     #[tokio::test]
-    async fn flag_like_positionals_are_rejected_before_spawning() {
+    async fn rollback_to_survives_fired_cancellation() {
+        let token = CancellationToken::new();
+        token.cancel(); // as a cancelled/deadline-hit main op would leave it
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // probe: head `post` (single parent) → clean chain back to `pre`.
+                .on(["jj", "op", "log"], Reply::ok("post\t1\npre\t1\n"))
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec).default_cancel_on(token);
+        let dir = Path::new("/r");
+
+        let outcome = jj.rollback_to(dir, "pre").await;
+        assert!(
+            matches!(outcome, Rollback::Restored),
+            "rollback must run despite the fired token: {outcome:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str()[..2] == ["op", "restore"]),
+            "the detached restore must have run: {:?}",
+            rec.calls()
+        );
+
+        // Sanity: a bare `op_restore` on this same (cancelled) client IS cancelled,
+        // proving the client token really is fired and the rollback deliberately
+        // side-steps it rather than the token being inert.
+        let bare = jj.op_restore(dir, "pre").await;
+        assert!(
+            bare.as_ref().is_err_and(|e| e.is_cancelled()),
+            "a bare op_restore must inherit the fired token: {bare:?}"
+        );
+    }
+
+    // Through `transaction`: a closure whose error is a *fired* cancellation still
+    // gets a working rollback (the savepoint was captured before the token fired).
+    #[tokio::test]
+    async fn transaction_rolls_back_after_cancelled_closure() {
+        let token = CancellationToken::new();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("pre\n"),             // capture (token not yet fired)
+                        Reply::ok("post\t1\npre\t1\n"), // probe → clean chain
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec).default_cancel_on(token.clone());
+        let dir = Path::new("/r");
+        let res = jj
+            .transaction(dir, |_tx| async move {
+                // The main operation's cancellation fires mid-transaction.
+                token.cancel();
+                Err::<(), _>(Error::Cancelled {
+                    program: "jj".to_string(),
+                })
+            })
+            .await;
+        let err = res.expect_err("cancelled closure");
+        assert!(err.cause.is_cancelled(), "cause: {:?}", err.cause);
+        assert!(
+            matches!(err.rollback, Rollback::Restored),
+            "the cleanup must survive the fired token: {:?}",
+            err.rollback
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str()[..2] == ["op", "restore"]),
+            "restore must have run: {:?}",
+            rec.calls()
+        );
+    }
+
+    // A failing `op restore` is no longer swallowed: the closure error is preserved
+    // as `cause`, and the restore failure is surfaced as `Rollback::Failed`.
+    #[tokio::test]
+    async fn transaction_reports_restore_failure() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("pre\n"), Reply::ok("post\t1\npre\t1\n")],
+                )
+                .on(["jj", "op", "restore"], Reply::fail(1, "op not found"))
+                .on(["jj", "describe"], Reply::fail(1, "boom")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let res = jj
+            .transaction(
+                Path::new("/r"),
+                |tx| async move { tx.describe("wip").await },
+            )
+            .await;
+        let err = res.expect_err("closure error");
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        match err.rollback {
+            Rollback::Failed(e) => {
+                assert!(matches!(e, Error::Exit { .. }), "rollback error: {e:?}");
+            }
+            other => panic!("expected Rollback::Failed, got {other:?}"),
+        }
+    }
+
+    // A concurrent op landing between capture and restore (jj records a `>= 2`-parent
+    // "reconcile divergent operations" merge) must be DETECTED: the rollback is
+    // skipped, signalled via `Rollback::SkippedDiverged`, and NO `op restore` runs —
+    // the foreign work is not clobbered.
+    #[tokio::test]
+    async fn transaction_skips_rollback_on_concurrent_divergence() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("pre\n"),
+                        // head `merge` has 2 parents (a foreign op was reconciled)
+                        // before the walk reaches `pre`.
+                        Reply::ok("merge\t2\nmine\t1\npre\t1\n"),
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "describe"], Reply::fail(1, "boom")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let res = jj
+            .transaction(
+                Path::new("/r"),
+                |tx| async move { tx.describe("wip").await },
+            )
+            .await;
+        let err = res.expect_err("closure error");
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        assert!(
+            matches!(err.rollback, Rollback::SkippedDiverged),
+            "rollback: {:?}",
+            err.rollback
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "must not revert across a divergence: {:?}",
+            rec.calls()
+        );
+    }
+
+    // If the captured savepoint is not within the probed window, the range can't be
+    // confirmed safe to revert — the rollback is refused (conservative), not blindly
+    // applied.
+    #[tokio::test]
+    async fn rollback_to_refuses_when_pre_not_in_window() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // `pre` (the captured op) is absent from the probed rows.
+                .on(["jj", "op", "log"], Reply::ok("a\t1\nb\t1\nc\t1\n"))
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let outcome = jj.rollback_to(Path::new("/r"), "pre").await;
+        assert!(
+            matches!(outcome, Rollback::SkippedDiverged),
+            "unverifiable range must be refused: {outcome:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "no restore when the savepoint can't be located: {:?}",
+            rec.calls()
+        );
+    }
+
+    // The injection barrier now has two tiers:
+    //  1. bookmark names and revsets are validated NEWTYPES, so a flag-like or
+    //     malformed value is rejected at *construction* — it can never reach an
+    //     argv slot (migration test below); and
+    //  2. the remaining bare-positional `&str` inputs that are not
+    //     bookmarks/revsets (operation ids, workspace names, URLs) keep the
+    //     internal guard, refused before anything spawns.
+
+    // Tier 1 — the newtypes reject the flag-like / malformed values the typed ops
+    // would otherwise have received, as a classifiable invalid-input error.
+    #[test]
+    fn validated_bookmark_and_revset_newtypes_reject_bad_values() {
+        for bad in ["", "-evil", "--all", "-bad", "--config=x", "-r"] {
+            let b = BookmarkName::new(bad).expect_err("bookmark name must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&b), "bookmark {bad:?}");
+            let r = RevsetExpr::new(bad).expect_err("revset must be rejected");
+            assert!(vcs_cli_support::is_invalid_input(&r), "revset {bad:?}");
+        }
+        // Legitimate values construct fine.
+        assert!(BookmarkName::new("feature/x").is_ok());
+        assert!(RevsetExpr::new("heads(::@ & bookmarks())").is_ok());
+    }
+
+    // Tier 2 — the ops that still take a bare `&str` (operation ids, workspace
+    // names, URLs) refuse a flag-like value BEFORE anything spawns.
+    #[tokio::test]
+    async fn str_positionals_are_rejected_before_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
         let dir = Path::new("/r");
 
-        assert!(jj.bookmark_create(dir, "-evil", "@").await.is_err());
-        assert!(jj.bookmark_rename(dir, "ok", "-bad").await.is_err());
-        assert!(jj.bookmark_delete(dir, "--all").await.is_err());
-        assert!(jj.bookmark_move(dir, "-evil", "@", false).await.is_err());
-        assert!(jj.edit(dir, "-evil").await.is_err());
-        assert!(jj.duplicate(dir, "-r").await.is_err());
-        assert!(jj.abandon(dir, "-evil").await.is_err());
-        // Token-prefix and other bare positionals:
-        assert!(
-            jj.bookmark_track(dir, "--config=x", "origin")
-                .await
-                .is_err(),
-            "name leads the {{name}}@{{remote}} token"
-        );
-        assert!(jj.bookmark_set(dir, "-evil", "@").await.is_err());
         assert!(jj.op_restore(dir, "--help").await.is_err());
         assert!(jj.workspace_forget(dir, "-evil").await.is_err());
         assert!(
-            jj.new_merge(dir, "m", vec!["@".into(), "--ignore-working-copy".into()])
+            jj.git_clone("-evil", dir, GitClone::separate())
                 .await
-                .is_err(),
-            "a flag-shaped parent is refused"
+                .is_err()
         );
-        assert!(jj.git_clone("-evil", dir, false).await.is_err());
-        assert!(jj.edit(dir, "").await.is_err(), "empty refused too");
+
         assert!(
             rec.calls().is_empty(),
             "nothing may spawn: {:?}",
             rec.calls()
         );
+    }
 
-        // …and legitimate values still pass through unchanged.
-        jj.edit(dir, "abc123").await.expect("edit");
+    // A legitimate revset still flows through the typed path unchanged.
+    #[tokio::test]
+    async fn typed_edit_passes_through() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.edit(Path::new("/r"), &rv("abc123")).await.expect("edit");
         assert_eq!(
             rec.only_call().args_str(),
             ["edit", "abc123", "--color", "never"]
@@ -2695,7 +4149,7 @@ mod tests {
     async fn git_clone_builds_dirless_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.git_clone("https://x/r.git", Path::new("/dest"), true)
+        jj.git_clone("https://x/r.git", Path::new("/dest"), GitClone::colocated())
             .await
             .expect("clone");
         let call = rec.only_call();
@@ -2715,7 +4169,9 @@ mod tests {
 
         let plain = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&plain);
-        jj.git_clone("u", Path::new("/d"), false).await.unwrap();
+        jj.git_clone("u", Path::new("/d"), GitClone::separate())
+            .await
+            .unwrap();
         let call = plain.only_call();
         assert!(call.has_flag("--no-colocate"), "explicit either way");
         assert!(!call.has_flag("--colocate"));
@@ -2737,7 +4193,11 @@ mod tests {
         let occupied = tmp.path().join("occupied");
         std::fs::create_dir(&occupied).unwrap();
         std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
-        assert!(jj.git_clone("https://x/r", &occupied, false).await.is_err());
+        assert!(
+            jj.git_clone("https://x/r", &occupied, GitClone::separate())
+                .await
+                .is_err()
+        );
         assert!(
             occupied.join("keep.txt").exists(),
             "a non-empty caller dir must survive a failed jj clone"
@@ -2746,7 +4206,11 @@ mod tests {
         // An empty dest we could have populated is removed on failure.
         let empty = tmp.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
-        assert!(jj.git_clone("https://x/r", &empty, false).await.is_err());
+        assert!(
+            jj.git_clone("https://x/r", &empty, GitClone::separate())
+                .await
+                .is_err()
+        );
         assert!(
             !empty.exists(),
             "an empty dest is cleaned so a retry isn't blocked"
@@ -2760,7 +4224,7 @@ mod tests {
         jj.absorb(Path::new("/r"), None, &[]).await.unwrap();
         jj.absorb(
             Path::new("/r"),
-            Some("@-".into()),
+            Some(rv("@-")),
             &[JjFileset::path("src/a.rs")],
         )
         .await
@@ -2768,7 +4232,7 @@ mod tests {
         jj.split_paths(Path::new("/r"), &[JjFileset::path("b.rs")], "split out b")
             .await
             .unwrap();
-        jj.duplicate(Path::new("/r"), "@-").await.unwrap();
+        jj.duplicate(Path::new("/r"), &rv("@-")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["absorb", "--color", "never"]);
         assert_eq!(
@@ -2825,10 +4289,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn log_paths_builds_revset_template_and_filesets() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.log_paths(
+            Path::new("."),
+            &rv("main..@"),
+            5,
+            &[JjFileset::path("x|y.rs"), JjFileset::path("z.rs")],
+        )
+        .await
+        .expect("log_paths");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "log",
+                "-r",
+                "main..@",
+                "-n5",
+                "--no-graph",
+                "-T",
+                parse::CHANGE_TEMPLATE,
+                "root-file:\"x|y.rs\"",
+                "root-file:\"z.rs\"",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    // An empty fileset slice must NOT degrade to a bare `jj log -r <revset>`
+    // (unrestricted history) — it's refused before any spawn, mirroring
+    // `commit_paths_refuses_empty_filesets_without_spawning`.
+    #[tokio::test]
+    async fn log_paths_refuses_empty_filesets_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .log_paths(Path::new("."), &rv("@"), 5, &[])
+            .await
+            .expect_err("empty filesets must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
     async fn op_log_parses_template_rows() {
         let rec = RecordingRunner::new(ScriptedRunner::new().on(
             ["jj", "op", "log"],
-            Reply::ok("abc\tu@h\t2026-06-05T10:00:00+0200\tnew empty commit\n"),
+            Reply::ok("abc\t\"u@h\"\t2026-06-05T10:00:00+0200\t\"new empty commit\"\n"),
         ));
         let jj = Jj::with_runner(&rec);
         let ops = jj.op_log(Path::new("."), 5).await.expect("op_log");
@@ -2844,10 +4353,13 @@ mod tests {
     #[tokio::test]
     async fn evolog_uses_commit_context_template() {
         let rec = RecordingRunner::new(
-            ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
+            ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")),
         );
         let jj = Jj::with_runner(&rec);
-        let rows = jj.evolog(Path::new("."), "@", 10).await.expect("evolog");
+        let rows = jj
+            .evolog(Path::new("."), &rv("@"), 10)
+            .await
+            .expect("evolog");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].description, "wip");
         let args = rec.only_call().args_str();
@@ -2874,7 +4386,7 @@ mod tests {
         );
         let jj = Jj::with_runner(&rec);
         let lines = jj
-            .file_annotate(Path::new("."), "src/a.rs", Some("@-".into()))
+            .file_annotate(Path::new("."), "src/a.rs", Some(rv("@-")))
             .await
             .expect("annotate");
         assert_eq!(lines.len(), 2);
@@ -2882,7 +4394,7 @@ mod tests {
         assert_eq!(lines[1].line, 2);
         // H7: the file's trailing newline is preserved verbatim, not trimmed.
         assert_eq!(
-            jj.file_show(Path::new("."), "@-", "src/a.rs")
+            jj.file_show(Path::new("."), &rv("@-"), "src/a.rs")
                 .await
                 .unwrap(),
             "content\n"
@@ -2928,7 +4440,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok("feat: parser\n\nbody\n"));
         let jj = Jj::with_runner(&rec);
         let text = jj
-            .description(Path::new("."), "abc123")
+            .description(Path::new("."), &rv("abc123"))
             .await
             .expect("description");
         assert_eq!(text, "feat: parser\n\nbody");
@@ -2958,7 +4470,7 @@ mod tests {
             let rec = RecordingRunner::replying(Reply::ok(raw));
             let jj = Jj::with_runner(&rec);
             assert_eq!(
-                jj.file_show(Path::new("."), "@", "f.txt")
+                jj.file_show(Path::new("."), &rv("@"), "f.txt")
                     .await
                     .expect("file_show"),
                 raw
@@ -3015,8 +4527,73 @@ mod tests {
             .await
             .expect("diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
+    }
+
+    // T-049: a content read (`diff_text`) over the client's default OutputBudget is
+    // refused with `OutputTooLarge` (actual `total_bytes` + allowed `max_bytes`),
+    // never a silently truncated diff. The oversized output is drained but not
+    // retained (the error carries only counts): the bounded-memory contract.
+    #[tokio::test]
+    async fn diff_text_over_budget_errors_output_too_large() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match jj
+            .diff_text(Path::new("."), DiffSpec::Rev("@-".into()))
+            .await
+        {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "jj");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // Below the budget the diff parses in full — the ceiling only fires over-cap.
+    #[tokio::test]
+    async fn diff_under_budget_parses_full_output() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(out)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let files = jj
+            .diff(Path::new("."), DiffSpec::Rev("@-".into()))
+            .await
+            .expect("under-budget diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("m"));
+    }
+
+    // A blob read (`file_show`) honours the same budget, and its per-call override
+    // reads a legitimately large file the default budget would refuse.
+    #[tokio::test]
+    async fn file_show_over_budget_errors_and_override_reads() {
+        let big = "x".repeat(200_000);
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "file", "show"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            jj.file_show(Path::new("."), &rv("@"), "big.bin").await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let got = jj
+            .file_show_within(
+                Path::new("."),
+                &rv("@"),
+                "big.bin",
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large file");
+        assert_eq!(got, big);
     }
 
     #[cfg(feature = "mock")]

@@ -99,12 +99,14 @@ baseline**: if capturing it exceeds the deadline, `build()` returns a *transient
 stall startup any more than it can stall the loop.
 
 - **`recv().await -> Option<RepoChange>`** — the next settled change; `None` once
-  the watcher is dropped. `current() -> &RepoSnapshot` is the last known state —
+  the watch backend dies permanently, the watcher is dropped, or the task
+  otherwise ends. `current() -> &RepoSnapshot` is the last known state —
   the build-time baseline, advanced **only when you pull a change** (via `recv`
   or the stream — it is as fresh as your last pull, not a live view).
 - **`stats()`** — lock-free health counters: re-queries run, changes emitted,
-  skips (transient failures + deadline overruns) and what the last skip failed
-  on. A climbing `skipped` with flat `requeries` means the repository is wedged —
+  skips (transient failures + deadline overruns), automatic retries and
+  recoveries, terminal failures, and what the last skip failed on. A climbing
+  `skipped` with flat `requeries` means the repository is wedged —
   poll it from a health check instead of inferring health from event silence.
 - **The `stream` feature** adds `impl futures_core::Stream for RepoWatcher`, so
   the watcher drops into `tokio::select!`/stream combinators directly. `recv()`
@@ -138,15 +140,91 @@ are observed from a watched worktree too.
 
 ## Semantics & limits
 
-- **Transient re-query failures are skipped, not surfaced.** A snapshot taken
-  while an operation holds `index.lock` may fail (or overrun `requery_timeout`);
-  the watcher skips that re-check and the next event re-queries the settled
-  state. Setup failures (the watch can't start) surface from `build()`. Skips
-  are **counted** — `stats()` reports them (with the failure kind) — and the
-  `tracing` feature adds a debug line on each.
+- **Transient re-query failures are skipped, then retried automatically.** A
+  snapshot taken while an operation holds `index.lock` may fail (or overrun
+  `requery_timeout`); the watcher skips that re-check and schedules a bounded
+  backoff retry **even if no new filesystem event arrives** — so a failure on
+  the very last signal doesn't leave the watcher stuck until the next one. The
+  retry sequence is capped: once exhausted, the loop goes idle again and waits
+  for the next real filesystem event, so a permanently wedged repository can't
+  spin the task forever. Setup failures (the watch can't start) surface from
+  `build()`. Skips, retries, and recoveries are all **counted** — `stats()`
+  reports them (with the failure kind for skips) — and the `tracing` feature
+  adds a debug line on each (and, since it forwards to `vcs-core`, the underlying
+  git/jj commands too — see [Cargo features](#cargo-features)).
+- **A permanent watch-backend failure ends the watch.** If the OS-level
+  filesystem watch itself dies (most reliably reported on Windows — e.g. the
+  watched `.git`/`.jj` directory was removed and re-created by a re-clone or
+  `jj git init`), the loop closes its output channel: `recv()` returns `None`
+  (and the stream ends) instead of silently going quiet, and
+  `stats().terminal_failures` increments. Rebuild the watcher
+  (`RepoWatcher::watch` again) to resume.
 - **Runtime.** Unlike the rest of the toolkit, `vcs-watch` uses **tokio at
   runtime** (the watch task + debounce timer). Build/await it inside a tokio
   runtime.
+
+## Errors
+
+`build()` (and `watch()`) returns [`Error`], a small `#[non_exhaustive]` enum:
+
+- **`Vcs`** — a `vcs-core` re-query failed while capturing the startup baseline
+  (a wedged snapshot, a missing `git`/`jj` binary, …). `err.is_transient()` /
+  `err.is_not_found()` classify it, and `err.processkit_error()` reaches the
+  structured subprocess error.
+- **`Io`** — a filesystem operation failed (e.g. resolving a worktree gitlink), or
+  the startup baseline overran `requery_timeout` (a *transient* `TimedOut`).
+- **`Notify`** — the OS-level filesystem watch couldn't start or register a path.
+
+The filesystem-watch backend (`notify`) is a **private** dependency: a `Notify`
+error carries the crate's own opaque [`WatchError`], not the backend's error type.
+Classify it without depending on — or version-matching — that third-party crate:
+
+```rust,ignore
+# use vcs_watch::{Error, RepoWatcher};
+# use vcs_core::Repo;
+# async fn demo(repo: Repo) {
+match RepoWatcher::watch(repo).await {
+    Ok(watcher)                => { /* … */ }
+    Err(Error::Notify(w)) if w.is_path_not_found() =>
+        eprintln!("the repo's state dir is gone — nothing to watch"),
+    Err(Error::Notify(w)) if w.is_watch_limit() =>
+        eprintln!("hit the OS watch limit (raise inotify max_user_watches)"),
+    Err(e) => eprintln!("watch failed: {e}"),   // Display + `source()` chain
+}
+# }
+```
+
+`WatchError` exposes `is_path_not_found()`, `is_watch_limit()`, `io_error()`
+(the raw `std::io::Error`, if any), and `paths()`; it also source-chains to that
+io error via `std::error::Error::source`, so `Error` → `WatchError` → `io::Error`
+walks cleanly. Because the backend type never appears in a public signature, a
+backend major bump is an internal, non-breaking change here — it is deliberately
+*not* part of this crate's stability contract.
+
+## Cargo features
+
+Both optional, **off by default**, and isolated from a minimal/default build (a
+build that doesn't ask for them pulls neither the extra dependency nor its code):
+
+- **`tracing`** — emit a `tracing` debug event on each skipped/retried re-query,
+  **and** forward to `vcs-core/tracing` (which fans out to `vcs-git`/`vcs-jj` and
+  `processkit`), so the underlying git/jj commands each re-query issues are traced
+  too — otherwise the watcher's own line would be the only visible event.
+- **`stream`** — add `impl futures_core::Stream for RepoWatcher` (pulls only the
+  tiny `futures-core` trait crate).
+
+The graph is checked in CI (the feature-isolation job builds each feature solo)
+and by the crate's own `tests/feature_graph.rs`; reproduce it with:
+
+```text
+# minimal build takes neither optional dep directly (--depth 1 = direct edges;
+# futures-core is present transitively via the tokio stack regardless)
+cargo tree -p vcs-watch --no-default-features -e normal --depth 1
+# `tracing` forwards — its reverse-dependency tree includes vcs-core
+cargo tree -p vcs-watch --features tracing -e normal -i tracing
+# `stream` adds futures-core as a direct dep
+cargo tree -p vcs-watch --features stream -e normal --depth 1
+```
 
 ## See also
 

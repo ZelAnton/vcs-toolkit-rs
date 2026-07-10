@@ -103,20 +103,24 @@ async fn open_detects_git_and_reports_changes() {
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "seed.txt" && c.kind == ChangeKind::Modified)
+            .any(|c| c.path == std::path::Path::new("seed.txt") && c.kind == ChangeKind::Modified)
     );
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "new.txt" && c.kind == ChangeKind::Added)
+            .any(|c| c.path == std::path::Path::new("new.txt") && c.kind == ChangeKind::Added)
     );
 
     // Partial commit of just the tracked edit.
-    repo.commit_paths(&["seed.txt".to_string()], "edit seed")
+    repo.commit_paths(&[std::path::PathBuf::from("seed.txt")], "edit seed")
         .await
         .expect("commit_paths");
     let after = repo.changed_files().await.expect("status");
-    assert!(after.iter().all(|c| c.path != "seed.txt"));
+    assert!(
+        after
+            .iter()
+            .all(|c| c.path != std::path::Path::new("seed.txt"))
+    );
 }
 
 #[tokio::test]
@@ -136,7 +140,7 @@ async fn open_detects_jj_and_reports_changes() {
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "new.txt" && c.kind == ChangeKind::Added),
+            .any(|c| c.path == std::path::Path::new("new.txt") && c.kind == ChangeKind::Added),
         "expected new.txt added, got {changes:?}"
     );
 }
@@ -224,14 +228,14 @@ async fn git_try_merge_and_abort_continue_cycle() {
     let head_before = repo
         .git()
         .expect("git backend")
-        .rev_parse(dir, "HEAD")
+        .rev_parse(dir, &vcs_core::vcs_git::RevSpec::new("HEAD").unwrap())
         .await
         .expect("rev-parse");
 
     // Conflict probe: reports the path, leaves no merge state, moves nothing.
     assert_eq!(
         repo.try_merge("conflicting").await.expect("try_merge"),
-        MergeProbe::Conflicts(vec!["seed.txt".to_string()])
+        MergeProbe::Conflicts(vec![std::path::PathBuf::from("seed.txt")])
     );
     assert_eq!(
         repo.in_progress_state().await.expect("state"),
@@ -249,7 +253,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert_eq!(
         repo.git()
             .expect("git backend")
-            .rev_parse(dir, "HEAD")
+            .rev_parse(dir, &vcs_core::vcs_git::RevSpec::new("HEAD").unwrap())
             .await
             .expect("rev-parse"),
         head_before,
@@ -261,7 +265,12 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch("conflicting"))
+            .merge_commit(
+                dir,
+                vcs_core::vcs_git::MergeCommit::branch(
+                    vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()
+                )
+            )
             .await
             .is_err()
     );
@@ -278,7 +287,12 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch("conflicting"))
+            .merge_commit(
+                dir,
+                vcs_core::vcs_git::MergeCommit::branch(
+                    vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()
+                )
+            )
             .await
             .is_err()
     );
@@ -321,7 +335,7 @@ async fn jj_try_merge_reports_conflicts_and_rolls_back() {
 
     assert_eq!(
         repo.try_merge("side-a").await.expect("try_merge"),
-        MergeProbe::Conflicts(vec!["c.txt".to_string()])
+        MergeProbe::Conflicts(vec![std::path::PathBuf::from("c.txt")])
     );
 
     // Rolled back: same working-copy change, no conflict, no merge child left.
@@ -371,7 +385,7 @@ async fn git_continue_drives_rebase_through_two_conflicts() {
     assert!(
         repo.git()
             .expect("git backend")
-            .rebase(dir, "onto")
+            .rebase(dir, &vcs_core::vcs_git::RevSpec::new("onto").unwrap())
             .await
             .is_err()
     );
@@ -401,4 +415,142 @@ async fn git_continue_drives_rebase_through_two_conflicts() {
         OperationState::Clear
     );
     assert!(repo.conflicted_files().await.expect("conflicts").is_empty());
+}
+
+// T-044: a real conflicting cherry-pick is detected as `CherryPick` (NOT `Merge` —
+// it writes `CHERRY_PICK_HEAD`, not `MERGE_HEAD`), continue is blocked while
+// unresolved, abort clears it, and a resolved continue drives it to `Clear`.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn git_cherry_pick_abort_and_continue_cycle() {
+    use vcs_core::vcs_git::{GitApi, RevSpec};
+
+    let sandbox = seeded_git();
+    let dir = sandbox.path();
+
+    // A feature commit edits seed.txt; the default branch edits the same line, so
+    // cherry-picking feature onto it conflicts.
+    sandbox.git(&["checkout", "-q", "-b", "feature"]);
+    sandbox.write("seed.txt", "feature\n");
+    sandbox.git(&["commit", "-aqm", "feature edit"]);
+    sandbox.git(&["checkout", "-q", "-"]);
+    sandbox.write("seed.txt", "mainline\n");
+    sandbox.git(&["commit", "-aqm", "mainline edit"]);
+
+    let repo = Repo::discover(dir).expect("open");
+    let git_backend = repo.git().expect("git backend");
+    let pick = || RevSpec::new("feature").unwrap();
+
+    // Conflicting cherry-pick → reported as CherryPick, never Merge.
+    assert!(git_backend.cherry_pick(dir, &pick()).await.is_err());
+    assert_eq!(
+        repo.in_progress_state().await.expect("state"),
+        OperationState::CherryPick
+    );
+
+    // Continue is blocked until resolved; abort then clears the pick.
+    assert_eq!(
+        repo.continue_in_progress().await.expect("continue"),
+        OperationState::Conflict
+    );
+    assert_eq!(
+        repo.abort_in_progress().await.expect("abort"),
+        OperationState::Clear
+    );
+    assert!(repo.conflicted_files().await.expect("conflicts").is_empty());
+
+    // Again, but resolve and continue to completion this time.
+    assert!(git_backend.cherry_pick(dir, &pick()).await.is_err());
+    assert_eq!(
+        repo.in_progress_state().await.expect("state"),
+        OperationState::CherryPick
+    );
+    sandbox.write("seed.txt", "resolved\n");
+    sandbox.git(&["add", "seed.txt"]);
+    assert_eq!(
+        repo.continue_in_progress().await.expect("continue"),
+        OperationState::Clear
+    );
+    assert!(repo.conflicted_files().await.expect("conflicts").is_empty());
+}
+
+// T-044: a real conflicting revert is detected as `Revert`, aborts cleanly, and a
+// resolved continue completes it.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn git_revert_abort_and_continue_cycle() {
+    use vcs_core::vcs_git::{GitApi, RevSpec};
+
+    let sandbox = seeded_git();
+    let dir = sandbox.path();
+
+    // Two commits editing the same line; reverting the first conflicts with the second.
+    sandbox.write("seed.txt", "v2\n");
+    sandbox.git(&["commit", "-aqm", "v2"]);
+    sandbox.write("seed.txt", "v3\n");
+    sandbox.git(&["commit", "-aqm", "v3"]);
+
+    let repo = Repo::discover(dir).expect("open");
+    let git_backend = repo.git().expect("git backend");
+    let target = || RevSpec::new("HEAD~1").unwrap();
+
+    // A conflicting revert → Revert state, aborted cleanly.
+    assert!(git_backend.revert(dir, &target()).await.is_err());
+    assert_eq!(
+        repo.in_progress_state().await.expect("state"),
+        OperationState::Revert
+    );
+    assert_eq!(
+        repo.abort_in_progress().await.expect("abort"),
+        OperationState::Clear
+    );
+
+    // Again, resolve and continue: the revert commits and clears.
+    assert!(git_backend.revert(dir, &target()).await.is_err());
+    sandbox.write("seed.txt", "resolved\n");
+    sandbox.git(&["add", "seed.txt"]);
+    assert_eq!(
+        repo.continue_in_progress().await.expect("continue"),
+        OperationState::Clear
+    );
+    assert!(repo.conflicted_files().await.expect("conflicts").is_empty());
+}
+
+// T-044: a real `git bisect` session is detected as `Bisect`; it has no continue
+// step so `continue_in_progress` is refused with `Error::Unsupported` (not a
+// misleading success), and abort ends it via `bisect reset`.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn git_bisect_detected_continue_unsupported_and_abort_resets() {
+    let sandbox = seeded_git();
+    let dir = sandbox.path();
+
+    // A short history so bisect has a range to bisect.
+    sandbox.commit_file("a.txt", "1\n", "c1");
+    sandbox.commit_file("a.txt", "2\n", "c2");
+    sandbox.commit_file("a.txt", "3\n", "c3");
+    let good = sandbox.rev_parse("HEAD~3"); // the seed commit
+
+    sandbox.git(&["bisect", "start"]);
+    sandbox.git(&["bisect", "bad", "HEAD"]);
+    sandbox.git(&["bisect", "good", good.trim()]);
+
+    let repo = Repo::discover(dir).expect("open");
+    assert_eq!(
+        repo.in_progress_state().await.expect("state"),
+        OperationState::Bisect
+    );
+
+    // Bisect has no `--continue`: it must be refused explicitly, not no-op'd.
+    let err = repo
+        .continue_in_progress()
+        .await
+        .expect_err("a bisect has no continue step");
+    assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+
+    // Abort ends the bisect (`bisect reset`) and returns to Clear.
+    assert_eq!(
+        repo.abort_in_progress().await.expect("abort"),
+        OperationState::Clear
+    );
 }

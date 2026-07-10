@@ -29,7 +29,7 @@ if s.dirty {
     line.push_str(" *");                        // uncommitted changes
 }
 if s.conflicted || s.operation != OperationState::Clear {
-    line.push_str(" ⚠");                        // mid-merge/rebase or conflicted
+    line.push_str(" ⚠");                        // any paused op (merge/rebase/am/cherry-pick/revert/bisect) or conflicted
 }
 println!("{line}");                             // e.g. `main ↑1↓0 *`
 # Ok(()) }
@@ -155,6 +155,30 @@ itself cancelled. If you need a guaranteed-clean state after cancelling, re-prob
 (`Repo::in_progress_state` / `Jj::op_head`) and reset with a **fresh, un-cancelled
 client** rather than assuming the interrupted call tidied up after itself.
 
+## Probe a merge for conflicts
+
+Check whether merging a branch would conflict, without leaving a merge in
+progress. [`Repo::try_merge`](https://docs.rs/vcs-core/latest/vcs_core/guide/) does a throwaway merge attempt and rolls it
+back itself (`merge --abort` on git, `op_restore` on jj) before returning, so a
+clean working tree comes back either way — you get a yes/no plus the
+conflicting paths, not a merge you now have to clean up.
+
+```rust,ignore
+# use vcs_core::{MergeProbe, Repo};
+# async fn demo(repo: &Repo) -> vcs_core::Result<()> {
+match repo.try_merge("feature").await? {
+    MergeProbe::Clean => println!("feature merges cleanly"),
+    MergeProbe::Conflicts(paths) => println!("would conflict in {paths:?}"),
+    _ => {}
+}
+# Ok(()) }
+```
+
+Notes: a real merge failure unrelated to conflicts (missing ref, dirty tree)
+propagates as a plain error, not as `MergeProbe::Conflicts`. See the
+cancellation caveat above — a cancelled probe's own rollback can itself be
+cancelled, leaving the throwaway merge in place.
+
 ## Stash-safe branch switch
 
 Carry a dirty working tree across a checkout without losing it.
@@ -192,7 +216,7 @@ file) to get the bytes.
 # use vcs_git::{Git, GitApi};
 # use vcs_git::conflict::{has_conflict_markers, parse_conflicts, resolve, ResolutionSide};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
-for path in git.conflicted_files(repo).await? {           // Vec<String>, `/`-separated
+for path in git.conflicted_files(repo).await? {           // Vec<PathBuf>, `/`-separated
     let content = std::fs::read_to_string(repo.join(&path))?;
     if !has_conflict_markers(&content) {
         continue;                                         // cheap pre-check
@@ -213,8 +237,8 @@ indices (jj conflicts can have more than two sides):
 # use vcs_jj::{Jj, JjApi};
 # use vcs_jj::conflict::{parse_conflicts, resolve, JjResolution};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
-for path in jj.resolve_list(repo, "@").await? {           // Vec<String> — conflicts on `@`
-    let content = jj.file_show(repo, "@", &path).await?;  // String (lossy)
+for path in jj.resolve_list(repo, "@").await? {           // Vec<PathBuf> — conflicts on `@`
+    let content = jj.file_show(repo, "@", &path.to_string_lossy()).await?; // String (lossy)
     let segments = parse_conflicts(&content)?;            // Vec<JjConflictSegment>
     let resolved = resolve(&segments, JjResolution::Side(0))?; // the first side
     std::fs::write(repo.join(&path), resolved)?;
@@ -246,7 +270,7 @@ println!("backend: {}", repo.kind().as_str());     // "git" / "jj"
 
 for change in repo.changed_files().await? { /* FileChange */ let _ = change; }
 let branch = repo.current_branch().await?;         // Option<String>
-let conflicts = repo.conflicted_files().await?;    // Vec<String>
+let conflicts = repo.conflicted_files().await?;    // Vec<PathBuf>
 let _ = (branch, conflicts);
 
 // Drop to the raw client for tool-specific ops off the common surface:

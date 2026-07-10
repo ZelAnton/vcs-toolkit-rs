@@ -6,6 +6,10 @@
 //! octal-C-quotes it, jj writes raw UTF-8 — and the parser decodes both.) Pure
 //! functions over arbitrary text — no process execution.
 
+use std::path::PathBuf;
+
+use crate::pathbytes::path_from_bytes;
+
 /// What a diff call compares — the working tree/copy, or a specific
 /// revision/revset (or range).
 ///
@@ -113,9 +117,17 @@ pub struct FileDiff {
     /// How the file changed.
     pub change: ChangeKind,
     /// The file's path — the *new* path for a rename — forward-slash normalised.
-    pub path: String,
+    ///
+    /// A [`PathBuf`] (not a `String`) so a non-UTF-8 filename is carried
+    /// losslessly: git C-quotes a non-ASCII path into octal escapes that decode
+    /// back to the exact bytes, kept here via [`path_from_bytes`] rather than
+    /// substituted with `U+FFFD`. (For jj's raw-UTF-8 `--git` diff a non-UTF-8
+    /// path is still subject to the surrounding text layer's decode; the
+    /// byte-faithful cross-backend round-trip is the status/conflict path, which
+    /// carries `PathBuf` end to end.)
+    pub path: PathBuf,
     /// For a rename, the original path (forward-slash normalised); `None` otherwise.
-    pub old_path: Option<String>,
+    pub old_path: Option<PathBuf>,
     /// The `@@` hunks; empty for a binary file or a pure rename with no edits.
     pub hunks: Vec<Hunk>,
     /// The verbatim diff section for this file (the `diff --git …` block through
@@ -162,10 +174,13 @@ fn diff_sections(full: &str) -> impl Iterator<Item = &str> {
 /// from the header lines, plus every `@@` hunk and its body.
 fn parse_section(section: &str) -> Option<FileDiff> {
     let mut kind = ChangeKind::Modified;
-    let mut new_path = None;
-    let mut minus_path = None;
-    let mut rename_to = None;
-    let mut rename_from = None;
+    // Paths are accumulated as raw bytes (not `String`) so a git C-quoted
+    // non-ASCII path decodes to its exact bytes and reaches `path_from_bytes`
+    // without a lossy round-trip through `String`.
+    let mut new_path: Option<Vec<u8>> = None;
+    let mut minus_path: Option<Vec<u8>> = None;
+    let mut rename_to: Option<Vec<u8>> = None;
+    let mut rename_from: Option<Vec<u8>> = None;
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut current: Option<Hunk> = None;
 
@@ -202,24 +217,19 @@ fn parse_section(section: &str) -> Option<FileDiff> {
             // `b/<path>`, or `"b/<path>"` quoted (the `b/` is *inside* the quotes),
             // or `/dev/null` (deleted side). Unquote, then strip the `b/` — a
             // `/dev/null` (no `b/`) yields `None`, leaving `new_path` unset.
-            new_path = unquote_git_path(rest.trim_end())
-                .strip_prefix("b/")
-                .map(str::to_string);
+            new_path = strip_side_prefix(unquote_git_path(rest.trim_end()), b"b/");
         } else if let Some(rest) = line.strip_prefix("--- ") {
-            minus_path = unquote_git_path(rest.trim_end())
-                .strip_prefix("a/")
-                .map(str::to_string);
+            minus_path = strip_side_prefix(unquote_git_path(rest.trim_end()), b"a/");
         }
     }
     if let Some(done) = current.take() {
         hunks.push(done);
     }
 
-    let normalize = |p: String| p.replace('\\', "/");
     // A rename keeps its old path so a caller can record the deletion too.
     let old_path = if rename_to.is_some() {
         kind = ChangeKind::Renamed;
-        rename_from.map(normalize)
+        rename_from.map(normalize_slashes)
     } else {
         None
     };
@@ -234,11 +244,25 @@ fn parse_section(section: &str) -> Option<FileDiff> {
         .or_else(|| header_b_path(section))?;
     Some(FileDiff {
         change: kind,
-        path: normalize(path),
-        old_path,
+        path: path_from_bytes(&normalize_slashes(path)),
+        old_path: old_path.map(|p| path_from_bytes(&p)),
         hunks,
         raw: section.to_string(),
     })
+}
+
+/// Strip a leading `a/` / `b/` (or any) prefix from a raw path, byte-wise;
+/// `None` when it is absent (so a `/dev/null` side yields no path).
+fn strip_side_prefix(path: Vec<u8>, prefix: &[u8]) -> Option<Vec<u8>> {
+    path.strip_prefix(prefix).map(<[u8]>::to_vec)
+}
+
+/// Normalise `\` path separators to `/` on the raw bytes (git renders a Windows
+/// path with backslashes; the DTO is forward-slash normalised across backends).
+fn normalize_slashes(path: Vec<u8>) -> Vec<u8> {
+    path.into_iter()
+        .map(|b| if b == b'\\' { b'/' } else { b })
+        .collect()
 }
 
 /// Parse a hunk header `@@ -<os>[,<ol>] +<ns>[,<nl>] @@[ <section>]` into an empty
@@ -272,19 +296,16 @@ fn parse_hunk_range(range: &str) -> (usize, usize) {
 /// unquoted `a/<p> b/<p>` form and git's C-quoted `"a/<p>" "b/<p>"` form (a
 /// non-ASCII / special-byte path). The unquoted form is ambiguous only when a path
 /// contains the literal `" b/"`, which binary-with-spaces makes rare.
-fn header_b_path(section: &str) -> Option<String> {
+fn header_b_path(section: &str) -> Option<Vec<u8>> {
     let first = section.lines().next()?;
     let s = first.strip_prefix("diff --git ")?;
     // Quoted header: the b-side is the last `"b/…"` token (for the binary/mode-only
     // sections this fallback serves, both sides share one path and one quoting).
     let path = if let Some(q) = s.rfind("\"b/") {
-        unquote_git_path(&s[q..])
-            .strip_prefix("b/")
-            .unwrap_or("")
-            .to_string()
+        strip_side_prefix(unquote_git_path(&s[q..]), b"b/").unwrap_or_default()
     } else {
         let idx = s.find(" b/")?;
-        s[idx + 1..].strip_prefix("b/").unwrap_or("").to_string()
+        strip_side_prefix(unquote_git_path(&s[idx + 1..]), b"b/").unwrap_or_default()
     };
     // A `diff --git a/x b/` with no path after `b/` yields nothing, not an empty
     // path — so a malformed header drops the section instead of an empty FileDiff.
@@ -296,12 +317,14 @@ fn header_b_path(section: &str) -> Option<String> {
 /// `core.quotePath=true` — any non-ASCII (high) byte (e.g. `é` → `\303\251`). A path
 /// that is *not* quoted (no leading `"`) is returned unchanged, so callers can apply
 /// this unconditionally. Octal escapes decode to raw bytes, so a multi-byte UTF-8
-/// filename round-trips; invalid UTF-8 falls back to the lossy replacement char.
+/// filename round-trips; the **raw decoded bytes** are returned (the caller builds
+/// a lossless [`PathBuf`] via [`path_from_bytes`]) instead of a lossily-decoded
+/// `String` — a non-UTF-8 path would otherwise be corrupted to `U+FFFD` here.
 /// Decoding stops at the first unescaped closing quote (trailing bytes are ignored).
-fn unquote_git_path(s: &str) -> String {
+fn unquote_git_path(s: &str) -> Vec<u8> {
     let bytes = s.as_bytes();
     if bytes.first() != Some(&b'"') {
-        return s.to_string();
+        return bytes.to_vec();
     }
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 1; // skip the opening quote
@@ -344,7 +367,7 @@ fn unquote_git_path(s: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
 }
 
 #[cfg(test)]
@@ -366,7 +389,10 @@ mod tests {
             "similarity index 100%\nrename from old/f.txt\nrename to new/f.txt\n",
         );
         let files = parse_diff(full);
-        let kinds: Vec<_> = files.iter().map(|f| (f.path.as_str(), f.change)).collect();
+        let kinds: Vec<_> = files
+            .iter()
+            .map(|f| (f.path.to_str().unwrap(), f.change))
+            .collect();
         assert_eq!(
             kinds,
             vec![
@@ -381,7 +407,10 @@ mod tests {
             .iter()
             .find(|f| f.change == ChangeKind::Renamed)
             .unwrap();
-        assert_eq!(rename.old_path.as_deref(), Some("old/f.txt"));
+        assert_eq!(
+            rename.old_path.as_deref(),
+            Some(std::path::Path::new("old/f.txt"))
+        );
     }
 
     #[test]
@@ -391,7 +420,7 @@ mod tests {
         let full = "diff --git a/a b/c.txt b/a b/c.txt\n--- a/a b/c.txt\t\n+++ b/a b/c.txt\t\n@@ -1 +1 @@\n-x\n+y\n";
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "a b/c.txt");
+        assert_eq!(files[0].path, std::path::Path::new("a b/c.txt"));
     }
 
     // git C-quotes a path with a non-ASCII byte (default `core.quotePath=true`).
@@ -409,7 +438,7 @@ mod tests {
         );
         let files = parse_diff(full);
         assert_eq!(files.len(), 1, "the non-ASCII file must not be dropped");
-        assert_eq!(files[0].path, "café.txt");
+        assert_eq!(files[0].path, std::path::Path::new("café.txt"));
         assert_eq!(files[0].change, ChangeKind::Modified);
     }
 
@@ -423,9 +452,12 @@ mod tests {
         );
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "résumé.txt");
+        assert_eq!(files[0].path, std::path::Path::new("résumé.txt"));
         assert_eq!(files[0].change, ChangeKind::Renamed);
-        assert_eq!(files[0].old_path.as_deref(), Some("café.txt"));
+        assert_eq!(
+            files[0].old_path.as_deref(),
+            Some(std::path::Path::new("café.txt"))
+        );
     }
 
     // A binary/mode-only quoted section (no `+++`/`---`/rename lines) resolves its
@@ -439,7 +471,7 @@ mod tests {
         );
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "café.bin");
+        assert_eq!(files[0].path, std::path::Path::new("café.bin"));
     }
 
     // A path with a literal tab is also C-quoted (`\t`), independent of quotePath.
@@ -448,16 +480,22 @@ mod tests {
         let full = "diff --git \"a/a\\tb.txt\" \"b/a\\tb.txt\"\n--- \"a/a\\tb.txt\"\n+++ \"b/a\\tb.txt\"\n@@ -1 +1 @@\n-x\n+y\n";
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "a\tb.txt");
+        assert_eq!(files[0].path, std::path::Path::new("a\tb.txt"));
     }
 
     #[test]
     fn unquote_git_path_decodes_escapes_and_passes_through_plain() {
-        assert_eq!(unquote_git_path("b/plain.txt"), "b/plain.txt"); // not quoted
-        assert_eq!(unquote_git_path("\"b/caf\\303\\251.txt\""), "b/café.txt"); // octal
-        assert_eq!(unquote_git_path("\"a\\tb\""), "a\tb"); // \t
-        assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b"); // \\
-        assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b"); // \"
+        // The decoder now yields raw bytes (the caller builds a lossless PathBuf).
+        assert_eq!(unquote_git_path("b/plain.txt"), b"b/plain.txt".to_vec()); // not quoted
+        assert_eq!(
+            unquote_git_path("\"b/caf\\303\\251.txt\""),
+            "b/café.txt".as_bytes().to_vec()
+        ); // octal → the exact UTF-8 bytes
+        assert_eq!(unquote_git_path("\"a\\tb\""), b"a\tb".to_vec()); // \t
+        assert_eq!(unquote_git_path("\"a\\\\b\""), b"a\\b".to_vec()); // \\
+        assert_eq!(unquote_git_path("\"a\\\"b\""), b"a\"b".to_vec()); // \"
+        // A non-UTF-8 octal escape (0xFF) survives byte-for-byte — the whole point.
+        assert_eq!(unquote_git_path("\"\\377.bin\""), b"\xff.bin".to_vec());
     }
 
     #[test]
@@ -471,13 +509,13 @@ mod tests {
         let recover = "diff --git a/real.txt b/real.txt\n+++ b/\nbinary files differ\n";
         let files = parse_diff(recover);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "real.txt");
+        assert_eq!(files[0].path, std::path::Path::new("real.txt"));
         // A mode-only change (no +++/---/rename, no hunks) still keeps its path via
         // the header fallback — the path-resolution change must not drop it.
         let mode_only = "diff --git a/f.sh b/f.sh\nold mode 100644\nnew mode 100755\n";
         let files = parse_diff(mode_only);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "f.sh");
+        assert_eq!(files[0].path, std::path::Path::new("f.sh"));
     }
 
     #[test]

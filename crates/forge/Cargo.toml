@@ -5,6 +5,7 @@ description = "One async Rust API over GitHub, GitLab, and Gitea: unified pull/m
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
@@ -26,6 +27,11 @@ vcs-cli-support = { path = "../cli-support", version = "0.5" }
 vcs-github = { path = "../github", version = "0.9" }
 vcs-gitlab = { path = "../gitlab", version = "0.5" }
 vcs-gitea = { path = "../gitea", version = "0.5" }
+# Shared git-format unified-diff model (re-exported below as `vcs_forge::FileDiff`
+# and friends) — `pr_diff` returns it directly since GitHub/GitLab already emit
+# the same unified-diff format the parser expects, so no facade-specific DTO
+# wraps it. Path-dependency by the same pattern as `crates/git/Cargo.toml`.
+vcs-diff = { path = "../diff", version = "0.5" }
 # `async fn` in the object-safe `ForgeApi` trait (dyn-friendly).
 async-trait = "0.1"
 # Optional: derive `Serialize` on the unified DTOs behind the `serde` feature
@@ -35,8 +41,9 @@ serde = { version = "1", features = ["derive"], optional = true }
 [features]
 # Emit a `tracing` event per command run (forwards to each wrapper's `tracing`).
 tracing = ["vcs-github/tracing", "vcs-gitlab/tracing", "vcs-gitea/tracing"]
-# Add `#[derive(Serialize)]` to the unified DTOs (`ForgePr`, `ForgeRepo`, …).
-serde = ["dep:serde"]
+# Add `#[derive(Serialize)]` to the unified DTOs (`ForgePr`, `ForgeRepo`, …) and
+# to the re-exported `vcs-diff` model `pr_diff` returns.
+serde = ["dep:serde", "vcs-diff/serde"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.

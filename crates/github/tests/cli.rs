@@ -4,7 +4,12 @@
 //! tests in `src/parse.rs` and the scripted-runner tests in `src/lib.rs`. Run
 //! with `cargo test -p vcs-github -- --ignored`.
 
-use vcs_github::{GitHub, GitHubApi};
+use vcs_github::{GitHub, GitHubApi, GitHubHost};
+
+/// Whether `gh` is on PATH (a successful `--version` spawn).
+async fn gh_present() -> bool {
+    GitHub::new().version().await.is_ok()
+}
 
 #[tokio::test]
 #[ignore = "requires the gh binary"]
@@ -16,6 +21,27 @@ async fn version_mentions_gh() {
     assert!(v.to_lowercase().contains("gh"), "unexpected: {v}");
 }
 
+// The real `gh --version` banner must parse into a version at/above the crate
+// floor. This is the "modern real binary" arm of the version-gate check the
+// scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
+// minimum and unrecognisable arms): if a future `gh` reshapes its `--version`
+// output so the shared parser can't read it, `capabilities()` returns
+// `Error::Parse` and this fails, flagging the drift.
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn capability_version_gate_real_binary() {
+    if !gh_present().await {
+        eprintln!("skipping: gh not installed");
+        return;
+    }
+    let caps = GitHub::new().capabilities().await.expect("gh capabilities");
+    assert!(
+        caps.is_supported(),
+        "the installed gh ({}) is below vcs-github's supported floor",
+        caps.version
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires the gh binary"]
 async fn auth_status_does_not_error() {
@@ -24,6 +50,18 @@ async fn auth_status_does_not_error() {
         .auth_status()
         .await
         .expect("auth_status should not error");
+}
+
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn auth_status_for_host_does_not_error() {
+    // The host-scoped probe reports the bool for one host (`gh auth status
+    // --hostname github.com`) whether or not the user is logged in; it must not
+    // error, just like the unscoped `auth_status`.
+    let _authed = GitHub::new()
+        .auth_status_for(&GitHubHost::github_com())
+        .await
+        .expect("auth_status_for should not error");
 }
 
 // Read-only, auth-gated checks against this very repository (it has real
@@ -78,6 +116,11 @@ async fn release_list_and_view_round_trip() {
         .await
         .expect("release_view");
     assert_eq!(release.tag_name, "vcs-git-v0.4.0");
-    assert!(!release.body.is_empty(), "release notes were curated");
-    assert!(!release.url.is_empty());
+    // `release_view` fetches body/url, so both are `Some` and non-empty (the lean
+    // `release_list` leaves them `None`).
+    assert!(
+        release.body.as_deref().is_some_and(|b| !b.is_empty()),
+        "release notes were curated"
+    );
+    assert!(release.url.as_deref().is_some_and(|u| !u.is_empty()));
 }

@@ -11,13 +11,110 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: model the remaining paused-sequencer states on `GitApi`. New detection
+  probes `is_cherry_pick_in_progress` / `is_revert_in_progress` /
+  `is_bisect_in_progress` (keyed off `CHERRY_PICK_HEAD` / `REVERT_HEAD` /
+  `BISECT_LOG` under the git dir), and the matching drivers `cherry_pick_abort` /
+  `cherry_pick_continue` / `revert_abort` / `revert_continue` / `bisect_reset`.
+  The two `--continue` commits suppress the editor (`GIT_EDITOR=true`) so a
+  headless caller never hangs, and run under the C locale so a re-conflict still
+  feeds `is_merge_conflict`. A cherry-pick/revert conflict writes its own head
+  file, **not** `MERGE_HEAD`, so these stay distinct from a merge. (T-044.)
+- feat: host-keyed credential resolution for remote ops. When the operation's
+  target host is known — `clone` derives it from the URL — it is now passed as the
+  `CredentialRequest`'s host (alongside the existing `credential.helper` host gate),
+  so a **host-keyed** `CredentialProvider` hands each op only that host's secret. One
+  `Git` client can safely drive several hosts (each clone draws its own token, never
+  a neighbour's); a provider `Err` is fail-closed (the op aborts before git spawns),
+  while `Ok(None)` defers to ambient auth. (T-045.)
+- feat: add `Git::empty_tree_oid` — the empty-tree object id for a repository's
+  **active object format**, computed via `git hash-object -t tree --stdin` (an
+  empty tree is empty content; `--stdin`, not `-w`, only computes the id). This is
+  the format-correct stand-in for `HEAD` when diffing/stat-ing an unborn
+  (no-commits-yet) working tree, and unlike the old constant it is also correct in
+  a SHA-256 repo, where the SHA-1 empty-tree id does not exist. (T-043.)
+- feat: add `GitApi::log_paths` — like `log`, but scoped to commits that
+  touched the given paths (`git log <revspec> -n <max> -- <paths>`), with the
+  same `--` pathspec separator as `add`/`commit_paths` and a refusal of an
+  empty path list before spawning.
 - test: lock in the `remote_branch_exists` bounded wait — a hung `ls-remote`
   resolves via its per-command 10 s timeout rather than hanging (pins the
   processkit 2.1 guarantee that a scripted pending reply honors `Command::timeout`
   on bulk verbs).
 
 ### Changed
--
+
+- **Breaking:** path-carrying results are now lossless for non-UTF-8 names.
+  `StatusEntry.path` / `StatusEntry.old_path` are `PathBuf` / `Option<PathBuf>`
+  (were `String` / `Option<String>`), and `GitApi::conflicted_files` returns
+  `Vec<PathBuf>` (was `Vec<String>`). `status` / `status_tracked` / `conflicted_files`
+  now parse the `-z` output from **raw bytes** (`parse_porcelain` / `parse_nul_paths`
+  consume `&[u8]`) via the new `ManagedClient::parse_bytes`, so a filename whose bytes
+  are not valid UTF-8 (legal on Unix) survives byte-for-byte and can be fed straight
+  back into `add` / `commit_paths` (which already take `PathBuf` through the NUL-safe
+  pathspec transport) to address the SAME file. `worktree_list` (`Worktree.path`,
+  already a `PathBuf`) now parses `worktree list --porcelain` from raw bytes too, so a
+  worktree whose directory name is not valid UTF-8 survives losslessly into the
+  facade's `WorktreeInfo.path` instead of collapsing to `U+FFFD` (no `-z`: that
+  porcelain variant needs git ≥ 2.36, above the crate's 2.31 support floor — the
+  newline framing already covers the non-UTF-8 case). Text-only machine output (branch
+  names, commit metadata, hashes) still decodes as `String`, where lossy decoding is
+  acceptable. `FileDiff.path` / `old_path` are `PathBuf` too (via `vcs-diff`). (T-050.)
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- **Breaking:** the public empty-tree constant `EMPTY_TREE` is renamed
+  `EMPTY_TREE_SHA1` and documented as **SHA-1 only**. It presented git's SHA-1
+  empty tree as a universal id, but that value does not exist in a repo created
+  with `extensions.objectFormat=sha256` — so `diff_text(DiffSpec::WorkingTree)`
+  and the facade `diff_stat` hard-failed on an *unborn* SHA-256 repo (they diffed
+  the working tree against a non-existent object). Both now resolve the id from
+  git via the new `Git::empty_tree_oid`, so the unborn working-tree diff/stat
+  works under either object format; behaviour after the first commit (the `HEAD`
+  path) is unchanged. Migrate `vcs_git::EMPTY_TREE` to `vcs_git::EMPTY_TREE_SHA1`
+  for the SHA-1-only literal, or to `git.empty_tree_oid(dir).await?` for the
+  object-format-correct id. (T-043; `docs/audit-2026-07.md` L6.)
+- **Breaking:** the raw escape hatches on the bound view (`GitAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `git.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw
+  call could target a *different* repository than the one it was bound to. New
+  dir-taking client methods `Git::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in`
+  back the bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `Git` itself (`git.run(…)`) — migrate a caller that relied on
+  `git.at(dir).run(…)` running in the process cwd to `git.run(…)`. (Supersedes the
+  M15 docs-only note below; T-035.)
+- fix: distinguish an attached branch with no configured upstream from Git
+  errors in `GitApi::upstream`; detached HEAD and directories outside a Git
+  repository now return `Err` instead of `Ok(None)`.
+- **Breaking:** reference names and revision expressions are now taken as the
+  validated newtypes `RefName` / `RevSpec` (previously constructible but accepted
+  by no method — a false safety promise). Every `GitApi` op that names a branch,
+  tag, or ref to create/delete/rename/look-up now takes `&RefName`; every op that
+  resolves a commit-ish or range takes `&RevSpec`; the option structs follow
+  (`BranchDelete::new(RefName)`, `MergeCheck::branch(RefName).into_base(RevSpec)`,
+  `MergeCommit`/`MergeNoCommit::branch(RevSpec)`, `AnnotatedTag::new(RefName,…)
+  [.rev(RevSpec)]`, `GitPush::branch(RefName)` / `refspec(&RefName, &RefName)`,
+  `WorktreeAdd::create_branch(path, RefName, RevSpec)` / `checkout(path, RevSpec)`,
+  `tag_create(&RefName, Option<RevSpec>)`, `blame(path, Option<RevSpec>)`). A
+  flag-like or malformed value is now rejected at newtype construction, before it
+  can reach an argv slot, as a classifiable `Error::is_invalid_input`. Migrate a
+  call by wrapping the string: `git.checkout(dir, "main")` →
+  `git.checkout(dir, &CheckoutTarget::Ref(RevSpec::new("main")?))`,
+  `git.create_branch(dir, "feat")` → `git.create_branch(dir, &RefName::new("feat")?)`.
+- **Breaking:** `checkout` now takes a `CheckoutTarget` enum instead of `&str`, so
+  git's `-` "previous branch" shortcut is modelled explicitly as
+  `CheckoutTarget::Previous` (a safe fixed literal) rather than being rejected by
+  the flag guard. `switch_with_stash` takes a `CheckoutTarget` for the same reason.
+  Remaining bare-positional `&str` inputs that are not refs/revisions (remote
+  names, URLs, config keys) keep their internal `reject_flag_like` guard.
+- **Breaking:** replace the trailing positional `bool` on three `GitApi` methods
+  with named `#[non_exhaustive]` specs, so the flag reads at the call site and can
+  grow without a signature break: `delete_branch(dir, name, force)` →
+  `delete_branch(dir, BranchDelete::new(name)[.force()])`, `stash_push(dir,
+  include_untracked)` → `stash_push(dir, StashPush::new()[.include_untracked()])`,
+  and `worktree_remove(dir, path, force)` → `worktree_remove(dir,
+  WorktreeRemove::new(path)[.force()])`. The `GitAt` bound view and the sync
+  `blocking::worktree_remove(dir, WorktreeRemove)` helper move to the same specs.
 
 ### Fixed
 -

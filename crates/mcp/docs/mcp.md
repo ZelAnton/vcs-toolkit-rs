@@ -7,9 +7,9 @@ agent harness (Claude Code, an IDE assistant, any MCP client) drives a git/jj re
 Each tool wraps a [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (`Repo`) or [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 (`Forge`) operation and returns its DTO as JSON. The binary drives git through a
 **hardened** client (`Git::hardened()` — repo hooks and config disabled) and tool
-arguments are injection-guarded (the MCP seam rejects a leading-`-` `body`/`title`,
-and the wrappers keep caller values out of flag position), so serving a repository
-you didn't create can't run its hooks or smuggle a flag into argv.
+arguments are injection-guarded (the wrappers keep caller values out of flag
+position — flag-VALUE slots plus `reject_flag_like` on the few bare positionals), so
+serving a repository you didn't create can't run its hooks or smuggle a flag into argv.
 
 It's the workspace's **first binary crate** — a thin `vcs-mcp` binary over a
 hermetically-testable library (`VcsMcpServer`) — and its **second runtime-tokio**
@@ -77,6 +77,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_info` | — | `{ backend, root, cwd, forge }` — git/jj, the repo root, the working dir, and the configured forge (or null). |
 | `repo_status` | — | The working-copy changes (added/modified/deleted/renamed paths). |
 | `repo_diff_stat` | — | Aggregate insertion/deletion/file counts for the working copy. |
+| `repo_log` | `{ revspec_or_revset, max }` | Up to `max` commits reachable from `revspec_or_revset` (a git revspec or jj revset), most-recent-first. `author`/`date` are null on jj. |
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |
@@ -86,11 +87,12 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_list` | — | Open pull/merge requests (up to 100; ~50 on Gitea). |
 | `forge_pr_view` | `{ number }` | A single PR/MR by number (GitLab uses the project-scoped `iid`). |
 | `forge_pr_checks` | `{ number }` | The PR/MR's coarse CI status (`Unsupported` on Gitea). |
+| `forge_pr_diff` | `{ number }` | The PR/MR's diff, one file entry per changed file (`Unsupported` on Gitea). |
 | `forge_issue_list` | — | Open issues (up to 100; ~50 on Gitea), as unified [`ForgeIssue`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
 | `forge_release_list` | — | Releases, newest first (up to 100; ~50 on Gitea), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
-| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `authed` is the auth probe result; the other flags are the intersection of "the CLI ships the command" and "the CLI is authenticated". |
+| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, version, supported, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `version` is the installed CLI's `{major,minor,patch}` (or `null` when unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; `authed` is the auth probe result; the per-op flags are the intersection of "the CLI ships the command", `supported`, and "the CLI is authenticated". |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
 
@@ -106,9 +108,10 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_create` | `{ title, body, source?, target? }` | Open a PR/MR (omit `source` for the current branch, `target` for the repo default); returns the CLI output (the URL on success). |
 | `forge_pr_comment` | `{ number, body }` | Post a markdown comment to an existing PR/MR; returns the CLI output (the comment URL on success). On **Gitea**, PRs and issues share one `index` space and `tea comment` targets either — so a `number` that is actually an issue comments on that issue. |
 | `forge_pr_edit` | `{ number, title?, body? }` | Edit a PR/MR's title and/or body. At least one of `title` or `body` must be set (both absent is rejected up front as `invalid_params`); an empty string is a real value (clears the field). |
-| `forge_pr_merge` | `{ number, strategy }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. |
+| `forge_pr_merge` | `{ number, strategy, auto?, delete_branch? }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. `auto` (merge once requirements are met) and `delete_branch` are **GitHub-only** and default to `false`; on GitLab/Gitea, requesting either returns `invalid_params` rather than merging without it. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
 | `forge_pr_mark_ready` | `{ number }` | Mark a draft PR/MR ready for review (`Unsupported` on Gitea). |
+| `forge_pr_checkout` | `{ number }` | Check out a PR/MR's branch into the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr checkout`). Mutates the working copy. |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |
 
 A gated call outside the write gate returns a clear error naming the tool
@@ -157,10 +160,12 @@ The `vcs-mcp` binary applies, in order:
    not expose the smudge-filter path; a `textconv` driver can still run on a diff of
    a **fully untrusted** repo, so sandbox the process (OS-level) for that case.
 4. **Argv injection guards.** A tool parameter can't smuggle a leading-`-` flag
-   into argv: the MCP seam rejects a leading-`-` `body`/`title` up front, and
-   underneath the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
+   into argv: the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
    position — typed (`u64`/`Path`) or flag-VALUE arguments, with `reject_flag_like`
-   on the few bare positionals (a revision, a release tag, Gitea's comment body).
+   on the few bare positionals (a revision, a release tag, Gitea's comment body). A
+   `body`/`title` that rides a flag-VALUE slot (e.g. a Markdown `- item` list or a
+   `---` rule) is safe and passes through — the guard lives at the wrapper that owns
+   the argv, not as a blanket leading-`-` refusal at the MCP seam.
 5. **A per-command timeout.** Every git/forge command runs under the `--timeout`
    deadline (default 120s), so a stalled network call (`repo_fetch`, the `forge_*`
    tools) can't hang a request indefinitely.

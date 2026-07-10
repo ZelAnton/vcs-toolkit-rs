@@ -1,0 +1,149 @@
+# Scheduled drift lane: the `integration` job in ci.yml pins jj to a fixed
+# matrix (0.38/0.40/0.42) so PRs stay hermetic and reproducible, but that pin
+# goes stale silently — a new jj release can change output/templates/revset
+# behavior that our parsers rely on, and nobody finds out until someone
+# manually bumps the matrix. This workflow runs on a schedule against the
+# ACTUAL latest jj release (resolved at run time, never hardcoded), plus
+# glab/tea best-effort, and reports failures via a GitHub issue instead of
+# failing a PR: it never gates `ci.yml` and does not touch that file's
+# triggers or jobs.
+name: Scheduled CLI Drift
+
+on:
+  schedule:
+    # Every Monday at 04:17 UTC. An off-the-hour minute avoids the
+    # top-of-hour stampede on GitHub's scheduler.
+    - cron: "17 4 * * 1"
+  workflow_dispatch: {}
+
+# Scheduled runs queue against each other (GitHub keeps at most one running
+# plus one pending per group, so a stray double-fire of the weekly cron
+# doesn't spawn overlapping runs). Manual `workflow_dispatch` runs get a
+# unique group per run instead of sharing that queue: GitHub's queueing only
+# retains a single pending job, so a *shared* group could let a second
+# manual debug run silently replace (and thus drop) a first one still
+# waiting behind a long scheduled run. Giving each dispatch its own group
+# means a manual run always executes and is never dropped, at the cost of
+# possibly running alongside the scheduled check — an acceptable trade-off
+# for an infrequent, non-gating debug lane.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('scheduled-cli-drift-manual-{0}', github.run_id) || 'scheduled-cli-drift-schedule' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Needed to file/update the drift-report issue on failure.
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  drift:
+    name: cli drift (latest jj)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Resolve latest jj release
+        id: jj
+        # Real "latest", resolved via the GitHub API through `gh` at run
+        # time — never a hardcoded pin, unlike the ci.yml integration matrix.
+        run: |
+          set -euo pipefail
+          tag="$(gh release list --repo jj-vcs/jj \
+            --exclude-drafts --exclude-pre-releases --limit 1 \
+            --json tagName --jq '.[0].tagName')"
+          if [ -z "$tag" ]; then
+            echo "could not resolve latest jj release" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install jj ${{ steps.jj.outputs.tag }}
+        # Same install approach as the ci.yml integration job: jj has no
+        # install-action entry and cargo-binstall ignores the pinned
+        # version, so download the release tarball and drop the binary on
+        # PATH.
+        run: |
+          set -euo pipefail
+          gh release download "${{ steps.jj.outputs.tag }}" --repo jj-vcs/jj \
+            --pattern '*x86_64-unknown-linux-musl.tar.gz' --output jj.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf jj.tar.gz -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/jj"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: jj --version
+      - run: git --version
+
+      # Install the forge CLIs so the vcs-gitlab/vcs-gitea integration smoke
+      # tests run for real, against their actual latest releases too.
+      # Best-effort, mirroring the ci.yml integration job's
+      # `continue-on-error` install: the tests skip gracefully when a binary
+      # is absent, so a download hiccup doesn't fail the whole drift check.
+      - name: Install glab + tea (best-effort)
+        continue-on-error: true
+        run: |
+          # No `set -e`: glab and tea install independently, and a hiccup in
+          # one (or in the version-resolve curl) must not skip the other.
+          set -uo pipefail
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          glab_ver="$(curl -fsSL 'https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases?per_page=1' \
+            | grep -oP '"tag_name":"v\K[^"]+' | head -1)" || true
+          if [ -n "${glab_ver:-}" ] \
+            && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${glab_ver}/downloads/glab_${glab_ver}_linux_amd64.tar.gz" -o glab.tar.gz; then
+            tar -xzf glab.tar.gz -C "$HOME/.local/bin" --strip-components=1 "bin/glab" && chmod +x "$HOME/.local/bin/glab"
+          fi
+          tea_ver="$(curl -fsSL 'https://gitea.com/api/v1/repos/gitea/tea/releases?limit=1' \
+            | grep -oP '"tag_name":"v?\K[^"]+' | head -1)" || true
+          if [ -n "${tea_ver:-}" ] \
+            && curl -fsSL "https://dl.gitea.com/tea/${tea_ver}/tea-${tea_ver}-linux-amd64" -o "$HOME/.local/bin/tea"; then
+            chmod +x "$HOME/.local/bin/tea"
+          fi
+      - run: glab --version || echo "glab not installed (tests will skip)"
+      - run: tea --version || echo "tea not installed (tests will skip)"
+
+      # Forge CLI version gate, all three arms in one run: the hermetic unit arms
+      # (minimum / modern / unrecognisable `--version` banner, scripted) plus the
+      # ignored real-binary arm against the actual latest gh/glab/tea installed
+      # above — `--include-ignored` runs the ignored and non-ignored tests together,
+      # and the filter selects both the `capability_version_gate_parses_and_gates`
+      # unit tests and the `capability_version_gate_real_binary` integration tests.
+      # This is the drift signal for a CLI whose `--version` shape moves out from
+      # under the shared parser, or whose latest release drops below our floor —
+      # caught here instead of deep in an operation on an old-distro CLI.
+      - run: cargo test --workspace --all-features --tests capability_version_gate -- --include-ignored
+
+      # Same scope as the ci.yml `integration` job: the real-binary
+      # `#[ignore]`d suites, `--tests` (unit + integration targets only, no
+      # doctests — doctest health is owned by the ci.yml `doc` job).
+      - run: cargo test --workspace --all-features --tests -- --ignored
+
+      - name: Report drift as a GitHub issue
+        if: failure()
+        # Signal-only: this never gates ci.yml or blocks a PR. File/refresh a
+        # single tracking issue instead of paging anyone, and instead of
+        # spamming a new issue on every weekly run.
+        run: |
+          set -euo pipefail
+          title="Scheduled CLI drift check failed (jj ${{ steps.jj.outputs.tag }})"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="The scheduled CLI-drift workflow failed against the latest jj release (${{ steps.jj.outputs.tag }}), and best-effort glab/tea.
+
+          Run: ${run_url}
+
+          This does not block regular CI or PRs; it flags that a newer CLI release may have changed output/behavior our parsers rely on. Investigate the failing run, adjust the code (or, if the failure is a known/expected CLI change, note it here), then close this issue — it will be reopened automatically if the check fails again."
+          existing="$(gh issue list --state open --search "in:title \"Scheduled CLI drift check failed\"" --json number --jq '.[0].number' || true)"
+          if [ -n "${existing:-}" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

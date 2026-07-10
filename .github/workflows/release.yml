@@ -10,22 +10,28 @@ name: Release
 # A crate's first release (no `<crate>-v*` tag yet) ships its current `Cargo.toml`
 # version as-is, ignoring the bump.
 #
-# Each crate is versioned and published independently (see AGENTS.md
+# Each crate is versioned and published independently (see CONTRIBUTING.md
 # "Releasing"). Two foundational crates publish FIRST — `vcs-diff` (std-only diff
 # model) and `vcs-cli-support` (the processkit-coupled plumbing) — since the
 # wrappers depend on them. The wrappers (vcs-git/vcs-jj/vcs-github/vcs-gitlab/
-# vcs-gitea) then publish, and the facades LAST — `vcs-forge` (depends on the
-# github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj). Each
-# such `^MAJOR.MINOR` dependency must stay in range when a dep crosses a
-# minor/major boundary. `all` releases every crate in one run — each bumped by the
-# same chosen type, from its own current version — in a single commit + atomic
-# push, then published and tagged one by one.
+# vcs-gitea) then publish, then the facades — `vcs-forge` (depends on the
+# github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj) —
+# and finally `vcs-watch`/`vcs-mcp` (depend on `vcs-core`/`vcs-core`+`vcs-forge`);
+# `vcs-testkit` has no workspace deps and can publish at any point.
+# `scripts/release/lib.sh` is the source of truth for this order. Each
+# `^MAJOR.MINOR` intra-workspace dependency must stay in range when a dep
+# crosses a minor/major boundary. `all` releases every crate in one run — each
+# bumped by the same chosen type, from its own current version — in a single
+# commit + atomic push, then published and tagged one by one.
 #
 # Per crate: bump → auto-fill an empty `[Unreleased]` from git history (git-cliff,
-# scoped to the crate's directory) → promote the changelog → dry-run publish →
-# publish to crates.io → tag → GitHub Release. Publishing comes BEFORE the tag, so
-# a failed publish strands nothing (just re-run; an already-uploaded version is
-# treated as success).
+# scoped to the crate's directory) → promote the changelog. Then, once for the
+# whole batch and BEFORE any upload: a SemVer gate (reject a bump too small for
+# the API change) and a `cargo package` verify (build each crate from its real
+# packaged tarball, resolving in-run deps from a temporary registry). Only then,
+# per crate → publish to crates.io → tag → GitHub Release. Publishing comes BEFORE
+# the tag, so a failed publish strands nothing (just re-run; an already-uploaded
+# version is treated as success).
 
 on:
   # Manual trigger only. The "Run workflow" button shows on this workflow's own
@@ -79,10 +85,16 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history + tags, for version math and git-cliff
 
+      # Nightly is installed FIRST and stable LAST so stable stays the DEFAULT
+      # toolchain for every build/package/publish step (dtolnay/rust-toolchain
+      # makes the last-installed toolchain the default). Nightly exists only for
+      # the SemVer gate's `cargo-semver-checks`, whose rustdoc-JSON generation is
+      # nightly-only, and is reached explicitly via `cargo +nightly` there.
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/rust-toolchain@stable
 
       # Fail fast if the publish credential is missing, BEFORE any irreversible
@@ -106,10 +118,21 @@ jobs:
         with:
           tool: git-cliff@2
 
+      # The SemVer gate's checker (see the "SemVer gate" step). A standalone
+      # prebuilt binary; it shells out to the toolchain chosen at call time, so
+      # `cargo +nightly semver-checks` runs it under nightly for rustdoc JSON.
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
       # Resolve the selected crate(s) and compute each one's next version from its
       # own Cargo.toml — never typed by hand. Writes a plan to $RUNNER_TEMP/plan.tsv
       # with one `name<TAB>dir<TAB>version<TAB>prev_tag` line per crate. `bump` is a
       # fixed choice (not free-form), so interpolating it is not an injection risk.
+      # The crate directory map, publish order, and version math all come from
+      # scripts/release/lib.sh — the single source of truth the release unit tests
+      # (scripts/release/lib.test.sh) also exercise.
       - name: Plan releases (version math)
         shell: bash
         env:
@@ -118,33 +141,25 @@ jobs:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          declare -A DIR=( [vcs-diff]=crates/diff [vcs-cli-support]=crates/cli-support [vcs-git]=crates/git [vcs-jj]=crates/jj [vcs-github]=crates/github [vcs-gitlab]=crates/gitlab [vcs-gitea]=crates/gitea [vcs-forge]=crates/forge [vcs-testkit]=crates/testkit [vcs-core]=crates/core [vcs-watch]=crates/watch [vcs-mcp]=crates/mcp )
+          source scripts/release/lib.sh
+          # `all` releases every crate in dependency (publish) order; otherwise the
+          # single selected crate.
           if [ "$SELECTED" = "all" ]; then
-            # Foundational crates first (vcs-diff/vcs-cli-support: the wrappers/facades
-            # depend on them), then the wrappers, then the facades: vcs-forge depends on
-            # vcs-github/vcs-gitlab/vcs-gitea, and vcs-core on vcs-git/vcs-jj. vcs-watch
-            # depends on vcs-core, and vcs-mcp on vcs-core+vcs-forge, so they publish LAST.
-            # vcs-testkit has no workspace deps (any position).
-            NAMES=(vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp)
+            NAMES="$(release_order)"
           else
-            NAMES=("$SELECTED")
+            NAMES="$SELECTED"
           fi
           : > "$PLAN"
           summary=""
-          for name in "${NAMES[@]}"; do
-            dir="${DIR[$name]}"
+          for name in $NAMES; do
+            dir="$(crate_dir "$name")"
             current=$(grep -m1 -oP '(?<=^version = ")[^"]+' "$dir/Cargo.toml")
-            if [[ ! "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if ! is_semver "$current"; then
               echo "::error::Could not parse version from $dir/Cargo.toml (got '$current')"
               exit 1
             fi
             if git tag --list "${name}-v*" | grep -q .; then
-              IFS='.' read -r MAJOR MINOR PATCH <<< "$current"
-              case "$BUMP" in
-                major) new="$((MAJOR+1)).0.0" ;;
-                minor) new="${MAJOR}.$((MINOR+1)).0" ;;
-                patch) new="${MAJOR}.${MINOR}.$((PATCH+1))" ;;
-              esac
+              new="$(next_version "$current" "$BUMP")"
               prev="${name}-v${current}"
             else
               new="$current"   # first release: ship the current version as-is
@@ -313,59 +328,100 @@ jobs:
           git add crates/*/Cargo.toml
           git commit -m "${msg%,}"
 
-      # Gate: build + package each crate exactly as `cargo publish` would, without
-      # uploading — catches build/metadata errors before the irreversible publish.
-      # `--locked` asserts Cargo.lock matches the just-bumped manifests.
+      # SemVer GATE — refuse a release whose chosen bump is too small for the API
+      # change, BEFORE anything is uploaded. For each planned crate that already
+      # has a prior release (a `<crate>-v*` tag == a crates.io baseline), run
+      # cargo-semver-checks (under nightly, for rustdoc JSON) comparing the release
+      # commit against that tag's code. cargo-semver-checks is version-aware — for
+      # a 0.x crate a breaking change requires a MINOR bump, an addition a PATCH —
+      # so its summary names the minimum required bump; we compare that to the
+      # chosen bump (scripts/release/lib.sh) and abort if it is insufficient,
+      # reporting the minimum acceptable bump. Crates with no baseline (a first
+      # release) are skipped, exactly as CI's report-only semver job skips them.
+      # We read the tool's VERDICT rather than trust its exit code: it exits
+      # non-zero precisely when the manifest bump is too small (the case we gate),
+      # so we capture its report either way and decide ourselves.
+      - name: SemVer gate (min legal bump)
+        shell: bash
+        env:
+          PLAN: ${{ runner.temp }}/plan.tsv
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -uo pipefail
+          source scripts/release/lib.sh
+          fail=0
+          while IFS=$'\t' read -r name dir version prev; do
+            if [ -z "$prev" ]; then
+              echo "semver: skip $name (first release — no published baseline)"
+              continue
+            fi
+            echo "::group::semver-checks $name (baseline $prev, planned bump $BUMP)"
+            out="$(cargo +nightly semver-checks check-release \
+                     --package "$name" --baseline-rev "$prev" 2>&1)" || true
+            printf '%s\n' "$out"
+            echo "::endgroup::"
+            required="$(required_bump_from_summary "$out")"
+            if [ "$required" = "unknown" ]; then
+              echo "::error::semver-checks produced no verdict for $name (a build or baseline error is shown above). Refusing to release blind — fix the tooling/baseline and re-run."
+              fail=1
+              continue
+            fi
+            if bump_sufficient "$BUMP" "$required"; then
+              echo "semver: $name OK — planned '$BUMP' bump covers the required '$required'."
+            else
+              echo "::error::$name: a '$BUMP' bump is NOT enough for this API change — the minimum legal bump is '$required'. Re-run the release with bump='$required' (or larger)."
+              fail=1
+            fi
+          done < "$PLAN"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::SemVer gate failed — nothing was published. Choose a sufficient bump and re-run."
+            exit 1
+          fi
+
+      # Gate: PACKAGE each crate exactly as `cargo publish` assembles it — produce
+      # the real `.crate` (the packaged file set) and the publish-shaped manifest,
+      # then verify-BUILD each from that tarball — all WITHOUT uploading. This
+      # replaces the old `cargo build` fallback, which never exercised the packaged
+      # file set or metadata for the nine crates with in-workspace deps, so a
+      # missing file, bad metadata, or an unresolvable path->version dependency
+      # only surfaced at the irreversible `cargo publish`.
       #
-      # A registry-resolving `--dry-run` requires every in-workspace dependency of
-      # the crate to already be LIVE on the crates.io index. Two cases make that
-      # impossible, and BOTH fall back to a plain `cargo build` against the local
-      # (path) deps — which proves the crate compiles without the registry, while
-      # `cargo publish` runs its own verify build against the published deps at
-      # publish time:
-      #   1. In-run dep: a dependency released in the SAME run isn't on the index
-      #      yet (it would fail e.g. `failed to select a version for vcs-diff =
-      #      "^0.x"`); it publishes earlier in the ordered run.
-      #   2. Unpublished dep: on a SOLO release, a dependency may never have been
-      #      published at all (no `<dep>-v*` tag — the same tag-presence convention
-      #      this workflow uses to detect a crate's first release). A real dry-run
-      #      would fail just as confusingly, so build instead.
-      # DEPS lists each crate's in-workspace (non-dev) dependencies, mirroring the
-      # DIR map in the plan step; crates with none always get a real dry-run.
-      - name: Verify crates publish (dry run)
+      # The planned crate(s) PLUS the in-run/unpublished part of their in-workspace
+      # dependency graph are packaged in ONE `cargo package` invocation
+      # (verify_package_specs, from scripts/release/lib.sh): cargo builds a
+      # temporary registry from the just-packaged siblings and resolves each
+      # crate's in-run/unpublished internal deps from it, while an ALREADY-PUBLISHED
+      # dependency is left out so it resolves from crates.io at its real published
+      # version — exactly what a real `cargo publish` would resolve. So even an
+      # `all` release with unpublished internal deps gets a real registry-resolving
+      # verify before the first `cargo publish`. `--locked` asserts Cargo.lock
+      # matches the just-bumped manifests; the tree is clean here (the bump commit
+      # already landed) so no `--allow-dirty` is needed.
+      - name: Verify crates package (registry-resolving)
         shell: bash
         env:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          declare -A DEPS=( [vcs-diff]="" [vcs-cli-support]="" [vcs-git]="vcs-diff vcs-cli-support" [vcs-jj]="vcs-diff vcs-cli-support" [vcs-github]="vcs-cli-support" [vcs-gitlab]="vcs-cli-support" [vcs-gitea]="vcs-cli-support" [vcs-forge]="vcs-cli-support vcs-github vcs-gitlab vcs-gitea" [vcs-testkit]="" [vcs-core]="vcs-git vcs-jj vcs-diff vcs-cli-support" [vcs-watch]="vcs-core" [vcs-mcp]="vcs-core vcs-forge" )
+          source scripts/release/lib.sh
+          planned=""
           while IFS=$'\t' read -r name dir version prev; do
-            # Scan this crate's in-workspace deps: a dep that is in the current PLAN
-            # (released this run) or has no published tag forces the build path.
-            # `:-` so a future crate missing a DEPS entry degrades to "no deps"
-            # (a real registry dry-run) instead of a cryptic `set -u` abort.
-            in_run_dep="" unpublished_dep=""
-            for dep in ${DEPS[$name]:-}; do
-              if grep -qP "^${dep}\t" "$PLAN"; then
-                in_run_dep="${in_run_dep:+$in_run_dep/}$dep"
-              elif ! git tag --list "${dep}-v*" | grep -q .; then
-                unpublished_dep="${unpublished_dep:+$unpublished_dep/}$dep"
-              fi
-            done
-            if [ -n "$in_run_dep" ] || [ -n "$unpublished_dep" ]; then
-              reason=""
-              [ -n "$in_run_dep" ] && reason="${in_run_dep} publish earlier this run"
-              if [ -n "$unpublished_dep" ]; then
-                echo "dep(s) ${unpublished_dep} not yet published — registry dry-run impossible, building instead"
-                reason="${reason:+$reason; }${unpublished_dep} not on crates.io"
-              fi
-              echo "verify $name v$version against local path deps (${reason}; registry dry-run runs at publish time)"
-              cargo build -p "$name" --locked
-              continue
-            fi
-            echo "dry-run publish $name v$version"
-            cargo publish -p "$name" --locked --dry-run
+            planned="$planned $name"
           done < "$PLAN"
+          # Which crates already have a crates.io release (a `<crate>-v*` tag) —
+          # the same tag-presence convention the plan step uses to detect a first
+          # release. verify_package_specs leaves these out of the package set so
+          # they resolve from crates.io, and packages the rest locally.
+          published=""
+          for name in $(release_order); do
+            if git tag --list "${name}-v*" | grep -q .; then
+              published="$published $name"
+            fi
+          done
+          specs="$(verify_package_specs "$planned" "$published")"
+          echo "cargo package $specs --locked"
+          # shellcheck disable=SC2086 # deliberate word-split of the `-p ...` flags
+          cargo package $specs --locked
 
       # Publish FIRST — before tags/push/Releases. crates.io is the only
       # irreversible step, so publishing before anything is pushed means a failed

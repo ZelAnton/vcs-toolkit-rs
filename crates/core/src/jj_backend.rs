@@ -9,17 +9,51 @@
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
-use vcs_jj::{ChangedPath, Jj, JjApi, JjFileset, WorkspaceAdd};
+use vcs_jj::{
+    BookmarkName, ChangedPath, Jj, JjApi, JjFileset, OutputBudget, RevsetExpr, Rollback,
+    WorkspaceAdd,
+};
 
 use crate::dto::{
-    ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState, RepoSnapshot,
-    WorktreeInfo,
+    ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
+    RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
-pub(crate) async fn current_branch<R: ProcessRunner>(
+/// Validate a facade revset string into a [`RevsetExpr`] at the boundary, mapping
+/// a rejected value to a classifiable input-validation error. The internal `"@"`
+/// callers pass a fixed literal (never fails); user-supplied revsets are checked.
+fn rev(s: &str) -> Result<RevsetExpr> {
+    Ok(RevsetExpr::new(s)?)
+}
+
+/// Whether a snapshot/branch query lets jj snapshot the working copy.
+///
+/// An ordinary jj query snapshots the working copy first — taking the lock,
+/// importing bare edits into a fresh `@`, and **recording a new operation** — so
+/// it mutates the very state it reads. [`Observe::ReadOnly`] runs the same query
+/// through vcs-jj's `--ignore-working-copy` variants: it reports the state of the
+/// last recorded operation without a lock, a new operation, or moving `@` — the
+/// mode an *observer* (a repo watcher / prompt) needs. The trade-off is that a
+/// bare working-tree edit jj has not yet snapshotted is invisible to a
+/// [`ReadOnly`](Observe::ReadOnly) read (it reflects the last operation, not
+/// unsaved edits); a caller that must see such edits uses [`Live`](Observe::Live)
+/// and accepts the recorded operation.
+#[derive(Clone, Copy)]
+enum Observe {
+    /// jj's default: snapshot the working copy (records an operation, may move `@`).
+    Live,
+    /// `--ignore-working-copy`: read the last recorded operation's state, recording
+    /// no operation and never moving `@`.
+    ReadOnly,
+}
+
+/// The nearest bookmark reachable from `@`, letting `observe` decide whether jj
+/// may snapshot the working copy first (see [`Observe`]).
+async fn current_branch_with<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
+    observe: Observe,
 ) -> Result<Option<String>> {
     // jj has no "current branch" in the git sense: after `jj describe` /
     // `jj new` / `jj commit` the bookmark stays on the described parent while
@@ -35,28 +69,51 @@ pub(crate) async fn current_branch<R: ProcessRunner>(
     // bookmarks — a merge of two bookmarked lines (one head each), or one commit
     // carrying several. Pick the lexicographically-smallest name so the answer is
     // deterministic instead of dependent on jj's row order.
-    Ok(jj
-        .reachable_bookmarks(dir)
-        .await?
-        .into_iter()
-        .map(|b| b.name)
-        .min())
+    let bookmarks = match observe {
+        Observe::Live => jj.reachable_bookmarks(dir).await?,
+        Observe::ReadOnly => jj.reachable_bookmarks_ignoring_working_copy(dir).await?,
+    };
+    Ok(bookmarks.into_iter().map(|b| b.name).min())
+}
+
+pub(crate) async fn current_branch<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Option<String>> {
+    current_branch_with(jj, dir, Observe::Live).await
 }
 
 pub(crate) async fn trunk<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Option<String>> {
     Ok(jj.trunk(dir).await?)
 }
 
+async fn local_branches_with<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    observe: Observe,
+) -> Result<Vec<String>> {
+    let bookmarks = match observe {
+        Observe::Live => jj.bookmarks(dir).await?,
+        Observe::ReadOnly => jj.bookmarks_ignoring_working_copy(dir).await?,
+    };
+    Ok(bookmarks.into_iter().map(|b| b.name).collect())
+}
+
 pub(crate) async fn local_branches<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
 ) -> Result<Vec<String>> {
-    Ok(jj
-        .bookmarks(dir)
-        .await?
-        .into_iter()
-        .map(|b| b.name)
-        .collect())
+    local_branches_with(jj, dir, Observe::Live).await
+}
+
+/// [`local_branches`] as a **read-only** query: passes `--ignore-working-copy`,
+/// so listing the bookmarks records no jj operation and never moves `@`. Built
+/// for an observer (the repo watcher) that must not mutate the state it reads.
+pub(crate) async fn local_branches_readonly<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    local_branches_with(jj, dir, Observe::ReadOnly).await
 }
 
 pub(crate) async fn branch_exists<R: ProcessRunner>(
@@ -79,14 +136,14 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
     // marks it `empty` — so `has_uncommitted_changes` agrees with `snapshot().dirty`,
     // which already treats `conflict ⇒ dirty` (M18). Only probed when `@` is empty, so
     // the common non-empty case stays a single query.
-    Ok(jj.is_conflicted(dir, "@").await?)
+    Ok(jj.is_conflicted(dir, &rev("@")?).await?)
 }
 
 pub(crate) async fn conflicted_files<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
-) -> Result<Vec<String>> {
-    Ok(jj.resolve_list(dir, "@").await?)
+) -> Result<Vec<PathBuf>> {
+    Ok(jj.resolve_list(dir, &rev("@")?).await?)
 }
 
 pub(crate) async fn delete_branch<R: ProcessRunner>(
@@ -94,7 +151,7 @@ pub(crate) async fn delete_branch<R: ProcessRunner>(
     dir: &Path,
     name: &str,
 ) -> Result<()> {
-    jj.bookmark_delete(dir, name).await?;
+    jj.bookmark_delete(dir, &BookmarkName::new(name)?).await?;
     Ok(())
 }
 
@@ -104,7 +161,8 @@ pub(crate) async fn rename_branch<R: ProcessRunner>(
     old: &str,
     new: &str,
 ) -> Result<()> {
-    jj.bookmark_rename(dir, old, new).await?;
+    jj.bookmark_rename(dir, &BookmarkName::new(old)?, &BookmarkName::new(new)?)
+        .await?;
     Ok(())
 }
 
@@ -118,7 +176,46 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 
 pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<DiffStat> {
     // `jj.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
-    jj.diff_stat(dir, "@").await.map_err(Into::into)
+    jj.diff_stat(dir, &rev("@")?).await.map_err(Into::into)
+}
+
+pub(crate) async fn log<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    max: usize,
+) -> Result<Vec<Commit>> {
+    // `JjApi::log`'s typed `Change` carries no author/timestamp (its template
+    // renders only change-id/commit-id/empty/description) — so, unlike git,
+    // `author`/`date` stay `None` here rather than being guessed (see the
+    // `Commit` type docs).
+    Ok(jj
+        .log(dir, &rev(revset)?, max)
+        .await?
+        .into_iter()
+        .map(|c| Commit::new(c.commit_id, c.description))
+        .collect())
+}
+
+pub(crate) async fn show_file<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    path: &str,
+) -> Result<String> {
+    Ok(jj.file_show(dir, &rev(revset)?, path).await?)
+}
+
+pub(crate) async fn show_file_within<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    path: &str,
+    budget: OutputBudget,
+) -> Result<String> {
+    Ok(jj
+        .file_show_within(dir, &rev(revset)?, path, budget)
+        .await?)
 }
 
 /// One `jj log -r @` template carrying the working-copy-only fields the
@@ -133,12 +230,47 @@ const SNAPSHOT_TEMPLATE: &str = "commit_id ++ \"\\t\" ++ \
     if(empty, \"1\", \"0\") ++ \"\\t\" ++ if(conflict, \"1\", \"0\")";
 
 pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<RepoSnapshot> {
+    snapshot_with(jj, dir, Observe::Live).await
+}
+
+/// [`snapshot`] as a **read-only** query: every underlying jj command passes
+/// `--ignore-working-copy`, so the batched read records **no** jj operation and
+/// never moves `@`. It reports the state of the last recorded operation, so a
+/// bare working-tree edit jj has not yet snapshotted is not reflected — the
+/// deliberate contract for an observer (the repo watcher) that must not perturb
+/// the working copy it is reporting on. Callers that must observe such edits use
+/// [`snapshot`] and accept the recorded operation.
+pub(crate) async fn snapshot_readonly<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<RepoSnapshot> {
+    snapshot_with(jj, dir, Observe::ReadOnly).await
+}
+
+/// Shared core of [`snapshot`] / [`snapshot_readonly`], selecting whether jj may
+/// snapshot the working copy before each underlying query (see [`Observe`]). Under
+/// [`Observe::ReadOnly`] every spawn is a `--ignore-working-copy` read, so the
+/// three fields (`@`'s head/empty/conflict, the branch, the change count) all
+/// reflect the **same** last-recorded operation — a coherent read-only snapshot,
+/// not a mix of snapshotted and non-snapshotted views.
+async fn snapshot_with<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    observe: Observe,
+) -> Result<RepoSnapshot> {
     // Spawn 1: head/empty/conflict for `@`. Spawn 2: `branch` via
     // `current_branch` (the nearest reachable bookmark). Spawn 3, only when
     // dirty: the change count.
-    let row = jj
-        .template_query(dir, "@", SNAPSHOT_TEMPLATE, Some(1))
-        .await?;
+    let row = match observe {
+        Observe::Live => {
+            jj.template_query(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
+                .await?
+        }
+        Observe::ReadOnly => {
+            jj.template_query_ignoring_working_copy(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
+                .await?
+        }
+    };
     let line = row.trim_end_matches(['\r', '\n']);
     let fields: Vec<&str> = line.split('\t').collect();
     // SNAPSHOT_TEMPLATE renders exactly three tab-separated fields: commit_id,
@@ -157,7 +289,7 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
         .copied()
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let branch = current_branch(jj, dir).await?;
+    let branch = current_branch_with(jj, dir, observe).await?;
     // Read the flags as explicit values: `conflict == "1"` ⇒ conflicted, and
     // `empty == "0"` ⇒ a non-empty change ⇒ dirty (so a missing/garbled field falls
     // to clean, not a contradictory "dirty with 0 changes"). A **conflicted** change
@@ -174,9 +306,14 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
         OperationState::Clear
     };
     // 2nd spawn only when there's something to count (dirty now includes the
-    // conflicted case, so the count reflects the conflicted files too).
+    // conflicted case, so the count reflects the conflicted files too). Under
+    // `ReadOnly` this counts the last recorded operation's changes without
+    // snapshotting, matching the `empty`/`conflict` flags read above.
     let change_count = if dirty {
-        jj.status(dir).await?.len()
+        match observe {
+            Observe::Live => jj.status(dir).await?.len(),
+            Observe::ReadOnly => jj.status_ignoring_working_copy(dir).await?.len(),
+        }
     } else {
         0
     };
@@ -195,10 +332,17 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
 pub(crate) async fn commit_paths<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
-    paths: &[String],
+    paths: &[PathBuf],
     message: &str,
 ) -> Result<()> {
-    let filesets: Vec<JjFileset> = paths.iter().map(JjFileset::path).collect();
+    // jj's fileset language is text (`root-file:"<path>"`), so a path is rendered
+    // through `to_string_lossy` here — jj itself does not accept a non-UTF-8 fileset
+    // token, so this is jj's own limit, not a lossy step we introduce. The
+    // byte-faithful cross-backend round-trip (status→commit) is exercised on git.
+    let filesets: Vec<JjFileset> = paths
+        .iter()
+        .map(|p| JjFileset::path(p.to_string_lossy()))
+        .collect();
     jj.commit_paths(dir, &filesets, message).await?;
     Ok(())
 }
@@ -222,7 +366,8 @@ pub(crate) async fn fetch_branch<R: ProcessRunner>(
     dir: &Path,
     branch: &str,
 ) -> Result<()> {
-    jj.git_fetch_branch(dir, branch).await?;
+    jj.git_fetch_branch(dir, &BookmarkName::new(branch)?)
+        .await?;
     Ok(())
 }
 
@@ -234,7 +379,7 @@ pub(crate) async fn push<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, branch: &str)
     // paths): jj consumes the token as a name and errors on a nonexistent
     // bookmark. Only the git path guards, because there the branch lands in a
     // *bare positional* refspec slot where a `--flag` would be parsed as one.
-    jj.git_push(dir, Some(branch.to_string())).await?;
+    jj.git_push(dir, Some(BookmarkName::new(branch)?)).await?;
     Ok(())
 }
 
@@ -245,12 +390,21 @@ pub(crate) async fn checkout<R: ProcessRunner>(
 ) -> Result<()> {
     // jj has no "switch branch"; moving `@` to the bookmark/revision is the
     // equivalent of a git checkout.
-    jj.edit(dir, reference).await?;
+    jj.edit(dir, &rev(reference)?).await?;
+    Ok(())
+}
+
+pub(crate) async fn new_child<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    reference: &str,
+) -> Result<()> {
+    jj.new_child(dir, &rev(reference)?).await?;
     Ok(())
 }
 
 pub(crate) async fn rebase<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, onto: &str) -> Result<()> {
-    jj.rebase(dir, onto).await?;
+    jj.rebase(dir, &rev(onto)?).await?;
     Ok(())
 }
 
@@ -263,30 +417,38 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
     let pre_op = jj.op_head(dir).await?;
     // Materialise the merge as a new working-copy change; jj records conflicts
     // on the commit instead of failing, so a 0 exit does NOT mean "clean".
+    // Validate the revsets at the boundary before the mutation; `@` is a fixed
+    // literal and `source` is the caller's, so an invalid `source` is a
+    // classifiable input error rather than a spawn failure.
+    let wc = rev("@")?;
     let merged = jj
         .new_merge(
             dir,
             "vcs-core try_merge probe (rolled back)",
-            vec!["@".into(), source.into()],
+            vec![wc.clone(), rev(source)?],
         )
         .await;
     // Probe the outcome before restoring (the probe target disappears after).
     // If `new_merge` itself failed, a failing probe must not mask that error.
     let probe = async {
-        if jj.is_conflicted(dir, "@").await? {
-            Ok::<_, vcs_jj::Error>(Some(jj.resolve_list(dir, "@").await?))
+        if jj.is_conflicted(dir, &wc).await? {
+            Ok::<_, vcs_jj::Error>(Some(jj.resolve_list(dir, &wc).await?))
         } else {
             Ok(None)
         }
     }
     .await;
-    // Always roll back — also when the merge or the probe errored.
-    let restored = jj.op_restore(dir, &pre_op).await;
+    // Always roll back — also when the merge or the probe errored. Uses the shared
+    // concurrency-safe protocol (`Jj::rollback_to`): the cleanup survives a cancelled
+    // operation and refuses to clobber a concurrent process's work, rather than the
+    // bare `op_restore` this used to run (T-036 — one rollback protocol, not two).
+    let rollback = jj.rollback_to(dir, &pre_op).await;
     match (merged, probe) {
         (Ok(()), Ok(conflicts)) => {
             // The probe is only trustworthy if the rollback actually happened —
-            // a `Clean`/`Conflicts` with the probe commit still present lies.
-            restored?;
+            // a `Clean`/`Conflicts` with the probe commit still present (a failed or
+            // divergence-refused rollback) lies.
+            rollback_result(rollback)?;
             Ok(match conflicts {
                 Some(files) => MergeProbe::Conflicts(files),
                 None => MergeProbe::Clean,
@@ -297,12 +459,23 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
         // condition the caller must act on (mirrors the git path's abort-failure
         // propagation); otherwise surface the probe error.
         (Ok(()), Err(err)) => {
-            restored?;
+            rollback_result(rollback)?;
             Err(err.into())
         }
         // The merge itself failed — that's the root cause; a secondary
         // restore/probe failure must not mask it.
         (Err(err), _) => Err(err.into()),
+    }
+}
+
+/// Turn a [`Rollback`] outcome into a facade [`Result`]: a completed (or unneeded)
+/// rollback is `Ok`; a **failed** restore or a **divergence-refused** one is a
+/// [`Error::Rollback`], carrying the structured outcome so the caller can tell them
+/// apart. Used by [`try_merge`] to decide whether its probe result is trustworthy.
+fn rollback_result(rollback: Rollback) -> Result<()> {
+    match rollback {
+        Rollback::Restored | Rollback::NotAttempted => Ok(()),
+        diverged_or_failed => Err(Error::Rollback(diverged_or_failed)),
     }
 }
 
@@ -364,6 +537,10 @@ pub(crate) async fn list_worktrees<R: ProcessRunner>(
         out.push(WorktreeInfo {
             path: root,
             branch: ws.bookmarks.into_iter().next(),
+            // `ws.commit` is the workspace commit's **full** id (WORKSPACE_TEMPLATE
+            // renders `commit_id`, not `.short()`), the same identity `snapshot`
+            // reports as `head` — so `WorktreeInfo.commit` can be compared against
+            // `RepoSnapshot.head` without a short-prefix collision (T-041).
             commit: (!ws.commit.is_empty()).then_some(ws.commit),
             is_bare: false,
         });
@@ -390,26 +567,69 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     // the rollback below must not `remove_dir_all` a directory the caller already
     // had (that would be silent data loss on an unrelated failure).
     let preexisting = abs_path.exists();
-    jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), base, path))
+    jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), rev(base)?, path))
         .await?;
     // `workspace add -r <base>` puts a fresh empty change on the new workspace's
     // `@`; `<ws_name>@` resolves to it regardless of the cwd. Anchor the bookmark
     // there so the worktree carries the requested branch.
     let revset = format!("{ws_name}@");
-    if let Err(e) = jj.bookmark_create(dir, branch, &revset).await {
-        // The two steps aren't atomic: `workspace add` already created the
-        // workspace and its on-disk dir, but the bookmark didn't land. Roll back
-        // so a failed call doesn't leak a half-made worktree — mirror
-        // `remove_worktree` (delete the dir first, then forget the workspace
-        // best-effort), then surface the original error. Only remove the dir if we
-        // created it (it didn't exist before `workspace add`).
-        if !preexisting && abs_path.exists() {
-            let _ = std::fs::remove_dir_all(&abs_path);
-        }
-        let _ = jj.workspace_forget(dir, &ws_name).await;
-        return Err(e.into());
+    if let Err(e) = jj
+        .bookmark_create(dir, &BookmarkName::new(branch)?, &rev(&revset)?)
+        .await
+    {
+        // The two steps aren't atomic: `workspace add` already created the workspace
+        // and (unless it pre-existed) its on-disk dir, but the bookmark didn't land.
+        // Roll back the half-made worktree — but report any cleanup residue rather
+        // than swallowing it, so a leaked dir or a dangling registration is visible
+        // and the caller can finish (and safely re-run) the cleanup.
+        return Err(rollback_failed_create(jj, dir, &ws_name, &abs_path, preexisting, e).await);
     }
     Ok(CreateOutcome::Plain)
+}
+
+/// Roll back a [`create_worktree`] whose `bookmark create` step failed, **reporting**
+/// any cleanup residue instead of swallowing it. Removes the workspace directory
+/// (only when `create_worktree` created it — a `preexisting` dir is the caller's data
+/// and is left untouched, never `remove_dir_all`'d) and forgets the workspace, then
+/// composes the outcome: the `bookmark create` failure is the root `cause`; a
+/// directory that could not be removed or a registration that could not be forgotten
+/// is appended as still-to-clean state (so a partial rollback is diagnosable and can
+/// be re-run). A fully clean rollback surfaces the original `cause` unchanged.
+async fn rollback_failed_create<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    ws_name: &str,
+    abs_path: &Path,
+    preexisting: bool,
+    cause: processkit::Error,
+) -> Error {
+    let mut residue: Vec<String> = Vec::new();
+    // Only remove a dir WE created — a pre-existing one is not ours to delete
+    // (removing it would be silent data loss on an unrelated failure).
+    if !preexisting
+        && abs_path.exists()
+        && let Err(e) = std::fs::remove_dir_all(abs_path)
+    {
+        residue.push(format!(
+            "the workspace directory {} could not be removed ({e})",
+            abs_path.display()
+        ));
+    }
+    if let Err(e) = jj.workspace_forget(dir, ws_name).await {
+        residue.push(format!(
+            "the workspace `{ws_name}` could not be forgotten ({e})"
+        ));
+    }
+    if residue.is_empty() {
+        // A clean rollback: the bookmark-step failure is the whole story, surfaced
+        // with its original classification.
+        return Error::Vcs(cause);
+    }
+    Error::Io(std::io::Error::other(format!(
+        "creating the worktree failed at `bookmark create` ({cause}), and the rollback \
+         could not fully clean up: {}. Finish the cleanup manually and retry.",
+        residue.join("; ")
+    )))
 }
 
 /// jj's initial workspace — its directory is the repository's main working copy,
@@ -467,7 +687,20 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     // it would couple the facade to one runtime, a worse trade for a library
     // meant to run under any executor; see docs/audit-2026-07.md P2.)
     if abs_path.exists() {
-        std::fs::remove_dir_all(&abs_path)?;
+        std::fs::remove_dir_all(&abs_path).map_err(|e| {
+            // Report what remains so the failure is diagnosable and the cleanup is
+            // repeatable: the directory is still on disk AND the workspace is still
+            // registered (its name was resolved above). Once the directory is free, a
+            // retry re-resolves the same name and finishes the removal + forget.
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to remove the worktree directory {} ({e}); the jj workspace \
+                     `{name}` is still registered — free the directory and retry",
+                    abs_path.display()
+                ),
+            ))
+        })?;
     }
     // Then forget the workspace. jj happily forgets an already-deleted workspace
     // dir, so this normally succeeds; we *surface* a failure rather than swallow it
@@ -510,15 +743,37 @@ async fn workspace_name_for_path<R: ProcessRunner>(
         roots.len(),
         "workspace_roots must return one result per name"
     );
+    // Registered workspaces whose root couldn't be resolved via `workspace root
+    // --name`: a no-match must NOT be reported as a clean `WorktreeNotFound` when we
+    // merely failed to place a registered workspace — `path` may well be that one.
+    let mut unresolved: Vec<String> = Vec::new();
     for (ws, root) in workspaces.into_iter().zip(roots) {
-        let Ok(root) = root else {
-            continue;
-        };
-        if normalize_for_compare(&root) == target || root == path {
-            return Ok(ws.name);
+        match root {
+            Ok(root) => {
+                if normalize_for_compare(&root) == target || root == path {
+                    return Ok(ws.name);
+                }
+            }
+            Err(_) => unresolved.push(ws.name),
         }
     }
-    Err(Error::WorktreeNotFound(path.to_path_buf()))
+    if unresolved.is_empty() {
+        // Every registered workspace resolved and none matched: a genuine miss.
+        Err(Error::WorktreeNotFound(path.to_path_buf()))
+    } else {
+        // Some registered workspaces did not resolve, so `path`'s absence can't be
+        // proven — surface a DISTINCT, diagnosable error (not a clean
+        // `WorktreeNotFound`, so `is_resource_not_found` stays false) that names the
+        // unresolved workspaces, rather than misreporting a real one as "not found".
+        Err(Error::Io(std::io::Error::other(format!(
+            "could not resolve the worktree at {}: {} registered workspace(s) did not \
+             resolve via `jj workspace root --name` ({}); the path may belong to one of \
+             them — resolve or `jj workspace forget` it manually",
+            path.display(),
+            unresolved.len(),
+            unresolved.join(", "),
+        ))))
+    }
 }
 
 /// Normalise a path for comparison against jj's `workspace root` output:
@@ -712,6 +967,297 @@ mod tests {
         assert!(
             !resolved.exists(),
             "the rollback must remove dir/<rel>, the location jj created"
+        );
+    }
+
+    // R2: the rollback must NOT swallow a secondary cleanup error. `workspace add`
+    // created the dir (which the rollback removes fine), but `workspace forget`
+    // fails — the returned error must report the dangling registration rather than
+    // hide it behind the bookmark-step cause.
+    #[tokio::test]
+    async fn create_worktree_rollback_surfaces_forget_failure() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r2-rollback-forget");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+
+        let jj = Jj::with_runner(AddCreatesDir {
+            dir: wt.clone(),
+            inner: ScriptedRunner::new()
+                .on(["jj", "workspace", "add"], Reply::ok(""))
+                .on(
+                    ["jj", "bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
+                .on(
+                    ["jj", "workspace", "forget"],
+                    Reply::fail(1, "cannot forget workspace\n"),
+                ),
+        });
+
+        let err = create_worktree(&jj, repo, &wt, "feature", "@")
+            .await
+            .expect_err("the bookmark-step failure must propagate");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not be forgotten") && msg.contains("feature"),
+            "the swallowed forget failure must be reported: {msg}"
+        );
+        assert!(
+            !wt.exists(),
+            "the dir removal still ran (only the forget failed)"
+        );
+    }
+
+    // A `ScriptedRunner` whose mocked `workspace add` drops a *file* where the
+    // worktree directory should be, so the rollback's `remove_dir_all` fails
+    // deterministically and cross-platform — a hermetic stand-in for a Windows-like
+    // "the directory can't be removed" outcome (a locked/undeletable dir), letting a
+    // test assert the removal failure is REPORTED rather than swallowed.
+    struct AddCreatesFile {
+        inner: processkit::testing::ScriptedRunner,
+        path: std::path::PathBuf,
+    }
+
+    #[async_trait::async_trait]
+    impl processkit::ProcessRunner for AddCreatesFile {
+        async fn output_string(
+            &self,
+            command: &processkit::Command,
+        ) -> processkit::Result<processkit::ProcessResult<String>> {
+            let args: Vec<String> = command
+                .arguments()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            if args.iter().any(|a| a == "workspace") && args.iter().any(|a| a == "add") {
+                if let Some(parent) = self.path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&self.path, b"not a dir");
+            }
+            self.inner.output_string(command).await
+        }
+    }
+
+    // R2 (Windows-like removal failure): the rollback surfaces a dir-removal failure
+    // instead of swallowing it. `workspace add` leaves a *file* at the worktree path,
+    // so `remove_dir_all` errors; the returned error must report the leaked path.
+    #[tokio::test]
+    async fn create_worktree_rollback_surfaces_dir_removal_failure() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r2-rollback-rmdir");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+        assert!(
+            !wt.exists(),
+            "must not pre-exist (so it counts as ours to remove)"
+        );
+
+        let jj = Jj::with_runner(AddCreatesFile {
+            path: wt.clone(),
+            inner: ScriptedRunner::new()
+                .on(["jj", "workspace", "add"], Reply::ok(""))
+                .on(
+                    ["jj", "bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
+        });
+
+        let err = create_worktree(&jj, repo, &wt, "feature", "@")
+            .await
+            .expect_err("the bookmark-step failure must propagate");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not be removed") && msg.contains("wt"),
+            "the swallowed dir-removal failure must be reported: {msg}"
+        );
+    }
+
+    // T-038: the read-only snapshot must pass `--ignore-working-copy` on **every**
+    // spawn (the `@` template query, the reachable-bookmark query, and — when the
+    // change reads dirty — the change-count query), so an observer never snapshots
+    // the jj working copy (records an operation / moves `@`). The row's middle
+    // field is `0` (empty=false ⇒ dirty), which forces the third (status) spawn to
+    // fire, so all three are exercised. Driven by a `RecordingRunner` so the argv
+    // is asserted hermetically.
+    #[tokio::test]
+    async fn snapshot_readonly_ignores_working_copy_on_every_spawn() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok("abc123\t0\t0\n"));
+        let jj = Jj::with_runner(&rec);
+        snapshot_readonly(&jj, Path::new("/repo"))
+            .await
+            .expect("read-only snapshot");
+
+        let calls = rec.calls();
+        assert!(
+            calls.len() >= 3,
+            "template + reachable bookmarks + change-count spawns, got {}",
+            calls.len()
+        );
+        for c in &calls {
+            assert!(
+                c.args_str().iter().any(|a| a == "--ignore-working-copy"),
+                "every read-only snapshot spawn must ignore the working copy: {:?}",
+                c.args_str()
+            );
+        }
+    }
+
+    // The complement: the default `snapshot` snapshots the working copy (jj's
+    // normal behaviour), so it must NOT carry the read-only flag on any spawn.
+    #[tokio::test]
+    async fn snapshot_default_does_not_ignore_working_copy() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok("abc123\t0\t0\n"));
+        let jj = Jj::with_runner(&rec);
+        snapshot(&jj, Path::new("/repo"))
+            .await
+            .expect("default snapshot");
+
+        for c in &rec.calls() {
+            assert!(
+                !c.args_str().iter().any(|a| a == "--ignore-working-copy"),
+                "the default snapshot must let jj snapshot the working copy: {:?}",
+                c.args_str()
+            );
+        }
+    }
+
+    // T-041 (tombstone, end-to-end): a locally-deleted bookmark still tracked on a
+    // remote must not appear in `local_branches` or `branch_exists`. The scripted
+    // `bookmark list` output is what jj renders for that state — a `present=0`
+    // local row plus a `present=1` remote-tracking row — so only the live local
+    // bookmark survives, and the deleted one never looks alive.
+    #[tokio::test]
+    async fn tombstone_bookmark_is_not_a_live_local_branch() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok(concat!(
+                "1\t\t\"main\"\tabc123\n",         // live local
+                "0\t\t\"gone\"\t\n",               // deleted local tombstone
+                "1\torigin\t\"gone\"\tdeadbeef\n", // its remote-tracking row
+            )),
+        ));
+
+        let names = local_branches(&jj, Path::new("/repo"))
+            .await
+            .expect("local_branches");
+        assert_eq!(
+            names,
+            vec!["main".to_string()],
+            "the tombstone must not appear as a local branch"
+        );
+        assert!(
+            branch_exists(&jj, Path::new("/repo"), "main")
+                .await
+                .expect("branch_exists main")
+        );
+        assert!(
+            !branch_exists(&jj, Path::new("/repo"), "gone")
+                .await
+                .expect("branch_exists gone"),
+            "a deleted bookmark must not report as an existing branch"
+        );
+    }
+
+    // T-041: `RepoSnapshot.head` and `WorktreeInfo.commit` must carry the SAME
+    // full commit id for the same commit, so a consumer can compare them to tell
+    // whether a worktree sits on the snapshotted commit. Driven hermetically: `@`
+    // and the `default` workspace both point at one 40-hex oid, and the two facade
+    // fields must come back equal and full-length — not one full, one truncated.
+    #[tokio::test]
+    async fn snapshot_head_and_worktree_commit_share_the_full_id() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        const FULL: &str = "abcdef0123456789abcdef0123456789abcdef01";
+
+        let jj = Jj::with_runner(
+            ScriptedRunner::new()
+                // snapshot spawn 1: `@` head/empty/conflict — empty=1 ⇒ clean, so
+                // no change-count spawn follows.
+                .on(
+                    ["jj", "log", "-r", "@"],
+                    Reply::ok(format!("{FULL}\t1\t0\n")),
+                )
+                // snapshot spawn 2: branch = nearest reachable bookmark.
+                .on(
+                    ["jj", "log", "-r", "heads(::@ & bookmarks())"],
+                    Reply::ok(format!("\"main\"\t{FULL}\n")),
+                )
+                // list_worktrees: the default workspace points at the same commit.
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok(format!("\"default\"\t{FULL}\t\"main\"\n")),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
+                    Reply::ok("/repo\n"),
+                ),
+        );
+
+        let snap = snapshot(&jj, Path::new("/repo")).await.expect("snapshot");
+        let worktrees = list_worktrees(&jj, Path::new("/repo"))
+            .await
+            .expect("worktrees");
+
+        let head = snap.head.expect("snapshot head present");
+        assert_eq!(
+            head.len(),
+            40,
+            "head must be the full oid, not a short prefix"
+        );
+        let wt_commit = worktrees[0].commit.as_deref().expect("worktree commit");
+        assert_eq!(
+            head, wt_commit,
+            "snapshot head and worktree commit must be the same full id"
+        );
+    }
+
+    // `local_branches_readonly` lists bookmarks read-only (no operation recorded).
+    #[tokio::test]
+    async fn local_branches_readonly_ignores_working_copy() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        local_branches_readonly(&jj, Path::new("/repo"))
+            .await
+            .expect("read-only branches");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "a single `bookmark list` spawn");
+        assert!(
+            calls[0]
+                .args_str()
+                .iter()
+                .any(|a| a == "--ignore-working-copy"),
+            "read-only branch listing must ignore the working copy: {:?}",
+            calls[0].args_str()
         );
     }
 }

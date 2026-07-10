@@ -10,10 +10,72 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Version-aware `capabilities()`.** `ForgeCapabilities` gains `version:
+  Option<vcs_diff::Version>` (the installed `gh`/`glab`/`tea` version, `None` for an
+  `Unknown` backend or an unrecognisable banner) and `supported: bool` (whether the
+  installed CLI meets the backend wrapper's declared version floor — gh ≥ 2.0,
+  glab ≥ 1.25, tea ≥ 0.9). `Forge::capabilities()` now probes the CLI version
+  alongside auth, and a CLI **below the floor** zeroes the per-op flags exactly
+  like an unauthed one — so the map never advertises a command an old CLI can't
+  run. An unrecognisable `--version` banner degrades to `supported: false` /
+  `version: None` (conservatively unavailable) rather than failing the probe; a
+  genuine spawn/timeout failure still propagates. `vcs_diff::Version` is re-exported
+  as `vcs_forge::Version`, and `ForgeCapabilities` gains `.version(v)` / `.supported()`
+  builders.
+- `ForgePr`/`ForgeIssue` gained `labels: Option<Vec<String>>` and
+  `assignees: Option<Vec<String>>` (additive on the `#[non_exhaustive]` DTOs, plus
+  chained `.labels(...)`/`.assignees(...)` setters) — GitHub and GitLab report
+  `Some(..)` (an empty `Some(vec![])` is a confirmed "none"); Gitea's `tea` has no
+  such columns, so both are `None` there (unknown, never a false empty list).
+- `Forge::pr_checkout(number)` / `ForgeApi::pr_checkout` — check a PR/MR's branch
+  out into the bound working copy, dispatching to `gh pr checkout` / `glab mr
+  checkout` / `tea pr checkout`. **Mutates the working copy.** Supported on all
+  three real backends (an `Unknown` handle returns `Unsupported`). The `ForgeApi`
+  trait method is **defaulted** to `Error::Unsupported` so external implementers
+  keep compiling. `ForgeOp` gained a `PrCheckout` variant (added to `ForgeOp::ALL`)
+  so `Forge::supports(ForgeOp::PrCheckout)` reports it available — the one
+  `ForgeOp` every real backend supports (only `Unknown` lacks it).
+- `PrMerge` — the unified merge spec (`strategy` + `auto` + `delete_branch`),
+  built through `PrMerge::merge()`/`squash()`/`rebase()` (or `PrMerge::new(strategy)`)
+  then `.auto()`/`.delete_branch()`. Generalises the per-CLI merge specs
+  (`vcs-github`'s `PrMerge`, `vcs-gitlab`'s `MrMerge`, `vcs-gitea`'s `PrMerge`) into
+  one shape the facade drives across all three backends.
 
 ### Changed
--
+
+- **Breaking: unified DTOs now model "the backend can't report this field" as
+  `None`, distinct from a confirmed `false`/empty.** The ambiguous sentinels that
+  couldn't tell "unknown" from a real value are replaced by a per-field support
+  contract:
+  - `ForgePr::draft` `bool` → `Option<bool>` (Gitea is `None` — `tea` has no draft
+    flag; GitHub/GitLab report `Some`).
+  - `ForgeRepo::private` `bool` → `Option<bool>` (GitLab is `None` when `glab` omits
+    `visibility` — an absent visibility is *unknown*, never a false `Some(false)`).
+  - `ForgeRelease::url` `String` → `Option<String>`, `ForgeRelease::draft` /
+    `prerelease` `bool` → `Option<bool>` (GitHub's lean `release_list` leaves `url`
+    `None`; GitLab has no draft/pre-release concept so both are `None`; Gitea has no
+    release-page URL so `url` is `None`).
+
+  The `serde`/MCP JSON contract follows: an unknown field serialises to `null`,
+  distinct from a confirmed `false`/`[]`. **Builder setters that took no argument now
+  take the value** (`ForgePr::draft(bool)`, `ForgeRepo::private(bool)`,
+  `ForgeRelease::draft(bool)`/`prerelease(bool)`), and the `labels`/`assignees`/`url`
+  setters record a *confirmed* `Some(..)`; a freshly `new()`-built DTO leaves every
+  support-gated field `None`. Update a `match`/field read to handle the `Option`
+  (e.g. `pr.draft` → `pr.draft == Some(true)`), and `.draft()` → `.draft(true)`.
+- **Breaking:** `Forge::pr_merge` / `ForgeApi::pr_merge` take a `PrMerge` spec
+  instead of a bare `MergeStrategy` — `pr_merge(n, MergeStrategy::Squash)` →
+  `pr_merge(n, PrMerge::squash())`. `PrMerge`'s `auto`/`delete_branch` options are
+  **GitHub-only** (`gh pr merge --auto --delete-branch`); on GitLab/Gitea,
+  requesting either now returns a structured `Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). `Error::is_unsupported()` now also classifies a wrapper-level
+  `Unsupported` bubbling up through `Error::Forge` (the option-can't-be-expressed
+  case), not just the facade's own `Error::Unsupported` (whole-operation-missing).
+- Internal only (no public API change): the GitHub backend now drives
+  `vcs-github`'s spec-typed `pr_close(dir, number, PrClose)` instead of the removed
+  positional `delete_branch: bool`. `Forge::pr_close(PrClose)` keeps its existing
+  signature.
 
 ### Fixed
 -

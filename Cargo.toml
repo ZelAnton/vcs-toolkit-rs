@@ -21,7 +21,7 @@ exclude = ["fuzz"]
 
 # Metadata shared by every crate in the toolkit. Each crate inherits these via
 # `field.workspace = true` in its own Cargo.toml. NOTE: `version` is *not* here
-# on purpose — the three crates publish independently and carry their own
+# on purpose — the workspace crates publish independently and carry their own
 # version (see each crate's [package]).
 [workspace.package]
 edition = "2024"
@@ -37,9 +37,10 @@ authors = ["Anton Zhelezniakou"]
 # ---------------------------------------------------------------------------
 # Workspace dependencies
 #
-# Convention (see AGENTS.md "Dependency management"): this workspace fixes NO
-# allow-list of crates. Declare a dependency here once and reference it from a
-# member with `<crate>.workspace = true` when more than one crate needs it.
+# Convention (see CONTRIBUTING.md "Dependency management"): this workspace
+# fixes NO allow-list of crates. Declare a dependency here once and reference
+# it from a member with `<crate>.workspace = true` when more than one crate
+# needs it.
 # Give every entry an inline comment explaining *why* it's here. Pin major
 # versions, enable only the features used, and keep Cargo.lock committed.
 # ---------------------------------------------------------------------------
@@ -48,20 +49,24 @@ authors = ["Anton Zhelezniakou"]
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
 # test seams the wrappers build on (under `processkit::testing`). Was the internal
-# `vcs-process` crate; now the published `processkit`. Pin `"2.1"`: the 2.1 line is
-# semver-stable, so the caret spans every future 2.1.x and `cargo update` pulls them
-# safely. What the 1.x→2.1 jump touched us: every data-carrying `Error` variant is now
-# **per-variant `#[non_exhaustive]`**, so building one outside `processkit` goes through
-# a constructor instead of a struct literal — `Error::exit`/`timeout`/`signalled`
-# (already in 2.1.0) plus `Error::spawn`/`not_found`/`stdin`/`parse` (added in **2.1.1**,
-# which is why the floor is 2.1.1 in `Cargo.lock`). Reading a variant's fields still goes
-# through a `{ .. }` pattern (non-exhaustive patterns stay legal) or the accessor API
-# (`program()`, `stdout()`, `stderr()`, `code()`, `is_timeout()`, …). The mechanical
+# `vcs-process` crate; now the published `processkit`. Pin `"2.1"`: the 2.x line is
+# semver-stable, so the caret spans future 2.x releases and `cargo update` pulls them
+# safely. `Cargo.lock` resolves 2.2.1, which keeps the 2.1.1 `Error` constructors
+# (`Error::spawn`/`not_found`/`stdin`/`parse`) and also picks up the Windows
+# `ProcessGroup::{suspend, resume}` pid-recycle race fix plus `wait_for`/`wait_for_port`
+# draining piped stdout/stderr instead of risking pipe-buffer deadlock; those matter
+# because `vcs-watch` manages job-object/process-group lifecycles. Reading a variant's
+# fields still goes through a `{ .. }` pattern (non-exhaustive patterns stay legal) or
+# the accessor API (`program()`, `stdout()`, `stderr()`, `code()`, `is_timeout()`, …). The mechanical
 # rename table from `docs/migrating-1.2-to-2.1.md` (`terminate_all`→`kill_all`,
 # `avg_cpu`→`avg_cpu_cores`, `memory_max`→`max_memory`, `Error::OutputTooLarge`'s
 # `line_limit`/`byte_limit`→`max_lines`/`max_bytes`, `processkit::{Encoding,StreamExt}`→
 # `processkit::prelude::…`) hits no call site in this workspace (verified by rg).
 processkit = "2.1"
+
+# Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
+# Unified version: 0.15 satisfies both wrapper crate requirements (was 0.13) and processkit/mock needs.
+mockall = "0.15"
 
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.

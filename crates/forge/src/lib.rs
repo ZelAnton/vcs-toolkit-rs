@@ -13,8 +13,8 @@
 //!
 //! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
 //! lifecycle (list / view / create / comment / edit / merge / mark-ready /
-//! close, CI checks) · the flat capability map · issues (list / view / create)
-//! · releases (list / view). One tiny call:
+//! close / checkout, CI checks) · the flat capability map · issues (list / view /
+//! create) · releases (list / view). One tiny call:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
@@ -60,27 +60,31 @@
 //!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
 //!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
-//!   `OPEN` / `opened` / `open` all read as one state. A few fields are
-//!   best-effort: a PR's `draft`, and a release's `body`/`url` absent from lean
-//!   `release_list` output (see each DTO's field docs).
+//!   `OPEN` / `opened` / `open` all read as one state. Fields a backend can't
+//!   report follow a **per-field support contract** — they are `Option` (a PR's
+//!   `draft`/`labels`/`assignees`, a repo's `private`, a release's
+//!   `url`/`draft`/`prerelease`), so `None` ("backend can't/didn't report it") is
+//!   distinct from a *confirmed* `Some(false)`/empty list, never a false sentinel
+//!   (see each DTO's field docs).
 //! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
 //!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
-//!   [`pr_checks`](Forge::pr_checks)); the capability map
-//!   ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
+//!   [`pr_checkout`](Forge::pr_checkout) / [`pr_checks`](Forge::pr_checks) /
+//!   [`pr_diff`](Forge::pr_diff)); the capability
+//!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
 //!   releases ([`release_list`](Forge::release_list) /
 //!   [`release_view`](Forge::release_view)). List ops cap at 100 — drop to the
 //!   wrapped client for more.
 //! - **Capability gaps** — `tea` has no current-repo view, draft toggle, checks
-//!   command, or single-release view, so on a Gitea handle
+//!   command, single-release view, or diff view, so on a Gitea handle
 //!   [`repo_view`](Forge::repo_view), [`pr_mark_ready`](Forge::pr_mark_ready),
-//!   [`pr_checks`](Forge::pr_checks), and [`release_view`](Forge::release_view)
-//!   return [`Error::Unsupported`] **without spawning**. Classify it with
-//!   [`Error::is_unsupported`].
+//!   [`pr_checks`](Forge::pr_checks), [`release_view`](Forge::release_view), and
+//!   [`pr_diff`](Forge::pr_diff) return [`Error::Unsupported`] **without
+//!   spawning**. Classify it with [`Error::is_unsupported`].
 //! - **Capability introspection** — to branch *before* calling rather than
 //!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
 //!   varying operation is available, and [`ForgeOp::ALL`] enumerates those
@@ -108,7 +112,7 @@
 //! # Testing
 //!
 //! The facade trait has **no mock feature** — `mockall` can't process the
-//! macro-generated [`ForgeApi`] signatures. Test the *real* dispatch instead:
+//! hand-maintained [`ForgeApi`] signatures. Test the *real* dispatch instead:
 //! build a [`Forge`] over an explicit client wrapping a fake runner — e.g.
 //! `Forge::from_github(cwd, GitHub::with_runner(ScriptedRunner::new()))` (likewise
 //! [`from_gitlab`](Forge::from_gitlab) / [`from_gitea`](Forge::from_gitea)) — and
@@ -139,6 +143,7 @@ mod gitlab_forge;
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
     ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeStrategy, PrClose, PrCreate, PrEdit,
+    PrMerge,
 };
 pub use error::{Error, Result};
 
@@ -148,11 +153,19 @@ pub use error::{Error, Result};
 pub use vcs_gitea;
 pub use vcs_github;
 pub use vcs_gitlab;
+// Re-export `vcs-diff`'s unified-diff model, since `pr_diff` returns it
+// directly — `gh pr diff`/`glab mr diff` already emit the same git-format diff
+// the parser expects, so no facade-specific DTO wraps it.
+pub use vcs_diff;
+pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed CLI version type behind [`ForgeCapabilities::version`] — re-exported so
+// a `vcs-forge`-only consumer can name it without a direct `vcs-diff` dependency.
+pub use vcs_diff::Version;
 // Re-export `Secret` so a consumer can name the token type the `*_with_token`
 // constructors accept (a plain `&str`/`String` also coerces via `Into<Secret>`, so
 // most callers never name it). It is `vcs_cli_support::Secret`, the very type the
 // wrappers' `with_token` takes.
-pub use vcs_cli_support::Secret;
+pub use vcs_cli_support::{OutputBudget, Secret};
 // Re-export `processkit` itself so a `vcs-forge`-only consumer can match the
 // wrapped error — `Error::Forge(vcs_forge::processkit::Error::Timeout { .. })` —
 // and name the `CancellationToken` for a `default_cancel_on` client, without a
@@ -326,11 +339,11 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Whether this handle's backend supports `op`. The capability-varying
-    /// operations ([`ForgeOp`]) are all present on GitHub and GitLab; Gitea
-    /// (`tea`) supports **none** of them — it has no current-repo view, draft
-    /// toggle, PR-checks command, or single-release view; and an
-    /// [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
+    /// Whether this handle's backend supports `op`. The operations in
+    /// [`ForgeOp`] are all present on GitHub and GitLab; Gitea (`tea`) supports
+    /// only [`PrCheckout`](ForgeOp::PrCheckout) among them — it has no current-repo
+    /// view, draft toggle, PR-checks command, single-release view, or diff view; and
+    /// an [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
     /// nothing at all (every operation returns `Unsupported`). Every other facade
     /// operation works on all three real backends. Branch on this to hide an
     /// unavailable operation up front instead of calling it and handling
@@ -343,10 +356,14 @@ impl<R: ProcessRunner> Forge<R> {
             // `true` here made a UI render every op as available, each click then
             // failing with `Unsupported`.)
             (ForgeKind::Unknown, _) => false,
-            // The four operations `tea` can't do; GitHub/GitLab do everything.
+            // The five operations `tea` can't do; GitHub/GitLab do everything.
             (
                 ForgeKind::Gitea,
-                ForgeOp::RepoView | ForgeOp::PrMarkReady | ForgeOp::PrChecks | ForgeOp::ReleaseView,
+                ForgeOp::RepoView
+                | ForgeOp::PrMarkReady
+                | ForgeOp::PrChecks
+                | ForgeOp::ReleaseView
+                | ForgeOp::PrDiff,
             ) => false,
             _ => true,
         }
@@ -469,33 +486,49 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// The forge's flat capability map — the intersection of "the CLI ships
-    /// this command" and "the CLI is authenticated". Spawns `auth status` /
-    /// `login list` exactly once; the per-forge static "ships the command" map
-    /// is a constant. The Unknown handle's map is the all-`false` shape.
+    /// The forge's flat capability map — the intersection of "the CLI ships this
+    /// command", "the installed CLI meets the wrapper's version floor", and "the CLI
+    /// is authenticated". Probes the CLI **version** (`gh`/`glab`/`tea --version`)
+    /// and **auth** (`auth status` / `login list`) once each; the per-forge static
+    /// "ships the command" map is a constant. A CLI below the version floor zeroes
+    /// the per-op flags exactly like an unauthed one — the honest answer for an old
+    /// binary that lacks the modern command surface. An unrecognisable `--version`
+    /// banner degrades to `supported: false` / `version: None` (conservatively
+    /// unavailable) rather than failing the whole probe; a genuine spawn/timeout
+    /// failure still propagates. The Unknown handle's map is the all-`false` shape
+    /// (no spawn).
     pub async fn capabilities(&self) -> Result<ForgeCapabilities> {
         match &self.backend {
             Backend::GitHub(c) => {
                 let mut caps = static_github_caps();
+                let (version, supported) = github_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = github_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
             Backend::GitLab(c) => {
                 let mut caps = static_gitlab_caps();
+                let (version, supported) = gitlab_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = gitlab_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
             Backend::Gitea(c) => {
                 let mut caps = static_gitea_caps();
+                let (version, supported) = gitea_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = gitea_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
@@ -503,12 +536,15 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Merge a PR/MR with the given [`MergeStrategy`].
-    pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
+    /// Merge a PR/MR with the given [`PrMerge`] spec (strategy plus the optional
+    /// `auto`/`delete_branch` flags). Those two options are **GitHub-only**: on
+    /// GitLab/Gitea, requesting either returns [`Unsupported`](Error::Unsupported)
+    /// rather than silently merging without it (see [`PrMerge`]).
+    pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, strategy).await,
-            Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, strategy).await,
-            Backend::Gitea(c) => gitea_forge::pr_merge(c, &self.cwd, number, strategy).await,
+            Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, merge).await,
+            Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, merge).await,
+            Backend::Gitea(c) => gitea_forge::pr_merge(c, &self.cwd, number, merge).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_merge")),
         }
     }
@@ -539,6 +575,21 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// Check out a PR/MR's branch into the bound working copy — `gh pr checkout
+    /// <n>` / `glab mr checkout <n>` / `tea pr checkout <n>`. The head/source
+    /// branch is fetched and switched to, so a subsequent build/test/edit runs
+    /// against the PR locally. **Mutates the working copy.** Supported on all three
+    /// real backends; an [`Unknown`](ForgeKind::Unknown) handle returns
+    /// [`Unsupported`](Error::Unsupported).
+    pub async fn pr_checkout(&self, number: u64) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::Gitea(c) => gitea_forge::pr_checkout(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_checkout")),
+        }
+    }
+
     /// The PR/MR's coarse CI status (see [`CiStatus`]). **[`Unsupported`](Error::Unsupported)
     /// on Gitea** (`tea` has no checks command).
     pub async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
@@ -547,6 +598,36 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitLab(c) => gitlab_forge::pr_checks(c, &self.cwd, number).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_checks")),
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_checks")),
+        }
+    }
+
+    /// The PR/MR's diff, one [`FileDiff`] per changed file — `gh pr diff <n>` /
+    /// `glab mr diff <n>`, through the same unified-diff parser `vcs-git`/
+    /// `vcs-jj` use (both CLIs emit the same git-format diff `git diff` does).
+    /// **[`Unsupported`](Error::Unsupported) on Gitea** (`tea` has no diff
+    /// command).
+    pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_diff(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::pr_diff(c, &self.cwd, number).await,
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_diff")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_diff")),
+        }
+    }
+
+    /// [`pr_diff`](Forge::pr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of the underlying client's
+    /// [`default_output_budget`](vcs_github::GitHub::default_output_budget). Past
+    /// the ceiling the read errors with an `OutputTooLarge`-carrying
+    /// [`Error::Forge`] (actual and allowed sizes) rather than buffering an
+    /// unbounded diff — the override for a legitimately huge PR/MR.
+    /// **[`Unsupported`](Error::Unsupported) on Gitea** (`tea` has no diff command).
+    pub async fn pr_diff_within(&self, number: u64, budget: OutputBudget) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_diff_within(c, &self.cwd, number, budget).await,
+            Backend::GitLab(c) => gitlab_forge::pr_diff_within(c, &self.cwd, number, budget).await,
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_diff")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_diff")),
         }
     }
 
@@ -614,9 +695,9 @@ fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
     Error::unsupported(forge, operation)
 }
 
-/// The "what the CLI ships" map for GitHub. `authed` is left `false`; the
-/// caller (`Forge::capabilities`) overwrites it from a single `auth status`
-/// probe and zeroes the rest if unauthed.
+/// The "what the CLI ships" map for GitHub. `version`/`supported`/`authed` are
+/// left unset; the caller (`Forge::capabilities`) overwrites them from the
+/// version + auth probes and zeroes the op flags if unsupported or unauthed.
 fn static_github_caps() -> ForgeCapabilities {
     ForgeCapabilities {
         pr_create: true,
@@ -625,6 +706,8 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_checks: true,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
@@ -640,6 +723,8 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         pr_checks: true,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
@@ -659,16 +744,18 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_checks: false,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
 
-/// Zero every per-op flag in `caps` — the spec's intersection with
-/// `authed: false` (every op is reported as unavailable when the CLI isn't
-/// authenticated). Leaves `authed` alone; the caller sets that from the
-/// auth probe. Used by [`Forge::capabilities`] for the three known
-/// backends.
-fn zero_unauthed(caps: &mut ForgeCapabilities) {
+/// Zero every per-op flag in `caps` — the spec's intersection when the CLI is
+/// either **not authenticated** or **below the version floor** (an op can't be
+/// guaranteed in either case). Leaves `version`/`supported`/`authed` alone; the
+/// caller sets those from the version + auth probes. Used by
+/// [`Forge::capabilities`] for the three known backends.
+fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_create = false;
     caps.pr_comment = false;
     caps.pr_edit = false;
@@ -677,25 +764,6 @@ fn zero_unauthed(caps: &mut ForgeCapabilities) {
     caps.issue_create = false;
 }
 
-/// Generate a facade trait from one signature table: the `#[async_trait]` trait
-/// declaration *and* the delegating `impl … for $Ty<R>`, so the two can never drift
-/// out of sync (a hazard when each is hand-maintained). Every generated body is a
-/// trivial delegation to the like-named inherent method — which method resolution
-/// prefers, so this never recurses; the real backend-`match` dispatch stays
-/// hand-written on the inherent `impl`. `async` methods doc-link to their inherent
-/// twin; `sync` methods carry an explicit doc string (their docs aren't uniform).
-///
-/// A near-identical copy lives in `vcs-core` (`facade_trait!`); the two are
-/// deliberately not shared (separate crates, ~40-line macro — duplication beats a
-/// new dependency). Signatures only — each entry is a bare `&self`/sync method (no
-/// method-level generics, no `&mut self`, no default bodies; a method shaped that
-/// way needs a grammar tweak, not just a table row).
-/// No `mockall::automock`: a Wave-S spike proved it can't process a
-/// trait whose signatures come from `macro_rules!` — captured `$_:ty` fragments
-/// reach `automock` as opaque nonterminal token groups its `syn` parser rejects
-/// ("unsupported type in this position"), whereas `#[async_trait]` tolerates them.
-/// The facade stays test-seam-tested (build a [`Forge`] over a fake runner).
-///
 // Macro `facade_trait!` removed in v0.1.1 — the v0.1.0 macro generated a
 // trait + delegating impl from a signature table. Adding default bodies
 // for the three post-v0.1.0 methods (`pr_comment`, `pr_edit`,
@@ -754,13 +822,22 @@ pub trait ForgeApi: Send + Sync {
         Ok(ForgeCapabilities::all_false())
     }
     /// See [`Forge::pr_merge`](crate::Forge::pr_merge).
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
+    async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>;
     /// See [`Forge::pr_mark_ready`](crate::Forge::pr_mark_ready).
     async fn pr_mark_ready(&self, number: u64) -> Result<()>;
     /// See [`Forge::pr_close`](crate::Forge::pr_close).
     async fn pr_close(&self, spec: PrClose) -> Result<()>;
+    /// See [`Forge::pr_checkout`](crate::Forge::pr_checkout). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, number: u64) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_checkout"))
+    }
     /// See [`Forge::pr_checks`](crate::Forge::pr_checks).
     async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
+    /// See [`Forge::pr_diff`](crate::Forge::pr_diff).
+    async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
     /// See [`Forge::issue_list`](crate::Forge::issue_list).
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>>;
     /// See [`Forge::issue_view`](crate::Forge::issue_view).
@@ -811,8 +888,8 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn capabilities(&self) -> Result<ForgeCapabilities> {
         self.capabilities().await
     }
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
-        self.pr_merge(number, strategy).await
+    async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
+        self.pr_merge(number, merge).await
     }
     async fn pr_mark_ready(&self, number: u64) -> Result<()> {
         self.pr_mark_ready(number).await
@@ -820,8 +897,14 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn pr_close(&self, spec: PrClose) -> Result<()> {
         self.pr_close(spec).await
     }
+    async fn pr_checkout(&self, number: u64) -> Result<()> {
+        self.pr_checkout(number).await
+    }
     async fn pr_checks(&self, number: u64) -> Result<CiStatus> {
         self.pr_checks(number).await
+    }
+    async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>> {
+        self.pr_diff(number).await
     }
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
         self.issue_list().await
@@ -939,9 +1022,12 @@ mod tests {
         assert_eq!(prs[0].number, 7);
         assert_eq!(prs[0].state, ForgePrState::Merged);
         assert_eq!(prs[0].source_branch, "feat");
-        // `isDraft` flows through the GitHub mapper (regression guard: a revert to
-        // a hardcoded `draft: false` would fail here, as the GitLab path does).
-        assert!(prs[0].draft);
+        // `isDraft` flows through the GitHub mapper as a *confirmed* `Some(true)`
+        // (regression guard: a revert to a hardcoded `false`/`None` would fail
+        // here). GitHub also confirms labels/assignees (`Some`, here empty).
+        assert_eq!(prs[0].draft, Some(true));
+        assert_eq!(prs[0].labels, Some(Vec::new()));
+        assert_eq!(prs[0].assignees, Some(Vec::new()));
     }
 
     // GitLab `repo_view` maps a known "public" visibility to private == false.
@@ -952,7 +1038,8 @@ mod tests {
         let repo = forge.repo_view().await.unwrap();
         assert_eq!(repo.owner, "gitlab-org");
         assert_eq!(repo.name, "cli");
-        assert!(!repo.private);
+        // A *known* "public" visibility is a confirmed `Some(false)`.
+        assert_eq!(repo.private, Some(false));
     }
 
     // When glab omits `visibility`, the facade must NOT report the repo as private
@@ -963,7 +1050,9 @@ mod tests {
             r#"{"name":"cli","path_with_namespace":"o/cli","default_branch":"main","web_url":"u"}"#;
         let forge = gitlab(ScriptedRunner::new().on(["glab", "repo", "view"], Reply::ok(json)));
         let repo = forge.repo_view().await.unwrap();
-        assert!(!repo.private, "absent visibility must not be private");
+        // Absent visibility is *unknown* (`None`), not a false `Some(false)` — a
+        // consumer must be able to tell "unknown" from a proven-public repo.
+        assert_eq!(repo.private, None, "absent visibility must be unknown");
     }
 
     // GitLab's `iid` becomes the number and "opened" maps to Open.
@@ -974,7 +1063,7 @@ mod tests {
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].number, 12);
         assert_eq!(prs[0].state, ForgePrState::Open);
-        assert!(prs[0].draft);
+        assert_eq!(prs[0].draft, Some(true));
     }
 
     // Gitea's `merged` flag drives Merged even though `state` is "closed".
@@ -990,7 +1079,7 @@ mod tests {
         assert_eq!(pr.target_branch, "main");
     }
 
-    // The Gitea backend reports the four unmodelled ops as Unsupported, naming
+    // The Gitea backend reports the five unmodelled ops as Unsupported, naming
     // the operation — and without spawning anything.
     #[tokio::test]
     async fn gitea_unsupported_ops_error_without_spawning() {
@@ -1001,10 +1090,57 @@ mod tests {
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
             forge.release_view("v1.0.0").await.unwrap_err(),
+            forge.pr_diff(1).await.unwrap_err(),
         ] {
             assert!(err.is_unsupported(), "{err:?}");
         }
         assert!(rec.calls().is_empty(), "unsupported ops must not spawn");
+    }
+
+    // T-049: the output budget set on the underlying client is INHERITED by the
+    // `Forge` facade — a `pr_diff` whose output exceeds it is refused with a
+    // `OutputTooLarge`-carrying error (actual + allowed sizes), never a truncated
+    // diff; the facade's `pr_diff_within` overrides the ceiling per-call. Verified
+    // on both GitHub (`gh pr diff`) and GitLab (`glab mr diff`).
+    #[tokio::test]
+    async fn pr_diff_inherits_client_budget_and_overrides_per_call() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+
+        // GitHub, budget inherited from the injected client.
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let forge = Forge::from_github("/repo", gh);
+        match forge.pr_diff(7).await {
+            Err(Error::Forge(processkit::Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            })) => {
+                assert_eq!(program, "gh");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected wrapped OutputTooLarge, got {other:?}"),
+        }
+        // The per-call override reads the same large PR in full.
+        let files = forge
+            .pr_diff_within(7, OutputBudget::unlimited())
+            .await
+            .expect("facade override reads the large diff");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
+
+        // GitLab, same inheritance through `glab mr diff`.
+        let glab =
+            GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let forge = Forge::from_gitlab("/repo", glab);
+        assert!(matches!(
+            forge.pr_diff(4).await,
+            Err(Error::Forge(processkit::Error::OutputTooLarge { .. }))
+        ));
     }
 
     // An Unknown handle (the remote didn't classify) reports Unsupported for
@@ -1022,10 +1158,12 @@ mod tests {
             forge.pr_list().await.unwrap_err(),
             forge.pr_view(1).await.unwrap_err(),
             forge.pr_create(PrCreate::new("T", "B")).await.unwrap_err(),
-            forge.pr_merge(1, MergeStrategy::Merge).await.unwrap_err(),
+            forge.pr_merge(1, PrMerge::merge()).await.unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_close(PrClose::new(1)).await.unwrap_err(),
+            forge.pr_checkout(1).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
+            forge.pr_diff(1).await.unwrap_err(),
             forge.issue_list().await.unwrap_err(),
             forge.issue_view(1).await.unwrap_err(),
             forge
@@ -1082,10 +1220,19 @@ mod tests {
             .expect("pr_edit title-only");
     }
 
-    // The capability map for an authed GitHub is everything-true (post-fork).
+    // The capability map for an authed GitHub on a modern `gh` is everything-true
+    // (post-fork). `capabilities()` now probes `gh --version` too, so script a
+    // modern banner (above the 2.0 floor) alongside the auth probe.
     #[tokio::test]
     async fn github_capabilities_authed_lights_everything() {
-        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::ok("")));
+        let forge = github(
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
+                )
+                .on(["gh", "auth"], Reply::ok("")),
+        );
         let caps = forge.capabilities().await.unwrap();
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
@@ -1094,18 +1241,34 @@ mod tests {
         assert!(caps.pr_merge);
         assert!(caps.issue_create);
         assert!(caps.authed);
+        // The version probe fills a confirmed version and clears the floor.
+        assert!(caps.supported, "modern gh meets the 2.0 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 2,
+                minor: 40,
+                patch: 1
+            })
+        );
     }
 
     // An unauthed GitHub keeps the static map's "ships the op" shape but flips
     // every op-specific flag to false (the intersection with `authed: false`
     // from spec §3). The `auth status` call exits non-zero ⇒ `auth_status()`
     // returns `false` (per the wrapper's documented exit-code reflection) and
-    // the capability table zeros the ops.
+    // the capability table zeros the ops. The version is modern, so `supported`
+    // stays true — auth, not version, is what zeroed the ops here.
     #[tokio::test]
     async fn github_capabilities_unauthed_zeros_ops_but_keeps_authed_false() {
-        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::fail(1, "no")));
+        let forge = github(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version 2.40.1\n"))
+                .on(["gh", "auth"], Reply::fail(1, "no")),
+        );
         let caps = forge.capabilities().await.unwrap();
         assert!(!caps.authed, "unauthed");
+        assert!(caps.supported, "modern gh is still supported");
         assert!(!caps.pr_create);
         assert!(!caps.pr_comment);
         assert!(!caps.pr_edit);
@@ -1114,19 +1277,86 @@ mod tests {
         assert!(!caps.issue_create);
     }
 
+    // A `gh` **below the version floor** zeroes the op flags exactly like an
+    // unauthed CLI — even when authenticated — so the map never advertises a
+    // command an old binary can't run. `authed`/`version` still report the truth.
+    #[tokio::test]
+    async fn github_capabilities_old_version_zeros_ops_even_when_authed() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 1.14.0 (2021-11-02)\n"),
+                )
+                .on(["gh", "auth"], Reply::ok("")),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert!(
+            caps.authed,
+            "authed, but the old gh still can't run the ops"
+        );
+        assert!(!caps.supported, "gh 1.14 is below the 2.0 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 1,
+                minor: 14,
+                patch: 0
+            })
+        );
+        assert!(!caps.pr_create);
+        assert!(!caps.pr_comment);
+        assert!(!caps.pr_edit);
+        assert!(!caps.pr_checks);
+        assert!(!caps.pr_merge);
+        assert!(!caps.issue_create);
+    }
+
+    // An unrecognisable `gh --version` banner degrades to `version: None` /
+    // `supported: false` (conservatively unavailable) rather than failing the whole
+    // probe — the ops are zeroed, but `authed` is still reported.
+    #[tokio::test]
+    async fn github_capabilities_unrecognizable_version_degrades_to_unsupported() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version unknowable\n"))
+                .on(["gh", "auth"], Reply::ok("")),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert_eq!(
+            caps.version, None,
+            "unrecognisable banner → no known version"
+        );
+        assert!(!caps.supported, "can't confirm the floor → unsupported");
+        assert!(caps.authed, "auth is still probed and reported");
+        assert!(!caps.pr_create && !caps.issue_create, "ops zeroed");
+    }
+
     // Gitea's static map is the intersection of its CLI: `pr_checks` is the
-    // only false when authed (no `tea` checks command). Everything else is
-    // `true` post-fork.
+    // only false when authed on a modern `tea` (no `tea` checks command).
+    // Everything else is `true` post-fork. `capabilities()` probes `tea --version`
+    // too, so script a modern banner above the 0.9 floor.
     #[tokio::test]
     async fn gitea_capabilities_authed_has_only_pr_checks_false() {
         // Gitea's auth probe parses `tea login list --output json` on a zero
         // exit and reports authed = (the array is non-empty). Script a non-empty
         // array so the probe reports authed; `[]` would read as not-authed.
         let forge = gitea(
-            ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
+            ScriptedRunner::new()
+                .on(["tea", "--version"], Reply::ok("tea version 0.9.2\n"))
+                .on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
         );
         let caps = forge.capabilities().await.unwrap();
         assert!(caps.authed, "gitea authed");
+        assert!(caps.supported, "modern tea meets the 0.9 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 0,
+                minor: 9,
+                patch: 2
+            })
+        );
         assert!(!caps.pr_checks, "gitea has no checks command");
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
@@ -1136,13 +1366,16 @@ mod tests {
     }
 
     // `supports` must agree exactly with the runtime `Unsupported` behaviour
-    // above: Gitea reports `false` for the four varying ops, GitHub and GitLab
-    // report `true` for all of them — a pure, no-spawn capability check.
+    // above: Gitea reports `false` for its unsupported ops but `true` for
+    // `pr_checkout` (which `tea` does ship); GitHub and GitLab report `true` for
+    // all of them — a pure, no-spawn capability check.
     #[test]
     fn supports_matches_unsupported_ops() {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
-            assert!(!gitea.supports(op), "gitea should not support {op:?}");
+            // Gitea ships `tea pr checkout`; the other varying ops are Unsupported.
+            let expected = op == ForgeOp::PrCheckout;
+            assert_eq!(gitea.supports(op), expected, "gitea supports({op:?})");
         }
         // An Unknown backend supports nothing — every op returns Unsupported, so
         // `supports` must be `false` for all of them (matches `capabilities()`).
@@ -1209,18 +1442,23 @@ mod tests {
             Some("2026-01-01T00:00:00Z")
         );
         assert_eq!(rels[0].body, None, "gh release_list does not fetch body");
-        assert!(rels[0].prerelease && !rels[0].draft);
+        assert_eq!(rels[0].url, None, "gh release_list does not fetch url");
+        // GitHub confirms draft/prerelease (`Some`) on both list and view.
+        assert_eq!(rels[0].prerelease, Some(true));
+        assert_eq!(rels[0].draft, Some(false));
         assert_eq!(rels[1].published_at, None);
-        assert!(rels[1].draft && !rels[1].prerelease);
+        assert_eq!(rels[1].draft, Some(true));
+        assert_eq!(rels[1].prerelease, Some(false));
 
         let json = r#"[{"tag_name":"v1","name":"One","released_at":"2026-01-01T00:00:00Z","description":"gl notes","_links":{"self":"u"}}]"#;
         let forge = gitlab(ScriptedRunner::new().on(["glab", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
-        assert_eq!(rels[0].url, "u");
+        assert_eq!(rels[0].url.as_deref(), Some("u"));
         assert!(rels[0].published_at.is_some());
         assert_eq!(rels[0].body.as_deref(), Some("gl notes"));
-        // GitLab has no draft/pre-release concept.
-        assert!(!rels[0].draft && !rels[0].prerelease);
+        // GitLab has no draft/pre-release concept — *unknown* (`None`), not false.
+        assert_eq!(rels[0].draft, None);
+        assert_eq!(rels[0].prerelease, None);
 
         // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
         // `published _at`), no release-page URL column.
@@ -1229,25 +1467,99 @@ mod tests {
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(rels[0].title, "One");
-        assert_eq!(rels[0].url, ""); // tea exposes no release-page URL
+        assert_eq!(rels[0].url, None, "tea exposes no release-page URL");
         assert!(rels[0].published_at.is_some());
         assert_eq!(rels[0].body, None, "tea has no release body");
-        assert!(rels[0].prerelease, "tea status 'prerelease' → prerelease");
+        // tea *does* report draft/prerelease (from its Status column) — confirmed.
+        assert_eq!(rels[0].prerelease, Some(true), "tea status 'prerelease'");
+        assert_eq!(rels[0].draft, Some(false));
     }
 
-    // The unified MergeStrategy maps to each CLI's own flag.
+    // The per-field support contract, per backend, across list and view: a backend
+    // that can't report a field yields `None` (unknown); one that can yields `Some`
+    // (confirmed — including a confirmed empty `Some(vec![])`), never a false
+    // `Some(false)`/empty list. This is the core of T-034.
+    #[tokio::test]
+    async fn support_contract_unknown_vs_confirmed_per_backend() {
+        // Gitea PR: draft/labels/assignees are all unknown (tea has no such
+        // columns) — on both the list and the paged view path (same mapper).
+        let json =
+            r#"[{"index":"3","title":"T","state":"open","head":"f","base":"main","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(prs[0].draft, None, "tea PR draft is unknown");
+        assert_eq!(prs[0].labels, None, "tea PR labels are unknown");
+        assert_eq!(prs[0].assignees, None, "tea PR assignees are unknown");
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+        let pr = forge.pr_view(3).await.unwrap();
+        assert_eq!((pr.draft, pr.labels, pr.assignees), (None, None, None));
+
+        // Gitea issue: labels/assignees unknown on the list path.
+        let list = r#"[{"index":"5","title":"I","state":"open","body":"b","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(list)));
+        let issues = forge.issue_list().await.unwrap();
+        assert_eq!(issues[0].labels, None);
+        assert_eq!(issues[0].assignees, None);
+
+        // GitHub issue view: labels/assignees are confirmed `Some(..)`.
+        let json = r#"{"number":3,"title":"Docs","state":"OPEN","body":"b","url":"u",
+            "labels":[{"name":"docs"}],"assignees":[{"login":"octocat"}]}"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "issue", "view"], Reply::ok(json)));
+        let issue = forge.issue_view(3).await.unwrap();
+        assert_eq!(issue.labels, Some(vec!["docs".to_string()]));
+        assert_eq!(issue.assignees, Some(vec!["octocat".to_string()]));
+
+        // GitHub PR with no labels is a *confirmed* empty `Some(vec![])`, never
+        // `None` — "we asked and there are none" differs from "we couldn't ask".
+        let json = r#"[{"number":1,"title":"X","state":"OPEN","isDraft":false,
+            "headRefName":"h","baseRefName":"main","url":"u","labels":[],"assignees":[]}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(
+            prs[0].draft,
+            Some(false),
+            "confirmed non-draft, not unknown"
+        );
+        assert_eq!(prs[0].labels, Some(Vec::new()), "confirmed no labels");
+        assert_eq!(prs[0].assignees, Some(Vec::new()));
+
+        // GitLab issue: labels/assignees are confirmed `Some(..)`.
+        let json = r#"[{"iid":2,"title":"Y","state":"opened","description":"d","web_url":"u",
+            "labels":["bug"],"assignees":[{"username":"steiza"}]}]"#;
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "issue", "list"], Reply::ok(json)));
+        let issues = forge.issue_list().await.unwrap();
+        assert_eq!(issues[0].labels, Some(vec!["bug".to_string()]));
+        assert_eq!(issues[0].assignees, Some(vec!["steiza".to_string()]));
+    }
+
+    // A GitHub release *view* fills url/body as `Some`, while the lean list leaves
+    // them `None` (asserted in `release_list_maps_published_at_per_backend`) — the
+    // list-vs-view distinction the raw `Option` now encodes honestly.
+    #[tokio::test]
+    async fn github_release_view_fills_url_and_body_some() {
+        let json = r#"{"tagName":"v1","name":"One","body":"notes","url":"https://gh/r/v1",
+            "publishedAt":"2026-01-01T00:00:00Z","isDraft":false,"isPrerelease":true}"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "release", "view"], Reply::ok(json)));
+        let rel = forge.release_view("v1").await.unwrap();
+        assert_eq!(rel.url.as_deref(), Some("https://gh/r/v1"));
+        assert_eq!(rel.body.as_deref(), Some("notes"));
+        assert_eq!(rel.draft, Some(false));
+        assert_eq!(rel.prerelease, Some(true));
+    }
+
+    // The unified PrMerge spec maps its strategy to each CLI's own flag.
     #[tokio::test]
     async fn pr_merge_maps_strategy_per_backend() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_github("/repo", GitHub::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Squash)
+            .pr_merge(5, PrMerge::squash())
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["pr", "merge", "5", "--squash"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Rebase)
+            .pr_merge(5, PrMerge::rebase())
             .await
             .unwrap();
         assert_eq!(
@@ -1264,13 +1576,74 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Merge)
+            .pr_merge(5, PrMerge::merge())
             .await
             .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
             ["pr", "merge", "5", "--style", "merge"]
         );
+    }
+
+    // `auto`/`delete_branch` are GitHub-only. On GitHub they map to gh's own
+    // `--auto`/`--delete-branch`; on GitLab/Gitea the facade surfaces a structured
+    // `Unsupported` (bubbled from the wrapper) rather than silently merging without
+    // them — so `is_unsupported()` is true and no wrong merge argv is emitted.
+    #[tokio::test]
+    async fn pr_merge_options_map_on_github_and_are_unsupported_elsewhere() {
+        // GitHub expresses both options as real flags.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_merge(5, PrMerge::squash().auto().delete_branch())
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "merge", "5", "--squash", "--auto", "--delete-branch"]
+        );
+
+        // GitLab / Gitea: an `auto` or `delete_branch` request is Unsupported and
+        // spawns nothing (the runner has no rule, so a leak-through would error
+        // differently than the classified `Unsupported`).
+        for (make, merge) in [
+            (
+                Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
+                PrMerge::merge().auto(),
+            ),
+            (
+                Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new())),
+                PrMerge::squash().delete_branch(),
+            ),
+        ] {
+            let err = make.pr_merge(5, merge).await.unwrap_err();
+            assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        }
+    }
+
+    // `pr_checkout` dispatches to each CLI's own checkout verb (gh/tea `pr
+    // checkout`, glab `mr checkout`) — supported on all three real backends.
+    #[tokio::test]
+    async fn pr_checkout_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["mr", "checkout", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .pr_checkout(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // GitHub's per-check buckets aggregate into one coarse CiStatus.
@@ -1308,6 +1681,25 @@ mod tests {
         let json = r#"[{"name":"a","bucket":"pass"},{"name":"b","bucket":"frobnicate"}]"#;
         let forge = github(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::ok(json)));
         assert_eq!(forge.pr_checks(1).await.unwrap(), CiStatus::Passing);
+    }
+
+    // `pr_diff` dispatches to `gh pr diff`/`glab mr diff` and parses the same
+    // git-format output through the shared `vcs-diff` parser — a plain forward,
+    // no facade-specific mapping.
+    #[tokio::test]
+    async fn pr_diff_dispatches_and_parses_per_backend() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)));
+        let files = forge.pr_diff(1).await.expect("github pr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, std::path::Path::new("m"));
+        assert_eq!(files[0].change, ChangeKind::Modified);
+
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(out)));
+        let files = forge.pr_diff(1).await.expect("gitlab pr_diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, std::path::Path::new("m"));
     }
 
     // `at` re-binds the cwd while sharing the backend.

@@ -1,0 +1,30 @@
+# Link-check config for the `docs-health` CI job (see
+# `.github/workflows/ci.yml`). Checks that *relative* Markdown links (README
+# ↔ `docs/**` ↔ per-crate guides ↔ CHANGELOGs) resolve to real files — the
+# guides are also embedded into rustdoc via `include_str!` and published
+# as-is to docs.rs, so a relative link that only "works" when browsed on
+# GitHub is still a real defect — and that external links are live.
+#
+# Markdown code fences/inline code are NOT scanned (`include_verbatim =
+# false`, the default) — illustrative URLs inside example code
+# (`https://example.com/repo.git`, `https://attacker.com` in the security
+# audit) are not meant to be live links and must not be "fixed" into ones.
+include_verbatim = false
+
+# Non-interactive CI output.
+no_progress = true
+
+# `github_token` is intentionally NOT set here: the CI step wires
+# `GITHUB_TOKEN` as an environment variable instead (lychee reads it
+# automatically — see `--github-token`'s `env: GITHUB_TOKEN` in `lychee
+# --help`). Unauthenticated github.com requests are rate-limited far below
+# what this corpus needs (every crate CHANGELOG carries a `.../compare/...`
+# link per release), so excluding github.com wholesale would blind the check
+# to its single most common link target; raising the rate limit via the
+# token is the narrower fix.
+#
+# No host is excluded below. Add an entry here — with a one-line reason,
+# matching the style of comments elsewhere in this repo's CI config — only
+# once a *specific* host is empirically shown to be flaky, rate-limited, or
+# auth-gated for this job; excluding preemptively just hides real breakage.
+exclude = []

@@ -10,10 +10,41 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `WatcherStats::retries`/`recoveries`/`terminal_failures` — a skipped
+  (timed-out or transiently failed) re-query now schedules a bounded backoff
+  retry on its own, without waiting for a new filesystem event, and these
+  counters distinguish a self-scheduled retry, a subsequent recovery, and a
+  terminal watch-backend failure.
+- `WatchError` — an opaque filesystem-watch backend error with the classifiers
+  `is_path_not_found()`, `is_watch_limit()`, `io_error()`, and `paths()`, plus a
+  source-chain to its underlying `std::io::Error`. Reachable via the new
+  `Error::watch_error()` accessor or by matching `Error::Notify`. Lets a consumer
+  classify and source-chain a watch failure through `vcs-watch` alone, with no
+  direct dependency on the third-party watch backend. (T-055.)
 
 ### Changed
--
+- **Breaking:** `Error::Notify` now wraps the crate's own opaque `WatchError`
+  instead of the third-party `notify::Error`. The filesystem-watch backend is now
+  a fully private dependency and is **not** part of this crate's stability
+  contract, so a backend major bump is an internal, non-breaking change here
+  rather than forcing consumers to keep a matching `notify` version. Match
+  `Error::Notify(watch_error)` (or call `Error::watch_error()`) and use the
+  `WatchError` classifiers in place of matching `notify::ErrorKind`. (T-055.)
+- The `tracing` feature now also forwards to `vcs-core/tracing` (which fans out
+  to `vcs-git`/`vcs-jj` and `processkit`), so enabling `vcs-watch/tracing` traces
+  the underlying git/jj commands each re-query issues — not just the watcher's own
+  skip/retry line. `tracing` and `stream` remain off by default and isolated from
+  minimal/default builds. (T-055.)
+- `RepoEvent::OperationChanged` now also fires for the git cherry-pick, revert,
+  and bisect states that `vcs-core`'s `OperationState` gained: starting, ending,
+  or moving between any sequencer state (`CherryPick`/`Revert`/`Bisect`, alongside
+  `Merge`/`Rebase`/`ApplyMailbox`) is reported, since the snapshot diff is generic
+  over `operation`. No API change — the event's `from`/`to` simply carry the new
+  variants. (T-044.)
+- A permanent filesystem-watch backend failure (e.g. the watched `.git`/`.jj`
+  directory was removed and re-created) now closes the watcher's output
+  channel: `RepoWatcher::recv`/the `stream` feature observe it as `None`/end
+  of stream directly, instead of only being visible via `stats().watch_errors`.
 
 ### Fixed
 -

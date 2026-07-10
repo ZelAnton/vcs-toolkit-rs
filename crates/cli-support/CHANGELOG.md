@@ -10,10 +10,45 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- **Host context for credential requests.** `ManagedClient::with_expected_host(host)`
+  records the remote host a client targets; the auto-injected forge token-env path
+  (`prepare`) now passes it as the `CredentialRequest`'s host, so a **host-keyed**
+  `CredentialProvider` resolves the secret for *that* host and never a neighbouring
+  instance's. `resolve_credential`'s **fallback policy** is now spelled out and
+  applies identically to read and write operations: no provider / `Ok(None)` / an
+  empty (whitespace-only) secret → defer to ambient auth; `Err` → **fail-closed**
+  abort (never a silent downgrade, and never a wrong host's secret). Clients without
+  a host binding are unchanged — the request carries no host, and a host-keyed
+  provider that can't place it defers to ambient. (T-045.)
+
+- **Cancellation-aware retry backoff.** `ManagedClient::default_cancel_on(token)` now
+  cuts a lock-contention retry backoff **short** the instant the token fires: a
+  cancelled operation returns a structured `Error::Cancelled` promptly instead of
+  sleeping out the remaining (possibly large `max_backoff`) delay before its next
+  attempt. The token is still applied to the spawned process as before — it is now
+  *also* observed by the retry loop. No further attempt is launched once the token
+  fires, so the attempt count stays deterministic (no cancel-vs-retry race). The
+  jitter/exponential/cap backoff maths and the no-token behaviour are unchanged.
 
 ### Changed
--
+
+- **Breaking:** `retry_async` gained a second parameter,
+  `cancel: Option<&processkit::CancellationToken>`, between `policy` and
+  `should_retry`: `retry_async(policy, cancel, should_retry, op)`. When `Some`, the
+  inter-attempt backoff aborts with `Error::Cancelled` the moment the token fires
+  (before, during, or right at the end of a wait), launching no further attempt;
+  pass `None` for the previous plain, uninterruptible backoff. Callers using
+  `ManagedClient` are unaffected — it threads its `default_cancel_on` token through
+  automatically.
+
+- **Breaking (macro):** `at_forwarders!` gained a third section, `raw { fn view(args…)
+  -> Ret => target; }`, and the raw escape hatches (`run`/`run_raw`/`run_args`/
+  `run_raw_args`) moved out of `bare` into it. `bare` now forwards a method verbatim
+  (dropping `dir`); `raw` forwards the view method to the client's **dir-taking**
+  `target` (`self.$field.target(self.dir, args…)`), so a raw call through a `…At` view
+  runs in the bound `dir` instead of the process cwd. A wrapper that lists `run*` under
+  `bare` must move them to `raw` and add the matching `*_in` client methods (T-035).
 
 ### Fixed
 -

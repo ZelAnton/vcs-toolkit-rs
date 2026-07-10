@@ -5,18 +5,33 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitlab::{
-    CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MergeStrategy as GlMs, MrCreate,
-    MrEdit as GlMrEdit, Release, RepoView,
+    CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MrCreate, MrEdit as GlMrEdit,
+    MrMerge, Release, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit,
+    MergeStrategy, PrCreate, PrEdit, PrMerge,
 };
 use crate::error::Result;
 
 pub(crate) async fn auth_status<R: ProcessRunner>(glab: &GitLab<R>) -> Result<bool> {
     Ok(glab.auth_status().await?)
+}
+
+/// Probe the `glab` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `glab --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `glab`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    glab: &GitLab<R>,
+) -> Result<(Option<vcs_gitlab::GitLabVersion>, bool)> {
+    match glab.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub(crate) async fn repo_view<R: ProcessRunner>(glab: &GitLab<R>, dir: &Path) -> Result<ForgeRepo> {
@@ -84,14 +99,25 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let ms = match strategy {
-        MergeStrategy::Merge => GlMs::Merge,
-        MergeStrategy::Squash => GlMs::Squash,
-        MergeStrategy::Rebase => GlMs::Rebase,
+    // Map the unified spec onto glab's `MrMerge`. The strategy maps to a flag;
+    // `auto`/`delete_branch` pass through verbatim — glab's wrapper reports them
+    // `Unsupported` rather than silently dropping them (see `vcs_gitlab::MrMerge`).
+    // The exhaustive `match` (no catch-all) makes a new `MergeStrategy` variant a
+    // compile error here.
+    let mut mr = match merge.strategy {
+        MergeStrategy::Merge => MrMerge::merge(),
+        MergeStrategy::Squash => MrMerge::squash(),
+        MergeStrategy::Rebase => MrMerge::rebase(),
     };
-    glab.mr_merge(dir, number, ms).await?;
+    if merge.auto {
+        mr = mr.auto();
+    }
+    if merge.delete_branch {
+        mr = mr.delete_branch();
+    }
+    glab.mr_merge(dir, number, mr).await?;
     Ok(())
 }
 
@@ -115,12 +141,47 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     Ok(())
 }
 
+// Named `pr_checkout` (not `mr_checkout`) to match the facade-level naming used
+// by the other bridging fns here — it calls glab's `mr_checkout` under the `pr_*`
+// facade name (like `pr_merge` → `mr_merge`, `pr_diff` → `mr_diff`).
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    glab.mr_checkout(dir, number).await?;
+    Ok(())
+}
+
 pub(crate) async fn pr_checks<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
     number: u64,
 ) -> Result<CiStatus> {
     Ok(map_ci(glab.mr_checks(dir, number).await?))
+}
+
+// `glab.mr_diff` already returns `vcs-diff`'s model directly (glab emits the
+// same git-format diff `git diff` does), so this is a plain forward — no
+// mapping. Named `pr_diff` (not `mr_diff`) to match the facade-level naming
+// used by every other bridging fn here (`pr_view`, `pr_merge`, `pr_checks`, …
+// all call into glab's `mr_*` methods under a `pr_*` facade name).
+pub(crate) async fn pr_diff<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(glab.mr_diff(dir, number).await?)
+}
+
+// The per-call output-budget override — forwards to the client's `mr_diff_within`.
+pub(crate) async fn pr_diff_within<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    budget: vcs_cli_support::OutputBudget,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(glab.mr_diff_within(dir, number, budget).await?)
 }
 
 pub(crate) async fn issue_list<R: ProcessRunner>(
@@ -179,6 +240,9 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
+        // GitLab's REST issue always carries labels/assignees — confirmed values.
+        labels: Some(i.labels),
+        assignees: Some(i.assignees),
     }
 }
 
@@ -196,13 +260,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag_name,
         title: r.name,
-        url: r.url,
+        // GitLab carries the URL as `_links.self`; an empty (absent-links) value
+        // surfaces as None rather than an empty string.
+        url: Some(r.url).filter(|s| !s.is_empty()),
         // An empty `released_at` (unpublished/upcoming release) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
         body: Some(r.description).filter(|s| !s.is_empty()),
-        // GitLab has no draft/pre-release concept on a release.
-        draft: false,
-        prerelease: false,
+        // GitLab has no draft/pre-release concept on a release, so these are
+        // *unknown* (`None`) — never a false `Some(false)` that would read as a
+        // confirmed "not a draft / not a pre-release".
+        draft: None,
+        prerelease: None,
     }
 }
 
@@ -214,7 +282,10 @@ fn map_mr(mr: MergeRequest) -> ForgePr {
         source_branch: mr.source_branch,
         target_branch: mr.target_branch,
         url: mr.web_url,
-        draft: mr.draft,
+        // GitLab's REST MR always carries draft/labels/assignees — confirmed values.
+        draft: Some(mr.draft),
+        labels: Some(mr.labels),
+        assignees: Some(mr.assignees),
     }
 }
 
@@ -241,10 +312,11 @@ fn map_project(p: RepoView) -> ForgeRepo {
         owner,
         default_branch: p.default_branch,
         url: p.web_url,
-        // Conservative: only claim privacy when the visibility is *known* and not
-        // "public". An absent visibility (`None`) is unknown, so it maps to
-        // `false` (public) — we never assert a privacy we can't prove.
-        private: p.visibility.as_deref().is_some_and(|v| v != "public"),
+        // Only claim a *known* visibility: a present value maps to `Some(v !=
+        // "public")`, but an absent visibility (`glab` omitted the field) is
+        // genuinely unknown and maps to `None` — never a false `Some(false)` a
+        // consumer could read as a proven-public repo.
+        private: p.visibility.as_deref().map(|v| v != "public"),
     }
 }
 

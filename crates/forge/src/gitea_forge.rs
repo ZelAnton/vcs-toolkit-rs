@@ -11,18 +11,33 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, MergeStrategy as GtMs, PrCreate as GtPrCreate, PrEdit as GtPrEdit,
+    Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrEdit as GtPrEdit, PrMerge as GtPrMerge,
     PullRequest, Release,
 };
 
 use crate::dto::{
     ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
-    PrEdit,
+    PrEdit, PrMerge,
 };
 use crate::error::Result;
 
 pub(crate) async fn auth_status<R: ProcessRunner>(tea: &Gitea<R>) -> Result<bool> {
     Ok(tea.auth_status().await?)
+}
+
+/// Probe the `tea` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `tea --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `tea`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    tea: &Gitea<R>,
+) -> Result<(Option<vcs_gitea::GiteaVersion>, bool)> {
+    match tea.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub(crate) async fn pr_list<R: ProcessRunner>(tea: &Gitea<R>, dir: &Path) -> Result<Vec<ForgePr>> {
@@ -83,14 +98,25 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let ms = match strategy {
-        MergeStrategy::Merge => GtMs::Merge,
-        MergeStrategy::Squash => GtMs::Squash,
-        MergeStrategy::Rebase => GtMs::Rebase,
+    // Map the unified spec onto tea's `PrMerge`. The strategy maps to `--style`;
+    // `auto`/`delete_branch` pass through verbatim — tea's wrapper reports them
+    // `Unsupported` rather than silently dropping them (see `vcs_gitea::PrMerge`).
+    // The exhaustive `match` (no catch-all) makes a new `MergeStrategy` variant a
+    // compile error here.
+    let mut pr = match merge.strategy {
+        MergeStrategy::Merge => GtPrMerge::merge(),
+        MergeStrategy::Squash => GtPrMerge::squash(),
+        MergeStrategy::Rebase => GtPrMerge::rebase(),
     };
-    tea.pr_merge(dir, number, ms).await?;
+    if merge.auto {
+        pr = pr.auto();
+    }
+    if merge.delete_branch {
+        pr = pr.delete_branch();
+    }
+    tea.pr_merge(dir, number, pr).await?;
     Ok(())
 }
 
@@ -101,6 +127,15 @@ pub(crate) async fn pr_close<R: ProcessRunner>(
     number: u64,
 ) -> Result<()> {
     tea.pr_close(dir, number).await?;
+    Ok(())
+}
+
+pub(crate) async fn pr_checkout<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    tea.pr_checkout(dir, number).await?;
     Ok(())
 }
 
@@ -158,6 +193,11 @@ fn map_issue(i: Issue) -> ForgeIssue {
         },
         body: i.body,
         url: i.url,
+        // `tea`'s issue list/view has no labels/assignees column, so they are
+        // *unknown* (`None`) — not a false empty list a consumer could read as a
+        // confirmed "no labels / unassigned" (see `ForgeIssue::labels`/`assignees`).
+        labels: None,
+        assignees: None,
     }
 }
 
@@ -165,13 +205,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag,
         title: r.title,
-        url: r.url,
+        // `tea releases` exposes no release-page URL column (the raw `url` is
+        // always empty), so it is *unknown* (`None`), not a false empty string.
+        url: None,
         // An empty `published_at` (an unpublished draft) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
         // `tea` has no release body/notes column.
         body: None,
-        draft: r.draft,
-        prerelease: r.prerelease,
+        // `tea` derives draft/prerelease from its `Status` column, so these are
+        // confirmed values.
+        draft: Some(r.draft),
+        prerelease: Some(r.prerelease),
     }
 }
 
@@ -192,6 +236,12 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         source_branch: pr.head_branch,
         target_branch: pr.base_branch,
         url: pr.url,
-        draft: false,
+        // `tea`'s PR list/view carries no draft flag and no labels/assignees
+        // column, so all three are *unknown* (`None`) — never a false
+        // `Some(false)`/empty list a consumer could read as confirmed (see the
+        // `ForgePr::draft`/`labels`/`assignees` docs).
+        draft: None,
+        labels: None,
+        assignees: None,
     }
 }

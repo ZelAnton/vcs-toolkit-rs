@@ -10,10 +10,83 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`gh` version floor + capability gate.** New `GitHubCapabilities` (`version:
+  GitHubVersion`), probed via `GitHubApi::capabilities()` (`gh --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so gh's `(date)`/release-URL trailers are
+  ignored; an unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **gh ≥ 2.0.0** — the
+  first modern `gh` line whose `--json` read surface, `pr edit`/`pr checkout`/
+  `pr ready` lifecycle verbs, and `api` this crate all drive. A too-old `gh` is now
+  rejected up front with a clear "needs gh ≥ 2.0.0, found 1.14.0" message rather
+  than failing deep inside an operation with a cryptic `unknown command`/`unknown
+  flag`. `GitHubVersion` (an alias of `vcs_diff::Version`) is re-exported, and the
+  bound `GitHubAt` view forwards `capabilities()`.
+- **GitHub Enterprise Server (GHES) credentials + host-scoped auth.** A new
+  `GitHubHost` type models the target host (SaaS `github.com` vs a GHES host),
+  built via `GitHubHost::github_com()`, `GitHubHost::new("ghe.example.com")`, or
+  `GitHubHost::from_remote_url(url)` (HTTPS/SSH/scp-like remotes; userinfo and port
+  dropped). `GitHub::with_host(host)` binds a client to it: a supplied credential
+  is then injected into the environment variable `gh` reads for **that** host —
+  `GH_TOKEN` for github.com, `GH_ENTERPRISE_TOKEN` for a GHES host — plus `GH_HOST`
+  is pinned, so an enterprise secret never lands in the github.com token env (nor
+  vice versa) and the secret stays out of `argv`. `GitHubApi::auth_status_for(&host)`
+  probes a single host (`gh auth status --hostname <host>`), so a broken or absent
+  session for a *different* host can't turn the check into a false negative for the
+  host you target; it is **defaulted** on the trait (external implementers keep
+  compiling) and mirrored on the `GitHubAt` bound view. An empty, malformed, or
+  undeterminable host is a diagnosable error (`GitHubHost::new`/`from_remote_url`
+  return `Err`), never a silent fall back to the github.com token. Without a host
+  binding the client is unchanged (github.com / `GH_TOKEN`).
+- **Host-keyed credential providers.** A `GitHub::with_host(host)`-bound client now
+  also carries the (canonical) host in every operation's `CredentialRequest`, so a
+  **host-keyed** `CredentialProvider` returns the secret for *that* instance and
+  nothing else — one provider safely serves several host-bound clients without
+  cross-injecting a neighbour's token. A provider `Err` is fail-closed (the op aborts
+  before `gh` spawns) and `Ok(None)` defers to ambient auth, for read and write
+  alike. Without a host binding the request carries no host (unchanged). (T-045.)
+- `PullRequest`/`Issue` gained `labels: Vec<String>` and `assignees: Vec<String>`,
+  parsed from `gh --json labels,assignees`'s nested `[{"name": …}]`/
+  `[{"login": …}]` shapes and flattened to plain strings.
+- `GitHubApi::pr_checkout(dir, number)` — check a pull request's branch out into
+  the working copy (`gh pr checkout <n>`); the head branch is fetched and switched
+  to, so a build/test/edit runs against the PR locally. Mutates the working copy.
+  Mirrored on the `GitHubAt` bound view. **Defaulted** to `Error::Unsupported` on
+  the trait so external implementers keep compiling.
 
 ### Changed
--
+
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- **Breaking:** the raw escape hatches on the bound view (`GitHubAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `gh.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository (`gh` infers the repo from the cwd's remote)
+  than the one it was bound to, now consistent with `api`. New dir-taking client
+  methods `GitHub::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the bound
+  forwarders (argv forwarded verbatim; only the cwd is bound). The **process-cwd**
+  escape hatch is unchanged and still reached by calling `run`/`run_raw`/… on `GitHub`
+  itself (`gh.run(…)`) — migrate a caller that relied on `gh.at(dir).run(…)` running
+  in the process cwd to `gh.run(…)`. (T-035.)
+- **Breaking:** `Release::body` and `Release::url` are now `Option<String>`
+  (were `String`). `release_list` doesn't request either field (RELEASE_LIST_FIELDS
+  omits them), so an absent value now reads as the honest `None` ("not fetched")
+  rather than a false empty string; `release_view` fills both as `Some`. A present
+  JSON `null` also reads as `None`. Update a read to unwrap the `Option` (e.g.
+  `release.body` → `release.body.as_deref()`). This is what lets the `vcs-forge`
+  facade surface a release's `url` as `Some` only when it was actually fetched.
+- **Breaking:** `GitHubApi::pr_close` drops its trailing positional
+  `delete_branch: bool` for a named `#[non_exhaustive]` `PrClose` spec —
+  `pr_close(dir, number, true)` → `pr_close(dir, number,
+  PrClose::new().delete_branch())` — so the flag reads at the call site (mirroring
+  `PrMerge`). The `GitHubAt` bound view moves to the same spec.
+- **No API change here**, noted for the ecosystem: this crate's `PrMerge`
+  (`strategy` + `auto` + `delete_branch`) is now the reference shape the sibling
+  wrappers adopt for a **unified merge spec** — `vcs-gitlab` gained `MrMerge`,
+  `vcs-gitea` gained `PrMerge`, and the `vcs-forge` facade a `PrMerge` DTO, each
+  with the same fields. `gh pr merge` is the only backend that can express `auto`
+  (`--auto`) and `delete_branch` (`--delete-branch`); GitLab/Gitea report those two
+  options `Unsupported`. `GitHubApi::pr_merge` is unchanged.
 
 ### Fixed
 -

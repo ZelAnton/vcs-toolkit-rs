@@ -137,7 +137,7 @@ async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
 async fn branch_status(&self, dir: &Path) -> Result<BranchStatus>;
 async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()>;
 async fn staged_is_empty(&self, dir: &Path) -> Result<bool>;
-async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
+async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>>;
 ```
 
 - **`status`** — `git status --porcelain=v1 -z`, parsed. Renames carry both paths.
@@ -163,16 +163,16 @@ git.add(repo, &[PathBuf::from("src/lib.rs")]).await?;       // `git add -- src/l
 
 for entry in git.status(repo).await? {                       // Vec<StatusEntry>
     match entry.old_path {
-        Some(from) => println!("rename {from} -> {}", entry.path),
-        None => println!("{} {}", entry.code, entry.path),
+        Some(from) => println!("rename {} -> {}", from.display(), entry.path.display()),
+        None => println!("{} {}", entry.code, entry.path.display()),
     }
 }
 
 if !git.staged_is_empty(repo).await? {                       // bool
     println!("index has staged changes");
 }
-for path in git.conflicted_files(repo).await? {             // Vec<String>
-    println!("conflict: {path}");
+for path in git.conflicted_files(repo).await? {             // Vec<PathBuf>
+    println!("conflict: {}", path.display());
 }
 # Ok(()) }
 ```
@@ -224,7 +224,7 @@ error.
 async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
 async fn create_branch(&self, dir: &Path, name: &str) -> Result<()>;
 async fn branch_exists(&self, dir: &Path, name: &str) -> Result<bool>;
-async fn delete_branch(&self, dir: &Path, name: &str, force: bool) -> Result<()>;
+async fn delete_branch(&self, dir: &Path, spec: BranchDelete) -> Result<()>; // BranchDelete::new(name)[.force()]
 async fn rename_branch(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn is_merged(&self, dir: &Path, spec: MergeCheck) -> Result<bool>; // MergeCheck::branch(b).into_base(base)
 async fn set_upstream(&self, dir: &Path, branch: &str, upstream: &str) -> Result<()>;
@@ -247,14 +247,14 @@ async fn current_branch(&self, dir: &Path) -> Result<Option<String>>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, MergeCheck};
+# use vcs_git::{BranchDelete, Git, GitApi, MergeCheck};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if !git.branch_exists(repo, "feature").await? {            // bool
     git.create_branch(repo, "feature").await?;
 }
 git.set_upstream(repo, "feature", "origin/feature").await?;
 if git.is_merged(repo, MergeCheck::branch("feature").into_base("main")).await? { // bool
-    git.delete_branch(repo, "feature", false).await?;      // `branch -d feature`
+    git.delete_branch(repo, BranchDelete::new("feature")).await?; // `branch -d feature`
 }
 for b in git.branches(repo).await? {                       // Vec<Branch>
     println!("{}{}", if b.current { "* " } else { "  " }, b.name);
@@ -265,13 +265,17 @@ for b in git.branches(repo).await? {                       // Vec<Branch>
 ## Revisions
 
 ```rust,ignore
-async fn rev_parse(&self, dir: &Path, rev: &str) -> Result<String>;
-async fn rev_parse_short(&self, dir: &Path, rev: &str) -> Result<String>;
-async fn resolve_commit(&self, dir: &Path, rev: &str) -> Result<String>;
+async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
+async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
+async fn resolve_commit(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
 async fn is_unborn(&self, dir: &Path) -> Result<bool>;
-async fn checkout(&self, dir: &Path, reference: &str) -> Result<()>;
-async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
+async fn checkout(&self, dir: &Path, target: &CheckoutTarget) -> Result<()>;
+async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
 ```
+
+Ref-name and revision arguments are the validated [newtypes](#validating-newtypes)
+`RefName` / `RevSpec` (and `checkout`'s `CheckoutTarget`), not bare `&str` — build
+them at your input boundary.
 
 - **`rev_parse`** — resolve a revision to its full hash (`rev-parse <rev>`).
 - **`rev_parse_short`** — the abbreviated hash (`rev-parse --short <rev>`), e.g. to
@@ -280,21 +284,24 @@ async fn checkout_detach(&self, dir: &Path, commit: &str) -> Result<()>;
   (`rev-parse --verify <rev>^{commit}`).
 - **`is_unborn`** — whether `HEAD` is unborn — a fresh repo with no commits
   (`rev-parse --verify -q HEAD`, exit-code mapped).
-- **`checkout`** — switch to a branch or revision (`git checkout <reference>`).
+- **`checkout`** — switch to a branch/revision, or the previous branch (`git
+  checkout <target>`); see [`CheckoutTarget`](#checkouttarget).
 - **`checkout_detach`** — check out a commit as a detached HEAD (`checkout --detach
   <commit>`).
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{CheckoutTarget, Git, GitApi, RevSpec};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if git.is_unborn(repo).await? {                            // bool
     println!("no commits yet");
 }
-let hash = git.rev_parse(repo, "HEAD").await?;             // String — full 40-hex sha
-let short = git.rev_parse_short(repo, "HEAD").await?;      // String — abbreviated
+let head = RevSpec::new("HEAD")?;
+let hash = git.rev_parse(repo, &head).await?;              // String — full 40-hex sha
+let short = git.rev_parse_short(repo, &head).await?;       // String — abbreviated
 let _ = (hash, short);
-git.checkout(repo, "main").await?;
+git.checkout(repo, &CheckoutTarget::Ref(RevSpec::new("main")?)).await?;
+git.checkout(repo, &CheckoutTarget::Previous).await?;      // `git checkout -`
 # Ok(()) }
 ```
 
@@ -306,7 +313,7 @@ To carry uncommitted changes across a switch, see the composed inherent helper
 ```rust,ignore
 async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
 async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
-async fn worktree_remove(&self, dir: &Path, path: &Path, force: bool) -> Result<()>;
+async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()>; // WorktreeRemove::new(path)[.force()]
 async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
 async fn worktree_prune(&self, dir: &Path) -> Result<()>;
 ```
@@ -320,7 +327,7 @@ async fn worktree_prune(&self, dir: &Path) -> Result<()>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, WorktreeAdd};
+# use vcs_git::{Git, GitApi, WorktreeAdd, WorktreeRemove};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 git.worktree_add(repo, WorktreeAdd::create_branch("/tmp/feature", "feature", "HEAD"))
     .await?;                                                 // `worktree add -b feature /tmp/feature HEAD`
@@ -329,7 +336,7 @@ for wt in git.worktree_list(repo).await? {                  // Vec<Worktree>
     println!("{} -> {:?}", wt.path.display(), wt.branch);
 }
 
-git.worktree_remove(repo, Path::new("/tmp/feature"), false).await?;
+git.worktree_remove(repo, WorktreeRemove::new("/tmp/feature")).await?;
 # Ok(()) }
 ```
 
@@ -349,7 +356,10 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
 - **`diff`** — parsed per-file unified diff for `spec`, layered on `diff_text`.
 - **`diff_text`** — raw git-format unified diff for `spec` (`diff <spec> --no-color
   --no-ext-diff -M`) — stable machine output. On an unborn repo,
-  `DiffSpec::WorkingTree` diffs against the empty tree rather than failing.
+  `DiffSpec::WorkingTree` diffs against the empty tree rather than failing; the
+  empty-tree id is resolved for the repo's active object format via
+  `Git::empty_tree_oid` (so it also works in a `sha256` repo), not the SHA-1-only
+  `EMPTY_TREE_SHA1` constant.
 - **`diff_is_empty`** — `git diff --quiet`, exit-code mapped: are there unstaged
   modifications to **tracked** files? Untracked files are not counted — not a full
   "is the working tree clean?" check; use `status` for that.
@@ -367,7 +377,7 @@ if !git.diff_is_empty(repo).await? {
     println!("working tree has unstaged tracked changes");
 }
 for file in git.diff(repo, DiffSpec::WorkingTree).await? {  // Vec<FileDiff>
-    println!("{:?} {}", file.change, file.path);
+    println!("{:?} {}", file.change, file.path.display());
 }
 let raw = git.diff_text(repo, DiffSpec::Rev("main..HEAD".into())).await?; // String
 let stat = git.diff_stat(repo, "main..HEAD").await?;        // DiffStat
@@ -529,7 +539,7 @@ match git.cherry_pick(repo, "abc123").await {
 ## Stash
 
 ```rust,ignore
-async fn stash_push(&self, dir: &Path, include_untracked: bool) -> Result<()>;
+async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>; // StashPush::new()[.include_untracked()]
 async fn stash_pop(&self, dir: &Path) -> Result<()>;
 ```
 
@@ -539,9 +549,9 @@ async fn stash_pop(&self, dir: &Path) -> Result<()>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{Git, GitApi, StashPush};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
-git.stash_push(repo, true).await?;   // include untracked
+git.stash_push(repo, StashPush::new().include_untracked()).await?;   // include untracked
 // … do work on a clean tree …
 git.stash_pop(repo).await?;
 # Ok(()) }
@@ -653,13 +663,21 @@ async fn run(&self, args: &[String]) -> Result<String>;
 async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
 ```
 
-- **`run`** — `git <args>` in the current directory, returning trimmed stdout
-  (errors on a non-zero exit). For unmodelled commands.
+- **`run`** — `git <args>` in the process's current directory, returning trimmed
+  stdout (errors on a non-zero exit). For unmodelled commands.
 - **`run_raw`** — like `run` but never errors on a non-zero exit — returns the
   captured `ProcessResult`.
 
 These are **not** flag-guarded — the caller owns the argv. The inherent
 `run_args` / `run_raw_args` take `&[&str]` to skip the `Vec<String>` allocation.
+
+**cwd (T-035).** On the **client** (`git.run(…)`) these run in the **process's
+current directory** — target a specific repo with `-C <dir>` in the argv. On the
+**bound view** (`git.at(dir).run(…)`) they are instead bound to `dir`: the view
+forwards to the client's dir-taking `run_in`/`run_raw_in`/`run_args_in`/
+`run_raw_args_in`, so a raw call through the handle runs in the bound repo, like
+every other `GitAt` method. Reach for the client's `run` when you deliberately
+want the process cwd.
 
 ```rust,ignore
 # use vcs_git::{Git, GitApi};
@@ -693,7 +711,7 @@ git.switch_with_stash(repo, "feature").await?;  // dirty tree comes along
 ### Blocking helpers
 
 ```text
-pub fn blocking::worktree_remove(dir: &Path, path: &Path, force: bool) -> std::io::Result<()>;
+pub fn blocking::worktree_remove(dir: &Path, spec: WorktreeRemove) -> std::io::Result<()>;
 ```
 
 A synchronous, best-effort `git worktree remove [--force] <path>` for contexts that
@@ -721,8 +739,8 @@ One entry from `git status --porcelain=v1 -z`.
 | field | type | meaning |
 |-------|------|---------|
 | `code` | `String` | two-character status code, e.g. `" M"`, `"??"`, `"A "`, `"R "` |
-| `path` | `String` | the path (the *new* path for a rename/copy); raw, unquoted |
-| `old_path` | `Option<String>` | the original path for a rename/copy; `None` otherwise |
+| `path` | `PathBuf` | the path (the *new* path for a rename/copy); raw `-z` bytes, lossless (non-UTF-8-safe on Unix) |
+| `old_path` | `Option<PathBuf>` | the original path for a rename/copy; `None` otherwise |
 
 ### `BranchStatus`
 
@@ -787,8 +805,8 @@ One file's entry in a parsed git-format unified diff.
 | field | type | meaning |
 |-------|------|---------|
 | `change` | `ChangeKind` | how the file changed |
-| `path` | `String` | the file's path (the *new* path for a rename), `/`-normalised |
-| `old_path` | `Option<String>` | the original path for a rename, `/`-normalised; `None` otherwise |
+| `path` | `PathBuf` | the file's path (the *new* path for a rename), `/`-normalised; lossless |
+| `old_path` | `Option<PathBuf>` | the original path for a rename, `/`-normalised; `None` otherwise |
 | `hunks` | `Vec<Hunk>` | the `@@` hunks; empty for a binary file or a pure rename |
 | `raw` | `String` | the verbatim `diff --git …` block, for callers that display raw text |
 
@@ -1040,16 +1058,19 @@ let u = AnnotatedTag::new("v1.0.0", "first release").rev("abc123");
 
 ## Validating newtypes
 
-Optional up-front validation for callers that accept names/revisions from untrusted
-input (UIs, bots, agents) and want to fail early with a clear error at the input
-boundary. They are **not** required wrappers — the dir-taking methods stay `&str`
-and apply the same flag-injection guard internally on every call, regardless of
-whether you used these.
+Every operation that names a **reference** (branch/tag/ref) or a **revision**
+takes one of these validated newtypes — `RefName` or `RevSpec` — instead of a bare
+`&str`. Construct one at your input boundary (from a UI/bot/agent string); a
+flag-like or malformed value is rejected there, as a classifiable
+[`vcs_cli_support::is_invalid_input`], and can never reach an argv slot. The remaining
+bare-positional `&str` inputs that are *not* refs/revisions (remote names, URLs,
+config keys) keep an internal flag-injection guard.
 
 ### `RefName`
 
-A pre-validated reference name (branch/tag/remote), following the load-bearing core
-of `git check-ref-format`. Rejects a name that is:
+A validated reference name (branch/tag/remote-tracking ref), following the
+load-bearing core of `git check-ref-format`. Used where git creates, deletes,
+renames, or looks up a ref by exact name. Rejects a name that is:
 
 - empty,
 - has a leading `-` or `.`,
@@ -1064,28 +1085,40 @@ pub fn as_str(&self) -> &str;
 
 ### `RevSpec`
 
-A pre-validated revision/range expression (`HEAD~2`, `main..feature`). Deliberately
-*minimal* — git's revision grammar is too rich to validate here — it only
-guarantees the expression is non-empty and cannot be parsed as a flag (no leading
-`-`), matching the internal guard.
+A validated revision/range expression (`HEAD~2`, `main..feature`). Used where git
+resolves a general commit-ish or range (`checkout`, `reset_hard`, `log`, diff
+ranges, …). Deliberately *minimal* — git's revision grammar is too rich to validate
+here — it only guarantees the expression is non-empty and cannot be parsed as a
+flag (no leading `-`).
 
 ```rust,ignore
 pub fn new(rev: impl Into<String>) -> Result<Self>;
 pub fn as_str(&self) -> &str;
 ```
 
+### `CheckoutTarget`
+
+`checkout` (and `switch_with_stash`) take a `CheckoutTarget`: either
+`CheckoutTarget::Ref(RevSpec)` — a validated ref/revision — or
+`CheckoutTarget::Previous`, git's `-` "previous branch" shortcut modelled
+explicitly as a safe fixed literal (rather than a leading-`-` value the flag guard
+would reject).
+
 ```rust,ignore
-# use vcs_git::{RefName, RevSpec};
+# use vcs_git::{CheckoutTarget, RefName, RevSpec};
 # fn demo() -> Result<(), processkit::Error> {
-let name = RefName::new("feature/login")?;   // Ok
-let rev = RevSpec::new("main..HEAD")?;        // Ok
-assert!(RefName::new("-evil").is_err());      // leading '-'
-assert!(RefName::new("bad..name").is_err());  // contains '..'
-let _ = (name, rev);
+let name = RefName::new("feature/login")?;         // Ok
+let rev = RevSpec::new("main..HEAD")?;             // Ok
+let target = CheckoutTarget::Ref(RevSpec::new("main")?);
+assert!(RefName::new("-evil").is_err());           // leading '-'
+assert!(RefName::new("bad..name").is_err());       // contains '..'
+assert!(RevSpec::new("-x").is_err());              // would parse as a flag
+let _ = (name, rev, target, CheckoutTarget::Previous);
 # Ok(()) }
 ```
 
-Both implement `Display` and yield the validated string via `as_str()`.
+`RefName`/`RevSpec` implement `Display` and yield the validated string via
+`as_str()`.
 
 ## Error classification
 

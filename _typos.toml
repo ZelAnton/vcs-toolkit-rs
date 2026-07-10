@@ -1,0 +1,36 @@
+# Spell-check config for the `docs-health` CI job (see
+# `.github/workflows/ci.yml`). Scoped to the documentation surface checked by
+# that job (README, `docs/**`, per-crate guides/CHANGELOGs, `ideas/**`,
+# `decisions/**` if present, CONTRIBUTING.md) — see the job's `typos` step for
+# the exact file list; source code is not part of this job's surface.
+#
+# `extend-words` below are project/domain terms `typos` would otherwise not
+# recognize (or could plausibly "correct") — spelling them out here keeps the
+# check enforcing rather than training people to ignore red CI.
+
+[default.extend-words]
+# Jujutsu (the VCS `vcs-jj` wraps) and its concepts/CLI vocabulary.
+jj = "jj"
+revset = "revset"
+revsets = "revsets"
+fileset = "fileset"
+filesets = "filesets"
+# Forge back end wrapped by `vcs-gitea`.
+gitea = "gitea"
+# Common Unix/CLI process vocabulary used throughout the process-model docs.
+argv = "argv"
+# Underlying git/GitHub crates referenced across the facade docs.
+gitoxide = "gitoxide"
+octocrab = "octocrab"
+gix = "gix"
+libgit2 = "libgit2"
+
+# `typos` tokenizes on the hyphen in compounds like "mis-split"/"mis-state"/
+# "mis-detected" (docs/audit-2026-07.md) and flags the leading "mis" fragment
+# as a standalone misspelling of "miss"/"mist" — the compounds are correct
+# as written.
+mis = "mis"
+# `typos` splits "café.txt" (crates/diff/CHANGELOG.md) at the non-ASCII "é"
+# and flags the leading ASCII fragment "caf" as a standalone misspelling of
+# "calf" — the example filename is correct as written.
+caf = "caf"

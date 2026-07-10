@@ -300,7 +300,7 @@ holds the conflict markers), and parse:
 # use std::{fs, path::Path};
 # use vcs_git::{Git, GitApi, conflict};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
-for path in git.conflicted_files(repo).await? {          // Vec<String>, unmerged paths
+for path in git.conflicted_files(repo).await? {          // Vec<PathBuf>, unmerged paths
     let content = fs::read_to_string(repo.join(&path)).unwrap();
     if conflict::has_conflict_markers(&content) {
         let segments = conflict::parse_conflicts(&content)?;
@@ -320,8 +320,8 @@ jj: list conflicted paths in a revset, materialize each, and parse:
 # use std::path::Path;
 # use vcs_jj::{Jj, JjApi, conflict};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
-for path in jj.resolve_list(repo, "@").await? {           // Vec<String> of paths
-    let content = jj.file_show(repo, "@", &path).await?;  // materialized markers
+for path in jj.resolve_list(repo, "@").await? {           // Vec<PathBuf> of paths
+    let content = jj.file_show(repo, "@", &path.to_string_lossy()).await?; // materialized markers
     let segments = conflict::parse_conflicts(&content)?;
     let resolved = conflict::resolve(&segments, conflict::JjResolution::Side(0))?;
     // ... write `resolved` back via your file-update path ...

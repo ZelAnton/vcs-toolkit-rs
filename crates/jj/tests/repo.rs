@@ -4,8 +4,17 @@
 
 // Scaffolding from vcs-testkit: `JjSandbox` owns the throwaway workspace and
 // raw scenario steps; the typed client under test does the rest.
-use vcs_jj::{Jj, JjApi, WorkspaceAdd};
+use vcs_jj::{BookmarkName, GitClone, Jj, JjApi, RevsetExpr, WorkspaceAdd};
 use vcs_testkit::{BareRemote, JjSandbox, TempDir, jj as jj_raw};
+
+// Terse constructors for the validated newtypes in test call sites; the literals
+// here are always valid, so `unwrap` is fine in tests.
+fn rv(s: &str) -> RevsetExpr {
+    RevsetExpr::new(s).unwrap()
+}
+fn bn(s: &str) -> BookmarkName {
+    BookmarkName::new(s).unwrap()
+}
 
 #[tokio::test]
 #[ignore = "requires the jj binary"]
@@ -41,7 +50,7 @@ async fn describe_new_and_log_cycle() {
     );
 
     // Both changes are reachable from @.
-    let log = jj.log(dir, "::@", 10).await.expect("log");
+    let log = jj.log(dir, &rv("::@"), 10).await.expect("log");
     assert!(
         log.len() >= 2,
         "expected at least two changes, got {}",
@@ -73,7 +82,7 @@ async fn bookmark_create_set_and_list() {
     jj.describe(dir, "rooted").await.expect("describe");
     jj_raw(dir, &["bookmark", "create", "mark", "-r", "@"]);
     // Move it via the typed API.
-    jj.bookmark_set(dir, "mark", "@")
+    jj.bookmark_set(dir, &bn("mark"), &rv("@"))
         .await
         .expect("bookmark_set");
 
@@ -114,7 +123,7 @@ async fn workspace_add_list_forget_cycle() {
     let ws_parent = TempDir::new("ws-linked");
     let ws_path = ws_parent.path().join("ws1");
 
-    jj.workspace_add(dir, WorkspaceAdd::new("ws1", "@", ws_path.clone()))
+    jj.workspace_add(dir, WorkspaceAdd::new("ws1", rv("@"), ws_path.clone()))
         .await
         .expect("workspace add");
 
@@ -143,7 +152,7 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     let jj = Jj::new();
 
     jj.describe(dir, "base").await.expect("describe");
-    jj.bookmark_create(dir, "feature", "@")
+    jj.bookmark_create(dir, &bn("feature"), &rv("@"))
         .await
         .expect("bookmark create");
 
@@ -156,7 +165,7 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
 
     // A clean working copy has no conflicts → empty list (jj exits non-zero).
     assert!(
-        jj.resolve_list(dir, "@")
+        jj.resolve_list(dir, &rv("@"))
             .await
             .expect("resolve_list")
             .is_empty()
@@ -174,8 +183,12 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     let b = jj.current_change(dir).await.expect("b").change_id;
     jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
 
-    let conflicts = jj.resolve_list(dir, "@").await.expect("resolve_list");
-    assert_eq!(conflicts, ["c.txt"], "got {conflicts:?}");
+    let conflicts = jj.resolve_list(dir, &rv("@")).await.expect("resolve_list");
+    assert_eq!(
+        conflicts,
+        [std::path::PathBuf::from("c.txt")],
+        "got {conflicts:?}"
+    );
 }
 
 // A renamed tracked file: jj `diff --summary` renders `R {old => new}`; status()
@@ -197,8 +210,11 @@ async fn status_exposes_rename_paths() {
         .iter()
         .find(|c| c.status == 'R')
         .unwrap_or_else(|| panic!("no rename entry in {changed:?}"));
-    assert_eq!(renamed.path, "new.rs");
-    assert_eq!(renamed.old_path.as_deref(), Some("old.rs"));
+    assert_eq!(renamed.path, std::path::Path::new("new.rs"));
+    assert_eq!(
+        renamed.old_path.as_deref(),
+        Some(std::path::Path::new("old.rs"))
+    );
 }
 
 // `description` reads back exactly what `describe` wrote (single revision,
@@ -211,19 +227,22 @@ async fn description_round_trips_describe() {
     let jj = Jj::new();
 
     // An undescribed change reads as empty.
-    assert_eq!(jj.description(dir, "@").await.expect("description"), "");
+    assert_eq!(
+        jj.description(dir, &rv("@")).await.expect("description"),
+        ""
+    );
 
     let message = "feat: parser\n\nlonger body line";
     jj.describe(dir, message).await.expect("describe");
     assert_eq!(
-        jj.description(dir, "@").await.expect("description"),
+        jj.description(dir, &rv("@")).await.expect("description"),
         message
     );
 
     // A multi-commit revset yields only the newest commit's description.
     jj.new_change(dir, "second").await.expect("new");
     assert_eq!(
-        jj.description(dir, "::@").await.expect("description"),
+        jj.description(dir, &rv("::@")).await.expect("description"),
         "second"
     );
 }
@@ -242,12 +261,12 @@ async fn transaction_rolls_back_on_error_and_keeps_success() {
     let res = jj
         .transaction(dir, |tx| async move {
             tx.describe("inside").await?;
-            tx.edit("zzz-no-such-revset").await // forces the rollback
+            tx.edit(&rv("zzz-no-such-revset")).await // forces the rollback
         })
         .await;
     assert!(res.is_err(), "the closure error must surface");
     assert_eq!(
-        jj.description(dir, "@").await.expect("description"),
+        jj.description(dir, &rv("@")).await.expect("description"),
         "before",
         "the describe inside the failed transaction must be rolled back"
     );
@@ -257,7 +276,7 @@ async fn transaction_rolls_back_on_error_and_keeps_success() {
         .await
         .expect("transaction");
     assert_eq!(
-        jj.description(dir, "@").await.expect("description"),
+        jj.description(dir, &rv("@")).await.expect("description"),
         "after"
     );
 }
@@ -271,7 +290,7 @@ async fn git_clone_from_local_bare_remote() {
     let jj = Jj::new();
 
     let plain = tmp.path().join("plain");
-    jj.git_clone(remote.url().as_str(), &plain, false)
+    jj.git_clone(remote.url().as_str(), &plain, GitClone::separate())
         .await
         .expect("clone");
     assert!(plain.join(".jj").is_dir(), "jj repo materialised");
@@ -282,7 +301,7 @@ async fn git_clone_from_local_bare_remote() {
     assert!(plain.join("seed.txt").exists(), "worktree materialised");
 
     let colocated = tmp.path().join("colocated");
-    jj.git_clone(remote.url().as_str(), &colocated, true)
+    jj.git_clone(remote.url().as_str(), &colocated, GitClone::colocated())
         .await
         .expect("clone --colocate");
     assert!(colocated.join(".jj").is_dir());
@@ -312,7 +331,7 @@ async fn absorb_split_and_duplicate_cycle() {
         "the edit was absorbed out of the working copy"
     );
     assert_eq!(
-        jj.file_show(dir, "@-", "a.txt").await.expect("show"),
+        jj.file_show(dir, &rv("@-"), "a.txt").await.expect("show"),
         "alpha edited\n",
         "the base change now carries the edit"
     );
@@ -320,7 +339,7 @@ async fn absorb_split_and_duplicate_cycle() {
     // Split operates on @ — put a fresh edit into @ across two files, then
     // carve one of them out into its own described commit.
     assert_eq!(
-        jj.description(dir, "@-").await.expect("description"),
+        jj.description(dir, &rv("@-")).await.expect("description"),
         "base"
     );
     std::fs::write(dir.join("c.txt"), "gamma\n").expect("write");
@@ -329,19 +348,19 @@ async fn absorb_split_and_duplicate_cycle() {
         .await
         .expect("split");
     assert_eq!(
-        jj.description(dir, "@-").await.expect("description"),
+        jj.description(dir, &rv("@-")).await.expect("description"),
         "carve c",
         "the named fileset landed in its own commit"
     );
     assert_eq!(
-        jj.file_show(dir, "@-", "c.txt").await.expect("show"),
+        jj.file_show(dir, &rv("@-"), "c.txt").await.expect("show"),
         "gamma\n"
     );
 
     // Duplicate: copying @- adds a commit without moving @.
-    let before = jj.commit_count(dir, "all()").await.expect("count");
-    jj.duplicate(dir, "@-").await.expect("duplicate");
-    let after = jj.commit_count(dir, "all()").await.expect("count");
+    let before = jj.commit_count(dir, &rv("all()")).await.expect("count");
+    jj.duplicate(dir, &rv("@-")).await.expect("duplicate");
+    let after = jj.commit_count(dir, &rv("all()")).await.expect("count");
     assert_eq!(after, before + 1, "one duplicated commit");
 }
 
@@ -375,7 +394,7 @@ async fn op_log_evolog_and_annotate_cycle() {
     assert_eq!(ops[0].id, jj.op_head(dir).await.expect("op_head"));
 
     // evolog: the re-described change has at least two recorded versions.
-    let evolution = jj.evolog(dir, "@", 10).await.expect("evolog");
+    let evolution = jj.evolog(dir, &rv("@"), 10).await.expect("evolog");
     assert!(evolution.len() >= 2, "got {evolution:?}");
     assert_eq!(evolution[0].description, "better words", "newest first");
     assert!(
@@ -433,8 +452,8 @@ async fn conflict_model_resolves_a_real_conflict() {
     let b = jj.current_change(dir).await.expect("b").change_id;
     jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
     assert_eq!(
-        jj.resolve_list(dir, "@").await.expect("resolve_list"),
-        ["c.txt"]
+        jj.resolve_list(dir, &rv("@")).await.expect("resolve_list"),
+        [std::path::PathBuf::from("c.txt")]
     );
 
     let content = std::fs::read_to_string(dir.join("c.txt")).expect("read");
@@ -446,10 +465,78 @@ async fn conflict_model_resolves_a_real_conflict() {
 
     // jj re-parses the materialized file on snapshot: markers gone → resolved.
     assert!(
-        jj.resolve_list(dir, "@")
+        jj.resolve_list(dir, &rv("@"))
             .await
             .expect("resolve_list")
             .is_empty(),
         "conflict cleared after writing the resolution"
+    );
+}
+
+// T-040: `status`/`diff_summary` must report the same, root-relative paths
+// regardless of the directory the client is bound to — the workspace root or
+// a nested subdirectory. Backslash separators never leak into the paths (on
+// Windows jj's `--summary` uses the OS-native separator), and a caller bound
+// to a nested dir must never see a `..`-prefixed, cwd-relative path.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn status_paths_are_root_relative_from_a_nested_directory() {
+    let sandbox = JjSandbox::init("nested-status");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    let nested = dir.join("sub").join("deep");
+    std::fs::create_dir_all(&nested).expect("mkdir nested");
+    std::fs::write(dir.join("top.rs"), "top\n").expect("write top");
+    std::fs::write(nested.join("bottom.rs"), "bottom\n").expect("write nested");
+
+    let from_root = jj.status(dir).await.expect("status from root");
+    let from_nested = jj.status(&nested).await.expect("status from nested dir");
+
+    assert_eq!(
+        from_root, from_nested,
+        "status must be identical regardless of the bound working directory"
+    );
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.to_str().unwrap()).collect();
+    assert!(paths.contains(&"top.rs"), "got {paths:?}");
+    assert!(paths.contains(&"sub/deep/bottom.rs"), "got {paths:?}");
+    assert!(
+        paths.iter().all(|p| !p.contains('\\') && !p.contains("..")),
+        "paths must be forward-slash, workspace-root-relative: {paths:?}"
+    );
+}
+
+// `diff_summary` (an explicit `from..to` revset range) must show the same
+// root-relative-path contract as `status`, independent of the bound directory.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn diff_summary_paths_are_root_relative_from_a_nested_directory() {
+    let sandbox = JjSandbox::init("nested-diff-summary");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    std::fs::create_dir_all(dir.join("pkg")).expect("mkdir pkg");
+    std::fs::write(dir.join("root.rs"), "root\n").expect("write root");
+    std::fs::write(dir.join("pkg").join("mod.rs"), "mod\n").expect("write pkg/mod.rs");
+
+    let from_root = jj
+        .diff_summary(dir, &rv("root()"), &rv("@"))
+        .await
+        .expect("diff_summary from root");
+    let from_nested = jj
+        .diff_summary(&dir.join("pkg"), &rv("root()"), &rv("@"))
+        .await
+        .expect("diff_summary from nested dir");
+
+    assert_eq!(
+        from_root, from_nested,
+        "diff_summary must be identical regardless of the bound working directory"
+    );
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.to_str().unwrap()).collect();
+    assert!(paths.contains(&"root.rs"), "got {paths:?}");
+    assert!(paths.contains(&"pkg/mod.rs"), "got {paths:?}");
+    assert!(
+        paths.iter().all(|p| !p.contains('\\') && !p.contains("..")),
+        "paths must be forward-slash, workspace-root-relative: {paths:?}"
     );
 }

@@ -10,13 +10,96 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `OperationState` now models the remaining git sequencer states: `CherryPick`
+  (`CHERRY_PICK_HEAD`), `Revert` (`REVERT_HEAD`), and `Bisect` (`BISECT_LOG`),
+  alongside `Merge`/`Rebase`/`ApplyMailbox`/`Conflict`/`Clear`. `in_progress_state`
+  and `snapshot().operation` now report these instead of a misleading `Clear`, and
+  `abort_in_progress` dispatches the state's OWN git command (`cherry-pick --abort`
+  / `revert --abort` / `bisect reset`) rather than silently doing nothing.
+  `continue_in_progress` drives `cherry-pick --continue` / `revert --continue`
+  (reporting `Conflict` when they stop on the next commit, like a rebase). A
+  cherry-pick/revert conflict writes its own head file, **not** `MERGE_HEAD`, so
+  these are never confused with a merge. (T-044.)
+- `Error::Unsupported(String)` + `Error::is_unsupported()`: an action refused
+  because the repository's current in-progress state has no such step — currently
+  `continue_in_progress` during a `git bisect` (which advances by marking commits
+  good/bad, not `--continue`). Explicit refusal instead of a misleading success.
+  Mirrors `vcs_forge::Error::is_unsupported`. (T-044.)
+- `Repo::log(revspec_or_revset, max)` / `VcsRepo::log`: backend-agnostic recent
+  history, dispatching to `GitApi::log` / `JjApi::log`. Returns the new
+  `Commit` DTO (`id`, `description`, and `author`/`date` — the latter two
+  `Some` only on git, since jj's typed log doesn't currently surface them).
+- `Error::Rollback(vcs_jj::Rollback)`: a new variant raised when the jj backend's
+  `Repo::try_merge` trial-merge rollback cannot complete cleanly — the `op restore`
+  failed, or a **concurrent** jj process advanced the operation log so reverting
+  would have clobbered its work. Carries the structured `vcs_jj::Rollback` so the
+  caller can tell a failed restore from a divergence-refused one.
 
 ### Changed
--
+
+- **Breaking:** the path-carrying facade surface is now lossless for non-UTF-8 names.
+  `FileChange.path` / `FileChange.old_path` are `PathBuf` / `Option<PathBuf>` (were
+  `String` / `Option<String>`); `Repo::conflicted_files` returns `Vec<PathBuf>` (was
+  `Vec<String>`); `MergeProbe::Conflicts` carries `Vec<PathBuf>` (was `Vec<String>`);
+  and `Repo::commit_paths` / `VcsRepo::commit_paths` take `&[PathBuf]` (was `&[String]`).
+  A path obtained from `changed_files` / `conflicted_files` now round-trips **losslessly**
+  into `commit_paths` — on git a filename whose bytes are not valid UTF-8 (legal on Unix)
+  reaches the commit unchanged and addresses the SAME file, where a `String::from_utf8_lossy`
+  decode would have substituted `U+FFFD` and retargeted it. `WorktreeInfo.path` (from
+  `worktrees`) is lossless the same way on both backends — the git worktree listing and
+  the jj workspace-root listing that feed it now parse from raw bytes, so a worktree /
+  workspace whose directory name is not valid UTF-8 no longer collapses to `U+FFFD`.
+  (`FileChange`/`MergeProbe`
+  still `Serialize`: a `PathBuf` renders as a JSON string for a UTF-8 path and, per the
+  fail-closed policy, a non-UTF-8 path is a serialization **error**, never a silent
+  `U+FFFD`.) The `FileChange` builder (`FileChange::new` / `.old_path`) now takes
+  `impl Into<PathBuf>`. (T-050.)
+- `WorktreeInfo.commit` is now the checked-out commit's **full** object id on
+  both backends (the jj side previously reported a short prefix), the same
+  identity `RepoSnapshot.head` carries — so the two can be compared directly to
+  tell whether a worktree sits on the snapshotted commit, without a short-prefix
+  collision. Documented as such on both fields. (T-041.)
+- The facade keeps its ergonomic `&str`-taking `Repo` API but now converts each
+  ref-name / revision input into the backend's validated newtype
+  (`vcs_git::RefName`/`RevSpec` / `vcs_jj::BookmarkName`/`RevsetExpr`) **at the
+  boundary**, so an invalid or flag-like value from a caller (CLI/MCP/UI) is
+  rejected with a classifiable `Error::is_invalid_input` **before** any child
+  process spawns, on both backends. Behavioural change: a flag-like branch passed
+  to `Repo::push` is now refused pre-spawn on the **jj** backend too (previously it
+  rode jj's `-b` flag-value slot verbatim), matching the git backend — the
+  conversion is uniform. `Repo::checkout("-")` maps to git's "previous branch"
+  (`CheckoutTarget::Previous`) at the boundary.
+- Internal only (no public API change): the git backend now drives `vcs-git`'s
+  spec-typed `delete_branch(BranchDelete)` / `worktree_remove(WorktreeRemove)` and
+  `blocking::worktree_remove(WorktreeRemove)` instead of the removed positional
+  `bool` flags. `Repo::delete_branch` / `remove_worktree` /
+  `cleanup_worktree_blocking` keep their existing signatures.
 
 ### Fixed
--
+
+- fix: jj worktree cleanup no longer swallows partial-failure state. The rollback
+  after a failed `bookmark create` in `create_worktree` still spares a pre-existing
+  directory, but now **reports** a secondary cleanup failure (a directory it couldn't
+  remove, or a workspace it couldn't `forget`) instead of discarding it with
+  `let _ = …`; a clean rollback still surfaces the original bookmark-step cause
+  unchanged. `remove_worktree` and `cleanup_worktree_blocking` likewise surface a
+  `remove_dir_all` failure and name what is still registered so the cleanup is
+  diagnosable and safely repeatable (the blocking path no longer swallows the removal
+  error, and skips the `forget` on a failed removal to avoid orphaning the directory).
+  Behavioural change: when a jj worktree path matches none of the *resolvable*
+  workspaces but some registered workspace couldn't be resolved via `workspace root
+  --name`, the lookup now returns a distinct diagnosable error (not a clean
+  `WorktreeNotFound` — `is_resource_not_found` stays `false`) that names the
+  unresolved workspaces, since the path's absence can't be proven. Pairs with the
+  `vcs-jj` `blocking::workspace_name_for_path` signature change
+  (`io::Result<Option<String>>`).
+- fix: `Repo::try_merge` on the jj backend now rolls its trial merge back through
+  the shared concurrency-safe protocol (`Jj::rollback_to`) instead of a bare
+  `op_restore`, so the two rollback paths (`try_merge` and `Jj::transaction`) share
+  one mechanism. The rollback survives a cancelled operation and, if a concurrent jj
+  process advanced the operation log during the trial merge, is **refused** —
+  surfacing `Error::Rollback` rather than reporting a stale, untrustworthy
+  `MergeProbe::Clean`/`Conflicts` while the probe change lingers.
 
 ## [0.7.2] - 2026-07-06
 
@@ -513,7 +596,7 @@ crates; tag releases as `vcs-core-v<version>`.
 - `trunk()` now falls back to a local `main`, then `master`, when the backend has
   no native trunk (git `origin/HEAD` unset / jj `trunk()` unresolved).
 - Requires `vcs-git` / `vcs-jj` **0.4** (for the `blocking` helpers it dispatches
-  to). See AGENTS.md "Releasing" for the two-phase release coordination.
+  to). See CONTRIBUTING.md "Releasing" for the two-phase release coordination.
 - Bumped `processkit` to 0.6 (no code change).
 
 ### Fixed
