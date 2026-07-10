@@ -994,6 +994,18 @@ pub trait GitApi: Send + Sync {
     /// Distinct from a rebase, which shares the `rebase-apply` dir but without the
     /// `applying` marker — aborting an am needs `am --abort`, not `rebase --abort`.
     async fn is_am_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a cherry-pick is in progress (`CHERRY_PICK_HEAD` under the git dir).
+    /// A cherry-pick conflict writes `CHERRY_PICK_HEAD`, **not** `MERGE_HEAD`, so
+    /// this is distinct from a merge and is aborted/continued with
+    /// `cherry-pick --abort` / `--continue`, not `merge --abort`.
+    async fn is_cherry_pick_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a revert is in progress (`REVERT_HEAD` under the git dir). Like a
+    /// cherry-pick, a revert conflict writes its own head file, not `MERGE_HEAD`;
+    /// it is driven with `revert --abort` / `--continue`.
+    async fn is_revert_in_progress(&self, dir: &Path) -> Result<bool>;
+    /// Whether a `git bisect` session is in progress (`BISECT_LOG` under the git
+    /// dir). Ended with `bisect reset` (there is no `--continue`).
+    async fn is_bisect_in_progress(&self, dir: &Path) -> Result<bool>;
 
     // --- Mutations -----------------------------------------------------------
 
@@ -1116,6 +1128,25 @@ pub trait GitApi: Send + Sync {
     /// the `apply` backend's "nothing to commit" stop — the default `merge`
     /// backend auto-drops emptied patches on `--continue`.
     async fn rebase_skip(&self, dir: &Path) -> Result<()>;
+    /// Abort an in-progress cherry-pick (`cherry-pick --abort`), restoring the
+    /// pre-cherry-pick state.
+    async fn cherry_pick_abort(&self, dir: &Path) -> Result<()>;
+    /// Continue a cherry-pick after resolving conflicts (`cherry-pick --continue`);
+    /// the editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never
+    /// hangs a headless caller. On a multi-commit pick it can stop again on the
+    /// next commit's conflict (exit non-zero) — a conflict, not a hard error.
+    async fn cherry_pick_continue(&self, dir: &Path) -> Result<()>;
+    /// Abort an in-progress revert (`revert --abort`), restoring the pre-revert
+    /// state.
+    async fn revert_abort(&self, dir: &Path) -> Result<()>;
+    /// Continue a revert after resolving conflicts (`revert --continue`); the
+    /// editor is suppressed like [`cherry_pick_continue`](GitApi::cherry_pick_continue),
+    /// and it too can stop on the next commit's conflict.
+    async fn revert_continue(&self, dir: &Path) -> Result<()>;
+    /// End a `git bisect` session (`bisect reset`), returning to the branch/commit
+    /// that was checked out before it started. This is the "abort" for a bisect;
+    /// bisect has no `--continue`.
+    async fn bisect_reset(&self, dir: &Path) -> Result<()>;
 }
 
 vcs_cli_support::managed_client! {
@@ -2045,6 +2076,32 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .exists())
     }
 
+    async fn is_cherry_pick_in_progress(&self, dir: &Path) -> Result<bool> {
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("CHERRY_PICK_HEAD")
+            .exists())
+    }
+
+    async fn is_revert_in_progress(&self, dir: &Path) -> Result<bool> {
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("REVERT_HEAD")
+            .exists())
+    }
+
+    async fn is_bisect_in_progress(&self, dir: &Path) -> Result<bool> {
+        // `BISECT_LOG` is git's own canonical "a bisect is running" marker (it also
+        // drives `git bisect log`); the other BISECT_* files are session details.
+        Ok(self
+            .resolved_git_dir(dir)
+            .await?
+            .join("BISECT_LOG")
+            .exists())
+    }
+
     async fn fetch(&self, dir: &Path) -> Result<()> {
         // `GIT_TERMINAL_PROMPT=0` so a remote needing credentials fails fast
         // rather than blocking on an interactive prompt — matching the other
@@ -2519,6 +2576,47 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .run_unit(no_editor(c_locale(
                 self.core.command_in(dir, ["rebase", "--skip"]),
             )))
+            .await
+    }
+
+    async fn cherry_pick_abort(&self, dir: &Path) -> Result<()> {
+        // No editor on --abort, but keep the C locale so any failure output still
+        // feeds the classifiers uniformly with the rest of the sequencer.
+        self.core
+            .run_unit(c_locale(
+                self.core.command_in(dir, ["cherry-pick", "--abort"]),
+            ))
+            .await
+    }
+
+    async fn cherry_pick_continue(&self, dir: &Path) -> Result<()> {
+        // `--continue` re-commits the resolved pick and may open the editor to
+        // confirm the message — force a no-op editor so a headless caller can't
+        // hang. C locale: a re-conflict's output feeds `is_merge_conflict`.
+        self.core
+            .run_unit(no_editor(c_locale(
+                self.core.command_in(dir, ["cherry-pick", "--continue"]),
+            )))
+            .await
+    }
+
+    async fn revert_abort(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(self.core.command_in(dir, ["revert", "--abort"])))
+            .await
+    }
+
+    async fn revert_continue(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(no_editor(c_locale(
+                self.core.command_in(dir, ["revert", "--continue"]),
+            )))
+            .await
+    }
+
+    async fn bisect_reset(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(c_locale(self.core.command_in(dir, ["bisect", "reset"])))
             .await
     }
 }
@@ -3121,6 +3219,9 @@ vcs_cli_support::at_forwarders! {
         fn is_rebase_in_progress() -> Result<bool>;
         fn is_merge_in_progress() -> Result<bool>;
         fn is_am_in_progress() -> Result<bool>;
+        fn is_cherry_pick_in_progress() -> Result<bool>;
+        fn is_revert_in_progress() -> Result<bool>;
+        fn is_bisect_in_progress() -> Result<bool>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_branch(branch: &RefName) -> Result<()>;
@@ -3157,6 +3258,11 @@ vcs_cli_support::at_forwarders! {
         fn cherry_pick(rev: &RevSpec) -> Result<()>;
         fn revert(rev: &RevSpec) -> Result<()>;
         fn rebase_skip() -> Result<()>;
+        fn cherry_pick_abort() -> Result<()>;
+        fn cherry_pick_continue() -> Result<()>;
+        fn revert_abort() -> Result<()>;
+        fn revert_continue() -> Result<()>;
+        fn bisect_reset() -> Result<()>;
     }
     // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
     // twins) so `git.at(dir).run(…)` runs in the bound repo, not the process cwd.
@@ -3455,6 +3561,49 @@ mod tests {
             git.is_rebase_in_progress(Path::new("/r")).await.unwrap(),
             "a bare rebase-apply dir is a rebase"
         );
+    }
+
+    // T-044: the sequencer states each key off their own git-dir marker, and a
+    // cherry-pick/revert conflict does NOT write `MERGE_HEAD` — so none of them is
+    // mistaken for a merge (which would dispatch `merge --abort` on a real repo).
+    #[tokio::test]
+    async fn detects_cherry_pick_revert_and_bisect_markers() {
+        use vcs_testkit::TempDir;
+        let gd = TempDir::new("t044-seq");
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "rev-parse", "--git-dir"],
+            Reply::ok(gd.path().to_str().unwrap()),
+        ));
+        let d = Path::new("/r");
+        let touch = |name: &str| std::fs::write(gd.path().join(name), b"x\n").unwrap();
+        let rm = |name: &str| std::fs::remove_file(gd.path().join(name)).unwrap();
+
+        // A cherry-pick: CHERRY_PICK_HEAD present, and crucially NOT read as a merge.
+        touch("CHERRY_PICK_HEAD");
+        assert!(git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_merge_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_bisect_in_progress(d).await.unwrap());
+        rm("CHERRY_PICK_HEAD");
+
+        // A revert.
+        touch("REVERT_HEAD");
+        assert!(git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_merge_in_progress(d).await.unwrap());
+        rm("REVERT_HEAD");
+
+        // A bisect (keyed off BISECT_LOG).
+        touch("BISECT_LOG");
+        assert!(git.is_bisect_in_progress(d).await.unwrap());
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        rm("BISECT_LOG");
+
+        // Clean git dir → none fire.
+        assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
+        assert!(!git.is_revert_in_progress(d).await.unwrap());
+        assert!(!git.is_bisect_in_progress(d).await.unwrap());
     }
 
     // A non-zero exit surfaces as a structured `Error::Exit`.
@@ -5799,6 +5948,36 @@ mod tests {
                 call.args_str()
             );
         }
+    }
+
+    // T-044: each sequencer abort/continue/reset issues its OWN git subcommand, and
+    // the two `--continue` variants (which can re-open the commit-message editor)
+    // suppress it so a headless caller never hangs.
+    #[tokio::test]
+    async fn sequencer_abort_continue_reset_commands() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let d = Path::new("/r");
+        git.cherry_pick_abort(d).await.unwrap();
+        git.cherry_pick_continue(d).await.unwrap();
+        git.revert_abort(d).await.unwrap();
+        git.revert_continue(d).await.unwrap();
+        git.bisect_reset(d).await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["cherry-pick", "--abort"]);
+        assert_eq!(calls[1].args_str(), ["cherry-pick", "--continue"]);
+        assert_eq!(calls[2].args_str(), ["revert", "--abort"]);
+        assert_eq!(calls[3].args_str(), ["revert", "--continue"]);
+        assert_eq!(calls[4].args_str(), ["bisect", "reset"]);
+        // Only the `--continue` commits can prompt an editor; those must suppress it.
+        let has_editor = |idx: usize| {
+            calls[idx]
+                .envs
+                .iter()
+                .any(|(k, _)| k.to_str() == Some("GIT_EDITOR"))
+        };
+        assert!(has_editor(1), "cherry-pick --continue suppresses editor");
+        assert!(has_editor(3), "revert --continue suppresses editor");
     }
 
     // harden() scrubs GIT_EDITOR/GIT_SEQUENCE_EDITOR from the inherited
