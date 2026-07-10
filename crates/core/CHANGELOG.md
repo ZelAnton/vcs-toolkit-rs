@@ -74,6 +74,15 @@ crates; tag releases as `vcs-core-v<version>`.
   `blocking::worktree_remove(WorktreeRemove)` instead of the removed positional
   `bool` flags. `Repo::delete_branch` / `remove_worktree` /
   `cleanup_worktree_blocking` keep their existing signatures.
+- **Breaking:** `Error::NotARepository` is now a struct variant carrying
+  `path: PathBuf` and a new `open_kind: OpenKind` field (`OpenKind::Discover` /
+  `OpenKind::Open`) instead of a bare `PathBuf` tuple, and the variant is itself
+  `#[non_exhaustive]` (room for more fields later without another break). The
+  `Display` message now distinguishes the two callers instead of always saying
+  "found at or above": `Repo::discover`'s walk-up-to-root case still reports
+  "found at or above `<path>`", while `Repo::open`'s strict, no-walk check now
+  reports "found at `<path>`" — the previous shared wording was misleading for
+  `open`, which never walks up. `OpenKind` is exported alongside `Error`.
 
 ### Fixed
 
