@@ -124,6 +124,14 @@ pub(crate) const EVOLOG_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\" 
 /// operation.
 pub(crate) const OP_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ user ++ \"\\t\" ++ time.start().format(\"%Y-%m-%dT%H:%M:%S%:z\") ++ \"\\t\" ++ description.first_line() ++ \"\\n\"";
 
+/// `jj op log -T` template for the rollback **divergence probe**: `id\tparent-count`,
+/// one row per operation, newest first. A parent count `>= 2` marks a "reconcile
+/// divergent operations" merge — the fingerprint jj records when a *concurrent* jj
+/// process advanced the operation log, so a rollback walking this can refuse to
+/// revert that foreign work (see `Jj::rollback_to`). Kept minimal (no user/time)
+/// because the probe only needs the ancestry shape.
+pub(crate) const OP_PARENTS_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ parents.len() ++ \"\\n\"";
+
 /// `jj file annotate -T` template: `change-id\tcontent`. Annotate emits one row
 /// per source line and separates them itself — no trailing `\n` here, or every
 /// row would be double-spaced.
@@ -175,6 +183,28 @@ pub(crate) fn parse_operations(output: &str) -> Vec<Operation> {
                 time: fields.next()?.to_string(),
                 description: fields.next().unwrap_or("").to_string(),
             })
+        })
+        .collect()
+}
+
+/// Parse rows produced by [`OP_PARENTS_TEMPLATE`] into `(op-id, parent-count)`
+/// pairs, newest first — the input to the rollback divergence walk. A row whose
+/// parent-count is missing or unparsable is read as `0` parents (it cannot be the
+/// divergence merge the probe looks for, so a malformed row never spuriously trips
+/// the "foreign concurrency" signal); the id is always kept so the walk can still
+/// locate the captured pre-operation.
+pub(crate) fn parse_op_parents(output: &str) -> Vec<(String, usize)> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut fields = line.splitn(2, '\t');
+            let id = fields.next().unwrap_or("").to_string();
+            let parents = fields
+                .next()
+                .and_then(|s| s.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            (id, parents)
         })
         .collect()
 }
@@ -457,6 +487,26 @@ mod tests {
         assert_eq!(ops[0].description, "new empty commit");
         // A literal tab in the description survives (splitn keeps the tail).
         assert_eq!(ops[1].description, "describe commit\twith tab");
+    }
+
+    #[test]
+    fn op_parents_reads_id_and_parent_count() {
+        // Newest first: a 2-parent reconcile merge, then two single-parent ops.
+        let out = "merge9\t2\nmine01\t1\npre000\t1\n";
+        let rows = parse_op_parents(out);
+        assert_eq!(
+            rows,
+            vec![
+                ("merge9".to_string(), 2),
+                ("mine01".to_string(), 1),
+                ("pre000".to_string(), 1),
+            ]
+        );
+        // A short/malformed row (no parent-count column) keeps its id and reads as
+        // 0 parents, so it can never spuriously look like the divergence merge.
+        let short = parse_op_parents("abc123\n");
+        assert_eq!(short, vec![("abc123".to_string(), 0)]);
+        assert!(parse_op_parents("").is_empty());
     }
 
     #[test]

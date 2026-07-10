@@ -15,6 +15,16 @@ crates; tag releases as `vcs-jj-v<version>`.
   touched the given filesets (`jj log -r <revset> <filesets>`), built with
   `JjFileset::path` (same primitive as `commit_paths`/`squash_paths`) and a
   refusal of an empty fileset list before spawning.
+- feat: add `Jj::rollback_to(dir, pre)` — the concurrency-safe op-log rollback
+  primitive `transaction` runs, exposed for non-closure / FFI callers. It runs the
+  cleanup on a **fresh cancellation context** with its own deadline (so a cancelled
+  or timed-out operation no longer disables its own rollback) and **detects a
+  concurrent op-log divergence** — refusing to revert (returning
+  `Rollback::SkippedDiverged`) when another jj process advanced the operation log,
+  rather than silently clobbering that work. Returns the structured `Rollback`
+  outcome (`Restored` / `SkippedDiverged` / `Failed` / `NotAttempted`).
+- feat: add the `Rollback` enum and `TransactionError` struct describing a
+  transaction's rollback outcome and preserving the closure's cause.
 
 ### Changed
 
@@ -43,9 +53,24 @@ crates; tag releases as `vcs-jj-v<version>`.
   GitClone::colocated()|GitClone::separate())` (the colocation choice is still
   always explicit — there is deliberately no default). The `JjAt` bound view moves
   to the same specs.
+- **Breaking:** `Jj::transaction` / `JjAt::transaction` now return
+  `Result<T, TransactionError>` instead of `Result<T>`. On the closure's `Err` the
+  `TransactionError` preserves that error as `cause` **and** reports what the
+  rollback did in `rollback` — so a failed or refused rollback is visible instead of
+  swallowed. Migrate a caller that only wants the old closure error with
+  `.map_err(TransactionError::into_cause)`.
 
 ### Fixed
--
+
+- fix: make the `transaction` op-log rollback safe under cancellation and
+  concurrency. Previously a *fired* cancellation of the closure (on a client with
+  `default_cancel_on`) also cancelled the `op_restore`, leaving the repo
+  mid-transaction; the rollback now runs on a fresh cancellation context with its
+  own deadline. A concurrent jj process's operation landing between the savepoint
+  capture and the restore was silently reverted; the rollback now detects the
+  op-log divergence and refuses (`Rollback::SkippedDiverged`). A failing
+  `op_restore` was discarded (`let _ = …`); it is now surfaced as
+  `Rollback::Failed`. See `Jj::rollback_to`.
 
 ## [0.9.2] - 2026-07-06
 

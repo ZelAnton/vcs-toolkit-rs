@@ -60,11 +60,13 @@
 //! - **[`JjAt`]** — a cwd-bound view ([`Jj::at`]) whose methods drop the leading
 //!   `dir`, so `jj.at(dir).status()` reads as `jj.status(dir)` — handy when one
 //!   client drives one checkout.
-//! - **[`Jj::transaction`]** — run a mutation sequence with op-log rollback:
-//!   capture the current operation, run a closure, and on `Err` restore the repo
-//!   to it. The op log is jj's safety net; this wraps it as a scope.
-//!   [`Jj::workspace_roots`] is a sibling inherent method — a bounded fan-out
-//!   resolving many workspace roots at once.
+//! - **[`Jj::transaction`]** — run a mutation sequence with concurrency-safe op-log
+//!   rollback: capture the current operation, run a closure, and on `Err` restore
+//!   the repo to it ([`Jj::rollback_to`]) — a rollback that survives a cancelled
+//!   closure and refuses to clobber a concurrent process's work, reporting the
+//!   outcome on [`TransactionError`] / [`Rollback`]. The op log is jj's safety net;
+//!   this wraps it as a scope. [`Jj::workspace_roots`] is a sibling inherent method
+//!   — a bounded fan-out resolving many workspace roots at once.
 //! - **Builder specs** for the multi-option commands — [`WorkspaceAdd`],
 //!   [`SquashPaths`], [`BookmarkMove`], [`SquashInto`], [`GitClone`] — each
 //!   `#[non_exhaustive]`, built with a constructor +
@@ -100,12 +102,14 @@
 //! # let _ = (current, dirty); Ok(()) }
 //! ```
 //!
-//! Mutate inside a [`transaction`](Jj::transaction) — an `Err` rolls the op log back:
+//! Mutate inside a [`transaction`](Jj::transaction) — an `Err` rolls the op log
+//! back (safely: the cleanup survives a cancelled closure and refuses to clobber a
+//! concurrent process's work — see [`TransactionError`] / [`Rollback`]):
 //!
 //! ```no_run
 //! use std::path::Path;
 //! use vcs_jj::Jj;
-//! # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
+//! # async fn demo(jj: &Jj) -> Result<(), vcs_jj::TransactionError> {
 //! let dir = Path::new(".");
 //! jj.transaction(dir, |tx| async move {
 //!     tx.describe("wip").await?;
@@ -118,8 +122,8 @@
 //! A binding (or any caller that can't pass a Rust closure) drives the same
 //! rollback imperatively with the primitives [`transaction`](Jj::transaction)
 //! wraps — [`op_head`](JjApi::op_head) to capture a savepoint and
-//! [`op_restore`](JjApi::op_restore) to roll back to it on failure (both on the
-//! object-safe [`JjApi`]).
+//! [`rollback_to`](Jj::rollback_to) to roll back to it on failure with the same
+//! cancellation-safe, divergence-checked protocol.
 //!
 //! # Testing
 //!
@@ -1799,6 +1803,160 @@ const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 /// processes, while still overlapping the (fast, network-free) calls.
 const WORKSPACE_ROOTS_CONCURRENCY: usize = 8;
 
+/// The dedicated deadline the concurrency-safe rollback ([`Jj::rollback_to`])
+/// bounds each of its own commands with. Set explicitly (not inherited) so a
+/// cleanup that follows a *cancelled or timed-out* operation still runs on a full,
+/// fresh budget rather than a spent one — a local `op log` / `op restore` is quick,
+/// so this is a generous ceiling, not a tight bound.
+const ROLLBACK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How many recent operations the divergence probe ([`Jj::rollback_to`]) walks back
+/// through, as jj's `--limit`, looking for the captured pre-operation. Generous — a
+/// single failed transaction records a handful of operations — so an honest rollback
+/// is only ever refused for genuine divergence, not for depth. If the captured
+/// operation is not within this window the probe treats the range as unverifiable
+/// and refuses to revert (see [`Rollback::SkippedDiverged`]).
+const ROLLBACK_PROBE_LIMIT: &str = "256";
+
+/// What the concurrency-safe op-log rollback did after a mutation failed — the
+/// outcome [`Jj::rollback_to`] returns and [`Jj::transaction`] reports on its
+/// [`TransactionError`]. It lets a caller tell a completed rollback apart from one
+/// that was deliberately **refused** (a concurrent process's work would have been
+/// clobbered) or one that **failed**, instead of guessing by re-probing the op log.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Rollback {
+    /// The repo is back at the captured operation — either `op restore` ran, or the
+    /// closure failed before recording any operation, so nothing needed undoing.
+    Restored,
+    /// The rollback was **skipped** to avoid clobbering a concurrent process: the
+    /// operation log diverged between the capture and the restore (jj reconciled a
+    /// foreign operation with a "reconcile divergent operations" merge), so restoring
+    /// to the captured operation would have silently reverted that work. The repo is
+    /// left as the closure and the other process left it; the caller must reconcile.
+    /// Also returned when the captured operation is no longer within the probed
+    /// window (`ROLLBACK_PROBE_LIMIT` operations), so the range cannot be confirmed
+    /// safe to revert.
+    SkippedDiverged,
+    /// The rollback itself failed — the divergence probe or the `op restore` errored.
+    /// The repo may be left mid-transaction; the carried [`Error`] is the cause.
+    Failed(Error),
+    /// No rollback was attempted: the transaction failed before it captured a
+    /// savepoint (e.g. the initial [`op_head`](JjApi::op_head) capture itself failed),
+    /// so there was nothing to roll back.
+    NotAttempted,
+}
+
+impl Rollback {
+    /// Whether the repo was returned to (or already at) the captured operation.
+    pub fn is_restored(&self) -> bool {
+        matches!(self, Rollback::Restored)
+    }
+
+    /// The error, when the rollback itself [`Failed`](Rollback::Failed); `None`
+    /// otherwise. Reads it off without destructuring the `#[non_exhaustive]` enum.
+    pub fn failure(&self) -> Option<&Error> {
+        match self {
+            Rollback::Failed(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Rollback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Rollback::Restored => f.write_str("rolled back to the captured operation"),
+            Rollback::SkippedDiverged => f.write_str(
+                "rollback skipped: the operation log diverged (a concurrent jj process \
+                 advanced it), so reverting was refused to avoid clobbering that work",
+            ),
+            Rollback::Failed(err) => write!(f, "rollback failed: {err}"),
+            Rollback::NotAttempted => f.write_str("no rollback was attempted"),
+        }
+    }
+}
+
+/// The error [`Jj::transaction`] returns when its closure fails. It preserves the
+/// closure's own error in [`cause`](Self::cause) — the same value the previous
+/// (rollback-swallowing) `Result<T>` contract returned — and additionally records
+/// what the concurrency-safe rollback did in [`rollback`](Self::rollback), so a
+/// failed or refused rollback is **visible** to the caller instead of silently
+/// dropped (the earlier `let _ = op_restore(..)` discarded it).
+///
+/// Match [`rollback`](Self::rollback) to distinguish `Restored` / `SkippedDiverged`
+/// / `Failed`; call [`into_cause`](Self::into_cause) for a drop-in of the old
+/// "closure error only" behavior.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TransactionError {
+    /// The error the closure returned — the transaction's root cause.
+    pub cause: Error,
+    /// What the concurrency-safe rollback did in response to `cause`.
+    pub rollback: Rollback,
+}
+
+impl TransactionError {
+    /// The closure's error — the transaction's root cause (what the old `Result<T>`
+    /// contract returned).
+    pub fn cause(&self) -> &Error {
+        &self.cause
+    }
+
+    /// What the rollback did — [`Restored`](Rollback::Restored) /
+    /// [`SkippedDiverged`](Rollback::SkippedDiverged) / [`Failed`](Rollback::Failed).
+    pub fn rollback(&self) -> &Rollback {
+        &self.rollback
+    }
+
+    /// Consume, returning just the closure's error — the drop-in for code that only
+    /// wants the old "closure error" and does not act on the rollback outcome.
+    pub fn into_cause(self) -> Error {
+        self.cause
+    }
+}
+
+impl std::fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "transaction failed: {} ({})", self.cause, self.rollback)
+    }
+}
+
+impl std::error::Error for TransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // The closure's error is the root cause; a rollback failure (if any) is
+        // reachable structurally through `self.rollback`.
+        Some(&self.cause)
+    }
+}
+
+/// The rollback decision derived from the op-log divergence probe (`rows`, newest
+/// first) and the captured pre-operation `pre`. Walking from the current head toward
+/// `pre`: a `>= 2`-parent operation seen *before* reaching `pre` is a concurrent
+/// "reconcile divergent operations" merge (foreign work) → refuse; reaching `pre`
+/// means the range is our own linear work → restore; not finding `pre` within the
+/// probed window means the range can't be confirmed safe → refuse (conservative:
+/// never blindly revert what we can't verify).
+enum RollbackPlan {
+    Restore,
+    SkipDiverged,
+}
+
+fn rollback_plan(rows: &[(String, usize)], pre: &str) -> RollbackPlan {
+    for (id, parents) in rows {
+        if id == pre {
+            // Reached the savepoint with only our own single-parent ops in between.
+            return RollbackPlan::Restore;
+        }
+        if *parents >= 2 {
+            // A reconcile-divergent-operations merge landed after `pre`: a
+            // concurrent process advanced the op log. Do not clobber it.
+            return RollbackPlan::SkipDiverged;
+        }
+    }
+    RollbackPlan::SkipDiverged
+}
+
 impl<R: ProcessRunner> Jj<R> {
     /// Run `jj <args>` over string slices — `jj.run_args(&["log", "-r", "@"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
@@ -1858,13 +2016,98 @@ impl<R: ProcessRunner> Jj<R> {
         JjAt { jj: self, dir }
     }
 
-    /// Run a mutation sequence with op-log rollback: capture the current
-    /// operation ([`op_head`](JjApi::op_head)), run `f` with a [`JjAt`] bound to
-    /// `dir`, and on `Err` restore the repo to the captured operation
-    /// ([`op_restore`](JjApi::op_restore)) before returning the error.
+    /// Build a repo-scoped `jj` command for the rollback **cleanup** that does
+    /// **not** inherit this client's [`default_cancel_on`](Jj::default_cancel_on)
+    /// token and carries its own bounded [`ROLLBACK_TIMEOUT`] deadline.
+    ///
+    /// [`cmd_in`](Self::cmd_in) gap-fills the client's cancel token; overriding it
+    /// here with a *fresh, never-fired* token means an already-fired cancellation of
+    /// the failed operation cannot also short-circuit the cleanup (the defect the old
+    /// `transaction` documented). The explicit timeout gives the cleanup a full fresh
+    /// budget even after a cancelled/timed-out main operation.
+    fn rollback_cmd_in<I, S>(&self, dir: &Path, args: I) -> processkit::Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.cmd_in(dir, args)
+            .cancel_on(CancellationToken::new())
+            .timeout(ROLLBACK_TIMEOUT)
+    }
+
+    /// The divergence probe: the recent operation log as `(id, parent-count)` pairs
+    /// (newest first), read on the detached cleanup context with
+    /// `--ignore-working-copy` so the *probe itself* records no snapshot operation.
+    async fn op_log_parents_probe(&self, dir: &Path) -> Result<Vec<(String, usize)>> {
+        let out = self
+            .core
+            .run(self.rollback_cmd_in(
+                dir,
+                [
+                    "op",
+                    "log",
+                    "--no-graph",
+                    "--ignore-working-copy",
+                    "--limit",
+                    ROLLBACK_PROBE_LIMIT,
+                    "-T",
+                    parse::OP_PARENTS_TEMPLATE,
+                ],
+            ))
+            .await?;
+        Ok(parse::parse_op_parents(&out))
+    }
+
+    /// `op restore <op_id>` on the detached cleanup context (see
+    /// [`rollback_cmd_in`](Self::rollback_cmd_in)), keeping the flag-like guard the
+    /// public [`op_restore`](JjApi::op_restore) applies.
+    async fn op_restore_detached(&self, dir: &Path, op_id: &str) -> Result<()> {
+        reject_flag_like("operation id", op_id)?;
+        self.core
+            .run_unit(self.rollback_cmd_in(dir, ["op", "restore", op_id]))
+            .await
+    }
+
+    /// Roll the repo back to `pre` — an operation id captured with
+    /// [`op_head`](JjApi::op_head) **before** a mutation — after that mutation failed.
+    /// This is the rollback [`transaction`](Self::transaction) runs, exposed for the
+    /// non-closure / FFI callers the transaction docs point at.
+    ///
+    /// Unlike a bare [`op_restore`](JjApi::op_restore) back to `pre`, it:
+    /// - runs every cleanup command on a **fresh cancellation context** with its own
+    ///   `ROLLBACK_TIMEOUT` deadline, so a *cancelled or timed-out* mutation does
+    ///   not also cancel the cleanup (a fired
+    ///   [`default_cancel_on`](Jj::default_cancel_on) token is not inherited);
+    /// - **detects a concurrent op-log divergence** first — if another jj process
+    ///   advanced the operation log between the capture and now (jj records a
+    ///   "reconcile divergent operations" merge), reverting to `pre` would silently
+    ///   discard that foreign work, so it is **refused** and
+    ///   [`Rollback::SkippedDiverged`] is returned instead of clobbering it.
+    ///
+    /// Never returns `Err`: a failure of the probe or the `op restore` is reported as
+    /// [`Rollback::Failed`], so the caller composes the rollback outcome with the
+    /// mutation's own error rather than having one mask the other.
+    pub async fn rollback_to(&self, dir: &Path, pre: &str) -> Rollback {
+        match self.op_log_parents_probe(dir).await {
+            Err(err) => Rollback::Failed(err),
+            Ok(rows) => match rollback_plan(&rows, pre) {
+                RollbackPlan::SkipDiverged => Rollback::SkippedDiverged,
+                RollbackPlan::Restore => match self.op_restore_detached(dir, pre).await {
+                    Ok(()) => Rollback::Restored,
+                    Err(err) => Rollback::Failed(err),
+                },
+            },
+        }
+    }
+
+    /// Run a mutation sequence with concurrency-safe op-log rollback: capture the
+    /// current operation ([`op_head`](JjApi::op_head)), run `f` with a [`JjAt`] bound
+    /// to `dir`, and on `Err` roll the repo back to the captured operation via
+    /// [`rollback_to`](Self::rollback_to) — reporting what the rollback did on the
+    /// returned [`TransactionError`].
     ///
     /// ```no_run
-    /// # async fn demo(jj: &vcs_jj::Jj) -> Result<(), processkit::Error> {
+    /// # async fn demo(jj: &vcs_jj::Jj) -> Result<(), vcs_jj::TransactionError> {
     /// jj.transaction(std::path::Path::new("."), |tx| async move {
     ///     tx.describe("wip").await?;
     ///     tx.new_change("next").await // an Err here rolls back the describe
@@ -1873,49 +2116,70 @@ impl<R: ProcessRunner> Jj<R> {
     /// # Ok(()) }
     /// ```
     ///
+    /// On the closure's `Err`, the returned [`TransactionError`] preserves that error
+    /// in [`cause`](TransactionError::cause) **and** carries the
+    /// [`rollback`](TransactionError::rollback) outcome — so a failed
+    /// ([`Rollback::Failed`]) or refused ([`Rollback::SkippedDiverged`]) rollback is
+    /// visible, not swallowed as it was before. Callers wanting only the previous
+    /// "closure error" behavior use [`TransactionError::into_cause`].
+    ///
     /// Inherent (not on the object-safe trait): the closure parameter is
     /// generic, which `mockall` / trait objects can't express.
     ///
     /// Caveats:
-    /// - **Single-actor.** The rollback is `op_restore <pre>`, which restores the
-    ///   **entire** repo view to the captured operation — so a change *another* jj
-    ///   process landed (a `describe`, a `bookmark move`, a commit) between the
-    ///   `op_head` capture and the restore is **also reverted**, not just `f`'s own
-    ///   work. Use this only when one actor drives the repo for the transaction's span.
+    /// - **Single-actor, but no longer silent about it.** The rollback restores the
+    ///   whole repo view to the captured operation, so it is meant for a span *one*
+    ///   actor drives. If another jj process advances the op log in the meantime, the
+    ///   rollback now **detects** the divergence and **refuses** to revert (returning
+    ///   [`Rollback::SkippedDiverged`]) rather than silently reverting that foreign
+    ///   work — the caller is told, and must reconcile.
     /// - Rollback runs on `Err` only — **not** on panic or cancellation (a
     ///   dropped future); there is no async `Drop`. Convert panics to `Err`
     ///   inside `f` if you need that safety.
-    /// - **A cancelled `f` also cancels the rollback.** If `f`'s `Err` is a *fired*
-    ///   cancellation (on a client built with `default_cancel_on`), the restore is
-    ///   dispatched to that same still-cancelled client and short-circuits before it
-    ///   spawns — so it is skipped and the repo is left mid-transaction. If you need the
-    ///   rollback to survive cancellation, run it yourself (capture `op_head`, then
-    ///   `op_restore` on a client **without** the cancel token) instead of this helper.
-    /// - If the restore itself fails, the *original* error from `f` is returned
-    ///   and the repo may be left mid-transaction; re-probe
-    ///   [`op_head`](JjApi::op_head) to detect that.
+    /// - **A cancelled `f` no longer cancels the rollback.** The cleanup runs on a
+    ///   fresh cancellation context with its own deadline (see
+    ///   [`rollback_to`](Self::rollback_to)), so a *fired* cancellation of `f` (on a
+    ///   client built with [`default_cancel_on`](Jj::default_cancel_on)) does not
+    ///   short-circuit the restore.
+    /// - If the restore itself fails, the closure's error is still returned as
+    ///   [`cause`](TransactionError::cause) and the failure is surfaced as
+    ///   [`Rollback::Failed`] (no longer discarded); the repo may be left
+    ///   mid-transaction.
     ///
     /// **Non-closure / FFI callers**: the borrowed [`JjAt`] and the `'a`-bound
     /// future this closure form takes don't cross an FFI boundary cleanly, so a
     /// language binding replicates the rollback with the public primitives this
     /// method wraps — capture [`op_head`](JjApi::op_head) before the mutations, run
     /// them (through a [`JjAt`] or the dir-taking methods), then on failure call
-    /// [`op_restore`](JjApi::op_restore) back to the captured id, best-effort
-    /// (don't let its error mask the original — the same caveats apply). Both are
-    /// on the object-safe [`JjApi`], so this also works through `&dyn JjApi`.
-    pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
+    /// [`rollback_to`](Self::rollback_to) with the captured id (it applies the same
+    /// cancellation-safe, divergence-checked protocol). [`op_head`](JjApi::op_head)
+    /// is on the object-safe [`JjApi`], so the capture also works through
+    /// `&dyn JjApi`; `rollback_to` is inherent on [`Jj`].
+    pub async fn transaction<'a, T, F, Fut>(
+        &'a self,
+        dir: &'a Path,
+        f: F,
+    ) -> std::result::Result<T, TransactionError>
     where
         F: FnOnce(JjAt<'a, R>) -> Fut,
         Fut: Future<Output = Result<T>> + 'a,
     {
-        let pre = self.op_head(dir).await?;
+        let pre = match self.op_head(dir).await {
+            Ok(pre) => pre,
+            // The savepoint capture failed before `f` ran, so nothing was mutated
+            // and there is nothing to roll back.
+            Err(cause) => {
+                return Err(TransactionError {
+                    cause,
+                    rollback: Rollback::NotAttempted,
+                });
+            }
+        };
         match f(self.at(dir)).await {
             Ok(value) => Ok(value),
-            Err(err) => {
-                // Best-effort restore; the closure's error is the cause and is
-                // what the caller must see even when the restore also fails.
-                let _ = self.op_restore(dir, &pre).await;
-                Err(err)
+            Err(cause) => {
+                let rollback = self.rollback_to(dir, &pre).await;
+                Err(TransactionError { cause, rollback })
             }
         }
     }
@@ -2022,8 +2286,9 @@ vcs_cli_support::at_forwarders! {
 // forwarder macro (fixed argument lists) cannot express.
 impl<'a, R: ProcessRunner> JjAt<'a, R> {
     /// Bound form of [`Jj::transaction`] (with `dir` pre-bound): run `f` with
-    /// op-log rollback on `Err`. See [`Jj::transaction`] for the caveats.
-    pub async fn transaction<T, F, Fut>(&self, f: F) -> Result<T>
+    /// concurrency-safe op-log rollback on `Err`. See [`Jj::transaction`] for the
+    /// [`TransactionError`] contract and the caveats.
+    pub async fn transaction<T, F, Fut>(&self, f: F) -> std::result::Result<T, TransactionError>
     where
         F: FnOnce(JjAt<'a, R>) -> Fut,
         Fut: Future<Output = Result<T>> + 'a,
@@ -2936,12 +3201,20 @@ mod tests {
     }
 
     // `transaction` captures the op head and restores it when the closure errors —
-    // and the original (closure) error is what surfaces.
+    // the closure error surfaces as `cause`, and the rollback ran (`Restored`). The
+    // first `op log` is the savepoint capture; the second is the divergence probe
+    // (which sees a clean single-parent chain back to the captured op), then restore.
     #[tokio::test]
     async fn transaction_restores_op_head_on_error() {
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["jj", "op", "log"], Reply::ok("abc123\n"))
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("abc123\n"),               // capture → pre
+                        Reply::ok("def456\t1\nabc123\t1\n"), // probe → clean chain to pre
+                    ],
+                )
                 .on(["jj", "op", "restore"], Reply::ok(""))
                 .on(["jj", "describe"], Reply::fail(1, "boom")),
         );
@@ -2953,15 +3226,38 @@ mod tests {
             )
             .await;
         let err = res.expect_err("closure error must surface");
-        assert!(matches!(err, Error::Exit { .. }));
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        assert!(
+            matches!(err.rollback, Rollback::Restored),
+            "rollback: {:?}",
+            err.rollback
+        );
         let calls = rec.calls();
-        assert_eq!(calls.len(), 3, "op head, mutation, restore: {calls:?}");
+        assert_eq!(
+            calls.len(),
+            4,
+            "capture, mutation, divergence probe, restore: {calls:?}"
+        );
         assert_eq!(calls[0].args_str()[..2], ["op", "log"]);
         assert_eq!(calls[1].args_str()[0], "describe");
-        assert_eq!(calls[2].args_str()[..3], ["op", "restore", "abc123"]);
+        assert_eq!(calls[2].args_str()[..2], ["op", "log"]);
+        assert!(
+            calls[2]
+                .args_str()
+                .iter()
+                .any(|a| a == "--ignore-working-copy"),
+            "the divergence probe must not snapshot the working copy: {:?}",
+            calls[2].args_str()
+        );
+        assert_eq!(calls[3].args_str()[..3], ["op", "restore", "abc123"]);
     }
 
-    // A successful transaction must NOT restore (that would undo the work).
+    // A successful transaction must NOT roll back (that would undo the work) — and
+    // never even runs the divergence probe.
     #[tokio::test]
     async fn transaction_keeps_changes_on_success() {
         let rec = RecordingRunner::new(
@@ -2977,7 +3273,7 @@ mod tests {
         .await
         .expect("transaction");
         let calls = rec.calls();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 2, "capture + mutation only: {calls:?}");
         assert!(
             calls.iter().all(|c| c.args_str()[..2] != ["op", "restore"]),
             "no restore on success: {calls:?}"
@@ -2999,6 +3295,196 @@ mod tests {
             .await
             .expect("transaction");
         assert_eq!(rec.calls()[1].cwd.as_deref(), Some(dir));
+    }
+
+    // The rollback must survive an already-fired client cancellation token: the
+    // probe and the `op restore` run on a fresh cancellation context, while a bare
+    // `op_restore` on the same client short-circuits as `Cancelled`. This is the
+    // core defect T-036 fixes — a cancelled operation no longer disables its cleanup.
+    #[tokio::test]
+    async fn rollback_to_survives_fired_cancellation() {
+        let token = CancellationToken::new();
+        token.cancel(); // as a cancelled/deadline-hit main op would leave it
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // probe: head `post` (single parent) → clean chain back to `pre`.
+                .on(["jj", "op", "log"], Reply::ok("post\t1\npre\t1\n"))
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec).default_cancel_on(token);
+        let dir = Path::new("/r");
+
+        let outcome = jj.rollback_to(dir, "pre").await;
+        assert!(
+            matches!(outcome, Rollback::Restored),
+            "rollback must run despite the fired token: {outcome:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str()[..2] == ["op", "restore"]),
+            "the detached restore must have run: {:?}",
+            rec.calls()
+        );
+
+        // Sanity: a bare `op_restore` on this same (cancelled) client IS cancelled,
+        // proving the client token really is fired and the rollback deliberately
+        // side-steps it rather than the token being inert.
+        let bare = jj.op_restore(dir, "pre").await;
+        assert!(
+            bare.as_ref().is_err_and(|e| e.is_cancelled()),
+            "a bare op_restore must inherit the fired token: {bare:?}"
+        );
+    }
+
+    // Through `transaction`: a closure whose error is a *fired* cancellation still
+    // gets a working rollback (the savepoint was captured before the token fired).
+    #[tokio::test]
+    async fn transaction_rolls_back_after_cancelled_closure() {
+        let token = CancellationToken::new();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("pre\n"),             // capture (token not yet fired)
+                        Reply::ok("post\t1\npre\t1\n"), // probe → clean chain
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec).default_cancel_on(token.clone());
+        let dir = Path::new("/r");
+        let res = jj
+            .transaction(dir, |_tx| async move {
+                // The main operation's cancellation fires mid-transaction.
+                token.cancel();
+                Err::<(), _>(Error::Cancelled {
+                    program: "jj".to_string(),
+                })
+            })
+            .await;
+        let err = res.expect_err("cancelled closure");
+        assert!(err.cause.is_cancelled(), "cause: {:?}", err.cause);
+        assert!(
+            matches!(err.rollback, Rollback::Restored),
+            "the cleanup must survive the fired token: {:?}",
+            err.rollback
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str()[..2] == ["op", "restore"]),
+            "restore must have run: {:?}",
+            rec.calls()
+        );
+    }
+
+    // A failing `op restore` is no longer swallowed: the closure error is preserved
+    // as `cause`, and the restore failure is surfaced as `Rollback::Failed`.
+    #[tokio::test]
+    async fn transaction_reports_restore_failure() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("pre\n"), Reply::ok("post\t1\npre\t1\n")],
+                )
+                .on(["jj", "op", "restore"], Reply::fail(1, "op not found"))
+                .on(["jj", "describe"], Reply::fail(1, "boom")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let res = jj
+            .transaction(
+                Path::new("/r"),
+                |tx| async move { tx.describe("wip").await },
+            )
+            .await;
+        let err = res.expect_err("closure error");
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        match err.rollback {
+            Rollback::Failed(e) => {
+                assert!(matches!(e, Error::Exit { .. }), "rollback error: {e:?}");
+            }
+            other => panic!("expected Rollback::Failed, got {other:?}"),
+        }
+    }
+
+    // A concurrent op landing between capture and restore (jj records a `>= 2`-parent
+    // "reconcile divergent operations" merge) must be DETECTED: the rollback is
+    // skipped, signalled via `Rollback::SkippedDiverged`, and NO `op restore` runs —
+    // the foreign work is not clobbered.
+    #[tokio::test]
+    async fn transaction_skips_rollback_on_concurrent_divergence() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("pre\n"),
+                        // head `merge` has 2 parents (a foreign op was reconciled)
+                        // before the walk reaches `pre`.
+                        Reply::ok("merge\t2\nmine\t1\npre\t1\n"),
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "describe"], Reply::fail(1, "boom")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let res = jj
+            .transaction(
+                Path::new("/r"),
+                |tx| async move { tx.describe("wip").await },
+            )
+            .await;
+        let err = res.expect_err("closure error");
+        assert!(
+            matches!(err.cause, Error::Exit { .. }),
+            "cause: {:?}",
+            err.cause
+        );
+        assert!(
+            matches!(err.rollback, Rollback::SkippedDiverged),
+            "rollback: {:?}",
+            err.rollback
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "must not revert across a divergence: {:?}",
+            rec.calls()
+        );
+    }
+
+    // If the captured savepoint is not within the probed window, the range can't be
+    // confirmed safe to revert — the rollback is refused (conservative), not blindly
+    // applied.
+    #[tokio::test]
+    async fn rollback_to_refuses_when_pre_not_in_window() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // `pre` (the captured op) is absent from the probed rows.
+                .on(["jj", "op", "log"], Reply::ok("a\t1\nb\t1\nc\t1\n"))
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let outcome = jj.rollback_to(Path::new("/r"), "pre").await;
+        assert!(
+            matches!(outcome, Rollback::SkippedDiverged),
+            "unverifiable range must be refused: {outcome:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "no restore when the savepoint can't be located: {:?}",
+            rec.calls()
+        );
     }
 
     // The injection barrier now has two tiers:

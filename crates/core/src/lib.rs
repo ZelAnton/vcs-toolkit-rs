@@ -2461,6 +2461,45 @@ mod tests {
         assert!(broken.try_merge("feature").await.is_err());
     }
 
+    // jj try_merge shares `Jj::rollback_to`'s concurrency guard: if a concurrent jj
+    // process advances the op log during the trial merge (jj records a `>= 2`-parent
+    // "reconcile divergent operations" merge), the rollback is REFUSED rather than
+    // clobbering that work — try_merge surfaces `Error::Rollback` instead of a stale,
+    // untrustworthy `Clean`, and issues no `op restore`.
+    #[tokio::test]
+    async fn jj_try_merge_refuses_rollback_on_op_log_divergence() {
+        use processkit::testing::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("op42\n"),              // capture → pre
+                        Reply::ok("merge\t2\nop42\t1\n"), // probe → foreign reconcile merge
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "new"], Reply::ok(""))
+                .on(["jj", "log"], Reply::ok("0\n")),
+        );
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        let err = repo
+            .try_merge("feature")
+            .await
+            .expect_err("a divergence must error, not report a stale Clean");
+        assert!(
+            matches!(err, Error::Rollback(vcs_jj::Rollback::SkippedDiverged)),
+            "expected Error::Rollback(SkippedDiverged), got {err:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "the concurrent op must not be clobbered by a restore: {:?}",
+            rec.calls()
+        );
+    }
+
     // continue_in_progress with unresolved paths reports `Conflict` and must NOT
     // attempt the continue (git would hard-error).
     #[tokio::test]

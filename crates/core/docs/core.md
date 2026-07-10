@@ -309,13 +309,16 @@ pub async fn abort_in_progress(&self)          -> Result<OperationState>;
 `try_merge` probes whether merging `source` into the current work would conflict,
 **without leaving any trace** — the probe is rolled back before returning,
 whatever the outcome (git: `merge --no-commit --no-ff` then `merge --abort`; jj:
-a merge change probed and undone via `op restore`). It only *reports* what a real
-merge would do.
+a merge change probed and rolled back through the concurrency-safe
+`Jj::rollback_to`). It only *reports* what a real merge would do.
 
 - git requires a clean-enough working tree: a dirty-tree refusal propagates as a
   plain error, **not** as `MergeProbe::Conflicts`.
 - A failing *rollback* **propagates as an error** rather than returning a result
-  that would misdescribe the on-disk state.
+  that would misdescribe the on-disk state. On the jj backend this includes a
+  rollback **refused** because a concurrent jj process advanced the operation log
+  during the trial merge (reverting would clobber that work): it surfaces as
+  `Error::Rollback` rather than a stale `MergeProbe::Clean`/`Conflicts`.
 
 ```rust,ignore
 # use vcs_core::MergeProbe;

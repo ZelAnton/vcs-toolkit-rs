@@ -14,6 +14,11 @@ crates; tag releases as `vcs-core-v<version>`.
   history, dispatching to `GitApi::log` / `JjApi::log`. Returns the new
   `Commit` DTO (`id`, `description`, and `author`/`date` — the latter two
   `Some` only on git, since jj's typed log doesn't currently surface them).
+- `Error::Rollback(vcs_jj::Rollback)`: a new variant raised when the jj backend's
+  `Repo::try_merge` trial-merge rollback cannot complete cleanly — the `op restore`
+  failed, or a **concurrent** jj process advanced the operation log so reverting
+  would have clobbered its work. Carries the structured `vcs_jj::Rollback` so the
+  caller can tell a failed restore from a divergence-refused one.
 
 ### Changed
 
@@ -34,7 +39,14 @@ crates; tag releases as `vcs-core-v<version>`.
   `cleanup_worktree_blocking` keep their existing signatures.
 
 ### Fixed
--
+
+- fix: `Repo::try_merge` on the jj backend now rolls its trial merge back through
+  the shared concurrency-safe protocol (`Jj::rollback_to`) instead of a bare
+  `op_restore`, so the two rollback paths (`try_merge` and `Jj::transaction`) share
+  one mechanism. The rollback survives a cancelled operation and, if a concurrent jj
+  process advanced the operation log during the trial merge, is **refused** —
+  surfacing `Error::Rollback` rather than reporting a stale, untrustworthy
+  `MergeProbe::Clean`/`Conflicts` while the probe change lingers.
 
 ## [0.7.2] - 2026-07-06
 
