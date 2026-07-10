@@ -34,7 +34,10 @@
 //!   failures. `ManagedClient` wraps a [`processkit`] `CliClient` and applies the
 //!   policy to every command, so the `vcs-git`/`vcs-jj` clients gain retry via
 //!   `with_retry(...)` without changing a call site. Lock-acquisition failures are
-//!   pre-execution, so retrying is safe even for mutating commands.
+//!   pre-execution, so retrying is safe even for mutating commands. A
+//!   [`default_cancel_on`](ManagedClient::default_cancel_on) token also cuts the
+//!   backoff short: cancelling mid-retry returns a structured [`Error::Cancelled`]
+//!   at once instead of sleeping out the remaining delay.
 //! - **[`CredentialProvider`] / [`Credential`] / [`Secret`]** — an opt-in seam for
 //!   supplying a secret *per operation* (a CI token, a vault lookup) instead of
 //!   relying on ambient CLI auth. `ManagedClient` injects the resolved token into
@@ -72,7 +75,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use processkit::{
-    CliClient, Command, Error, IntoCommand, JobRunner, ProcessResult, ProcessRunner, Result,
+    CancellationToken, CliClient, Command, Error, IntoCommand, JobRunner, ProcessResult,
+    ProcessRunner, Result,
 };
 
 pub mod credentials;
@@ -604,13 +608,41 @@ fn full_jitter(max: Duration) -> Duration {
     Duration::from_nanos((r % (nanos + 1)).min(u64::MAX as u128) as u64)
 }
 
+/// The structured [`Error::Cancelled`] to surface when a cancellation token aborts
+/// the retry backoff, named for the same program as the attempt that just failed —
+/// so it reads exactly like the `Cancelled` a [`processkit`] run raises when its own
+/// [`default_cancel_on`](ManagedClient::default_cancel_on) token kills an in-flight
+/// process. Falls back to an empty program name only if the last error carried none
+/// (every real attempt error names its program).
+fn cancelled_error(last_err: &Error) -> Error {
+    Error::Cancelled {
+        program: last_err.program().unwrap_or_default().to_owned(),
+    }
+}
+
 /// Run `op`, retrying its result while `should_retry` says so and `policy` has
 /// attempts left, sleeping the (jittered, exponential) backoff between tries. The
 /// op is re-invoked from scratch each attempt, so it must be idempotent for the
 /// errors `should_retry` selects (lock-contention failures are — the command never
 /// ran). Returns the first `Ok`, or the last `Err`.
+///
+/// When `cancel` is `Some`, the backoff between attempts is **cancellation-aware**:
+/// if the token fires before or during a wait, the wait stops immediately and the
+/// whole retry aborts with a structured [`Error::Cancelled`] (naming the
+/// just-failed attempt's program). It does **not** sit out the rest of the delay,
+/// and — crucially — it launches **no** further attempt, so a cancel can never race
+/// a fresh op into flight (the attempt count stays deterministic). Pass `None` to
+/// keep the plain, uninterruptible backoff (behaviour unchanged from before this
+/// parameter existed).
+///
+/// The **first** attempt always runs; cancellation is only observed around the
+/// backoff. An `op` bound to the same token (a [`ManagedClient`] built with
+/// [`default_cancel_on`](ManagedClient::default_cancel_on)) still surfaces its own
+/// `Cancelled` when the token was already fired as it ran — `should_retry` returns
+/// `false` for that terminal error, so the loop returns it without a backoff anyway.
 pub async fn retry_async<T, Fut>(
     policy: &RetryPolicy,
+    cancel: Option<&CancellationToken>,
     should_retry: impl Fn(&Error) -> bool,
     mut op: impl FnMut() -> Fut,
 ) -> Result<T>
@@ -626,8 +658,28 @@ where
                     return Err(err);
                 }
                 let delay = backoff_for(policy, attempt - 1);
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
+                match cancel {
+                    // Cancellation-aware backoff. `run_until_cancelled` drops the
+                    // pending sleep the instant the token fires (or returns at once
+                    // if it is already fired), so a cancelled retry never waits out
+                    // the full delay. We then abort with a structured `Cancelled`
+                    // instead of looping into another attempt — the same check also
+                    // covers a zero delay and a cancel that lands right as the wait
+                    // ends, so no attempt is ever launched after the token fired.
+                    Some(token) => {
+                        if !delay.is_zero() {
+                            let _ = token.run_until_cancelled(tokio::time::sleep(delay)).await;
+                        }
+                        if token.is_cancelled() {
+                            return Err(cancelled_error(&err));
+                        }
+                    }
+                    // No token: the original plain, uninterruptible backoff.
+                    None => {
+                        if !delay.is_zero() {
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
                 }
             }
         }
@@ -663,6 +715,11 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// When set, the token is auto-injected into this env var on every command,
     /// resolved for this service. Used by the forge clients (`GH_TOKEN`, …).
     token_env: Option<(CredentialService, &'static str)>,
+    /// A copy of the [`default_cancel_on`](Self::default_cancel_on) token, kept here
+    /// (as well as on `inner`, which bounds the spawned *process*) so the retry loop
+    /// can cut a lock-contention backoff short the instant cancellation fires,
+    /// instead of sleeping out the full delay before the next attempt.
+    cancel: Option<CancellationToken>,
 }
 
 impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
@@ -674,6 +731,9 @@ impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
             // whether one is configured, plus the token-env binding.
             .field("credentials", &self.credentials.is_some())
             .field("token_env", &self.token_env)
+            // The token itself is not meaningfully renderable; whether one is set
+            // matches `inner`'s own `has_default_cancel`, kept explicit here too.
+            .field("has_cancel", &self.cancel.is_some())
             .finish()
     }
 }
@@ -687,6 +747,7 @@ impl ManagedClient<JobRunner> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            cancel: None,
         }
     }
 }
@@ -699,6 +760,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            cancel: None,
         }
     }
 
@@ -803,9 +865,14 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self
     }
 
-    /// Cancel every command this client builds when `token` fires.
-    pub fn default_cancel_on(mut self, token: processkit::CancellationToken) -> Self {
-        self.inner = self.inner.default_cancel_on(token);
+    /// Cancel every command this client builds when `token` fires — and cut a
+    /// lock-contention retry backoff short the moment it does, so a cancelled
+    /// operation returns promptly instead of sleeping out the remaining delay
+    /// before its next attempt. The token is applied to the spawned process (via
+    /// `inner`) *and* observed by the retry loop.
+    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
+        self.inner = self.inner.default_cancel_on(token.clone());
+        self.cancel = Some(token);
         self
     }
 
@@ -835,18 +902,24 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Like [`CliClient::run`], with credential injection and lock-retry.
     pub async fn run(&self, call: impl IntoCommand<R>) -> Result<String> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.run(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.run(cmd.clone()),
+        )
         .await
     }
 
     /// Like [`CliClient::run_unit`], with credential injection and lock-retry.
     pub async fn run_unit(&self, call: impl IntoCommand<R>) -> Result<()> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.run_unit(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.run_unit(cmd.clone()),
+        )
         .await
     }
 
@@ -898,9 +971,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// injection and lock-retry.
     pub async fn probe(&self, call: impl IntoCommand<R>) -> Result<bool> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.probe(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.probe(cmd.clone()),
+        )
         .await
     }
 
@@ -908,9 +984,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// still errors), with credential injection and lock-retry.
     pub async fn exit_code(&self, call: impl IntoCommand<R>) -> Result<i32> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.exit_code(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.exit_code(cmd.clone()),
+        )
         .await
     }
 
@@ -1274,7 +1353,7 @@ mod tests {
 
         // Fails twice with a lock error, then succeeds — retried to success.
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             let lock = lock();
             async move { if n < 2 { Err(lock) } else { Ok(n) } }
@@ -1285,7 +1364,7 @@ mod tests {
 
         // A non-lock error is returned immediately (not retried).
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(exit("git", 1, "real, deterministic failure")) }
         })
@@ -1299,13 +1378,165 @@ mod tests {
 
         // Persistent lock contention exhausts the attempt budget.
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(exit("git", 128, "index.lock': File exists")) }
         })
         .await;
         assert!(out.is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 4, "all attempts used");
+    }
+
+    // A persistent lock error always retryable, for the cancellation tests below.
+    fn lock_err() -> Error {
+        exit(
+            "git",
+            128,
+            "Unable to create '/r/.git/index.lock': File exists.",
+        )
+    }
+
+    // Cancellation scenario 1 — the token is **already fired** when the backoff is
+    // about to begin: `retry_async` must not sleep out the (long) delay, and must
+    // abort with a structured `Cancelled` after the single attempt that already ran,
+    // launching no second one. On a paused clock the virtual time must not advance —
+    // proving the full backoff was skipped, not merely fast.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_before_backoff_aborts_without_waiting_or_retrying() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        token.cancel(); // already cancelled before we even start
+        let policy = RetryPolicy::none()
+            .attempts(5)
+            .base_backoff(Duration::from_secs(3600)); // huge — must never be waited
+        let calls = AtomicU32::new(0);
+
+        let start = tokio::time::Instant::now();
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(lock_err()) }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a fired token aborts with a program-named Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "one attempt ran; the cancel launched no retry"
+        );
+        assert_eq!(
+            start.elapsed(),
+            Duration::ZERO,
+            "the backoff was cut short — no virtual time elapsed"
+        );
+    }
+
+    // Cancellation scenario 2 — the token fires **while the backoff sleep is
+    // parked**. With a paused clock the (long) sleep cannot elapse on its own, so a
+    // spawned task cancelling the token is what resolves the wait: the retry must
+    // wake early and return `Cancelled` without a second attempt.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_during_backoff_wakes_early_and_does_not_retry() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        let policy = RetryPolicy::none()
+            .attempts(5)
+            .base_backoff(Duration::from_secs(3600)); // never elapses under paused time
+        let calls = AtomicU32::new(0);
+
+        let start = tokio::time::Instant::now();
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let token = token.clone();
+            async move {
+                // On the first failure, schedule the cancel to land while we are
+                // parked in the backoff sleep (the sleep can't fire under paused time,
+                // so this is what unblocks the wait).
+                if n == 0 {
+                    tokio::spawn(async move { token.cancel() });
+                }
+                Err(lock_err())
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a cancel during the sleep aborts with Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cancel woke the sleep early — no second attempt"
+        );
+        assert_eq!(
+            start.elapsed(),
+            Duration::ZERO,
+            "woke on the cancel, not after the 1 h delay"
+        );
+    }
+
+    // Cancellation scenario 3 — the token fires such that it is observed **right
+    // before the next attempt** would launch. With a zero backoff there is no sleep
+    // to interrupt, so the op cancels the token as it fails; the guard between the
+    // (no-op) backoff and the next attempt must still abort with `Cancelled` rather
+    // than spinning up attempt #2.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_right_before_next_attempt_aborts() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        let policy = RetryPolicy::none().attempts(5); // zero backoff → no sleep
+        let calls = AtomicU32::new(0);
+
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let token = token.clone();
+            async move {
+                // Cancel as the first attempt fails: the post-backoff guard must catch
+                // it before launching the next attempt.
+                if n == 0 {
+                    token.cancel();
+                }
+                Err(lock_err())
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a cancel observed before the next attempt aborts with Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the guard stopped attempt #2 from launching"
+        );
+    }
+
+    // Without a token the backoff is unchanged: a persistent lock error still
+    // exhausts every attempt (no early exit, `None` path preserved).
+    #[tokio::test]
+    async fn no_token_backoff_is_unchanged() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let policy = RetryPolicy::none().attempts(3); // zero backoff, fast
+        let calls = AtomicU32::new(0);
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(lock_err()) }
+        })
+        .await;
+        assert!(
+            matches!(out, Err(Error::Exit { .. })),
+            "last error is the lock exit, not Cancelled"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "all attempts used with no token"
+        );
     }
 
     // `resolve_credential` returns `None` until a provider is attached, then the

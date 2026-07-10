@@ -10,9 +10,26 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- **Cancellation-aware retry backoff.** `ManagedClient::default_cancel_on(token)` now
+  cuts a lock-contention retry backoff **short** the instant the token fires: a
+  cancelled operation returns a structured `Error::Cancelled` promptly instead of
+  sleeping out the remaining (possibly large `max_backoff`) delay before its next
+  attempt. The token is still applied to the spawned process as before — it is now
+  *also* observed by the retry loop. No further attempt is launched once the token
+  fires, so the attempt count stays deterministic (no cancel-vs-retry race). The
+  jitter/exponential/cap backoff maths and the no-token behaviour are unchanged.
 
 ### Changed
+
+- **Breaking:** `retry_async` gained a second parameter,
+  `cancel: Option<&processkit::CancellationToken>`, between `policy` and
+  `should_retry`: `retry_async(policy, cancel, should_retry, op)`. When `Some`, the
+  inter-attempt backoff aborts with `Error::Cancelled` the moment the token fires
+  (before, during, or right at the end of a wait), launching no further attempt;
+  pass `None` for the previous plain, uninterruptible backoff. Callers using
+  `ManagedClient` are unaffected — it threads its `default_cancel_on` token through
+  automatically.
 
 - **Breaking (macro):** `at_forwarders!` gained a third section, `raw { fn view(args…)
   -> Ret => target; }`, and the raw escape hatches (`run`/`run_raw`/`run_args`/

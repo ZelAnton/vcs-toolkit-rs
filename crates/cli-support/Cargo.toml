@@ -35,8 +35,10 @@ serde_json = { version = "1", optional = true }
 serde = ["dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
-# `#[tokio::test]` for the async `retry_async` / `ManagedClient` tests.
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+# `#[tokio::test]` for the async `retry_async` / `ManagedClient` tests; `test-util`
+# adds the paused-clock (`start_paused`) support the cancellation-backoff tests use
+# to drive `tokio::time::sleep` deterministically without real waits.
+tokio = { version = "1", features = ["macros", "rt", "time", "test-util"] }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature and pass `--cfg docsrs` so any feature-gated
