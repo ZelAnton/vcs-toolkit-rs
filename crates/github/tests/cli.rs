@@ -78,6 +78,11 @@ async fn release_list_and_view_round_trip() {
         .await
         .expect("release_view");
     assert_eq!(release.tag_name, "vcs-git-v0.4.0");
-    assert!(!release.body.is_empty(), "release notes were curated");
-    assert!(!release.url.is_empty());
+    // `release_view` fetches body/url, so both are `Some` and non-empty (the lean
+    // `release_list` leaves them `None`).
+    assert!(
+        release.body.as_deref().is_some_and(|b| !b.is_empty()),
+        "release notes were curated"
+    );
+    assert!(release.url.as_deref().is_some_and(|u| !u.is_empty()));
 }

@@ -60,9 +60,12 @@
 //!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
 //!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
-//!   `OPEN` / `opened` / `open` all read as one state. A few fields are
-//!   best-effort: a PR's `draft`, and a release's `body`/`url` absent from lean
-//!   `release_list` output (see each DTO's field docs).
+//!   `OPEN` / `opened` / `open` all read as one state. Fields a backend can't
+//!   report follow a **per-field support contract** — they are `Option` (a PR's
+//!   `draft`/`labels`/`assignees`, a repo's `private`, a release's
+//!   `url`/`draft`/`prerelease`), so `None` ("backend can't/didn't report it") is
+//!   distinct from a *confirmed* `Some(false)`/empty list, never a false sentinel
+//!   (see each DTO's field docs).
 //! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
@@ -978,9 +981,12 @@ mod tests {
         assert_eq!(prs[0].number, 7);
         assert_eq!(prs[0].state, ForgePrState::Merged);
         assert_eq!(prs[0].source_branch, "feat");
-        // `isDraft` flows through the GitHub mapper (regression guard: a revert to
-        // a hardcoded `draft: false` would fail here, as the GitLab path does).
-        assert!(prs[0].draft);
+        // `isDraft` flows through the GitHub mapper as a *confirmed* `Some(true)`
+        // (regression guard: a revert to a hardcoded `false`/`None` would fail
+        // here). GitHub also confirms labels/assignees (`Some`, here empty).
+        assert_eq!(prs[0].draft, Some(true));
+        assert_eq!(prs[0].labels, Some(Vec::new()));
+        assert_eq!(prs[0].assignees, Some(Vec::new()));
     }
 
     // GitLab `repo_view` maps a known "public" visibility to private == false.
@@ -991,7 +997,8 @@ mod tests {
         let repo = forge.repo_view().await.unwrap();
         assert_eq!(repo.owner, "gitlab-org");
         assert_eq!(repo.name, "cli");
-        assert!(!repo.private);
+        // A *known* "public" visibility is a confirmed `Some(false)`.
+        assert_eq!(repo.private, Some(false));
     }
 
     // When glab omits `visibility`, the facade must NOT report the repo as private
@@ -1002,7 +1009,9 @@ mod tests {
             r#"{"name":"cli","path_with_namespace":"o/cli","default_branch":"main","web_url":"u"}"#;
         let forge = gitlab(ScriptedRunner::new().on(["glab", "repo", "view"], Reply::ok(json)));
         let repo = forge.repo_view().await.unwrap();
-        assert!(!repo.private, "absent visibility must not be private");
+        // Absent visibility is *unknown* (`None`), not a false `Some(false)` — a
+        // consumer must be able to tell "unknown" from a proven-public repo.
+        assert_eq!(repo.private, None, "absent visibility must be unknown");
     }
 
     // GitLab's `iid` becomes the number and "opened" maps to Open.
@@ -1013,7 +1022,7 @@ mod tests {
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].number, 12);
         assert_eq!(prs[0].state, ForgePrState::Open);
-        assert!(prs[0].draft);
+        assert_eq!(prs[0].draft, Some(true));
     }
 
     // Gitea's `merged` flag drives Merged even though `state` is "closed".
@@ -1254,18 +1263,23 @@ mod tests {
             Some("2026-01-01T00:00:00Z")
         );
         assert_eq!(rels[0].body, None, "gh release_list does not fetch body");
-        assert!(rels[0].prerelease && !rels[0].draft);
+        assert_eq!(rels[0].url, None, "gh release_list does not fetch url");
+        // GitHub confirms draft/prerelease (`Some`) on both list and view.
+        assert_eq!(rels[0].prerelease, Some(true));
+        assert_eq!(rels[0].draft, Some(false));
         assert_eq!(rels[1].published_at, None);
-        assert!(rels[1].draft && !rels[1].prerelease);
+        assert_eq!(rels[1].draft, Some(true));
+        assert_eq!(rels[1].prerelease, Some(false));
 
         let json = r#"[{"tag_name":"v1","name":"One","released_at":"2026-01-01T00:00:00Z","description":"gl notes","_links":{"self":"u"}}]"#;
         let forge = gitlab(ScriptedRunner::new().on(["glab", "release", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
-        assert_eq!(rels[0].url, "u");
+        assert_eq!(rels[0].url.as_deref(), Some("u"));
         assert!(rels[0].published_at.is_some());
         assert_eq!(rels[0].body.as_deref(), Some("gl notes"));
-        // GitLab has no draft/pre-release concept.
-        assert!(!rels[0].draft && !rels[0].prerelease);
+        // GitLab has no draft/pre-release concept — *unknown* (`None`), not false.
+        assert_eq!(rels[0].draft, None);
+        assert_eq!(rels[0].prerelease, None);
 
         // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
         // `published _at`), no release-page URL column.
@@ -1274,10 +1288,84 @@ mod tests {
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
         assert_eq!(rels[0].title, "One");
-        assert_eq!(rels[0].url, ""); // tea exposes no release-page URL
+        assert_eq!(rels[0].url, None, "tea exposes no release-page URL");
         assert!(rels[0].published_at.is_some());
         assert_eq!(rels[0].body, None, "tea has no release body");
-        assert!(rels[0].prerelease, "tea status 'prerelease' → prerelease");
+        // tea *does* report draft/prerelease (from its Status column) — confirmed.
+        assert_eq!(rels[0].prerelease, Some(true), "tea status 'prerelease'");
+        assert_eq!(rels[0].draft, Some(false));
+    }
+
+    // The per-field support contract, per backend, across list and view: a backend
+    // that can't report a field yields `None` (unknown); one that can yields `Some`
+    // (confirmed — including a confirmed empty `Some(vec![])`), never a false
+    // `Some(false)`/empty list. This is the core of T-034.
+    #[tokio::test]
+    async fn support_contract_unknown_vs_confirmed_per_backend() {
+        // Gitea PR: draft/labels/assignees are all unknown (tea has no such
+        // columns) — on both the list and the paged view path (same mapper).
+        let json =
+            r#"[{"index":"3","title":"T","state":"open","head":"f","base":"main","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(prs[0].draft, None, "tea PR draft is unknown");
+        assert_eq!(prs[0].labels, None, "tea PR labels are unknown");
+        assert_eq!(prs[0].assignees, None, "tea PR assignees are unknown");
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+        let pr = forge.pr_view(3).await.unwrap();
+        assert_eq!((pr.draft, pr.labels, pr.assignees), (None, None, None));
+
+        // Gitea issue: labels/assignees unknown on the list path.
+        let list = r#"[{"index":"5","title":"I","state":"open","body":"b","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(list)));
+        let issues = forge.issue_list().await.unwrap();
+        assert_eq!(issues[0].labels, None);
+        assert_eq!(issues[0].assignees, None);
+
+        // GitHub issue view: labels/assignees are confirmed `Some(..)`.
+        let json = r#"{"number":3,"title":"Docs","state":"OPEN","body":"b","url":"u",
+            "labels":[{"name":"docs"}],"assignees":[{"login":"octocat"}]}"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "issue", "view"], Reply::ok(json)));
+        let issue = forge.issue_view(3).await.unwrap();
+        assert_eq!(issue.labels, Some(vec!["docs".to_string()]));
+        assert_eq!(issue.assignees, Some(vec!["octocat".to_string()]));
+
+        // GitHub PR with no labels is a *confirmed* empty `Some(vec![])`, never
+        // `None` — "we asked and there are none" differs from "we couldn't ask".
+        let json = r#"[{"number":1,"title":"X","state":"OPEN","isDraft":false,
+            "headRefName":"h","baseRefName":"main","url":"u","labels":[],"assignees":[]}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(
+            prs[0].draft,
+            Some(false),
+            "confirmed non-draft, not unknown"
+        );
+        assert_eq!(prs[0].labels, Some(Vec::new()), "confirmed no labels");
+        assert_eq!(prs[0].assignees, Some(Vec::new()));
+
+        // GitLab issue: labels/assignees are confirmed `Some(..)`.
+        let json = r#"[{"iid":2,"title":"Y","state":"opened","description":"d","web_url":"u",
+            "labels":["bug"],"assignees":[{"username":"steiza"}]}]"#;
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "issue", "list"], Reply::ok(json)));
+        let issues = forge.issue_list().await.unwrap();
+        assert_eq!(issues[0].labels, Some(vec!["bug".to_string()]));
+        assert_eq!(issues[0].assignees, Some(vec!["steiza".to_string()]));
+    }
+
+    // A GitHub release *view* fills url/body as `Some`, while the lean list leaves
+    // them `None` (asserted in `release_list_maps_published_at_per_backend`) — the
+    // list-vs-view distinction the raw `Option` now encodes honestly.
+    #[tokio::test]
+    async fn github_release_view_fills_url_and_body_some() {
+        let json = r#"{"tagName":"v1","name":"One","body":"notes","url":"https://gh/r/v1",
+            "publishedAt":"2026-01-01T00:00:00Z","isDraft":false,"isPrerelease":true}"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "release", "view"], Reply::ok(json)));
+        let rel = forge.release_view("v1").await.unwrap();
+        assert_eq!(rel.url.as_deref(), Some("https://gh/r/v1"));
+        assert_eq!(rel.body.as_deref(), Some("notes"));
+        assert_eq!(rel.draft, Some(false));
+        assert_eq!(rel.prerelease, Some(true));
     }
 
     // The unified PrMerge spec maps its strategy to each CLI's own flag.

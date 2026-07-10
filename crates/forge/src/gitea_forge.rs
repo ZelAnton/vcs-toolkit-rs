@@ -178,10 +178,11 @@ fn map_issue(i: Issue) -> ForgeIssue {
         },
         body: i.body,
         url: i.url,
-        // `tea`'s issue list/view has no labels/assignees column — always empty
-        // (see `ForgeIssue::labels`/`ForgeIssue::assignees` doc).
-        labels: Vec::new(),
-        assignees: Vec::new(),
+        // `tea`'s issue list/view has no labels/assignees column, so they are
+        // *unknown* (`None`) — not a false empty list a consumer could read as a
+        // confirmed "no labels / unassigned" (see `ForgeIssue::labels`/`assignees`).
+        labels: None,
+        assignees: None,
     }
 }
 
@@ -189,13 +190,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag,
         title: r.title,
-        url: r.url,
+        // `tea releases` exposes no release-page URL column (the raw `url` is
+        // always empty), so it is *unknown* (`None`), not a false empty string.
+        url: None,
         // An empty `published_at` (an unpublished draft) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
         // `tea` has no release body/notes column.
         body: None,
-        draft: r.draft,
-        prerelease: r.prerelease,
+        // `tea` derives draft/prerelease from its `Status` column, so these are
+        // confirmed values.
+        draft: Some(r.draft),
+        prerelease: Some(r.prerelease),
     }
 }
 
@@ -216,10 +221,12 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         source_branch: pr.head_branch,
         target_branch: pr.base_branch,
         url: pr.url,
-        draft: false,
-        // `tea`'s PR list/view has no labels/assignees column — always empty
-        // (see `ForgePr::labels`/`ForgePr::assignees` doc).
-        labels: Vec::new(),
-        assignees: Vec::new(),
+        // `tea`'s PR list/view carries no draft flag and no labels/assignees
+        // column, so all three are *unknown* (`None`) — never a false
+        // `Some(false)`/empty list a consumer could read as confirmed (see the
+        // `ForgePr::draft`/`labels`/`assignees` docs).
+        draft: None,
+        labels: None,
+        assignees: None,
     }
 }

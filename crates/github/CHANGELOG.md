@@ -21,6 +21,13 @@ crates; tag releases as `vcs-github-v<version>`.
 
 ### Changed
 
+- **Breaking:** `Release::body` and `Release::url` are now `Option<String>`
+  (were `String`). `release_list` doesn't request either field (RELEASE_LIST_FIELDS
+  omits them), so an absent value now reads as the honest `None` ("not fetched")
+  rather than a false empty string; `release_view` fills both as `Some`. A present
+  JSON `null` also reads as `None`. Update a read to unwrap the `Option` (e.g.
+  `release.body` → `release.body.as_deref()`). This is what lets the `vcs-forge`
+  facade surface a release's `url` as `Some` only when it was actually fetched.
 - **Breaking:** `GitHubApi::pr_close` drops its trailing positional
   `delete_branch: bool` for a named `#[non_exhaustive]` `PrClose` spec —
   `pr_close(dir, number, true)` → `pr_close(dir, number,

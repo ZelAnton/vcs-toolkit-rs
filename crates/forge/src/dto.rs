@@ -184,24 +184,31 @@ pub struct ForgePr {
     pub target_branch: String,
     /// Web URL.
     pub url: String,
-    /// Whether the PR/MR is a draft. **Best-effort**: GitHub (`gh --json isDraft`)
-    /// and GitLab report it; Gitea always reports `false` here (`tea`'s PR list
-    /// doesn't carry the draft flag).
-    pub draft: bool,
-    /// Labels attached to the PR/MR. GitHub and GitLab both report them; Gitea
-    /// is always empty here — `tea`'s PR list/view has no labels column.
-    pub labels: Vec<String>,
-    /// Usernames/logins of assigned users. GitHub and GitLab both report them
-    /// (GitHub `gh --json assignees` → `login`, GitLab `assignees` → `username`);
-    /// Gitea is always empty here — `tea`'s PR list/view has no assignees column.
-    pub assignees: Vec<String>,
+    /// Whether the PR/MR is a draft, or `None` when the backend can't report it.
+    /// **Per-backend support:** GitHub (`gh --json isDraft`) and GitLab report a
+    /// definite `Some(true)`/`Some(false)`; Gitea is always `None` — `tea`'s PR
+    /// list/view carries no draft flag, so "not a draft" can't be told apart from
+    /// "unknown", and the honest answer is `None` rather than a false `Some(false)`.
+    pub draft: Option<bool>,
+    /// Labels attached to the PR/MR, or `None` when the backend can't report them.
+    /// **Per-backend support:** GitHub and GitLab report `Some(..)` — an empty
+    /// `Some(vec![])` is a *confirmed* "no labels"; Gitea is always `None` —
+    /// `tea`'s PR list/view has no labels column, so an empty list there would be a
+    /// false "no labels" rather than the truthful "unknown".
+    pub labels: Option<Vec<String>>,
+    /// Usernames/logins of assigned users, or `None` when the backend can't report
+    /// them. **Per-backend support:** GitHub (`gh --json assignees` → `login`) and
+    /// GitLab (`assignees` → `username`) report `Some(..)` — an empty `Some(vec![])`
+    /// is a *confirmed* "unassigned"; Gitea is always `None` — `tea`'s PR list/view
+    /// has no assignees column.
+    pub assignees: Option<Vec<String>>,
 }
 
 impl ForgePr {
-    /// A PR/MR with the given number, title, and state; empty branches/url/
-    /// labels/assignees, not a draft — chain the setters. Lets a custom
-    /// [`ForgeApi`](crate::ForgeApi) backend or a test build one despite the
-    /// `#[non_exhaustive]`.
+    /// A PR/MR with the given number, title, and state; empty branches/url and
+    /// **unknown** (`None`) draft/labels/assignees — chain the setters to record a
+    /// confirmed value. Lets a custom [`ForgeApi`](crate::ForgeApi) backend or a
+    /// test build one despite the `#[non_exhaustive]`.
     pub fn new(number: u64, title: impl Into<String>, state: ForgePrState) -> Self {
         Self {
             number,
@@ -210,9 +217,9 @@ impl ForgePr {
             source_branch: String::new(),
             target_branch: String::new(),
             url: String::new(),
-            draft: false,
-            labels: Vec::new(),
-            assignees: Vec::new(),
+            draft: None,
+            labels: None,
+            assignees: None,
         }
     }
 
@@ -234,21 +241,25 @@ impl ForgePr {
         self
     }
 
-    /// Mark it a draft.
-    pub fn draft(mut self) -> Self {
-        self.draft = true;
+    /// Record a *confirmed* draft flag (`Some(draft)`) — pass `true` to mark it a
+    /// draft, `false` to record a confirmed non-draft (distinct from the `None`
+    /// "unknown" a fresh [`new`](ForgePr::new) starts with).
+    pub fn draft(mut self, draft: bool) -> Self {
+        self.draft = Some(draft);
         self
     }
 
-    /// Set the labels.
+    /// Record a *confirmed* label set (`Some(labels)`) — an empty list is a
+    /// confirmed "no labels", distinct from the `None` "unknown".
     pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
-        self.labels = labels.into();
+        self.labels = Some(labels.into());
         self
     }
 
-    /// Set the assignee usernames/logins.
+    /// Record a *confirmed* assignee set (`Some(assignees)`) — an empty list is a
+    /// confirmed "unassigned", distinct from the `None` "unknown".
     pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
-        self.assignees = assignees.into();
+        self.assignees = Some(assignees.into());
         self
     }
 }
@@ -283,23 +294,26 @@ pub struct ForgeRepo {
     pub default_branch: String,
     /// Web URL.
     pub url: String,
-    /// Whether the repository is private/non-public. **Conservative when
-    /// unknown:** if the backend doesn't report visibility (e.g. GitLab omits the
-    /// field), this is `false` (public) rather than `true` — a consumer is never
-    /// told a repo is private without proof.
-    pub private: bool,
+    /// Whether the repository is private/non-public, or `None` when the backend
+    /// doesn't report visibility. **Per-backend support:** GitHub always reports a
+    /// definite `Some(true)`/`Some(false)`; GitLab reports `Some(..)` when the
+    /// project's `visibility` is present but `None` when `glab` omits it — an absent
+    /// visibility is *unknown*, never a silent `Some(false)`, so a consumer is never
+    /// told a repo is public/private without proof.
+    pub private: Option<bool>,
 }
 
 impl ForgeRepo {
-    /// A repo/project with the given name and owner; empty default-branch/url, public
-    /// — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    /// A repo/project with the given name and owner; empty default-branch/url and
+    /// **unknown** (`None`) visibility — chain the setters to record a confirmed
+    /// value. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
     pub fn new(name: impl Into<String>, owner: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             owner: owner.into(),
             default_branch: String::new(),
             url: String::new(),
-            private: false,
+            private: None,
         }
     }
 
@@ -315,9 +329,11 @@ impl ForgeRepo {
         self
     }
 
-    /// Mark the repository private/non-public.
-    pub fn private(mut self) -> Self {
-        self.private = true;
+    /// Record a *confirmed* visibility (`Some(private)`) — pass `true` for
+    /// private/non-public, `false` for a confirmed public repo (distinct from the
+    /// `None` "unknown" a fresh [`new`](ForgeRepo::new) starts with).
+    pub fn private(mut self, private: bool) -> Self {
+        self.private = Some(private);
         self
     }
 }
@@ -341,20 +357,23 @@ pub struct ForgeIssue {
     /// Web URL. Populated by both [`issue_list`](crate::Forge::issue_list) and
     /// [`issue_view`](crate::Forge::issue_view) on every forge.
     pub url: String,
-    /// Labels attached to the issue. GitHub and GitLab both report them; Gitea
-    /// is always empty here — `tea`'s issue list/view has no labels column.
-    pub labels: Vec<String>,
-    /// Usernames/logins of assigned users. GitHub and GitLab both report them
-    /// (GitHub `gh --json assignees` → `login`, GitLab `assignees` → `username`);
-    /// Gitea is always empty here — `tea`'s issue list/view has no assignees
-    /// column.
-    pub assignees: Vec<String>,
+    /// Labels attached to the issue, or `None` when the backend can't report them.
+    /// **Per-backend support:** GitHub and GitLab report `Some(..)` — an empty
+    /// `Some(vec![])` is a *confirmed* "no labels"; Gitea is always `None` —
+    /// `tea`'s issue list/view has no labels column.
+    pub labels: Option<Vec<String>>,
+    /// Usernames/logins of assigned users, or `None` when the backend can't report
+    /// them. **Per-backend support:** GitHub (`gh --json assignees` → `login`) and
+    /// GitLab (`assignees` → `username`) report `Some(..)` — an empty `Some(vec![])`
+    /// is a *confirmed* "unassigned"; Gitea is always `None` — `tea`'s issue
+    /// list/view has no assignees column.
+    pub assignees: Option<Vec<String>>,
 }
 
 impl ForgeIssue {
-    /// An issue with the given number, title, and state; empty body/url/labels/
-    /// assignees — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi)
-    /// backend or test.
+    /// An issue with the given number, title, and state; empty body/url and
+    /// **unknown** (`None`) labels/assignees — chain the setters to record a
+    /// confirmed value. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
     pub fn new(number: u64, title: impl Into<String>, state: ForgeIssueState) -> Self {
         Self {
             number,
@@ -362,8 +381,8 @@ impl ForgeIssue {
             state,
             body: String::new(),
             url: String::new(),
-            labels: Vec::new(),
-            assignees: Vec::new(),
+            labels: None,
+            assignees: None,
         }
     }
 
@@ -379,15 +398,17 @@ impl ForgeIssue {
         self
     }
 
-    /// Set the labels.
+    /// Record a *confirmed* label set (`Some(labels)`) — an empty list is a
+    /// confirmed "no labels", distinct from the `None` "unknown".
     pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
-        self.labels = labels.into();
+        self.labels = Some(labels.into());
         self
     }
 
-    /// Set the assignee usernames/logins.
+    /// Record a *confirmed* assignee set (`Some(assignees)`) — an empty list is a
+    /// confirmed "unassigned", distinct from the `None` "unknown".
     pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
-        self.assignees = assignees.into();
+        self.assignees = Some(assignees.into());
         self
     }
 }
@@ -419,9 +440,11 @@ pub struct ForgeRelease {
     pub tag: String,
     /// Release title (may be empty — forges commonly default it to the tag).
     pub title: String,
-    /// Web URL. **Best-effort:** empty from GitHub's lean `release_list`;
-    /// `release_view` fills it where supported.
-    pub url: String,
+    /// Web URL, or `None` when the backend doesn't report one. **Per-backend
+    /// support:** `release_view` fills `Some(..)` on GitHub and GitLab; GitHub's
+    /// lean `release_list` doesn't request the URL, so it is `None` there, and
+    /// Gitea is always `None` — `tea releases` exposes no release-page URL column.
+    pub url: Option<String>,
     /// Publication timestamp (RFC 3339); `None` for an unpublished draft or
     /// when the backend doesn't report one.
     pub published_at: Option<String>,
@@ -429,27 +452,30 @@ pub struct ForgeRelease {
     /// always on Gitea (`tea` has no release body), and on GitHub's lean
     /// `release_list` (only [`release_view`](crate::Forge::release_view) fills it).
     pub body: Option<String>,
-    /// Whether this is an unpublished draft. **Best-effort:** GitHub and Gitea
-    /// report it; GitLab has no draft concept, so it is always `false` there.
-    pub draft: bool,
-    /// Whether this is a pre-release. **Best-effort:** GitHub and Gitea report it;
-    /// GitLab has no pre-release concept, so it is always `false` there.
-    pub prerelease: bool,
+    /// Whether this is an unpublished draft, or `None` when the backend has no
+    /// draft concept. **Per-backend support:** GitHub and Gitea report a definite
+    /// `Some(true)`/`Some(false)`; GitLab is always `None` — a GitLab release has
+    /// no draft flag, so `Some(false)` would be a false "not a draft".
+    pub draft: Option<bool>,
+    /// Whether this is a pre-release, or `None` when the backend has no pre-release
+    /// concept. **Per-backend support:** GitHub and Gitea report `Some(..)`; GitLab
+    /// is always `None` — a GitLab release has no pre-release flag.
+    pub prerelease: Option<bool>,
 }
 
 impl ForgeRelease {
-    /// A release on `tag`; empty title/url, no timestamp/body, not a draft or
-    /// pre-release — chain the setters. For a custom [`ForgeApi`](crate::ForgeApi)
-    /// backend or test.
+    /// A release on `tag`; empty title, no url/timestamp/body and **unknown**
+    /// (`None`) draft/pre-release — chain the setters to record a confirmed value.
+    /// For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
     pub fn new(tag: impl Into<String>) -> Self {
         Self {
             tag: tag.into(),
             title: String::new(),
-            url: String::new(),
+            url: None,
             published_at: None,
             body: None,
-            draft: false,
-            prerelease: false,
+            draft: None,
+            prerelease: None,
         }
     }
 
@@ -459,9 +485,9 @@ impl ForgeRelease {
         self
     }
 
-    /// Set the web URL.
+    /// Set the web URL (`Some(url)`).
     pub fn url(mut self, url: impl Into<String>) -> Self {
-        self.url = url.into();
+        self.url = Some(url.into());
         self
     }
 
@@ -477,15 +503,18 @@ impl ForgeRelease {
         self
     }
 
-    /// Mark it an unpublished draft.
-    pub fn draft(mut self) -> Self {
-        self.draft = true;
+    /// Record a *confirmed* draft flag (`Some(draft)`) — pass `true` to mark it an
+    /// unpublished draft, `false` for a confirmed published release (distinct from
+    /// the `None` "unknown" a fresh [`new`](ForgeRelease::new) starts with).
+    pub fn draft(mut self, draft: bool) -> Self {
+        self.draft = Some(draft);
         self
     }
 
-    /// Mark it a pre-release.
-    pub fn prerelease(mut self) -> Self {
-        self.prerelease = true;
+    /// Record a *confirmed* pre-release flag (`Some(prerelease)`) — distinct from
+    /// the `None` "unknown" a fresh [`new`](ForgeRelease::new) starts with.
+    pub fn prerelease(mut self, prerelease: bool) -> Self {
+        self.prerelease = Some(prerelease);
         self
     }
 }
@@ -987,7 +1016,7 @@ mod tests {
             .source_branch("feature")
             .target_branch("main")
             .url("https://x/pr/7")
-            .draft()
+            .draft(true)
             .labels(vec!["bug".to_string()])
             .assignees(vec!["octocat".to_string()]);
         assert_eq!(pr.number, 7);
@@ -996,19 +1025,31 @@ mod tests {
         assert_eq!(pr.source_branch, "feature");
         assert_eq!(pr.target_branch, "main");
         assert_eq!(pr.url, "https://x/pr/7");
-        assert!(pr.draft);
-        assert_eq!(pr.labels, vec!["bug".to_string()]);
-        assert_eq!(pr.assignees, vec!["octocat".to_string()]);
+        assert_eq!(pr.draft, Some(true));
+        assert_eq!(pr.labels, Some(vec!["bug".to_string()]));
+        assert_eq!(pr.assignees, Some(vec!["octocat".to_string()]));
+        // A fresh PR leaves the support-gated fields `None` (unknown), and
+        // `.draft(false)` records a *confirmed* non-draft (not the same as `None`).
+        let bare = ForgePr::new(8, "Bare", ForgePrState::Open);
+        assert_eq!(bare.draft, None);
+        assert_eq!(bare.labels, None);
+        assert_eq!(bare.assignees, None);
+        assert_eq!(
+            ForgePr::new(9, "x", ForgePrState::Open).draft(false).draft,
+            Some(false)
+        );
 
         let repo = ForgeRepo::new("proj", "acme")
             .default_branch("main")
             .url("https://x/proj")
-            .private();
+            .private(true);
         assert_eq!(repo.name, "proj");
         assert_eq!(repo.owner, "acme");
         assert_eq!(repo.default_branch, "main");
         assert_eq!(repo.url, "https://x/proj");
-        assert!(repo.private);
+        assert_eq!(repo.private, Some(true));
+        assert_eq!(ForgeRepo::new("p", "o").private, None);
+        assert_eq!(ForgeRepo::new("p", "o").private(false).private, Some(false));
 
         let issue = ForgeIssue::new(3, "Bug", ForgeIssueState::Closed)
             .body("desc")
@@ -1020,18 +1061,19 @@ mod tests {
         assert_eq!(issue.state, ForgeIssueState::Closed);
         assert_eq!(issue.body, "desc");
         assert_eq!(issue.url, "https://x/i/3");
-        assert_eq!(issue.labels, vec!["wontfix".to_string()]);
-        assert_eq!(issue.assignees, vec!["andyfeller".to_string()]);
+        assert_eq!(issue.labels, Some(vec!["wontfix".to_string()]));
+        assert_eq!(issue.assignees, Some(vec!["andyfeller".to_string()]));
+        assert_eq!(ForgeIssue::new(4, "x", ForgeIssueState::Open).labels, None);
 
         let rel = ForgeRelease::new("v1.0")
             .title("First")
             .url("https://x/rel/v1.0")
             .published_at("2026-07-03T10:00:00+02:00")
             .body("notes")
-            .draft()
-            .prerelease();
-        assert_eq!(rel.url, "https://x/rel/v1.0");
-        assert!(rel.draft);
+            .draft(true)
+            .prerelease(true);
+        assert_eq!(rel.url.as_deref(), Some("https://x/rel/v1.0"));
+        assert_eq!(rel.draft, Some(true));
         assert_eq!(rel.tag, "v1.0");
         assert_eq!(rel.title, "First");
         assert_eq!(
@@ -1039,7 +1081,13 @@ mod tests {
             Some("2026-07-03T10:00:00+02:00")
         );
         assert_eq!(rel.body.as_deref(), Some("notes"));
-        assert!(rel.prerelease);
+        assert_eq!(rel.prerelease, Some(true));
+        // A fresh release leaves url/draft/prerelease `None` (unknown).
+        let bare_rel = ForgeRelease::new("v2.0");
+        assert_eq!(bare_rel.url, None);
+        assert_eq!(bare_rel.draft, None);
+        assert_eq!(bare_rel.prerelease, None);
+        assert_eq!(ForgeRelease::new("v3").draft(false).draft, Some(false));
 
         // ForgeCapabilities builds a non-all-false map for a custom backend.
         let caps = ForgeCapabilities::all_false()
@@ -1177,16 +1225,75 @@ mod serde_tests {
             source_branch: "feat".into(),
             target_branch: "main".into(),
             url: "u".into(),
-            draft: false,
-            labels: vec!["bug".into()],
-            assignees: vec!["octocat".into()],
+            draft: Some(false),
+            labels: Some(vec!["bug".into()]),
+            assignees: Some(vec!["octocat".into()]),
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert_eq!(v["number"], 7);
         assert_eq!(v["state"], "Merged"); // enum → variant name
         assert_eq!(v["source_branch"], "feat");
+        // A *confirmed* `Some(false)`/`Some([..])` serialises to the plain value,
+        // not `null` — the wire tells "confirmed" apart from "unknown".
+        assert_eq!(v["draft"], false);
         assert_eq!(v["labels"], serde_json::json!(["bug"]));
         assert_eq!(v["assignees"], serde_json::json!(["octocat"]));
+    }
+
+    // The support contract on the wire: a `None` (backend can't report the field)
+    // serialises to JSON `null`, distinct from a *confirmed* `Some(false)` / empty
+    // `Some([])`. This is the MCP JSON contract for "unknown vs confirmed
+    // false/empty" — pin it so a consumer can rely on the distinction.
+    #[test]
+    fn unknown_fields_serialize_as_null_distinct_from_confirmed() {
+        // Gitea-shaped PR: draft/labels/assignees are unknown (`None` → `null`).
+        let unknown = ForgePr {
+            number: 1,
+            title: "t".into(),
+            state: ForgePrState::Open,
+            source_branch: "f".into(),
+            target_branch: "main".into(),
+            url: "u".into(),
+            draft: None,
+            labels: None,
+            assignees: None,
+        };
+        let v = serde_json::to_value(&unknown).unwrap();
+        assert!(v["draft"].is_null(), "unknown draft must be null");
+        assert!(v["labels"].is_null(), "unknown labels must be null");
+        assert!(v["assignees"].is_null(), "unknown assignees must be null");
+
+        // A confirmed *empty* label set is `[]`, NOT `null` — "we asked and there
+        // are none" reads differently from "we couldn't ask".
+        let confirmed_empty = ForgePr {
+            labels: Some(Vec::new()),
+            assignees: Some(Vec::new()),
+            draft: Some(false),
+            ..unknown.clone()
+        };
+        let v = serde_json::to_value(&confirmed_empty).unwrap();
+        assert_eq!(v["labels"], serde_json::json!([]));
+        assert_eq!(v["assignees"], serde_json::json!([]));
+        assert_eq!(v["draft"], false);
+
+        // ForgeRepo: absent visibility → `null`; confirmed public → `false`.
+        let repo_unknown = ForgeRepo::new("p", "o");
+        assert!(serde_json::to_value(&repo_unknown).unwrap()["private"].is_null());
+        let repo_public = ForgeRepo::new("p", "o").private(false);
+        assert_eq!(
+            serde_json::to_value(&repo_public).unwrap()["private"],
+            false
+        );
+
+        // ForgeRelease: GitLab-shaped (no draft/pre-release concept, url unknown).
+        let rel_unknown = ForgeRelease::new("v1");
+        let v = serde_json::to_value(&rel_unknown).unwrap();
+        assert!(v["url"].is_null(), "unknown url must be null");
+        assert!(v["draft"].is_null(), "no-draft-concept must be null");
+        assert!(
+            v["prerelease"].is_null(),
+            "no-prerelease-concept must be null"
+        );
     }
 
     // The Wave-A DTOs are part of vcs-mcp's JSON wire format — pin their shape:
@@ -1200,8 +1307,8 @@ mod serde_tests {
             state: ForgeIssueState::Closed,
             body: "b".into(),
             url: "u".into(),
-            labels: vec!["wontfix".into()],
-            assignees: Vec::new(),
+            labels: Some(vec!["wontfix".into()]),
+            assignees: Some(Vec::new()),
         };
         let v = serde_json::to_value(&issue).unwrap();
         assert_eq!(v["number"], 3);
@@ -1213,16 +1320,18 @@ mod serde_tests {
         let release = ForgeRelease {
             tag: "v1".into(),
             title: "One".into(),
-            url: "u".into(),
+            url: Some("u".into()),
             published_at: None,
             body: Some("notes".into()),
-            draft: false,
-            prerelease: true,
+            draft: Some(false),
+            prerelease: Some(true),
         };
         let v = serde_json::to_value(&release).unwrap();
         assert_eq!(v["tag"], "v1");
+        assert_eq!(v["url"], "u");
         assert!(v["published_at"].is_null(), "draft date must be null");
         assert_eq!(v["body"], "notes");
+        assert_eq!(v["draft"], false);
         assert_eq!(v["prerelease"], true);
 
         let spec = PrCreate::new("T", "B").source("feat");

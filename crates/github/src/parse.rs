@@ -259,13 +259,17 @@ pub struct Release {
     /// Release title (may be empty/null).
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub name: String,
-    /// Release notes (markdown); empty from `release_list`, which doesn't
-    /// fetch it.
-    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
-    pub body: String,
-    /// Web URL; empty from `release_list`, which doesn't fetch it.
-    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
-    pub url: String,
+    /// Release notes (markdown). `None` from `release_list`, which doesn't request
+    /// the field (only `release_view` does) — so an absent value reads as the
+    /// honest "not fetched", not a false empty string. A present JSON `null` (a
+    /// release genuinely without notes) likewise reads as `None`.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Web URL. `None` from `release_list`, which doesn't request the field (only
+    /// `release_view` does) — so an absent value reads as the honest "not fetched",
+    /// not a false empty string. A present JSON `null` likewise reads as `None`.
+    #[serde(default)]
+    pub url: Option<String>,
     /// Publication timestamp (ISO 8601); empty/null for a draft.
     #[serde(
         rename = "publishedAt",
@@ -583,7 +587,9 @@ mod tests {
         )
         .expect("release with null name/body/url/publishedAt");
         assert_eq!(release.name, "");
-        assert_eq!(release.body, "");
+        // `body`/`url` are `Option`: a present `null` reads as `None`, not "".
+        assert_eq!(release.body, None);
+        assert_eq!(release.url, None);
     }
 
     #[test]
@@ -687,7 +693,11 @@ mod tests {
             vcs_cli_support::json::from_json(BINARY, list).expect("parse list");
         assert!(releases[0].is_latest);
         assert_eq!(releases[0].tag_name, "vcs-git-v0.4.0");
-        assert_eq!(releases[0].body, "", "list doesn't fetch the body");
+        assert_eq!(
+            releases[0].body, None,
+            "list doesn't request the body → None"
+        );
+        assert_eq!(releases[0].url, None, "list doesn't request the url → None");
 
         let view = r#"{"tagName": "vcs-git-v0.4.0", "name": "vcs-git v0.4.0",
             "body": "Added\n- stuff", "url": "https://gh/releases/1",
@@ -695,8 +705,8 @@ mod tests {
             "isDraft": false, "isPrerelease": false}"#;
         let release: Release = vcs_cli_support::json::from_json(BINARY, view).expect("parse view");
         assert!(!release.is_latest, "view has no isLatest → default false");
-        assert_eq!(release.body, "Added\n- stuff");
-        assert_eq!(release.url, "https://gh/releases/1");
+        assert_eq!(release.body.as_deref(), Some("Added\n- stuff"));
+        assert_eq!(release.url.as_deref(), Some("https://gh/releases/1"));
     }
 
     #[test]

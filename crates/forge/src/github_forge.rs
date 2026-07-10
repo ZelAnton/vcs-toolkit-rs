@@ -210,9 +210,11 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         source_branch: pr.head_ref_name,
         target_branch: pr.base_ref_name,
         url: pr.url,
-        draft: pr.is_draft,
-        labels: pr.labels,
-        assignees: pr.assignees,
+        // gh always reports these when requested (`--json isDraft,labels,assignees`
+        // are in PR_FIELDS), so they are confirmed values, never unknown.
+        draft: Some(pr.is_draft),
+        labels: Some(pr.labels),
+        assignees: Some(pr.assignees),
     }
 }
 
@@ -231,8 +233,9 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
-        labels: i.labels,
-        assignees: i.assignees,
+        // gh always reports labels/assignees when requested — confirmed, not unknown.
+        labels: Some(i.labels),
+        assignees: Some(i.assignees),
     }
 }
 
@@ -250,12 +253,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag_name,
         title: r.name,
-        url: r.url,
+        // The raw `url`/`body` are `Option`: `None` from the lean `release_list`
+        // (RELEASE_LIST_FIELDS omits them), `Some` from `release_view`. Drop an
+        // empty string to `None` too, so an unexpected `""` never reads as a URL.
+        url: r.url.filter(|s| !s.is_empty()),
         // gh reports an empty `publishedAt` for a draft — surface that as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
-        body: Some(r.body).filter(|s| !s.is_empty()),
-        draft: r.is_draft,
-        prerelease: r.is_prerelease,
+        body: r.body.filter(|s| !s.is_empty()),
+        // gh always reports isDraft/isPrerelease (both in the list and view field
+        // sets), so these are confirmed values.
+        draft: Some(r.is_draft),
+        prerelease: Some(r.is_prerelease),
     }
 }
 
@@ -265,7 +273,8 @@ fn map_repo(r: RepoView) -> ForgeRepo {
         owner: r.owner,
         default_branch: r.default_branch,
         url: r.url,
-        private: r.is_private,
+        // gh's `repo view` always reports `isPrivate` — a confirmed value.
+        private: Some(r.is_private),
     }
 }
 
