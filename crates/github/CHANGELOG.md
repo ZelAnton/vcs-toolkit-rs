@@ -10,6 +10,22 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **GitHub Enterprise Server (GHES) credentials + host-scoped auth.** A new
+  `GitHubHost` type models the target host (SaaS `github.com` vs a GHES host),
+  built via `GitHubHost::github_com()`, `GitHubHost::new("ghe.example.com")`, or
+  `GitHubHost::from_remote_url(url)` (HTTPS/SSH/scp-like remotes; userinfo and port
+  dropped). `GitHub::with_host(host)` binds a client to it: a supplied credential
+  is then injected into the environment variable `gh` reads for **that** host —
+  `GH_TOKEN` for github.com, `GH_ENTERPRISE_TOKEN` for a GHES host — plus `GH_HOST`
+  is pinned, so an enterprise secret never lands in the github.com token env (nor
+  vice versa) and the secret stays out of `argv`. `GitHubApi::auth_status_for(&host)`
+  probes a single host (`gh auth status --hostname <host>`), so a broken or absent
+  session for a *different* host can't turn the check into a false negative for the
+  host you target; it is **defaulted** on the trait (external implementers keep
+  compiling) and mirrored on the `GitHubAt` bound view. An empty, malformed, or
+  undeterminable host is a diagnosable error (`GitHubHost::new`/`from_remote_url`
+  return `Err`), never a silent fall back to the github.com token. Without a host
+  binding the client is unchanged (github.com / `GH_TOKEN`).
 - `PullRequest`/`Issue` gained `labels: Vec<String>` and `assignees: Vec<String>`,
   parsed from `gh --json labels,assignees`'s nested `[{"name": …}]`/
   `[{"login": …}]` shapes and flattened to plain strings.

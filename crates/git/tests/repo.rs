@@ -2,7 +2,7 @@
 //! repository. Ignored by default (require the `git` binary); run with
 //! `cargo test -p vcs-git -- --ignored`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Scaffolding from vcs-testkit; most tests here drive `git.init()` themselves
 // (initialisation IS the subject), so they use `TempDir` + `configure_identity`
@@ -276,25 +276,83 @@ async fn bound_view_and_rev_parse_short() {
     );
 }
 
-// diff_text on an unborn repo (no commits) must not error on the unresolvable
-// HEAD — it diffs against the empty tree and shows the staged additions.
-#[tokio::test]
-#[ignore = "requires the git binary"]
-async fn diff_text_works_on_unborn_repo() {
-    let tmp = TempDir::new("unborn");
-    let dir = tmp.path();
+// Whether the installed git can create a SHA-256 repository. `--object-format=
+// sha256` is rejected by git built without the (historically experimental)
+// SHA-256 support, so the SHA-256 unborn-diff test skips rather than fails there.
+// A bare `std::process::Command` (not the panic-on-failure `vcs_testkit::git`) so
+// an unsupported git is a clean `false`, not a panic.
+fn git_supports_sha256() -> bool {
+    let probe = TempDir::new("sha256-probe");
+    std::process::Command::new("git")
+        .args(["init", "--object-format=sha256"])
+        .arg(probe.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// Shared body for the unborn working-tree diff/stat tests. `dir` must already be
+// an initialised, still-unborn repo of the object format under test. On an unborn
+// repo `HEAD` is unresolvable, so the working-tree diff/stat must fall back to the
+// repo's *format-correct* empty tree (`empty_tree_oid`, not the SHA-1 constant)
+// and report the staged addition instead of erroring. `expected_oid_len` pins the
+// hash width so a SHA-256 repo isn't silently handed a 40-hex SHA-1 id.
+async fn unborn_working_tree_diff_and_stat(dir: &Path, expected_oid_len: usize) {
     let git = Git::new();
-    git.init(dir).await.expect("init");
     configure(dir);
     std::fs::write(dir.join("f.txt"), "hello\n").expect("write");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
-
     assert!(git.is_unborn(dir).await.expect("is_unborn"));
+
+    // The empty-tree id tracks the repo's active object format.
+    let oid = git.empty_tree_oid(dir).await.expect("empty_tree_oid");
+    assert_eq!(
+        oid.len(),
+        expected_oid_len,
+        "empty-tree oid width must match the repo's object format, got {oid}"
+    );
+
+    // Working-tree diff shows the addition instead of erroring on the unborn HEAD.
     let diff = git
         .diff_text(dir, vcs_git::DiffSpec::WorkingTree)
         .await
         .expect("diff_text must not error on unborn repo");
     assert!(diff.contains("f.txt"), "expected the new file in: {diff}");
+
+    // Stat against the format-correct empty tree counts the added file.
+    let stat = git.diff_stat(dir, &rv(&oid)).await.expect("diff_stat");
+    assert_eq!(stat.files_changed, 1, "one added file expected: {stat:?}");
+    assert!(stat.insertions >= 1, "expected an insertion: {stat:?}");
+}
+
+// SHA-1 (git's default): the unborn working-tree diff/stat resolves the 40-hex
+// empty tree and reports the addition.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn diff_text_and_stat_work_on_unborn_sha1_repo() {
+    let tmp = TempDir::new("unborn-sha1");
+    let dir = tmp.path();
+    Git::new().init(dir).await.expect("init");
+    unborn_working_tree_diff_and_stat(dir, 40).await;
+}
+
+// SHA-256: the SHA-1 empty-tree id doesn't exist here, so the code must resolve
+// the 64-hex empty tree from git. Skips when the installed git lacks SHA-256
+// support (see `git_supports_sha256`).
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn diff_text_and_stat_work_on_unborn_sha256_repo() {
+    if !git_supports_sha256() {
+        eprintln!("skipping: installed git lacks --object-format=sha256 support");
+        return;
+    }
+    let tmp = TempDir::new("unborn-sha256");
+    let dir = tmp.path();
+    // `git.init()` only makes a SHA-1 repo; init the SHA-256 one via raw git.
+    vcs_testkit::git(dir, &["init", "--object-format=sha256"]);
+    unborn_working_tree_diff_and_stat(dir, 64).await;
 }
 
 // A real merge conflict must surface through `conflicted_files`, and a tree

@@ -28,6 +28,13 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ### Changed
 
+- **Breaking:** `blocking::workspace_name_for_path` now returns
+  `io::Result<Option<String>>` instead of `Option<String>`, so a `Drop`-guard caller
+  can tell a genuine "no such workspace" (`Ok(None)`) from a probe that could not
+  answer (`Err`: `jj` missing / failed to spawn, `workspace list` exited non-zero, or
+  a registered workspace did not resolve via `workspace root --name`). The old
+  `Option` folded every failure into `None`, silently skipping cleanup that a real
+  error should have surfaced.
 - **Breaking:** the raw escape hatches on the bound view (`JjAt::run`/`run_raw`/
   `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
   current directory. Previously they sat in the `bare` forwarder group, so

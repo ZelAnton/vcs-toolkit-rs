@@ -40,6 +40,22 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Fixed
 
+- fix: jj worktree cleanup no longer swallows partial-failure state. The rollback
+  after a failed `bookmark create` in `create_worktree` still spares a pre-existing
+  directory, but now **reports** a secondary cleanup failure (a directory it couldn't
+  remove, or a workspace it couldn't `forget`) instead of discarding it with
+  `let _ = …`; a clean rollback still surfaces the original bookmark-step cause
+  unchanged. `remove_worktree` and `cleanup_worktree_blocking` likewise surface a
+  `remove_dir_all` failure and name what is still registered so the cleanup is
+  diagnosable and safely repeatable (the blocking path no longer swallows the removal
+  error, and skips the `forget` on a failed removal to avoid orphaning the directory).
+  Behavioural change: when a jj worktree path matches none of the *resolvable*
+  workspaces but some registered workspace couldn't be resolved via `workspace root
+  --name`, the lookup now returns a distinct diagnosable error (not a clean
+  `WorktreeNotFound` — `is_resource_not_found` stays `false`) that names the
+  unresolved workspaces, since the path's absence can't be proven. Pairs with the
+  `vcs-jj` `blocking::workspace_name_for_path` signature change
+  (`io::Result<Option<String>>`).
 - fix: `Repo::try_merge` on the jj backend now rolls its trial merge back through
   the shared concurrency-safe protocol (`Jj::rollback_to`) instead of a bare
   `op_restore`, so the two rollback paths (`try_merge` and `Jj::transaction`) share

@@ -374,13 +374,27 @@ strategy stays in the consumer. `branch` must not already exist. **The jj path i
 two steps** (`workspace add`, then `bookmark create`) and is not atomic, but a
 failed bookmark step **rolls back**: the workspace directory is removed only when
 `workspace add` created it (a pre-existing directory the caller already had is
-left intact), the workspace is forgotten best-effort, and the original error is
-surfaced — so a failed call doesn't leak a half-made worktree.
+left intact), then the workspace is forgotten. The rollback no longer discards its
+own residue — if it can't remove that directory or can't `forget` the workspace,
+the call fails with a composite `Error::Io` that **names** what still needs
+cleaning up (and is safe to re-run) instead of hiding it. A **clean** rollback
+instead surfaces the original bookmark-step error unchanged (keeping its
+`Error::Vcs` classification) — so a failed call never silently leaks a half-made
+worktree.
 
 `remove_worktree` removes the worktree/workspace at `path`. For jj this resolves
 the workspace name by matching `path`, deletes the directory, then forgets it; a
-jj `path` that matches no attached workspace returns `Error::WorktreeNotFound`
-(contrast `cleanup_worktree_blocking` below, where no-match is a `Ok` no-op).
+directory that can't be deleted is **reported** — an `Error::Io` naming the jj
+workspace still registered, so the retry is obvious, with the `forget` deferred to
+that retry rather than orphaning the directory. Path resolution has two failure
+shapes: a `path` that matches none of the **resolvable** workspaces — every
+registered workspace resolved and none matched — returns `Error::WorktreeNotFound`
+(`is_resource_not_found() == true`); but when some registered workspace can **not**
+be resolved via `jj workspace root --name`, the path's absence can't be proven, so
+a **distinct** diagnosable `Error::Io` (naming the unresolved workspaces;
+`is_resource_not_found()` stays `false`) is returned instead of a misleading
+`WorktreeNotFound`. (Contrast `cleanup_worktree_blocking` below, where a genuine
+no-match is an `Ok` no-op.)
 `force` mirrors git's `worktree remove`: with `force = false` a worktree that
 still has **uncommitted changes** is refused rather than deleted (on jj the
 changes are snapshotted into the op log first, so a refusal keeps them
@@ -390,10 +404,15 @@ workspace is always refused — deleting its directory would destroy the repo.
 `cleanup_worktree_blocking` is the **synchronous** counterpart — for a context
 that cannot `.await`, chiefly a `Drop` guard. It force-removes the worktree at
 `path` (git: `worktree remove --force`; jj: resolve the workspace name by
-`path`, delete the directory, then `workspace forget`). It is best-effort and
-short-lived: it **shells out directly with no job-containment**, unlike the async
-methods. A jj `path` that matches no workspace is a no-op (`Ok`); like the async
-method it still **refuses the main workspace** (a repo-wipe is never intended).
+`path`, delete the directory, then `workspace forget`). It stays short-lived and
+**shells out directly with no job-containment**, unlike the async methods, but it
+no longer swallows failures. A jj `path` that genuinely matches no workspace is
+still an `Ok` no-op; a **probe** failure, though — the `workspace list`, or a
+registered workspace that won't resolve — is now surfaced as `Err` rather than
+folded into a silent no-op, and a `remove_dir_all` failure is likewise surfaced,
+with the `forget` **skipped** on a failed removal so a surviving directory isn't
+orphaned by a workspace record that outlived it. Like the async method it still
+**refuses the main workspace** (a repo-wipe is never intended).
 
 ```rust,no_run
 # use std::path::Path;

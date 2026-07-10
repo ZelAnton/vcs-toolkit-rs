@@ -97,6 +97,7 @@ hatches](#raw-escape-hatches)).
 ```rust,ignore
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
+async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool>;// `gh auth status --hostname <host>`
 async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;// `gh api <endpoint>` in `dir`
 async fn repo_view(&self, dir: &Path) -> Result<RepoView>;// `gh repo view --json …`
 ```
@@ -118,6 +119,55 @@ match gh.auth_status().await {
 }
 # Ok(()) }
 ```
+
+### Host selection — github.com vs GitHub Enterprise Server
+
+`gh` reads a **different** credential environment variable per host — `GH_TOKEN`
+for github.com, `GH_ENTERPRISE_TOKEN` for a GitHub Enterprise Server (GHES) host
+— and its `auth status` can be scoped to one host. `vcs-github` models the target
+host as a [`GitHubHost`] so a supplied credential lands in the variable `gh`
+*actually reads* for that host, and an auth probe checks exactly the host you care
+about.
+
+```rust,ignore
+# use vcs_github::{GitHub, GitHubApi, GitHubHost};
+# async fn demo() -> Result<(), processkit::Error> {
+// SaaS (the default): the token is injected as GH_TOKEN.
+let saas = GitHubHost::github_com();
+
+// A GHES host: derive it from the repo's remote (an unparseable/hostless remote
+// is an Err, never a silent github.com fallback), or name it directly.
+let ghes = GitHubHost::from_remote_url("https://ghe.example.com/acme/app.git")?;
+let ghes = GitHubHost::new("ghe.example.com")?; // equivalent, from a bare host
+
+// Bind the host + a token: for a GHES host the token goes to GH_ENTERPRISE_TOKEN
+// (never GH_TOKEN) and GH_HOST is set, so an enterprise secret can't leak into the
+// github.com env. One client per host keeps hosts isolated.
+let gh = GitHub::new().with_host(ghes.clone()).with_token("ghe-pat");
+
+// Probe auth for just that host — a broken session for another host can't turn
+// this into a false negative for the one you target.
+if !gh.auth_status_for(&ghes).await? {
+    eprintln!("not logged in to {}", ghes.as_str());
+}
+# let _ = saas; Ok(()) }
+```
+
+`with_host` selects the credential env var (`GH_TOKEN` for github.com,
+`GH_ENTERPRISE_TOKEN` for a GHES host) and pins `GH_HOST`; combine it with
+`with_token`/`with_env_token`/`with_credentials` in either order. `GH_HOST` only
+steers gh's host inference for commands with **no** repository context — a
+repo-scoped method still resolves its host from the working directory's remote —
+so use a host-bound client with repositories on that host. Without `with_host` the
+client keeps the previous behaviour: github.com semantics, credential as
+`GH_TOKEN`.
+
+`GitHubHost::new` / `from_remote_url` **reject** an empty, malformed, or
+undeterminable host with a diagnosable error rather than defaulting to github.com,
+so an ambiguous host never quietly authenticates against the wrong server with the
+github.com token. `auth_status_for` runs `gh auth status --hostname <host>` and,
+like `auth_status`, folds only the exit code into the bool (a spawn failure or
+timeout still errors).
 
 `api` returns the raw REST/GraphQL response body unparsed — your escape hatch
 to any endpoint the typed methods don't cover. The `endpoint` is guarded
