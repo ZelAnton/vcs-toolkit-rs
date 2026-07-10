@@ -205,7 +205,7 @@ async fn non_utf8_path_round_trips_status_to_commit() {
 
     // Feed the status path straight back into BOTH mutating APIs.
     let staged = entry.path.clone();
-    git.add(dir, &[staged.clone()])
+    git.add(dir, std::slice::from_ref(&staged))
         .await
         .expect("add must accept the non-UTF-8 path");
     git.commit_paths(dir, CommitPaths::new([staged.clone()], "add non-utf8 file"))
