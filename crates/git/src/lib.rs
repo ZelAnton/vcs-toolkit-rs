@@ -140,9 +140,9 @@ pub use vcs_diff::{
 // `vcs_git::is_merge_conflict`, … still resolve.
 use vcs_cli_support::git_credential_helper;
 pub use vcs_cli_support::{
-    Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, RetryPolicy,
-    Secret, StaticCredential, is_lock_contention, is_merge_conflict, is_nothing_to_commit,
-    is_transient_fetch_error, provider_fn,
+    Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, OutputBudget,
+    RetryPolicy, Secret, StaticCredential, is_lock_contention, is_merge_conflict,
+    is_nothing_to_commit, is_transient_fetch_error, provider_fn,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -1251,6 +1251,130 @@ impl<R: ProcessRunner> Git<R> {
     }
 }
 
+impl<R: ProcessRunner> Git<R> {
+    /// [`diff_text`](GitApi::diff_text) with an explicit per-call
+    /// [`OutputBudget`], instead of this client's
+    /// [`default_output_budget`](Git::default_output_budget). Use it to read a
+    /// legitimately large diff past a tighter client default
+    /// ([`OutputBudget::unlimited`], or a higher byte cap), or to tighten the cap
+    /// for one call. Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff.
+    pub async fn diff_text_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_budgeted(dir, spec, budget).await
+    }
+
+    /// [`diff`](GitApi::diff) with an explicit per-call [`OutputBudget`] — the
+    /// parsed-model counterpart of [`diff_text_within`](Git::diff_text_within).
+    pub async fn diff_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_budgeted(dir, spec, budget).await?;
+        Ok(parse_diff(&text))
+    }
+
+    /// Shared body of [`diff_text`](GitApi::diff_text) /
+    /// [`diff_text_within`](Git::diff_text_within): builds the `git diff` and runs
+    /// it under `budget` (a fail-loud byte ceiling; unbounded when the budget is
+    /// [`OutputBudget::unlimited`]).
+    async fn diff_text_budgeted(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // The target is a single positional arg: `HEAD` for the working tree, or
+        // the caller's revision/range. `-M` enables rename detection; `--no-color`
+        // / `--no-ext-diff` keep the output stable and machine-parseable.
+        let target = match spec {
+            DiffSpec::WorkingTree => {
+                // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
+                // diff against the empty tree so a pre-first-commit working tree
+                // still yields its additions instead of a hard failure. The empty
+                // tree's id depends on the repo's object format (the SHA-1
+                // `EMPTY_TREE_SHA1` doesn't exist in a SHA-256 repo), so resolve it
+                // from git rather than hard-coding — see `empty_tree_oid`.
+                if self.is_unborn(dir).await? {
+                    self.empty_tree_oid(dir).await?
+                } else {
+                    "HEAD".to_string()
+                }
+            }
+            DiffSpec::Rev(rev) => {
+                reject_flag_like("revision", &rev)?;
+                rev
+            }
+        };
+        // The explicit prefixes pin the `a/`…`b/` form the shared parser extracts
+        // paths from — a user's `diff.noprefix` / `diff.mnemonicPrefix` config
+        // would otherwise change the headers and make every file silently vanish
+        // from the parse. (Command-line prefixes override both config options.)
+        // `run_untrimmed_within`: trimming the diff would drop a trailing blank
+        // context line, desyncing the last hunk from its `@@` line count for a
+        // consumer that re-applies or re-parses it (H7); the budget bounds it.
+        // Trailing `--`: pin `target` as a revision, never a pathspec — without it
+        // a `Rev` that happens to name a tracked path would diff the working tree
+        // for that path instead of the intended commit (the C2/M13 collision
+        // class). `reject_flag_like` already blocks a leading `-`; `--` closes the
+        // path-collision half.
+        self.core
+            .run_untrimmed_within(
+                self.core.command_in(
+                    dir,
+                    [
+                        "diff",
+                        target.as_str(),
+                        "--no-color",
+                        "--no-ext-diff",
+                        "-M",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
+                        "--",
+                    ],
+                ),
+                budget,
+            )
+            .await
+    }
+
+    /// [`show_file`](GitApi::show_file) with an explicit per-call
+    /// [`OutputBudget`], instead of this client's
+    /// [`default_output_budget`](Git::default_output_budget). Reads a blob's bytes
+    /// under `budget`: past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] rather than
+    /// buffering an unbounded file.
+    pub async fn show_file_within(
+        &self,
+        dir: &Path,
+        rev: &RevSpec,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        let rev = rev.as_str();
+        // git rejects backslash separators in the `<rev>:<path>` spec ("exists on
+        // disk, but not in <rev>") — normalise for Windows callers. Only on Windows:
+        // on Unix a backslash is a legal filename byte, and rewriting it would make
+        // a literal `a\b.txt` unresolvable.
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
+        let spec = format!("{rev}:{path}");
+        // `run_untrimmed_within`: a blob's trailing newline(s) are part of its
+        // content — trimming them corrupts a read-modify-write round-trip (H7); the
+        // budget bounds it.
+        self.core
+            .run_untrimmed_within(self.core.command_in(dir, ["show", spec.as_str()]), budget)
+            .await
+    }
+}
+
 /// Set each secret environment variable on `cmd` (the values from
 /// [`Git::remote_credentials`]). A no-op when `envs` is empty.
 fn apply_secret_env(cmd: Command, envs: &[(String, Secret)]) -> Command {
@@ -1983,54 +2107,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String> {
-        // The target is a single positional arg: `HEAD` for the working tree, or
-        // the caller's revision/range. `-M` enables rename detection; `--no-color`
-        // / `--no-ext-diff` keep the output stable and machine-parseable.
-        let target = match spec {
-            DiffSpec::WorkingTree => {
-                // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
-                // diff against the empty tree so a pre-first-commit working tree
-                // still yields its additions instead of a hard failure. The empty
-                // tree's id depends on the repo's object format (the SHA-1
-                // `EMPTY_TREE_SHA1` doesn't exist in a SHA-256 repo), so resolve it
-                // from git rather than hard-coding — see `empty_tree_oid`.
-                if self.is_unborn(dir).await? {
-                    self.empty_tree_oid(dir).await?
-                } else {
-                    "HEAD".to_string()
-                }
-            }
-            DiffSpec::Rev(rev) => {
-                reject_flag_like("revision", &rev)?;
-                rev
-            }
-        };
-        // The explicit prefixes pin the `a/`…`b/` form the shared parser extracts
-        // paths from — a user's `diff.noprefix` / `diff.mnemonicPrefix` config
-        // would otherwise change the headers and make every file silently vanish
-        // from the parse. (Command-line prefixes override both config options.)
-        // `run_untrimmed`: trimming the diff would drop a trailing blank context
-        // line, desyncing the last hunk from its `@@` line count for a consumer
-        // that re-applies or re-parses it (H7).
-        // Trailing `--`: pin `target` as a revision, never a pathspec — without it
-        // a `Rev` that happens to name a tracked path would diff the working tree
-        // for that path instead of the intended commit (the C2/M13 collision
-        // class). `reject_flag_like` already blocks a leading `-`; `--` closes the
-        // path-collision half.
-        self.core
-            .run_untrimmed(self.core.command_in(
-                dir,
-                [
-                    "diff",
-                    target.as_str(),
-                    "--no-color",
-                    "--no-ext-diff",
-                    "-M",
-                    "--src-prefix=a/",
-                    "--dst-prefix=b/",
-                    "--",
-                ],
-            ))
+        self.diff_text_budgeted(dir, spec, self.core.output_budget())
             .await
     }
 
@@ -2113,7 +2190,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet"].map(String::from));
-        let cmd = apply_secret_env(
+        // `budget_diagnostics`: bound the retained failure/progress output (a
+        // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
+        // still classifies the tail-preserved message). Unbounded by default.
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 // On a per-client timeout, terminate gracefully (then hard-kill
@@ -2121,7 +2201,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
@@ -2135,13 +2215,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", remote].map(String::from));
-        let cmd = apply_secret_env(
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
@@ -2153,13 +2233,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", "origin", refspec.as_str()].map(String::from));
-        let cmd = apply_secret_env(
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
             c_locale(self.core.command_in(dir, &args))
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .timeout_grace(FETCH_TIMEOUT_GRACE)
                 .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
             &envs,
-        );
+        ));
         self.core.run_unit(cmd).await
     }
 
@@ -2410,7 +2490,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         if spec.bare {
             command = command.arg("--bare");
         }
-        let command = apply_secret_env(
+        // `budget_diagnostics`: bound the retained clone progress/failure output
+        // (a drop-oldest tail — never `OutputTooLarge`, so a real failure stays a
+        // classifiable `Error::Exit`). Unbounded by default.
+        let command = self.core.budget_diagnostics(apply_secret_env(
             command
                 .arg(url)
                 .arg(dest)
@@ -2419,7 +2502,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 // a grace window). No-op without a deadline (matches `fetch`).
                 .timeout_grace(FETCH_TIMEOUT_GRACE),
             &envs,
-        );
+        ));
 
         // R7: git populates `dest` incrementally, so a failed clone (timeout, network,
         // auth) can leave a **partial, non-empty** `dest` that blocks a retry with
@@ -2476,18 +2559,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String> {
-        let rev = rev.as_str();
-        // git rejects backslash separators in the `<rev>:<path>` spec ("exists
-        // on disk, but not in <rev>") — normalise for Windows callers. Only on
-        // Windows: on Unix a backslash is a legal filename byte, and rewriting
-        // it would make a literal `a\b.txt` unresolvable.
-        #[cfg(windows)]
-        let path = path.replace('\\', "/");
-        let spec = format!("{rev}:{path}");
-        // `run_untrimmed`: a blob's trailing newline(s) are part of its content —
-        // trimming them corrupts a read-modify-write round-trip (H7).
-        self.core
-            .run_untrimmed(self.core.command_in(dir, ["show", spec.as_str()]))
+        self.show_file_within(dir, rev, path, self.core.output_budget())
             .await
     }
 
@@ -5865,6 +5937,116 @@ mod tests {
             .await
             .expect("show_file");
         assert_eq!(rec.only_call().args_str(), ["show", "HEAD:sub\\dir\\f.txt"]);
+    }
+
+    // T-049: a content read (`diff_text`) whose output exceeds the client's default
+    // OutputBudget is refused with a structured `OutputTooLarge` carrying the actual
+    // (`total_bytes`) and allowed (`max_bytes`) sizes — never a silently truncated
+    // diff handed back as if complete. The huge output is drained but NOT retained
+    // (the error carries only counts, not the multi-KiB blob): the bounded-memory
+    // contract.
+    #[tokio::test]
+    async fn diff_text_over_budget_errors_output_too_large() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match git
+            .diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+            .await
+        {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "git");
+                assert_eq!(max_bytes, Some(64 * 1024), "the allowed ceiling");
+                assert!(
+                    total_bytes > 64 * 1024,
+                    "the actual size ({total_bytes}) exceeds the allowed cap"
+                );
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // Below the budget the full diff comes back verbatim — the ceiling only fires on
+    // an over-cap read, so ordinary diffs are unaffected.
+    #[tokio::test]
+    async fn diff_text_under_budget_returns_full_output() {
+        let diff = "diff --git a/f b/f\n@@ -1,2 +1,2 @@\n-x\n+y\n \n";
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(diff)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert_eq!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await
+                .expect("under-budget diff_text"),
+            diff
+        );
+    }
+
+    // The per-call override reads a legitimately large diff past a tight client
+    // default: `diff_text_within(..., unlimited())` returns the full output the
+    // default budget would have refused.
+    #[tokio::test]
+    async fn diff_text_within_override_reads_past_the_default() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        // The default budget would refuse it…
+        assert!(matches!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        // …but an explicit unlimited override reads it in full.
+        let got = git
+            .diff_text_within(
+                Path::new("/r"),
+                DiffSpec::Rev("HEAD".into()),
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large diff");
+        assert_eq!(got, big);
+    }
+
+    // A blob read (`show_file`) honours the same budget and its per-call override.
+    #[tokio::test]
+    async fn show_file_over_budget_errors_and_override_reads() {
+        let big = "x".repeat(200_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "show"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            git.show_file(Path::new("/r"), &rv("HEAD"), "big.bin").await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let got = git
+            .show_file_within(
+                Path::new("/r"),
+                &rv("HEAD"),
+                "big.bin",
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large blob");
+        assert_eq!(got, big);
+    }
+
+    // A client with no budget set keeps the pre-budget behaviour: even a huge diff
+    // is returned in full (the default is unlimited, never `OutputTooLarge`).
+    #[tokio::test]
+    async fn default_client_has_no_budget() {
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)));
+        assert_eq!(
+            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                .await
+                .expect("unbudgeted client returns the full diff"),
+            big
+        );
     }
 
     // config --get: exit 0 → Some(value), exit 1 → None (unset), other → error.

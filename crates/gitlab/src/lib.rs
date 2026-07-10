@@ -117,7 +117,7 @@ use std::sync::Arc;
 // token provider.
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
-    Secret, StaticCredential, provider_fn,
+    OutputBudget, Secret, StaticCredential, provider_fn,
 };
 // Re-export the processkit types in this crate's public API, so consumers needn't
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
@@ -851,19 +851,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
-        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
-        // last line, a missing trailing newline) — trimming it before parsing
-        // could desync the parser from `git`'s own byte-exact output. `--color
-        // never` keeps the output free of ANSI even if stdout were ever a tty.
-        let id = number.to_string();
-        let text = self
-            .core
-            .run_untrimmed(
-                self.core
-                    .command_in(dir, ["mr", "diff", id.as_str(), "--color", "never"]),
-            )
-            .await?;
-        Ok(vcs_diff::parse_diff(&text))
+        self.mr_diff_within(dir, number, self.core.output_budget())
+            .await
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
@@ -940,6 +929,34 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
 }
 
 impl<R: ProcessRunner> GitLab<R> {
+    /// [`mr_diff`](GitLabApi::mr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](GitLab::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff — the override for a
+    /// legitimately huge MR.
+    pub async fn mr_diff_within(
+        &self,
+        dir: &Path,
+        number: u64,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed_within`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing could
+        // desync the parser from `git`'s own byte-exact output. `--color never` keeps
+        // the output free of ANSI even if stdout were ever a tty. The budget bounds it.
+        let id = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed_within(
+                self.core
+                    .command_in(dir, ["mr", "diff", id.as_str(), "--color", "never"]),
+                budget,
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     /// Run `glab <args>` over string slices — `glab.run_args(&["mr", "list"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
     /// trait), so it can take `&[&str]`; forwards to the same path as
@@ -1618,6 +1635,37 @@ mod tests {
             rec.only_call().args_str(),
             ["mr", "diff", "4", "--color", "never"]
         );
+    }
+
+    // T-049: `mr_diff` over the client's default OutputBudget is refused with
+    // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff;
+    // the per-call override reads a legitimately large MR past a tight default.
+    #[tokio::test]
+    async fn mr_diff_over_budget_errors_and_override_reads() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let glab =
+            GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match glab.mr_diff(Path::new("/r"), 4).await {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "glab");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+        // The unlimited override reads the same large MR in full.
+        let files = glab
+            .mr_diff_within(Path::new("/r"), 4, OutputBudget::unlimited())
+            .await
+            .expect("override reads the large MR diff");
+        assert_eq!(files[0].path, "m");
     }
 
     // issue_list builds the `--per-page 100 --output json` argv (per-page max

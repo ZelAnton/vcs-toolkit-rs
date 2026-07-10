@@ -75,8 +75,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use processkit::{
-    CancellationToken, CliClient, Command, Error, IntoCommand, JobRunner, ProcessResult,
-    ProcessRunner, Result,
+    CancellationToken, CliClient, Command, Error, IntoCommand, JobRunner, OutputBufferPolicy,
+    OverflowMode, ProcessResult, ProcessRunner, Result,
 };
 
 pub mod credentials;
@@ -109,6 +109,146 @@ pub mod json {
     /// [`Error::Parse`] tagged with `program` (the CLI's binary name).
     pub fn from_json<T: DeserializeOwned>(program: &str, json: &str) -> Result<T> {
         serde_json::from_str(json).map_err(|e| Error::parse(program, e.to_string()))
+    }
+}
+
+/// A configurable ceiling on how much output a potentially large **content**
+/// operation may buffer before it is refused — a diff (`diff_text`/`diff`), a
+/// file's bytes at a revision (`show_file`/`file_show`), a forge PR/MR diff
+/// (`pr_diff`), and the diagnostic (error/progress) output of `clone`/`fetch`.
+///
+/// This is the single, shared knob the CLI wrappers (`vcs-git`, `vcs-jj`, the
+/// forge crates) and the facades (`vcs-core`, `vcs-forge`, the MCP server) all
+/// use, so the limit is configured and reasoned about one way across the
+/// workspace instead of one ad-hoc cap per client. Set a per-client default with
+/// each client's `default_output_budget(...)` builder (inherited by any facade
+/// built over that client); raise or lower it for a single call with the
+/// `*_within` method variants (`diff_text_within`, `show_file_within`,
+/// `pr_diff_within`, …). There is **no un-overridable global constant** — the
+/// default is [`unlimited`](OutputBudget::unlimited) (retain everything, the
+/// pre-budget behaviour), and every cap is a caller choice.
+///
+/// It projects onto two [`processkit`] [`OutputBufferPolicy`] shapes, so one
+/// budget drives both kinds of bounded output:
+///
+/// - [`content_policy`](OutputBudget::content_policy) — a **fail-loud** ceiling
+///   ([`OverflowMode::Error`]): once the cap is reached the run errors with
+///   [`Error::OutputTooLarge`], carrying the actual (`total_lines`/`total_bytes`)
+///   and allowed (`max_lines`/`max_bytes`) sizes. The pipe is still drained (the
+///   child never blocks) and output past the ceiling is **counted but never
+///   retained**, so memory stays bounded and a truncated result is never handed
+///   back as if complete. This is what the content verbs use.
+/// - [`diagnostic_policy`](OutputBudget::diagnostic_policy) — a **drop-oldest**
+///   tail bound: caps the retained error/progress output of a discard verb
+///   (`clone`/`fetch`) *without* converting a real failure into
+///   `OutputTooLarge`, so transient-failure classification still reads the
+///   (tail-preserved) message. This is the same shape the `gh run watch` cap
+///   uses.
+///
+/// The byte ceiling ([`bytes`](OutputBudget::bytes)) is the load-bearing memory
+/// bound: the content verbs capture raw stdout (no line splitting), where the
+/// byte cap — not the line cap — is what [`processkit`] enforces. A line ceiling
+/// ([`with_max_lines`](OutputBudget::with_max_lines)) is an optional extra that
+/// also bounds line-pumped output (a diagnostic stream, a verb's stderr).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputBudget {
+    max_bytes: Option<usize>,
+    max_lines: Option<usize>,
+}
+
+impl OutputBudget {
+    /// No ceiling — retain everything (the default, and the pre-budget
+    /// behaviour). [`content_policy`](Self::content_policy) /
+    /// [`diagnostic_policy`](Self::diagnostic_policy) return `None`, leaving the
+    /// command's own (unbounded) buffer untouched.
+    pub const fn unlimited() -> Self {
+        Self {
+            max_bytes: None,
+            max_lines: None,
+        }
+    }
+
+    /// A byte ceiling of `max_bytes` (the retained-text size, the unit
+    /// [`OutputBufferPolicy::max_bytes`] caps). The primary, memory-bounding
+    /// knob: it applies to the raw-stdout content path where a line cap would
+    /// not. Add a line ceiling with [`with_max_lines`](Self::with_max_lines).
+    pub const fn bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes: Some(max_bytes),
+            max_lines: None,
+        }
+    }
+
+    /// Add a line ceiling of `max_lines` (an extra bound on line-pumped output —
+    /// diagnostics, a verb's stderr). Composes with any [`bytes`](Self::bytes)
+    /// cap; whichever ceiling is reached first fires.
+    #[must_use]
+    pub const fn with_max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = Some(max_lines);
+        self
+    }
+
+    /// Whether no ceiling is set (retain everything).
+    pub const fn is_unlimited(&self) -> bool {
+        self.max_bytes.is_none() && self.max_lines.is_none()
+    }
+
+    /// The configured byte ceiling, if any.
+    pub const fn max_bytes(&self) -> Option<usize> {
+        self.max_bytes
+    }
+
+    /// The configured line ceiling, if any.
+    pub const fn max_lines(&self) -> Option<usize> {
+        self.max_lines
+    }
+
+    /// The **fail-loud** [`OutputBufferPolicy`] for a content verb — errors with
+    /// [`Error::OutputTooLarge`] once the ceiling is reached, never retaining or
+    /// returning a truncated tail. `None` when [`unlimited`](Self::unlimited)
+    /// (leave the command's default buffer).
+    pub fn content_policy(&self) -> Option<OutputBufferPolicy> {
+        if self.is_unlimited() {
+            return None;
+        }
+        // A byte cap (Some) keeps the fail-loud ceiling honest even with no line
+        // cap: `OverflowMode::Error` is "zero-tolerance" only when *neither* cap
+        // is set, so setting `max_bytes` gives it a real ceiling to fire on.
+        let mut policy = match self.max_lines {
+            Some(lines) => OutputBufferPolicy::fail_loud(lines),
+            None => OutputBufferPolicy::unbounded().with_overflow(OverflowMode::Error),
+        };
+        if let Some(bytes) = self.max_bytes {
+            policy = policy.with_max_bytes(bytes);
+        }
+        Some(policy)
+    }
+
+    /// The **drop-oldest** [`OutputBufferPolicy`] for a discard verb's diagnostic
+    /// output (`clone`/`fetch`): keeps the last `max_bytes`/`max_lines` (the tail,
+    /// where a CLI's fatal line sits) and flags truncation, but does **not** raise
+    /// [`Error::OutputTooLarge`] — so a genuine failure still surfaces as
+    /// `Error::Exit` and stays classifiable ([`is_transient_fetch_error`],
+    /// [`is_lock_contention`]). `None` when [`unlimited`](Self::unlimited).
+    pub fn diagnostic_policy(&self) -> Option<OutputBufferPolicy> {
+        if self.is_unlimited() {
+            return None;
+        }
+        let mut policy = match self.max_lines {
+            Some(lines) => OutputBufferPolicy::bounded(lines),
+            None => OutputBufferPolicy::unbounded(),
+        };
+        if let Some(bytes) = self.max_bytes {
+            policy = policy.with_max_bytes(bytes);
+        }
+        Some(policy)
+    }
+}
+
+impl Default for OutputBudget {
+    /// [`unlimited`](OutputBudget::unlimited) — the budget is opt-in.
+    fn default() -> Self {
+        Self::unlimited()
     }
 }
 
@@ -316,6 +456,18 @@ macro_rules! managed_client {
             /// Cancel every command this client builds when `token` fires.
             pub fn default_cancel_on(mut self, token: ::processkit::CancellationToken) -> Self {
                 self.core = self.core.default_cancel_on(token);
+                self
+            }
+
+            /// Apply a default [`OutputBudget`](vcs_cli_support::OutputBudget) to the
+            /// potentially large **content** operations this client builds — the
+            /// diff/show/pr-diff verbs and the `clone`/`fetch` diagnostic capture.
+            /// Inherited by any facade built over this client. The default is
+            /// [`OutputBudget::unlimited`](vcs_cli_support::OutputBudget::unlimited)
+            /// (retain everything); a single call can still override it via the
+            /// `*_within` method variants.
+            pub fn default_output_budget(mut self, budget: $crate::OutputBudget) -> Self {
+                self.core = self.core.default_output_budget(budget);
                 self
             }
         }
@@ -733,6 +885,14 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// can cut a lock-contention backoff short the instant cancellation fires,
     /// instead of sleeping out the full delay before the next attempt.
     cancel: Option<CancellationToken>,
+    /// The default output budget applied to the potentially large **content**
+    /// verbs this client builds (via [`run_untrimmed`](Self::run_untrimmed)) and,
+    /// on request, to a discard verb's diagnostic capture
+    /// ([`budget_diagnostics`](Self::budget_diagnostics)). Defaults to
+    /// [`OutputBudget::unlimited`] — no ceiling — so a client that never sets one
+    /// behaves exactly as before. A single call overrides it via
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    output_budget: OutputBudget,
 }
 
 impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
@@ -750,6 +910,8 @@ impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
             // The token itself is not meaningfully renderable; whether one is set
             // matches `inner`'s own `has_default_cancel`, kept explicit here too.
             .field("has_cancel", &self.cancel.is_some())
+            // A small plain cap (no secret) — safe to render.
+            .field("output_budget", &self.output_budget)
             .finish()
     }
 }
@@ -765,6 +927,7 @@ impl ManagedClient<JobRunner> {
             token_env: None,
             expected_host: None,
             cancel: None,
+            output_budget: OutputBudget::unlimited(),
         }
     }
 }
@@ -779,6 +942,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
             token_env: None,
             expected_host: None,
             cancel: None,
+            output_budget: OutputBudget::unlimited(),
         }
     }
 
@@ -937,6 +1101,34 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self
     }
 
+    /// Set the default [`OutputBudget`] applied to the content verbs this client
+    /// builds through [`run_untrimmed`](Self::run_untrimmed) — off by default
+    /// ([`OutputBudget::unlimited`]). A single call can override it via
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    pub fn default_output_budget(mut self, budget: OutputBudget) -> Self {
+        self.output_budget = budget;
+        self
+    }
+
+    /// The active default output budget.
+    pub fn output_budget(&self) -> OutputBudget {
+        self.output_budget
+    }
+
+    /// Apply this client's default budget to `cmd` as a **diagnostic** (drop-oldest
+    /// tail) bound, for a discard verb that only surfaces its output on failure
+    /// (`clone`/`fetch`). Caps the retained error/progress buffer without turning a
+    /// real failure into [`Error::OutputTooLarge`] — the tail (where a CLI's fatal
+    /// line sits) is preserved, so [`is_transient_fetch_error`] /
+    /// [`is_lock_contention`] still classify it. A no-op when the budget is
+    /// [`unlimited`](OutputBudget::unlimited).
+    pub fn budget_diagnostics(&self, cmd: Command) -> Command {
+        match self.output_budget.diagnostic_policy() {
+            Some(policy) => cmd.output_buffer(policy),
+            None => cmd,
+        }
+    }
+
     /// Build a [`Command`] for this client's program (passthrough).
     pub fn command<I, S>(&self, args: I) -> Command
     where
@@ -1019,9 +1211,40 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// `\n`. The raw bytes are then decoded losslessly with
     /// [`String::from_utf8_lossy`], the same raw-stdout-to-`String` convention used
     /// elsewhere in this workspace (e.g. `vcs-jj`).
+    ///
+    /// **Output budget:** this client's default [`OutputBudget`]
+    /// ([`default_output_budget`](Self::default_output_budget)) is applied as a
+    /// fail-loud byte ceiling — a content read past the cap errors with
+    /// [`Error::OutputTooLarge`] (carrying the actual and allowed sizes) instead of
+    /// buffering an unbounded blob, and a truncated read is never returned as if
+    /// complete. Unlimited by default (unchanged behaviour). Override the ceiling
+    /// for one call with [`run_untrimmed_within`](Self::run_untrimmed_within).
     pub async fn run_untrimmed(&self, call: impl IntoCommand<R>) -> Result<String> {
+        self.run_untrimmed_within(call, self.output_budget).await
+    }
+
+    /// Like [`run_untrimmed`](Self::run_untrimmed), but with an explicit per-call
+    /// [`OutputBudget`] instead of this client's default — the per-call override
+    /// used by the `*_within` content methods (`diff_text_within`,
+    /// `show_file_within`, `pr_diff_within`, …) to read a legitimately large
+    /// file/diff (a higher ceiling, or [`OutputBudget::unlimited`]) or to tighten
+    /// the cap for one call.
+    pub async fn run_untrimmed_within(
+        &self,
+        call: impl IntoCommand<R>,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        let cmd = self.prepare(call).await?;
+        // A fail-loud byte ceiling: `output_bytes` raises `Error::OutputTooLarge`
+        // the moment the raw stdout passes the cap (drained but not retained), so
+        // this never returns a truncated blob as if it were complete.
+        let cmd = match budget.content_policy() {
+            Some(policy) => cmd.output_buffer(policy),
+            None => cmd,
+        };
         let bytes = self
-            .output_bytes(call)
+            .inner
+            .output_bytes(cmd)
             .await?
             .ensure_success()?
             .into_stdout();
@@ -1716,5 +1939,77 @@ mod tests {
                 "provider error must propagate (fail-closed), host={host:?}"
             );
         }
+    }
+
+    // The default budget is unlimited — no ceiling, so a client that never sets
+    // one keeps its pre-budget (unbounded) capture behaviour, and both policy
+    // projections are `None` (leave the command's own buffer untouched).
+    #[test]
+    fn output_budget_default_is_unlimited() {
+        let b = OutputBudget::default();
+        assert!(b.is_unlimited());
+        assert_eq!(b, OutputBudget::unlimited());
+        assert_eq!(b.max_bytes(), None);
+        assert_eq!(b.max_lines(), None);
+        assert!(b.content_policy().is_none());
+        assert!(b.diagnostic_policy().is_none());
+    }
+
+    // A byte cap projects onto a FAIL-LOUD content policy (errors past the cap,
+    // never truncates) and a DROP-OLDEST diagnostic policy (bounded tail, never
+    // errors) — the two shapes one budget drives.
+    #[test]
+    fn output_budget_bytes_projects_to_both_policies() {
+        let b = OutputBudget::bytes(4096);
+        assert!(!b.is_unlimited());
+        assert_eq!(b.max_bytes(), Some(4096));
+
+        let content = b
+            .content_policy()
+            .expect("a byte budget yields a content policy");
+        assert_eq!(
+            content.overflow,
+            OverflowMode::Error,
+            "content is fail-loud"
+        );
+        assert_eq!(content.max_bytes, Some(4096));
+        // No line cap set, so the fail-loud ceiling rests entirely on the byte cap
+        // (which is exactly what the raw-stdout content path enforces).
+        assert_eq!(content.max_lines, None);
+
+        let diag = b
+            .diagnostic_policy()
+            .expect("a byte budget yields a diagnostic policy");
+        assert_eq!(
+            diag.overflow,
+            OverflowMode::DropOldest,
+            "diagnostics keep the tail, never OutputTooLarge"
+        );
+        assert_eq!(diag.max_bytes, Some(4096));
+    }
+
+    // A line ceiling composes with the byte cap on both projections.
+    #[test]
+    fn output_budget_with_max_lines_composes() {
+        let b = OutputBudget::bytes(4096).with_max_lines(200);
+        assert_eq!(b.max_lines(), Some(200));
+        let content = b.content_policy().unwrap();
+        assert_eq!(content.max_lines, Some(200));
+        assert_eq!(content.max_bytes, Some(4096));
+        assert_eq!(content.overflow, OverflowMode::Error);
+        let diag = b.diagnostic_policy().unwrap();
+        assert_eq!(diag.max_lines, Some(200));
+        assert_eq!(diag.max_bytes, Some(4096));
+        assert_eq!(diag.overflow, OverflowMode::DropOldest);
+    }
+
+    // The client-level default budget round-trips through the builder/getter, and
+    // `budget_diagnostics` applies (or, when unlimited, leaves) a command's buffer.
+    #[test]
+    fn managed_client_default_output_budget_round_trips() {
+        let client = ManagedClient::new("git");
+        assert!(client.output_budget().is_unlimited());
+        let client = client.default_output_budget(OutputBudget::bytes(1 << 20));
+        assert_eq!(client.output_budget(), OutputBudget::bytes(1 << 20));
     }
 }

@@ -168,6 +168,16 @@ pub(crate) async fn pr_diff<R: ProcessRunner>(
     Ok(gh.pr_diff(dir, number).await?)
 }
 
+// The per-call output-budget override — forwards to the client's `pr_diff_within`.
+pub(crate) async fn pr_diff_within<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    budget: vcs_cli_support::OutputBudget,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(gh.pr_diff_within(dir, number, budget).await?)
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,

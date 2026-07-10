@@ -190,6 +190,12 @@ pub use dto::{
     WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
+// The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
+// per-client default ([`Repo::from_git`]/[`from_jj`] over a client built with
+// `default_output_budget`) or a per-call override
+// ([`Repo::show_file_within`](Repo::show_file_within)) for the content read this
+// facade exposes. `vcs-git` and `vcs-jj` re-export the same type.
+pub use vcs_git::OutputBudget;
 
 // Re-export the underlying typed clients so a consumer depending only on
 // `vcs-core` can still reach raw, tool-specific operations — and their types
@@ -720,6 +726,28 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// [`show_file`](Repo::show_file) with an explicit per-call [`OutputBudget`],
+    /// instead of the budget the backend client was built with
+    /// ([`default_output_budget`](vcs_git::Git::default_output_budget), inherited
+    /// through [`from_git`](Repo::from_git)/[`from_jj`](Repo::from_jj)). Reads the
+    /// blob under `budget`: past the ceiling it errors with an
+    /// [`OutputTooLarge`](processkit::Error::OutputTooLarge)-carrying
+    /// [`Error::Vcs`] (actual and allowed sizes) rather than buffering an unbounded
+    /// file — use it to read a legitimately large file
+    /// ([`OutputBudget::unlimited`], or a higher cap) or to tighten the cap for one
+    /// call. A truncated blob is never returned as if complete.
+    pub async fn show_file_within(
+        &self,
+        rev: &str,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::show_file_within(g, &self.cwd, rev, path, budget).await,
+            Backend::Jj(j) => jj_backend::show_file_within(j, &self.cwd, rev, path, budget).await,
+        }
+    }
+
     /// A batched [`RepoSnapshot`] of the common repo state — branch, upstream,
     /// ahead/behind, dirtiness, change count, and operation state — in a **small
     /// fixed** number of spawns instead of a call per field (git: `status
@@ -1185,6 +1213,7 @@ facade_trait! {
         fn diff_stat() -> Result<DiffStat>;
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn show_file_within(rev: &str, path: &str, budget: OutputBudget) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
         fn snapshot_readonly() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[String], message: &str) -> Result<()>;

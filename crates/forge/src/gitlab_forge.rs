@@ -174,6 +174,16 @@ pub(crate) async fn pr_diff<R: ProcessRunner>(
     Ok(glab.mr_diff(dir, number).await?)
 }
 
+// The per-call output-budget override — forwards to the client's `mr_diff_within`.
+pub(crate) async fn pr_diff_within<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    budget: vcs_cli_support::OutputBudget,
+) -> Result<Vec<vcs_diff::FileDiff>> {
+    Ok(glab.mr_diff_within(dir, number, budget).await?)
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,

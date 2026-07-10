@@ -9,7 +9,10 @@
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
-use vcs_jj::{BookmarkName, ChangedPath, Jj, JjApi, JjFileset, RevsetExpr, Rollback, WorkspaceAdd};
+use vcs_jj::{
+    BookmarkName, ChangedPath, Jj, JjApi, JjFileset, OutputBudget, RevsetExpr, Rollback,
+    WorkspaceAdd,
+};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
@@ -201,6 +204,18 @@ pub(crate) async fn show_file<R: ProcessRunner>(
     path: &str,
 ) -> Result<String> {
     Ok(jj.file_show(dir, &rev(revset)?, path).await?)
+}
+
+pub(crate) async fn show_file_within<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    revset: &str,
+    path: &str,
+    budget: OutputBudget,
+) -> Result<String> {
+    Ok(jj
+        .file_show_within(dir, &rev(revset)?, path, budget)
+        .await?)
 }
 
 /// One `jj log -r @` template carrying the working-copy-only fields the
