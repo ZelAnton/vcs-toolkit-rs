@@ -646,7 +646,20 @@ pub trait JjApi: Send + Sync {
     async fn capabilities(&self) -> Result<JjCapabilities>;
     /// Parsed working-copy changes — the files changed in `@`
     /// (`jj diff -r @ --summary`), mirroring `vcs_git` `status`.
+    ///
+    /// Like every ordinary jj command, this **snapshots the working copy first**
+    /// (recording a new operation, possibly moving `@`); for a read-only probe
+    /// that must not perturb the repo, use
+    /// [`status_ignoring_working_copy`](JjApi::status_ignoring_working_copy).
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
+    /// [`status`](JjApi::status) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so it reports the working-copy changes of the
+    /// **last recorded operation** without snapshotting — no new operation is
+    /// recorded and `@` never moves. A bare filesystem edit that jj has not yet
+    /// snapshotted is therefore **not** reflected — that is the read-only
+    /// trade-off. Built for an observer (a repo watcher / prompt) that must not
+    /// mutate the state it reads.
+    async fn status_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<ChangedPath>>;
     /// Raw `jj status` text (human-readable) — the unparsed counterpart of
     /// [`status`](JjApi::status), mirroring `vcs_git` `status_text`.
     async fn status_text(&self, dir: &Path) -> Result<String>;
@@ -678,14 +691,29 @@ pub trait JjApi: Send + Sync {
     async fn new_change(&self, dir: &Path, message: &str) -> Result<()>;
     /// Start a new undescribed change on top of `parent` (`jj new <parent>`).
     async fn new_child(&self, dir: &Path, parent: &RevsetExpr) -> Result<()>;
-    /// Local bookmarks (`jj bookmark list`).
+    /// Local bookmarks (`jj bookmark list`). Snapshots the working copy first
+    /// (records an operation); for a read-only listing use
+    /// [`bookmarks_ignoring_working_copy`](JjApi::bookmarks_ignoring_working_copy).
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
+    /// [`bookmarks`](JjApi::bookmarks) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so listing the local bookmarks records no
+    /// operation and never moves `@` (the bookmark set is independent of the
+    /// working-copy snapshot, so the result is otherwise identical).
+    async fn bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Local *and* remote-tracking bookmarks (`jj bookmark list -a`).
     async fn bookmarks_all(&self, dir: &Path) -> Result<Vec<BookmarkRef>>;
     /// Local bookmarks on the nearest commits reachable from `@`
     /// (`log -r 'heads(::@ & bookmarks())'`) — the candidate targets a commit
     /// "belongs to". A commit carrying several bookmarks yields one entry each.
+    /// Snapshots the working copy first (records an operation); for the read-only
+    /// form use
+    /// [`reachable_bookmarks_ignoring_working_copy`](JjApi::reachable_bookmarks_ignoring_working_copy).
     async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>>;
+    /// [`reachable_bookmarks`](JjApi::reachable_bookmarks) as a **read-only**
+    /// query: adds `--ignore-working-copy`, so `@` resolves to the last recorded
+    /// operation's working-copy commit and no new operation is recorded.
+    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path)
+    -> Result<Vec<Bookmark>>;
     /// Track a remote bookmark (`jj bookmark track <name>@<remote>`).
     async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
     /// Point a bookmark at `revision` (`jj bookmark set <name> -r <revision>`).
@@ -765,8 +793,23 @@ pub trait JjApi: Send + Sync {
     /// Empty when there are none.
     async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<String>>;
     /// Run an arbitrary templated `jj log` query and return raw stdout
-    /// (`log -r <revset> --no-graph [--limit n] -T <template>`).
+    /// (`log -r <revset> --no-graph [--limit n] -T <template>`). Snapshots the
+    /// working copy first (records an operation); for a read-only query use
+    /// [`template_query_ignoring_working_copy`](JjApi::template_query_ignoring_working_copy).
     async fn template_query(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+    ) -> Result<String>;
+    /// [`template_query`](JjApi::template_query) as a **read-only** query: adds
+    /// `--ignore-working-copy`, so a revset mentioning `@` resolves to the last
+    /// recorded operation's working-copy commit and the query records no new
+    /// operation and never moves `@`. A template reading working-copy-derived
+    /// keywords (`empty`, `conflict`, …) therefore reflects the last recorded
+    /// state, not a fresh snapshot of unsaved edits.
+    async fn template_query_ignoring_working_copy(
         &self,
         dir: &Path,
         revset: &RevsetExpr,
@@ -927,6 +970,31 @@ impl<R: ProcessRunner> Jj<R> {
     }
 }
 
+/// Whether a query lets jj **snapshot the working copy** before answering.
+///
+/// jj snapshots by default: it takes the working-copy lock, imports any bare
+/// filesystem edits into a fresh `@`, and **records a new operation** in the op
+/// log — so an ordinary `jj log`/`jj status`/`jj bookmark list` is a *mutation*,
+/// not a pure read. [`WorkingCopy::Ignore`] appends the global
+/// `--ignore-working-copy` flag, which reports the state of the **last recorded
+/// operation** without any of that: no lock, no new operation, `@` unmoved. That
+/// is the read-only mode an *observer* (a watcher, a prompt refresh) needs —
+/// reading the repo must not perturb the very state it reports.
+///
+/// Trade-off: because [`Ignore`](WorkingCopy::Ignore) does not snapshot, a bare
+/// working-tree edit that no jj command has recorded yet is invisible to it
+/// (state is as of the last operation). Callers that must observe such edits opt
+/// into [`Snapshot`](WorkingCopy::Snapshot) and accept the recorded operation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorkingCopy {
+    /// jj's default: snapshot the working copy first (records an operation, may
+    /// move `@`).
+    Snapshot,
+    /// Pass `--ignore-working-copy`: read the last recorded operation's state,
+    /// recording no operation and never moving `@`.
+    Ignore,
+}
+
 impl<R: ProcessRunner> Jj<R> {
     /// A repo-scoped `jj` command with `--color never` forced on. jj honours
     /// `ui.color = "always"` from user config even when its output is piped, which
@@ -939,7 +1007,105 @@ impl<R: ProcessRunner> Jj<R> {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        self.core.command_in(dir, args).arg("--color").arg("never")
+        self.cmd_in_wc(dir, args, WorkingCopy::Snapshot)
+    }
+
+    /// Like [`cmd_in`](Self::cmd_in), but chooses whether jj may snapshot the
+    /// working copy first. On [`WorkingCopy::Ignore`] it also appends the global
+    /// `--ignore-working-copy` flag, so the command records no operation and never
+    /// moves `@` (a genuinely read-only query). Like `--color never`, it is a
+    /// global flag appended after the subcommand (no jj subcommand takes a
+    /// trailing `--`, so appending is safe).
+    fn cmd_in_wc<I, S>(&self, dir: &Path, args: I, wc: WorkingCopy) -> processkit::Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let cmd = self.core.command_in(dir, args).arg("--color").arg("never");
+        match wc {
+            WorkingCopy::Snapshot => cmd,
+            WorkingCopy::Ignore => cmd.arg("--ignore-working-copy"),
+        }
+    }
+
+    /// Shared core of [`status`](JjApi::status) /
+    /// [`status_ignoring_working_copy`](JjApi::status_ignoring_working_copy): the
+    /// only difference is whether jj snapshots the working copy first.
+    async fn status_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<ChangedPath>> {
+        // `diff -r @ --summary` is the machine-stable form of the working-copy
+        // changes that `jj status` renders for humans: one `<letter> <path>` line.
+        self.core
+            .parse(
+                self.cmd_in_wc(dir, ["diff", "-r", "@", "--summary"], wc),
+                parse::parse_diff_summary,
+            )
+            .await
+    }
+
+    /// Shared core of [`bookmarks`](JjApi::bookmarks) /
+    /// [`bookmarks_ignoring_working_copy`](JjApi::bookmarks_ignoring_working_copy).
+    async fn bookmarks_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<Bookmark>> {
+        self.core
+            .parse(
+                self.cmd_in_wc(
+                    dir,
+                    ["bookmark", "list", "-T", parse::BOOKMARK_LIST_TEMPLATE],
+                    wc,
+                ),
+                parse::parse_bookmarks,
+            )
+            .await
+    }
+
+    /// Shared core of [`reachable_bookmarks`](JjApi::reachable_bookmarks) /
+    /// [`reachable_bookmarks_ignoring_working_copy`](JjApi::reachable_bookmarks_ignoring_working_copy).
+    async fn reachable_bookmarks_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<Vec<Bookmark>> {
+        self.core
+            .parse(
+                self.cmd_in_wc(
+                    dir,
+                    [
+                        "log",
+                        "-r",
+                        "heads(::@ & bookmarks())",
+                        "--no-graph",
+                        "-T",
+                        parse::REACHABLE_BOOKMARKS_TEMPLATE,
+                    ],
+                    wc,
+                ),
+                parse::parse_reachable_bookmarks,
+            )
+            .await
+    }
+
+    /// Shared core of [`template_query`](JjApi::template_query) /
+    /// [`template_query_ignoring_working_copy`](JjApi::template_query_ignoring_working_copy).
+    async fn template_query_wc(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+        wc: WorkingCopy,
+    ) -> Result<String> {
+        let mut args: Vec<String> = vec![
+            "log".into(),
+            "-r".into(),
+            revset.as_str().into(),
+            "--no-graph".into(),
+        ];
+        if let Some(n) = limit {
+            args.push("--limit".into());
+            args.push(n.to_string());
+        }
+        args.push("-T".into());
+        args.push(template.into());
+        // `run_untrimmed`: `template_query` is documented to return the template's
+        // **raw** stdout, so a template that deliberately ends in `\n\n` or trailing
+        // spaces (e.g. fixed-width joins) is preserved, not silently stripped (H7).
+        // Callers that want a scalar trim it themselves (see `description`).
+        self.core.run_untrimmed(self.cmd_in_wc(dir, args, wc)).await
     }
 }
 
@@ -969,14 +1135,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<ChangedPath>> {
-        // `diff -r @ --summary` is the machine-stable form of the working-copy
-        // changes that `jj status` renders for humans: one `<letter> <path>` line.
-        self.core
-            .parse(
-                self.cmd_in(dir, ["diff", "-r", "@", "--summary"]),
-                parse::parse_diff_summary,
-            )
-            .await
+        self.status_wc(dir, WorkingCopy::Snapshot).await
+    }
+
+    async fn status_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<ChangedPath>> {
+        self.status_wc(dir, WorkingCopy::Ignore).await
     }
 
     async fn status_text(&self, dir: &Path) -> Result<String> {
@@ -1073,15 +1236,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
-        self.core
-            .parse(
-                self.cmd_in(
-                    dir,
-                    ["bookmark", "list", "-T", parse::BOOKMARK_LIST_TEMPLATE],
-                ),
-                parse::parse_bookmarks,
-            )
-            .await
+        self.bookmarks_wc(dir, WorkingCopy::Snapshot).await
+    }
+
+    async fn bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+        self.bookmarks_wc(dir, WorkingCopy::Ignore).await
     }
 
     async fn bookmarks_all(&self, dir: &Path) -> Result<Vec<BookmarkRef>> {
@@ -1097,22 +1256,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
-        self.core
-            .parse(
-                self.cmd_in(
-                    dir,
-                    [
-                        "log",
-                        "-r",
-                        "heads(::@ & bookmarks())",
-                        "--no-graph",
-                        "-T",
-                        parse::REACHABLE_BOOKMARKS_TEMPLATE,
-                    ],
-                ),
-                parse::parse_reachable_bookmarks,
-            )
-            .await
+        self.reachable_bookmarks_wc(dir, WorkingCopy::Snapshot).await
+    }
+
+    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>> {
+        self.reachable_bookmarks_wc(dir, WorkingCopy::Ignore).await
     }
 
     async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()> {
@@ -1400,23 +1548,19 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         template: &str,
         limit: Option<usize>,
     ) -> Result<String> {
-        let mut args: Vec<String> = vec![
-            "log".into(),
-            "-r".into(),
-            revset.as_str().into(),
-            "--no-graph".into(),
-        ];
-        if let Some(n) = limit {
-            args.push("--limit".into());
-            args.push(n.to_string());
-        }
-        args.push("-T".into());
-        args.push(template.into());
-        // `run_untrimmed`: `template_query` is documented to return the template's
-        // **raw** stdout, so a template that deliberately ends in `\n\n` or trailing
-        // spaces (e.g. fixed-width joins) is preserved, not silently stripped (H7).
-        // Callers that want a scalar trim it themselves (see `description`).
-        self.core.run_untrimmed(self.cmd_in(dir, args)).await
+        self.template_query_wc(dir, revset, template, limit, WorkingCopy::Snapshot)
+            .await
+    }
+
+    async fn template_query_ignoring_working_copy(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        template: &str,
+        limit: Option<usize>,
+    ) -> Result<String> {
+        self.template_query_wc(dir, revset, template, limit, WorkingCopy::Ignore)
+            .await
     }
 
     async fn description(&self, dir: &Path, revset: &RevsetExpr) -> Result<String> {
@@ -2577,6 +2721,51 @@ mod tests {
                 "raw call on the client stays in the process cwd"
             );
             assert_eq!(c.args_str(), ["status"]);
+        }
+    }
+
+    // T-038: each read-only query twin issues **exactly** its snapshotting form's
+    // argv plus the global `--ignore-working-copy` flag — the flag that keeps jj
+    // from locking + snapshotting the working copy and recording an operation. The
+    // default forms must NOT carry it (they snapshot, as jj always has). Pinned via
+    // a `RecordingRunner` so the argv is asserted byte-for-byte, hermetically.
+    #[tokio::test]
+    async fn read_only_query_twins_append_ignore_working_copy() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+
+        // Each pair: the default (snapshotting) form, then its read-only twin.
+        jj.status(dir).await.unwrap();
+        jj.status_ignoring_working_copy(dir).await.unwrap();
+        jj.bookmarks(dir).await.unwrap();
+        jj.bookmarks_ignoring_working_copy(dir).await.unwrap();
+        jj.reachable_bookmarks(dir).await.unwrap();
+        jj.reachable_bookmarks_ignoring_working_copy(dir)
+            .await
+            .unwrap();
+        jj.template_query(dir, &rv("@"), "commit_id", Some(1))
+            .await
+            .unwrap();
+        jj.template_query_ignoring_working_copy(dir, &rv("@"), "commit_id", Some(1))
+            .await
+            .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 8, "four (default, read-only) pairs");
+        for pair in calls.chunks(2) {
+            let live = pair[0].args_str();
+            let read_only = pair[1].args_str();
+            assert!(
+                !live.iter().any(|a| a == "--ignore-working-copy"),
+                "the default form must snapshot the working copy (no flag): {live:?}"
+            );
+            let mut expected = live.clone();
+            expected.push("--ignore-working-copy".to_string());
+            assert_eq!(
+                read_only, expected,
+                "the read-only twin must be the default argv + --ignore-working-copy"
+            );
         }
     }
 

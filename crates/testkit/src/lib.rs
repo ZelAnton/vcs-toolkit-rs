@@ -422,6 +422,49 @@ impl JjSandbox {
         run("jj", self.path(), args);
     }
 
+    /// Run `jj <args>` in the workspace and capture trimmed stdout (panics on
+    /// failure) — for reading state in assertions (op ids, the `@` commit id).
+    /// Uses the same config-isolated environment as [`jj`](JjSandbox::jj).
+    pub fn jj_capture(&self, args: &[&str]) -> String {
+        run_capture("jj", self.path(), args)
+    }
+
+    /// The current operation id (`jj op log … --ignore-working-copy`). Capture it
+    /// before and after a series of *read-only* queries to assert none recorded a
+    /// new operation (a mutating `jj` snapshot would advance it).
+    ///
+    /// **Read-only measurement:** `--ignore-working-copy` is essential here — a
+    /// plain `jj op log` would itself snapshot any pending working-tree edit and
+    /// record an operation, so the measurement would perturb the very thing it is
+    /// asserting about.
+    pub fn op_head(&self) -> String {
+        self.jj_capture(&[
+            "op",
+            "log",
+            "--no-graph",
+            "-n1",
+            "-T",
+            "id.short()",
+            "--ignore-working-copy",
+        ])
+    }
+
+    /// The working-copy commit id of `@` (`jj log -r @ … --ignore-working-copy`) —
+    /// to assert a read-only query did not move `@` (jj rewrites `@` when it
+    /// snapshots an unsnapshotted working-tree edit). Read-only for the same reason
+    /// as [`op_head`](JjSandbox::op_head).
+    pub fn at_commit(&self) -> String {
+        self.jj_capture(&[
+            "log",
+            "-r",
+            "@",
+            "--no-graph",
+            "-T",
+            "commit_id",
+            "--ignore-working-copy",
+        ])
+    }
+
     /// Write `content` to the workspace-relative `path` (creating parents).
     pub fn write(&self, path: &str, content: &str) {
         let full = self.path().join(path);
