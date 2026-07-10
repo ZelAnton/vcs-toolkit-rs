@@ -92,7 +92,12 @@ pub struct Branch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Worktree {
-    /// Absolute path to the worktree.
+    /// Absolute path to the worktree. A [`PathBuf`] built from the raw
+    /// `worktree list --porcelain` bytes (via [`vcs_diff::path_from_bytes`]), so a
+    /// worktree whose directory name is not valid UTF-8 (legal on Unix) is carried
+    /// losslessly instead of being flattened to `U+FFFD` — the same platform-correct
+    /// type `StatusEntry::path` uses, and what the facade's `WorktreeInfo.path`
+    /// forwards.
     pub path: PathBuf,
     /// Short branch name (`refs/heads/` stripped); `None` when detached or bare.
     pub branch: Option<String>,
@@ -260,7 +265,22 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
 /// each a set of `label [value]` lines — `worktree <path>`, `HEAD <sha>`,
 /// `branch refs/heads/<name>`, plus the valueless attributes `bare` / `detached`
 /// / `locked`. Unknown labels (e.g. `prunable`) are ignored.
-pub(crate) fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
+///
+/// Consumes **raw bytes** (not a lossily-decoded `&str`): the `worktree <path>`
+/// value is a filesystem path that, on Unix, need not be valid UTF-8, so its bytes
+/// are carried losslessly (via [`vcs_diff::path_from_bytes`]) — a `String` decode
+/// would substitute `U+FFFD` and make `Worktree.path` name a *different* directory,
+/// the same defect the status/diff surface already avoids. The labels and the
+/// text-typed values (`HEAD` sha, `branch` ref) are ASCII, so they still decode as
+/// `String`.
+///
+/// This parses the **newline-framed** porcelain (no `-z`): git only grew
+/// `worktree list --porcelain -z` in 2.36, above this crate's git-support floor
+/// (2.31), and requesting `-z` there would hard-fail the listing. Newline framing
+/// already covers the non-UTF-8 case this task targets — a path byte is never `\n`
+/// — so only a worktree path containing a *literal newline* stays out of scope,
+/// exactly as before this change.
+pub(crate) fn parse_worktree_porcelain(output: &[u8]) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
     let mut current: Option<Worktree> = None;
     let flush = |current: &mut Option<Worktree>, out: &mut Vec<Worktree>| {
@@ -268,21 +288,24 @@ pub(crate) fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
             out.push(wt);
         }
     };
-    for line in output.lines() {
+    for line in output.split(|&b| b == b'\n') {
         if line.is_empty() {
             flush(&mut current, &mut worktrees);
             continue;
         }
-        let (label, value) = match line.split_once(' ') {
-            Some((l, v)) => (l, Some(v)),
+        // `label value`, split on the FIRST ASCII space (the path itself may hold
+        // spaces); a valueless attribute (`bare`/`detached`/`locked`) has none.
+        let (label, value) = match line.iter().position(|&b| b == b' ') {
+            Some(i) => (&line[..i], Some(&line[i + 1..])),
             None => (line, None),
         };
         match label {
             // A new record begins; flush any record not closed by a blank line.
-            "worktree" => {
+            b"worktree" => {
                 flush(&mut current, &mut worktrees);
                 current = Some(Worktree {
-                    path: PathBuf::from(value.unwrap_or("")),
+                    // Raw path bytes → `PathBuf`, lossless on Unix.
+                    path: value.map(vcs_diff::path_from_bytes).unwrap_or_default(),
                     branch: None,
                     head: None,
                     bare: false,
@@ -290,29 +313,33 @@ pub(crate) fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
                     locked: false,
                 });
             }
-            "HEAD" => {
+            b"HEAD" => {
                 if let Some(wt) = current.as_mut() {
-                    wt.head = value.map(str::to_string);
+                    wt.head = value.map(|v| String::from_utf8_lossy(v).into_owned());
                 }
             }
-            "branch" => {
+            b"branch" => {
                 if let Some(wt) = current.as_mut() {
                     // Value is a full ref (`refs/heads/main`); expose the short name.
-                    wt.branch =
-                        value.map(|v| v.strip_prefix("refs/heads/").unwrap_or(v).to_string());
+                    wt.branch = value.map(|v| {
+                        let full = String::from_utf8_lossy(v);
+                        full.strip_prefix("refs/heads/")
+                            .unwrap_or(&full)
+                            .to_string()
+                    });
                 }
             }
-            "bare" => {
+            b"bare" => {
                 if let Some(wt) = current.as_mut() {
                     wt.bare = true;
                 }
             }
-            "detached" => {
+            b"detached" => {
                 if let Some(wt) = current.as_mut() {
                     wt.detached = true;
                 }
             }
-            "locked" => {
+            b"locked" => {
                 if let Some(wt) = current.as_mut() {
                     wt.locked = true;
                 }
@@ -726,7 +753,7 @@ mod tests {
         let input = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\
                      \nworktree /repo/wt\nHEAD def456\ndetached\n\
                      \nworktree /repo/bare\nbare\n";
-        let got = parse_worktree_porcelain(input);
+        let got = parse_worktree_porcelain(input.as_bytes());
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].path, PathBuf::from("/repo"));
         assert_eq!(got[0].branch.as_deref(), Some("main"));
@@ -735,10 +762,24 @@ mod tests {
         assert!(got[2].bare && got[2].head.is_none());
     }
 
+    // A worktree whose directory name is not valid UTF-8 (legal on Unix) survives
+    // byte-for-byte through `parse_worktree_porcelain`, so the facade's
+    // `WorktreeInfo.path` addresses the SAME directory. `0xFF` is never valid UTF-8;
+    // the old `&str` (`from_utf8_lossy`) parse would have replaced it with U+FFFD.
+    #[cfg(unix)]
+    #[test]
+    fn worktrees_preserve_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = parse_worktree_porcelain(b"worktree /repo/wt-caf\xff\nHEAD abc123\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"/repo/wt-caf\xff");
+        assert_eq!(got[0].head.as_deref(), Some("abc123"));
+    }
+
     #[test]
     fn worktrees_parse_last_record_without_trailing_blank() {
         // The final record may not be followed by a blank line.
-        let got = parse_worktree_porcelain("worktree /only\nHEAD aaa\nbranch refs/heads/x\n");
+        let got = parse_worktree_porcelain(b"worktree /only\nHEAD aaa\nbranch refs/heads/x\n");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].branch.as_deref(), Some("x"));
     }
@@ -799,7 +840,7 @@ mod proptests {
             let _ = parse_porcelain_v2(&s);
             let _ = parse_log(&s);
             let _ = parse_branches(&s);
-            let _ = parse_worktree_porcelain(&s);
+            let _ = parse_worktree_porcelain(s.as_bytes());
             let _ = parse_blame_porcelain(&s);
             let _ = parse_shortstat(&s);
             let _ = parse_ls_remote_heads(&s);
@@ -814,6 +855,7 @@ mod proptests {
         fn byte_parsers_never_panic_on_arbitrary_bytes(b in any::<Vec<u8>>()) {
             let _ = parse_porcelain(&b);
             let _ = parse_nul_paths(&b);
+            let _ = parse_worktree_porcelain(&b);
         }
 
         // …and on structure-biased input that reaches the parsing branches.

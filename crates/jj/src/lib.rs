@@ -2083,7 +2083,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("--name".into());
             args.push(n.to_string());
         }
-        Ok(PathBuf::from(self.core.run(self.cmd_in(dir, args)).await?))
+        // `parse_bytes`: a workspace root path need not be valid UTF-8 on Unix, so
+        // build the `PathBuf` from raw stdout bytes. The old `run` decoded stdout
+        // through `String::from_utf8_lossy`, which would flatten a non-UTF-8 root to
+        // `U+FFFD` and mis-address the workspace it feeds the facade's
+        // `WorktreeInfo.path`. Read-only like the previous `run` (no lock-retry —
+        // `--ignore-working-copy`, so lock contention is not a concern).
+        self.core
+            .parse_bytes(self.cmd_in(dir, args), parse::workspace_root_from_bytes)
+            .await
     }
 
     async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()> {
@@ -2309,14 +2317,18 @@ impl<R: ProcessRunner> Jj<R> {
                 ],
             )
         });
-        processkit::output_all(commands, WORKSPACE_ROOTS_CONCURRENCY, self.core.runner())
+        // `output_all_bytes` (not `output_all`): a workspace root path need not be
+        // valid UTF-8 on Unix, so capture raw stdout and build the `PathBuf` from
+        // bytes — a lossy `String` decode would flatten a non-UTF-8 root to `U+FFFD`.
+        processkit::output_all_bytes(commands, WORKSPACE_ROOTS_CONCURRENCY, self.core.runner())
             .await
             .into_iter()
             .map(|r| {
                 r.and_then(|pr| pr.ensure_success())
-                    // `trim_end` (not `trim`) for exact parity with the single
-                    // `workspace_root`, which trims via `core.run`'s `trim_end`.
-                    .map(|pr| PathBuf::from(pr.stdout().trim_end()))
+                    // Raw bytes → `PathBuf`, lossless on Unix — exact parity with the
+                    // single `workspace_root` (both go through `workspace_root_from_bytes`,
+                    // which strips only the trailing line terminator jj appends).
+                    .map(|pr| parse::workspace_root_from_bytes(pr.stdout()))
             })
             .collect()
     }

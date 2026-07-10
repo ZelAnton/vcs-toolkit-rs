@@ -52,7 +52,12 @@ crates; tag releases as `vcs-git-v<version>`.
   consume `&[u8]`) via the new `ManagedClient::parse_bytes`, so a filename whose bytes
   are not valid UTF-8 (legal on Unix) survives byte-for-byte and can be fed straight
   back into `add` / `commit_paths` (which already take `PathBuf` through the NUL-safe
-  pathspec transport) to address the SAME file. Text-only machine output (branch
+  pathspec transport) to address the SAME file. `worktree_list` (`Worktree.path`,
+  already a `PathBuf`) now parses `worktree list --porcelain` from raw bytes too, so a
+  worktree whose directory name is not valid UTF-8 survives losslessly into the
+  facade's `WorktreeInfo.path` instead of collapsing to `U+FFFD` (no `-z`: that
+  porcelain variant needs git ≥ 2.36, above the crate's 2.31 support floor — the
+  newline framing already covers the non-UTF-8 case). Text-only machine output (branch
   names, commit metadata, hashes) still decodes as `String`, where lossy decoding is
   acceptable. `FileDiff.path` / `old_path` are `PathBuf` too (via `vcs-diff`). (T-050.)
 - deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).

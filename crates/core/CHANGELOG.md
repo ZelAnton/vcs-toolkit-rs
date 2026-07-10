@@ -45,7 +45,11 @@ crates; tag releases as `vcs-core-v<version>`.
   A path obtained from `changed_files` / `conflicted_files` now round-trips **losslessly**
   into `commit_paths` — on git a filename whose bytes are not valid UTF-8 (legal on Unix)
   reaches the commit unchanged and addresses the SAME file, where a `String::from_utf8_lossy`
-  decode would have substituted `U+FFFD` and retargeted it. (`FileChange`/`MergeProbe`
+  decode would have substituted `U+FFFD` and retargeted it. `WorktreeInfo.path` (from
+  `worktrees`) is lossless the same way on both backends — the git worktree listing and
+  the jj workspace-root listing that feed it now parse from raw bytes, so a worktree /
+  workspace whose directory name is not valid UTF-8 no longer collapses to `U+FFFD`.
+  (`FileChange`/`MergeProbe`
   still `Serialize`: a `PathBuf` renders as a JSON string for a UTF-8 path and, per the
   fail-closed policy, a non-UTF-8 path is a serialization **error**, never a silent
   `U+FFFD`.) The `FileChange` builder (`FileChange::new` / `.old_path`) now takes

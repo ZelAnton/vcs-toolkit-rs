@@ -2423,8 +2423,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
+        // `parse_bytes`: the porcelain `worktree <path>` value is a filesystem path
+        // that need not be valid UTF-8 on Unix, so parse from raw stdout bytes — a
+        // lossy `String` decode would corrupt a non-UTF-8 worktree name to `U+FFFD`
+        // and leak a wrong path into the facade's `WorktreeInfo.path`. (Deliberately
+        // no `-z`: `worktree list --porcelain -z` is git ≥ 2.36, above this crate's
+        // 2.31 support floor; newline framing already covers the non-UTF-8 case.)
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["worktree", "list", "--porcelain"]),
                 parse::parse_worktree_porcelain,

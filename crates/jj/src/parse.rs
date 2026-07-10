@@ -509,6 +509,24 @@ pub(crate) fn parse_resolve_list(output: &[u8]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Build a workspace-root [`PathBuf`] from the raw stdout of `jj workspace root`.
+///
+/// Reads the path from **raw bytes** (not a lossily-decoded `String`) so a
+/// workspace root that is not valid UTF-8 (legal on Unix) survives byte-for-byte
+/// instead of collapsing to `U+FFFD` — matching the byte-faithful status/diff
+/// surface, and what the facade's `WorktreeInfo.path` forwards. jj prints the
+/// absolute root path followed by a single line terminator (`\n`, or `\r\n` on
+/// Windows, where the path is UTF-8 anyway); strip **only** that terminator — not
+/// arbitrary trailing whitespace like `str::trim_end` — so a root path that
+/// legitimately ends in a space/tab on Unix is preserved.
+pub(crate) fn workspace_root_from_bytes(stdout: &[u8]) -> PathBuf {
+    let end = stdout
+        .iter()
+        .rposition(|&b| b != b'\n' && b != b'\r')
+        .map_or(0, |i| i + 1);
+    path_from_bytes(&stdout[..end])
+}
+
 /// Normalise `\` path separators to `/` on raw bytes — jj's `--summary` /
 /// `resolve --list` emit the OS-native separator (backslashes on Windows), which
 /// the unified DTO reports forward-slash across backends/platforms.
@@ -889,6 +907,36 @@ mod tests {
     }
 
     #[test]
+    fn workspace_root_strips_only_the_trailing_line_terminator() {
+        // jj prints the root path then one `\n` (a `\r\n` on Windows).
+        assert_eq!(
+            workspace_root_from_bytes(b"/repo/ws\n"),
+            PathBuf::from("/repo/ws")
+        );
+        assert_eq!(
+            workspace_root_from_bytes(b"/repo/ws\r\n"),
+            PathBuf::from("/repo/ws")
+        );
+        // No terminator at all is fine, and all-empty yields an empty path.
+        assert_eq!(
+            workspace_root_from_bytes(b"/repo/ws"),
+            PathBuf::from("/repo/ws")
+        );
+        assert_eq!(workspace_root_from_bytes(b"\n"), PathBuf::new());
+    }
+
+    // A workspace root whose bytes are not valid UTF-8 (legal on Unix) survives
+    // byte-for-byte, so the facade's `WorktreeInfo.path` names the SAME directory;
+    // a trailing space (a legal path byte) is kept — only the `\n` is stripped.
+    #[cfg(unix)]
+    #[test]
+    fn workspace_root_preserves_non_utf8_and_trailing_space() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = workspace_root_from_bytes(b"/repo/ws-caf\xff \n");
+        assert_eq!(got.as_os_str().as_bytes(), b"/repo/ws-caf\xff ");
+    }
+
+    #[test]
     fn bookmarks_parse_name_and_commit_from_template() {
         // Rows produced by BOOKMARK_LIST_TEMPLATE:
         // `<present>\t<remote>\t"<name>"\t<full-commit>`. Two live local bookmarks.
@@ -1169,6 +1217,7 @@ mod proptests {
             let _ = parse_resolve_list(&b);
             let _ = parse_diff_summary(&b);
             let _ = expand_rename(&b);
+            let _ = workspace_root_from_bytes(&b);
         }
 
         #[test]

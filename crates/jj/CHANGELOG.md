@@ -35,10 +35,15 @@ crates; tag releases as `vcs-jj-v<version>`.
   --summary` / `resolve --list` output from **raw bytes** (`parse_diff_summary` /
   `parse_resolve_list` consume `&[u8]`) via `ManagedClient::parse_bytes`, so a
   non-UTF-8 filename (legal on Unix) survives byte-for-byte instead of being flattened
-  by `String::from_utf8_lossy`. Text-only templated output (change/commit ids,
-  bookmark/workspace names, descriptions) still decodes as `String`. (Note: jj's
-  fileset language is text, so committing a non-UTF-8 path via `commit_paths` remains
-  bounded by jj itself; the byte-faithful round trip is exercised on git.) (T-050.)
+  by `String::from_utf8_lossy`. `workspace_root` / `workspace_roots` likewise now build
+  their returned `PathBuf` from raw `jj workspace root` stdout (via `parse_bytes` /
+  `processkit::output_all_bytes`), so a workspace root that is not valid UTF-8 survives
+  losslessly into the facade's `WorktreeInfo.path` — and only the trailing line
+  terminator is stripped now, so a root path ending in a space/tab is preserved rather
+  than trimmed. Text-only templated output (change/commit ids, bookmark/workspace
+  names, descriptions) still decodes as `String`. (Note: jj's fileset language is text,
+  so committing a non-UTF-8 path via `commit_paths` remains bounded by jj itself; the
+  byte-faithful round trip is exercised on git.) (T-050.)
 
 ### Fixed
 
