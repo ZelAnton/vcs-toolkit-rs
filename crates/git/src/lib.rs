@@ -838,14 +838,17 @@ pub trait GitApi: Send + Sync {
     /// `log` has no `--pathspec-from-file` support, so a `paths` set that would
     /// risk exceeding the OS argv limit is instead split into multiple `git log`
     /// calls, each within budget; the per-call results are merged (deduplicated
-    /// by hash — a commit can touch paths spread across more than one chunk),
-    /// reordered by committer instant descending, and capped at `max`
-    /// (T-052/R-03). Committer instant (not author instant) is used because a
-    /// rebase, cherry-pick, or amend updates the committer date while often
-    /// preserving the original author date, so sorting by author instant could
-    /// reorder such commits relative to git's real history order. A `paths` set
-    /// that fits in one call is unaffected — same single invocation, same order,
-    /// as before.
+    /// by hash — a commit can touch paths spread across more than one chunk)
+    /// and restored to git's own commit order using a separate, pathless `git
+    /// log <revspec> --format=%H` oracle call (T-052/R-03): pathspec filtering
+    /// only drops non-matching commits, it never reorders the ones that
+    /// remain, so the oracle's order — over the *same* revspec, unrestricted
+    /// by paths — gives the exact relative order a single, hypothetical
+    /// unchunked call would have produced. Unlike sorting by a parsed date
+    /// field, this needs no assumption about author-vs-committer timestamps or
+    /// same-second ties (git log dates have no sub-second precision). A
+    /// `paths` set that fits in one call is unaffected — same single
+    /// invocation, same order, as before.
     async fn log_paths(
         &self,
         dir: &Path,
@@ -1379,33 +1382,44 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (merged) top `max` has at most `max - 1` newer commits in the *entire*
         // union of chunk results, so it has at most that many newer commits
         // within its own chunk too — i.e. it always ranks within that chunk's
-        // own top `max`.
-        //
-        // Re-ordering by **committer** instant rather than author instant
-        // (R-03): git's own log order tracks commit/committer time, not author
-        // time — a rebase, cherry-pick, or amend updates the committer date
-        // (typically to "now") while often preserving the original author date,
-        // so sorting by author instant could reorder such commits relative to
-        // git's real history order. Each chunk call fetches an extra trailing
-        // `%cI` field (via [`Self::log_paths_chunk_command`]) purely for this
-        // merge step — it never appears in the returned [`Commit`]s.
-        let mut merged: Vec<(Commit, i64)> = Vec::new();
+        // own top `max`. This bound is about *how many* qualifying commits can
+        // precede another, not about how they are ordered, so it holds
+        // regardless of the ordering mechanism below.
+        let mut merged: Vec<Commit> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for chunk in &chunks {
-            let command = self.log_paths_chunk_command(dir, revspec, &n, chunk.iter().copied());
-            let commits = self
-                .core
-                .parse(command, parse_log_with_committer_instant)
-                .await?;
-            for (commit, committer_instant) in commits {
+            let command = self.log_paths_command(dir, revspec, &n, chunk.iter().copied());
+            let commits = self.core.parse(command, parse::parse_log).await?;
+            for commit in commits {
                 if seen.insert(commit.hash.clone()) {
-                    merged.push((commit, committer_instant));
+                    merged.push(commit);
                 }
             }
         }
-        merged.sort_by_cached_key(|(_, committer_instant)| std::cmp::Reverse(*committer_instant));
+        // Merging per-chunk call results loses git's own single-call order, so
+        // restore it (R-03) via a hash-order oracle: one extra, pathless `git
+        // log <revspec> --format=%H` call over the *same* revspec (cheap — no
+        // per-path diff computation, just hashes) gives the exact relative
+        // order a single unchunked call would have produced, since pathspec
+        // filtering only drops non-matching commits without reordering the
+        // ones that remain. A commit absent from the oracle (should not
+        // happen — it always names a commit `log_paths` itself just returned
+        // as reachable from `revspec`) sorts after every ranked commit rather
+        // than panicking.
+        let order_command = self.log_paths_order_command(dir, revspec);
+        let order = self.core.parse(order_command, parse_commit_order).await?;
+        let rank: std::collections::HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(index, hash)| (hash.as_str(), index))
+            .collect();
+        merged.sort_by_key(|commit| {
+            rank.get(commit.hash.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
         merged.truncate(max);
-        Ok(merged.into_iter().map(|(commit, _)| commit).collect())
+        Ok(merged)
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
@@ -2430,12 +2444,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
 impl<R: ProcessRunner> Git<R> {
     /// Build one `git --literal-pathspecs log <revspec> -n<max> -z --format=…
-    /// -- <paths>` call for the common case: everything fits one invocation
-    /// (the direct [`GitApi::log_paths`] call). `--literal-pathspecs` matches a
-    /// path containing `*`/`?`/`[]` literally rather than as pathspec glob magic
-    /// (R-02) — see [`Self::log_paths_chunk_command`] for the large-path-set
-    /// (chunked) twin, which adds a trailing committer-date field for merge
-    /// ordering.
+    /// -- <paths>` call — used both for the common case (everything fits one
+    /// invocation, the direct [`GitApi::log_paths`] call) and for each chunk
+    /// of its large-path-set fallback (T-052; the two need no different
+    /// format, since chunked order is restored afterwards by
+    /// [`Self::log_paths_order_command`], not by anything embedded in each
+    /// chunk's own output — R-03). `--literal-pathspecs` matches a path
+    /// containing `*`/`?`/`[]` literally rather than as pathspec glob magic
+    /// (R-02).
     fn log_paths_command<'a>(
         &self,
         dir: &Path,
@@ -2461,37 +2477,18 @@ impl<R: ProcessRunner> Git<R> {
         command
     }
 
-    /// Like [`Self::log_paths_command`], for each chunk of `log_paths`'s
-    /// large-path-set fallback (T-052) — same `--literal-pathspecs` (R-02), plus
-    /// a trailing `%cI` (committer date, strict ISO-8601) format field so the
-    /// merge step in [`GitApi::log_paths`] can re-order the combined chunk
-    /// results by committer instant instead of relying on git's now-lost single-
-    /// call order (R-03). The extra field is parsed by
-    /// [`parse_log_with_committer_instant`] and never appears in the returned
-    /// [`Commit`]s.
-    fn log_paths_chunk_command<'a>(
-        &self,
-        dir: &Path,
-        revspec: &RevSpec,
-        n: &str,
-        paths: impl IntoIterator<Item = &'a str>,
-    ) -> Command {
-        let mut command = self.core.command_in(
-            dir,
-            [
-                "--literal-pathspecs",
-                "log",
-                revspec.as_str(),
-                n,
-                "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
-                "--",
-            ],
-        );
-        for path in paths {
-            command = command.arg(path);
-        }
-        command
+    /// Build the pathless `git log <revspec> -z --format=%H` commit-order
+    /// oracle used to restore git's own order across `log_paths`'s merged
+    /// chunk results (T-052/R-03; see [`GitApi::log_paths`]). No `-n` cap: a
+    /// commit surviving path-filtering into the merged top-`max` can sit
+    /// arbitrarily far back in the *unrestricted* history (many untouched
+    /// commits between it and the tip), so the oracle must be able to rank
+    /// it — capping this call risks an unranked commit outside the map. No
+    /// paths, so no `--literal-pathspecs` is needed here. Parsed by
+    /// [`parse_commit_order`].
+    fn log_paths_order_command(&self, dir: &Path, revspec: &RevSpec) -> Command {
+        self.core
+            .command_in(dir, ["log", revspec.as_str(), "-z", "--format=%H"])
     }
 }
 
@@ -2628,106 +2625,15 @@ fn chunk_pathspecs(paths: &[String]) -> Vec<Vec<&str>> {
     chunks
 }
 
-/// Approximate a UTC instant (seconds since the Unix epoch) from a git
-/// strict-ISO-8601 date field (`%aI`/`%cI` — either has a trailing `Z` or a
-/// numeric `±HH:MM` offset, verified against real `git log` output; there is
-/// no third form). Used only to reorder [`chunk_pathspecs`]'s merged,
-/// multi-call `log_paths` results back into one list by committer instant
-/// (R-03; see [`parse_log_with_committer_instant`]) — a single call never
-/// needs this, since it already comes back in git's own order. Malformed
-/// input (should not happen — this always parses our own fixed `--format`)
-/// sorts last (`i64::MIN`) rather than panicking or silently landing near the
-/// top.
-fn iso8601_instant_key(date: &str) -> i64 {
-    parse_iso8601_utc_seconds(date).unwrap_or(i64::MIN)
-}
-
-/// Parse a strict ISO-8601 date field (`%aI`/`%cI`: `YYYY-MM-DDTHH:MM:SS` + `Z`
-/// or `±HH:MM`) into UTC seconds since the Unix epoch. See [`iso8601_instant_key`].
-fn parse_iso8601_utc_seconds(date: &str) -> Option<i64> {
-    let bytes = date.as_bytes();
-    if bytes.len() < 20
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-    {
-        return None;
-    }
-    let year: i64 = date.get(0..4)?.parse().ok()?;
-    let month: u32 = date.get(5..7)?.parse().ok()?;
-    let day: u32 = date.get(8..10)?.parse().ok()?;
-    let hour: i64 = date.get(11..13)?.parse().ok()?;
-    let minute: i64 = date.get(14..16)?.parse().ok()?;
-    let second: i64 = date.get(17..19)?.parse().ok()?;
-    let rest = date.get(19..)?;
-    let offset_seconds: i64 = if rest == "Z" {
-        0
-    } else {
-        let sign = match rest.as_bytes().first()? {
-            b'+' => 1,
-            b'-' => -1,
-            _ => return None,
-        };
-        if rest.len() != 6 || rest.as_bytes()[3] != b':' {
-            return None;
-        }
-        let off_h: i64 = rest.get(1..3)?.parse().ok()?;
-        let off_m: i64 = rest.get(4..6)?.parse().ok()?;
-        sign * (off_h * 3600 + off_m * 60)
-    };
-    let days = days_from_civil(year, month, day);
-    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset_seconds)
-}
-
-/// Days since the Unix epoch (1970-01-01) for a Gregorian calendar date —
-/// Howard Hinnant's public-domain `days_from_civil` algorithm (the truncating
-/// `/ 400` trick relies on truncation-toward-zero division, which Rust's `/`
-/// on signed integers already is — same as the C++ original).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = (if y >= 0 { y } else { y - 399 }) / 400;
-    let yoe = y - era * 400; // [0, 399]
-    let mp = (i64::from(m) + 9) % 12; // [0, 11]: Mar=0 .. Feb=11
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1; // [0, 365]
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    era * 146_097 + doe - 719_468
-}
-
-/// Parse `git log -z --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI` output —
-/// [`parse::parse_log`]'s five fields plus a trailing committer-date (`%cI`)
-/// field, kept only as a UTC instant alongside each parsed [`Commit`] and
-/// dropped afterwards. This is the per-chunk parser for `log_paths`'s
-/// large-path-set fallback ([`Git::log_paths_chunk_command`]): merging
-/// multiple chunk calls back into one list loses git's own per-call order, so
-/// the merge step re-sorts by this committer instant instead (R-03). A single
-/// call never needs this — it already comes back in git's own order, so it
-/// uses the plain [`parse::parse_log`]/[`Git::log_paths_command`] pair with no
-/// extra field.
-fn parse_log_with_committer_instant(output: &str) -> Vec<(Commit, i64)> {
+/// Parse [`Git::log_paths_order_command`]'s `git log -z --format=%H` output
+/// into an ordered list of hashes — git's own commit order for the queried
+/// revspec, used as the ranking oracle that restores order across
+/// `log_paths`'s merged chunk results (T-052/R-03; see [`GitApi::log_paths`]).
+fn parse_commit_order(output: &str) -> Vec<String> {
     output
         .split('\0')
         .filter(|rec| !rec.is_empty())
-        .filter_map(|rec| {
-            let mut fields = rec.split('\u{1f}');
-            let hash = fields.next()?.to_string();
-            let short_hash = fields.next()?.to_string();
-            let author = fields.next()?.to_string();
-            let date = fields.next()?.to_string();
-            let subject = fields.next().unwrap_or("").to_string();
-            let committer_instant = fields.next().map(iso8601_instant_key).unwrap_or(i64::MIN);
-            Some((
-                Commit {
-                    hash,
-                    short_hash,
-                    author,
-                    date,
-                    subject,
-                },
-                committer_instant,
-            ))
-        })
+        .map(str::to_string)
         .collect()
 }
 
@@ -3812,17 +3718,18 @@ mod tests {
     // `log` into per-chunk calls (`git log` has no `--pathspec-from-file`
     // support, unlike `add`/`commit_paths`; each chunk call also carries
     // `--literal-pathspecs`, R-02) and merges the results: dedup by hash (the
-    // "shared" commit appears in both chunks' canned output), reordered by
-    // **committer** instant descending, capped at `max` (T-052/R-03).
+    // "shared" commit appears in both chunks' canned output), reordered to
+    // match a separate, pathless oracle call's commit order, capped at `max`
+    // (T-052/R-03).
     //
-    // The "shared" commit is deliberately given the OLDEST author date but the
-    // NEWEST committer date (as a rebase/cherry-pick/amend would produce, since
-    // those update the committer date while often preserving the original
-    // author date) — this is exactly the scenario R-03 flagged: sorting by
-    // author instant would rank it last; sorting by committer instant (the
-    // fix) ranks it first.
+    // All three commits share the exact same (second-resolution) author date
+    // — a date-based sort would have no signal to order them at all and
+    // could only fall back to arbitrary/input order — yet the oracle still
+    // produces a definite, correct order, because it comes from git's own
+    // traversal rather than from parsed timestamps. This is exactly the case
+    // R-03 flagged as unfixable by refining the date sort further.
     #[tokio::test]
-    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_committer_date() {
+    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_oracle_order() {
         // Two paths, each already over budget alone once paired — `chunk_pathspecs`
         // puts each in its own singleton chunk.
         let path_a = "a".repeat(4_000);
@@ -3834,7 +3741,7 @@ mod tests {
             "HEAD",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
@@ -3842,26 +3749,29 @@ mod tests {
         let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_b_args.push(path_b.clone());
 
-        // Chunk A: "newer-a" (author+committer 2026-01-02) + "shared" (author
-        // 2026-01-01, but rebased — committer 2026-01-05, the true global
-        // newest by committer instant).
+        // Chunk A: "newer-a" + "shared", both dated 2026-01-02.
         let reply_a = Reply::ok(
-            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\u{1f}2026-01-02T00:00:00Z\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\u{1f}2026-01-05T00:00:00Z\0"
+            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
                 .to_string(),
         );
-        // Chunk B: "newest-b" (author+committer 2026-01-03) + the SAME "shared"
+        // Chunk B: "newest-b" (also dated 2026-01-02) + the SAME "shared"
         // commit again (touches a path in both chunks).
         let reply_b = Reply::ok(
-            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\u{1f}2026-01-03T00:00:00Z\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\u{1f}2026-01-05T00:00:00Z\0"
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-02T00:00:00Z\u{1f}newest-b\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
                 .to_string(),
         );
+        // The oracle: git's real, unrestricted commit order for the same
+        // revspec — puts "shared" between the other two, an order no sort of
+        // the (identical) merged timestamps could ever reproduce.
+        let order_reply = Reply::ok("bbb1\0shar\0aaa1\0".to_string());
 
         let git = Git::with_runner(
             ScriptedRunner::new()
                 .on(chunk_a_args, reply_a)
-                .on(chunk_b_args, reply_b),
+                .on(chunk_b_args, reply_b)
+                .on(["git", "log", "HEAD", "-z", "--format=%H"], order_reply),
         );
 
         let commits = git
@@ -3871,26 +3781,16 @@ mod tests {
 
         assert_eq!(
             commits.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(),
-            ["shar", "bbb1", "aaa1"],
-            "expected newest-committer-first across chunks (not newest-author-first), \
-             with the shared commit deduplicated"
-        );
-        // The returned `Commit`s must still expose the *author* date (`%aI`),
-        // not the committer date used only internally for merge ordering.
-        assert_eq!(
-            commits.iter().map(|c| c.date.as_str()).collect::<Vec<_>>(),
-            [
-                "2026-01-01T00:00:00Z",
-                "2026-01-03T00:00:00Z",
-                "2026-01-02T00:00:00Z",
-            ]
+            ["bbb1", "shar", "aaa1"],
+            "expected the oracle's commit order across chunks, with the shared \
+             commit deduplicated"
         );
     }
 
     // The single-call path (small path sets) must return byte-identical order
-    // to what a chunked call over the same commits produces via committer
-    // instant — i.e. chunking never changes which order callers see for a
-    // path set that happens to be small (T-052/R-03 regression guard).
+    // to what a chunked call over the same commits produces via the oracle —
+    // i.e. chunking never changes which order callers see for a path set
+    // that happens to be small (T-052/R-03 regression guard).
     #[tokio::test]
     async fn log_paths_single_call_and_chunked_call_agree_on_order() {
         let single_reply = Reply::ok(
@@ -3931,25 +3831,25 @@ mod tests {
             "HEAD",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_a_args.push(path_a.clone());
         let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_b_args.push(path_b.clone());
-        let reply_a = Reply::ok(
-            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\u{1f}2026-01-02T00:00:00Z\0"
-                .to_string(),
-        );
-        let reply_b = Reply::ok(
-            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\u{1f}2026-01-03T00:00:00Z\0"
-                .to_string(),
-        );
+        let reply_a =
+            Reply::ok("aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0".to_string());
+        let reply_b =
+            Reply::ok("bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0".to_string());
+        // The oracle agrees with the single-call order: "newest-b" before
+        // "newer-a".
+        let order_reply = Reply::ok("bbb1\0aaa1\0".to_string());
         let chunked_git = Git::with_runner(
             ScriptedRunner::new()
                 .on(chunk_a_args, reply_a)
-                .on(chunk_b_args, reply_b),
+                .on(chunk_b_args, reply_b)
+                .on(["git", "log", "HEAD", "-z", "--format=%H"], order_reply),
         );
         let chunked_commits = chunked_git
             .log_paths(Path::new("."), &rv("HEAD"), 5, &[path_a, path_b])
@@ -3965,8 +3865,8 @@ mod tests {
                 .iter()
                 .map(|c| c.hash.as_str())
                 .collect::<Vec<_>>(),
-            "single-call and chunked-call order must agree when no rebase/amend \
-             skews author vs. committer instant"
+            "single-call and chunked-call order must agree when the oracle \
+             agrees with the single-call order"
         );
     }
 
@@ -4036,31 +3936,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_iso8601_utc_and_offset_forms() {
-        // UTC form ("Z") — verified against real `git log --format=%aI` output.
-        assert_eq!(parse_iso8601_utc_seconds("1970-01-01T00:00:00Z"), Some(0));
-        // A positive offset moves the UTC instant *earlier* than the naive
-        // wall-clock reading (2026-07-10T11:10:10+02:00 is 2026-07-10T09:10:10Z).
-        let with_offset = parse_iso8601_utc_seconds("2026-07-10T11:10:10+02:00");
-        let utc_equivalent = parse_iso8601_utc_seconds("2026-07-10T09:10:10Z");
-        assert_eq!(with_offset, utc_equivalent);
-        assert!(with_offset.is_some());
-        // A negative offset.
+    fn parse_commit_order_splits_on_nul_and_drops_trailing_empty() {
         assert_eq!(
-            parse_iso8601_utc_seconds("2026-07-10T05:10:10-04:00"),
-            utc_equivalent
+            parse_commit_order("aaa1\0bbb2\0ccc3\0"),
+            vec!["aaa1", "bbb2", "ccc3"]
         );
-        // Malformed input parses to `None` (and `iso8601_instant_key` falls
-        // back to sort-last rather than panicking).
-        assert_eq!(parse_iso8601_utc_seconds("not a date"), None);
-        assert_eq!(iso8601_instant_key("not a date"), i64::MIN);
-    }
-
-    #[test]
-    fn iso8601_instant_key_orders_newer_after_older() {
-        let older = iso8601_instant_key("2026-01-01T00:00:00Z");
-        let newer = iso8601_instant_key("2026-01-02T00:00:00Z");
-        assert!(newer > older);
+        assert!(parse_commit_order("").is_empty());
     }
 
     #[tokio::test]
