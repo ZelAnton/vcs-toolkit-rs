@@ -1051,7 +1051,7 @@ Every operation that names a **reference** (branch/tag/ref) or a **revision**
 takes one of these validated newtypes — `RefName` or `RevSpec` — instead of a bare
 `&str`. Construct one at your input boundary (from a UI/bot/agent string); a
 flag-like or malformed value is rejected there, as a classifiable
-[`Error::is_invalid_input`], and can never reach an argv slot. The remaining
+[`vcs_cli_support::is_invalid_input`], and can never reach an argv slot. The remaining
 bare-positional `&str` inputs that are *not* refs/revisions (remote names, URLs,
 config keys) keep an internal flag-injection guard.
 

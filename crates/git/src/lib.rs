@@ -97,7 +97,7 @@
 //! expression** now does so through a validated newtype — [`RefName`] for
 //! branch/tag/ref names, [`RevSpec`] for revisions/ranges — so a flag-like or
 //! malformed value is rejected at construction, *before* it can reach an argv
-//! slot (a classifiable [`Error::is_invalid_input`] failure). The one
+//! slot (a classifiable [`vcs_cli_support::is_invalid_input`] failure). The one
 //! context-dependent special value, git's `-` "previous branch", is modelled
 //! explicitly as [`CheckoutTarget::Previous`] rather than smuggled through a
 //! newtype. Remaining bare-positional inputs that are **not** refs/revisions
@@ -576,7 +576,7 @@ impl WorktreeRemove {
 /// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
 /// no leading `-` or `.`, no `..`, no control characters or space, none of
 /// `~ ^ : ? * [ \`, no trailing `/` or `.lock`. A rejected name is an
-/// [`Error::is_invalid_input`] failure.
+/// [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RefName(String);
 
@@ -624,7 +624,7 @@ impl std::fmt::Display for RefName {
 /// here — it only guarantees the expression is non-empty and cannot be parsed
 /// as a flag (no leading `-`). For a value that must be a genuine ref **name**
 /// (to create/delete/rename a branch or tag) use the stricter [`RefName`]. A
-/// rejected expression is an [`Error::is_invalid_input`] failure.
+/// rejected expression is an [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RevSpec(String);
 
@@ -4638,7 +4638,7 @@ mod tests {
     async fn show_file_keeps_backslashes_on_unix() {
         let rec = RecordingRunner::replying(Reply::ok("content\n"));
         let git = Git::with_runner(&rec);
-        git.show_file(Path::new("/r"), "HEAD", "sub\\dir\\f.txt")
+        git.show_file(Path::new("/r"), &rv("HEAD"), "sub\\dir\\f.txt")
             .await
             .expect("show_file");
         assert_eq!(rec.only_call().args_str(), ["show", "HEAD:sub\\dir\\f.txt"]);

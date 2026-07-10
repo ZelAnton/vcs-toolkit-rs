@@ -486,7 +486,7 @@ fn c_locale(cmd: processkit::Command) -> processkit::Command {
 /// construction, and the type is the flag-injection barrier from then on.
 /// Deliberately *minimal* — jj's revset grammar is too rich to validate here —
 /// it only guarantees the expression is non-empty and cannot be parsed as a flag
-/// (no leading `-`). A rejected expression is an [`Error::is_invalid_input`]
+/// (no leading `-`). A rejected expression is an [`vcs_cli_support::is_invalid_input`]
 /// failure. For a value that must be a bookmark **name** (create/move/delete a
 /// bookmark) use [`BookmarkName`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -527,7 +527,7 @@ impl std::str::FromStr for RevsetExpr {
 /// `-`), matching the injection guard these operations applied internally before.
 /// The typed methods additionally wrap the name in jj's `exact:` string pattern
 /// so a `*`/`?` in a name can never fan the operation out across every bookmark.
-/// A rejected name is an [`Error::is_invalid_input`] failure.
+/// A rejected name is an [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BookmarkName(String);
 
