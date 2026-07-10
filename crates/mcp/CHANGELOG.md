@@ -10,6 +10,17 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-07-10
+
+### Added
 - Documented **non-UTF-8 path policy (fail-closed)** for path-bearing results
   (`repo_status`'s `FileChange.path`, `repo_conflicts`'s list, `repo_diff`'s
   `FileDiff.path`): the facade carries each path losslessly as a `PathBuf`, and since
@@ -433,7 +444,8 @@ crates; tag releases as `vcs-mcp-v<version>`.
   Read-only by default. The wrappers' argv injection guards apply under every
   tool.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.2...vcs-mcp-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.1...vcs-mcp-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.5.0...vcs-mcp-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-mcp-v0.4.0...vcs-mcp-v0.5.0

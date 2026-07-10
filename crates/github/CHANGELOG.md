@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.10.0] - 2026-07-10
+
+### Added
 - **`gh` version floor + capability gate.** New `GitHubCapabilities` (`version:
   GitHubVersion`), probed via `GitHubApi::capabilities()` (`gh --version`, parsed
   with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
@@ -704,7 +715,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.10.0...HEAD
+[0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.2...vcs-github-v0.10.0
 [0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.1...vcs-github-v0.9.2
 [0.9.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.0...vcs-github-v0.9.1
 [0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.8.0...vcs-github-v0.9.0

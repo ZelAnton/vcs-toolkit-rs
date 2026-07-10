@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-07-10
+
+### Added
 - `OperationState` now models the remaining git sequencer states: `CherryPick`
   (`CHERRY_PICK_HEAD`), `Revert` (`REVERT_HEAD`), and `Bisect` (`BISECT_LOG`),
   alongside `Merge`/`Rebase`/`ApplyMailbox`/`Conflict`/`Clear`. `in_progress_state`
@@ -621,7 +632,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.2...vcs-core-v0.8.0
 [0.7.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...vcs-core-v0.7.2
 [0.7.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...vcs-core-v0.7.1
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.6.0...vcs-core-v0.7.0

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-07-10
+
+### Added
 
 - **Host context for credential requests.** `ManagedClient::with_expected_host(host)`
   records the remote host a client targets; the auto-injected forge token-env path
@@ -429,7 +440,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.2...vcs-cli-support-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.1...vcs-cli-support-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.0...vcs-cli-support-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.4.0...vcs-cli-support-v0.5.0

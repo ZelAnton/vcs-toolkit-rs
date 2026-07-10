@@ -10,6 +10,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-07-10
+
+### Added
 - `os_from_bytes` / `path_from_bytes` — a lossless raw-bytes → `OsString` / `PathBuf`
   bridge for filesystem paths taken from `git`/`jj` machine output. On Unix the bytes
   are wrapped verbatim (a non-UTF-8 filename survives byte-for-byte); elsewhere they
@@ -269,7 +280,8 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.2...vcs-diff-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.1...vcs-diff-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.0...vcs-diff-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.4.0...vcs-diff-v0.5.0

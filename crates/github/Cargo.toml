@@ -1,6 +1,6 @@
 [package]
 name = "vcs-github"
-version = "0.9.2"
+version = "0.10.0"
 description = "Automate GitHub from Rust: a typed, async wrapper for the GitHub CLI (gh) — pull requests, issues, releases, and CI checks."
 edition.workspace = true
 rust-version.workspace = true
@@ -19,12 +19,12 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 processkit.workspace = true
 # Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`).
 # features=["serde"]: shared JSON helpers (json::null_to_empty/from_json) live in cli-support behind that feature — added after cli-support 0.2.0, so its NEXT release must be >= minor and this floor raised to match.
-vcs-cli-support = { path = "../cli-support", version = "0.5", features = ["serde"] }
+vcs-cli-support = { path = "../cli-support", version = "0.6", features = ["serde"] }
 # Shared git-format unified-diff model + parser (`gh pr diff` emits the same
 # format `git diff`/`jj diff --git` do, so `pr_diff` parses through the shared
 # parser rather than duplicating it). Re-exported below (`vcs_github::FileDiff`,
 # …) so a consumer depending only on vcs-github needn't add vcs-diff directly.
-vcs-diff = { path = "../diff", version = "0.5" }
+vcs-diff = { path = "../diff", version = "0.6" }
 # Deserialize `gh … --json` output into typed structs (PullRequest/Issue/RepoView).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

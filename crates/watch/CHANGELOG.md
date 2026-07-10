@@ -10,6 +10,17 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.6.0] - 2026-07-10
+
+### Added
 - `WatcherStats::retries`/`recoveries`/`terminal_failures` — a skipped
   (timed-out or transiently failed) re-query now schedules a bounded backoff
   retry on its own, without waiting for a new filesystem event, and these
@@ -393,7 +404,8 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.2...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.6.0...HEAD
+[0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.2...vcs-watch-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.1...vcs-watch-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.0...vcs-watch-v0.5.1
 [0.5.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.4.0...vcs-watch-v0.5.0

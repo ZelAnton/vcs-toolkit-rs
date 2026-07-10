@@ -1,6 +1,6 @@
 [package]
 name = "vcs-testkit"
-version = "0.5.2"
+version = "0.6.0"
 description = "Test fixtures for Git and Jujutsu automation: throwaway repos, hermetic sandboxes, and a seeded bare remote."
 edition.workspace = true
 rust-version.workspace = true
