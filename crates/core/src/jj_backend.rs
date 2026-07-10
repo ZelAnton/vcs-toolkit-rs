@@ -24,9 +24,33 @@ fn rev(s: &str) -> Result<RevsetExpr> {
     Ok(RevsetExpr::new(s)?)
 }
 
-pub(crate) async fn current_branch<R: ProcessRunner>(
+/// Whether a snapshot/branch query lets jj snapshot the working copy.
+///
+/// An ordinary jj query snapshots the working copy first — taking the lock,
+/// importing bare edits into a fresh `@`, and **recording a new operation** — so
+/// it mutates the very state it reads. [`Observe::ReadOnly`] runs the same query
+/// through vcs-jj's `--ignore-working-copy` variants: it reports the state of the
+/// last recorded operation without a lock, a new operation, or moving `@` — the
+/// mode an *observer* (a repo watcher / prompt) needs. The trade-off is that a
+/// bare working-tree edit jj has not yet snapshotted is invisible to a
+/// [`ReadOnly`](Observe::ReadOnly) read (it reflects the last operation, not
+/// unsaved edits); a caller that must see such edits uses [`Live`](Observe::Live)
+/// and accepts the recorded operation.
+#[derive(Clone, Copy)]
+enum Observe {
+    /// jj's default: snapshot the working copy (records an operation, may move `@`).
+    Live,
+    /// `--ignore-working-copy`: read the last recorded operation's state, recording
+    /// no operation and never moving `@`.
+    ReadOnly,
+}
+
+/// The nearest bookmark reachable from `@`, letting `observe` decide whether jj
+/// may snapshot the working copy first (see [`Observe`]).
+async fn current_branch_with<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
+    observe: Observe,
 ) -> Result<Option<String>> {
     // jj has no "current branch" in the git sense: after `jj describe` /
     // `jj new` / `jj commit` the bookmark stays on the described parent while
@@ -42,28 +66,51 @@ pub(crate) async fn current_branch<R: ProcessRunner>(
     // bookmarks — a merge of two bookmarked lines (one head each), or one commit
     // carrying several. Pick the lexicographically-smallest name so the answer is
     // deterministic instead of dependent on jj's row order.
-    Ok(jj
-        .reachable_bookmarks(dir)
-        .await?
-        .into_iter()
-        .map(|b| b.name)
-        .min())
+    let bookmarks = match observe {
+        Observe::Live => jj.reachable_bookmarks(dir).await?,
+        Observe::ReadOnly => jj.reachable_bookmarks_ignoring_working_copy(dir).await?,
+    };
+    Ok(bookmarks.into_iter().map(|b| b.name).min())
+}
+
+pub(crate) async fn current_branch<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Option<String>> {
+    current_branch_with(jj, dir, Observe::Live).await
 }
 
 pub(crate) async fn trunk<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Option<String>> {
     Ok(jj.trunk(dir).await?)
 }
 
+async fn local_branches_with<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    observe: Observe,
+) -> Result<Vec<String>> {
+    let bookmarks = match observe {
+        Observe::Live => jj.bookmarks(dir).await?,
+        Observe::ReadOnly => jj.bookmarks_ignoring_working_copy(dir).await?,
+    };
+    Ok(bookmarks.into_iter().map(|b| b.name).collect())
+}
+
 pub(crate) async fn local_branches<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
 ) -> Result<Vec<String>> {
-    Ok(jj
-        .bookmarks(dir)
-        .await?
-        .into_iter()
-        .map(|b| b.name)
-        .collect())
+    local_branches_with(jj, dir, Observe::Live).await
+}
+
+/// [`local_branches`] as a **read-only** query: passes `--ignore-working-copy`,
+/// so listing the bookmarks records no jj operation and never moves `@`. Built
+/// for an observer (the repo watcher) that must not mutate the state it reads.
+pub(crate) async fn local_branches_readonly<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    local_branches_with(jj, dir, Observe::ReadOnly).await
 }
 
 pub(crate) async fn branch_exists<R: ProcessRunner>(
@@ -168,12 +215,47 @@ const SNAPSHOT_TEMPLATE: &str = "commit_id ++ \"\\t\" ++ \
     if(empty, \"1\", \"0\") ++ \"\\t\" ++ if(conflict, \"1\", \"0\")";
 
 pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<RepoSnapshot> {
+    snapshot_with(jj, dir, Observe::Live).await
+}
+
+/// [`snapshot`] as a **read-only** query: every underlying jj command passes
+/// `--ignore-working-copy`, so the batched read records **no** jj operation and
+/// never moves `@`. It reports the state of the last recorded operation, so a
+/// bare working-tree edit jj has not yet snapshotted is not reflected — the
+/// deliberate contract for an observer (the repo watcher) that must not perturb
+/// the working copy it is reporting on. Callers that must observe such edits use
+/// [`snapshot`] and accept the recorded operation.
+pub(crate) async fn snapshot_readonly<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<RepoSnapshot> {
+    snapshot_with(jj, dir, Observe::ReadOnly).await
+}
+
+/// Shared core of [`snapshot`] / [`snapshot_readonly`], selecting whether jj may
+/// snapshot the working copy before each underlying query (see [`Observe`]). Under
+/// [`Observe::ReadOnly`] every spawn is a `--ignore-working-copy` read, so the
+/// three fields (`@`'s head/empty/conflict, the branch, the change count) all
+/// reflect the **same** last-recorded operation — a coherent read-only snapshot,
+/// not a mix of snapshotted and non-snapshotted views.
+async fn snapshot_with<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    observe: Observe,
+) -> Result<RepoSnapshot> {
     // Spawn 1: head/empty/conflict for `@`. Spawn 2: `branch` via
     // `current_branch` (the nearest reachable bookmark). Spawn 3, only when
     // dirty: the change count.
-    let row = jj
-        .template_query(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
-        .await?;
+    let row = match observe {
+        Observe::Live => {
+            jj.template_query(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
+                .await?
+        }
+        Observe::ReadOnly => {
+            jj.template_query_ignoring_working_copy(dir, &rev("@")?, SNAPSHOT_TEMPLATE, Some(1))
+                .await?
+        }
+    };
     let line = row.trim_end_matches(['\r', '\n']);
     let fields: Vec<&str> = line.split('\t').collect();
     // SNAPSHOT_TEMPLATE renders exactly three tab-separated fields: commit_id,
@@ -192,7 +274,7 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
         .copied()
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let branch = current_branch(jj, dir).await?;
+    let branch = current_branch_with(jj, dir, observe).await?;
     // Read the flags as explicit values: `conflict == "1"` ⇒ conflicted, and
     // `empty == "0"` ⇒ a non-empty change ⇒ dirty (so a missing/garbled field falls
     // to clean, not a contradictory "dirty with 0 changes"). A **conflicted** change
@@ -209,9 +291,14 @@ pub(crate) async fn snapshot<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result
         OperationState::Clear
     };
     // 2nd spawn only when there's something to count (dirty now includes the
-    // conflicted case, so the count reflects the conflicted files too).
+    // conflicted case, so the count reflects the conflicted files too). Under
+    // `ReadOnly` this counts the last recorded operation's changes without
+    // snapshotting, matching the `empty`/`conflict` flags read above.
     let change_count = if dirty {
-        jj.status(dir).await?.len()
+        match observe {
+            Observe::Live => jj.status(dir).await?.len(),
+            Observe::ReadOnly => jj.status_ignoring_working_copy(dir).await?.len(),
+        }
     } else {
         0
     };
@@ -965,6 +1052,82 @@ mod tests {
         assert!(
             msg.contains("could not be removed") && msg.contains("wt"),
             "the swallowed dir-removal failure must be reported: {msg}"
+        );
+    }
+
+    // T-038: the read-only snapshot must pass `--ignore-working-copy` on **every**
+    // spawn (the `@` template query, the reachable-bookmark query, and — when the
+    // change reads dirty — the change-count query), so an observer never snapshots
+    // the jj working copy (records an operation / moves `@`). The row's middle
+    // field is `0` (empty=false ⇒ dirty), which forces the third (status) spawn to
+    // fire, so all three are exercised. Driven by a `RecordingRunner` so the argv
+    // is asserted hermetically.
+    #[tokio::test]
+    async fn snapshot_readonly_ignores_working_copy_on_every_spawn() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok("abc123\t0\t0\n"));
+        let jj = Jj::with_runner(&rec);
+        snapshot_readonly(&jj, Path::new("/repo"))
+            .await
+            .expect("read-only snapshot");
+
+        let calls = rec.calls();
+        assert!(
+            calls.len() >= 3,
+            "template + reachable bookmarks + change-count spawns, got {}",
+            calls.len()
+        );
+        for c in &calls {
+            assert!(
+                c.args_str().iter().any(|a| a == "--ignore-working-copy"),
+                "every read-only snapshot spawn must ignore the working copy: {:?}",
+                c.args_str()
+            );
+        }
+    }
+
+    // The complement: the default `snapshot` snapshots the working copy (jj's
+    // normal behaviour), so it must NOT carry the read-only flag on any spawn.
+    #[tokio::test]
+    async fn snapshot_default_does_not_ignore_working_copy() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok("abc123\t0\t0\n"));
+        let jj = Jj::with_runner(&rec);
+        snapshot(&jj, Path::new("/repo"))
+            .await
+            .expect("default snapshot");
+
+        for c in &rec.calls() {
+            assert!(
+                !c.args_str().iter().any(|a| a == "--ignore-working-copy"),
+                "the default snapshot must let jj snapshot the working copy: {:?}",
+                c.args_str()
+            );
+        }
+    }
+
+    // `local_branches_readonly` lists bookmarks read-only (no operation recorded).
+    #[tokio::test]
+    async fn local_branches_readonly_ignores_working_copy() {
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        local_branches_readonly(&jj, Path::new("/repo"))
+            .await
+            .expect("read-only branches");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "a single `bookmark list` spawn");
+        assert!(
+            calls[0].args_str().iter().any(|a| a == "--ignore-working-copy"),
+            "read-only branch listing must ignore the working copy: {:?}",
+            calls[0].args_str()
         );
     }
 }
