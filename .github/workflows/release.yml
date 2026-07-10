@@ -93,8 +93,24 @@ jobs:
       # toolchain for every build/package/publish step (dtolnay/rust-toolchain
       # makes the last-installed toolchain the default). Nightly exists only for
       # the SemVer gate's `cargo-semver-checks`, whose rustdoc-JSON generation is
-      # nightly-only, and is reached explicitly via `cargo +nightly` there.
-      - uses: dtolnay/rust-toolchain@nightly
+      # nightly-only, and is reached explicitly via `cargo +nightly-2026-06-15`
+      # there. PINNED (not the floating `nightly` channel): rustc's *unstable*
+      # rustdoc-JSON format version keeps moving forward on nightly, and
+      # cargo-semver-checks only understands the format versions current at its
+      # own release time — a newer nightly than the checker supports fails with
+      # "unsupported rustdoc format vNN" for EVERY crate, which the SemVer gate
+      # (correctly) treats as "no verdict, refuse to release blind" (see below).
+      # cargo-semver-checks v0.48.0 (the version at the time of this pin)
+      # understands format v56/v57; v57 held from at least 2026-06-01 through
+      # 2026-06-15 and had already moved to v58 by 2026-06-25 (empirically
+      # bisected). When bumping this pin, re-verify locally first: `cargo
+      # +nightly-<date> rustdoc -Z unstable-options --output-format json -p
+      # <any small crate>` and check the `format_version` field of the emitted
+      # `target/doc/<crate>.json` is one cargo-semver-checks' CURRENT release
+      # actually lists as supported (its error message names the supported set).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-15
       - uses: dtolnay/rust-toolchain@stable
 
       # Fail fast if the publish credential is missing, BEFORE any irreversible
@@ -120,7 +136,8 @@ jobs:
 
       # The SemVer gate's checker (see the "SemVer gate" step). A standalone
       # prebuilt binary; it shells out to the toolchain chosen at call time, so
-      # `cargo +nightly semver-checks` runs it under nightly for rustdoc JSON.
+      # `cargo +nightly-2026-06-15 semver-checks` runs it under the pinned
+      # nightly above for rustdoc JSON.
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@v2
         with:
@@ -331,7 +348,7 @@ jobs:
       # SemVer GATE — refuse a release whose chosen bump is too small for the API
       # change, BEFORE anything is uploaded. For each planned crate that already
       # has a prior release (a `<crate>-v*` tag == a crates.io baseline), run
-      # cargo-semver-checks (under nightly, for rustdoc JSON) comparing the release
+      # cargo-semver-checks (under the pinned nightly, for rustdoc JSON) comparing the release
       # commit against that tag's code. cargo-semver-checks is version-aware — for
       # a 0.x crate a breaking change requires a MINOR bump, an addition a PATCH —
       # so its summary names the minimum required bump; we compare that to the
@@ -356,7 +373,7 @@ jobs:
               continue
             fi
             echo "::group::semver-checks $name (baseline $prev, planned bump $BUMP)"
-            out="$(cargo +nightly semver-checks check-release \
+            out="$(cargo +nightly-2026-06-15 semver-checks check-release \
                      --package "$name" --baseline-rev "$prev" 2>&1)" || true
             printf '%s\n' "$out"
             echo "::endgroup::"
