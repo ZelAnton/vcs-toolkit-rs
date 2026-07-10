@@ -892,8 +892,9 @@ pub trait GitApi: Send + Sync {
     async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// A remote's URL (`remote get-url <remote>`).
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
-    /// The current branch's upstream, e.g. `Some("origin/main")`
+    /// The current attached branch's upstream, e.g. `Some("origin/main")`
     /// (`rev-parse --abbrev-ref --symbolic-full-name @{u}`); `None` when unset.
+    /// A detached HEAD or a directory outside a repository is an error.
     async fn upstream(&self, dir: &Path) -> Result<Option<String>>;
     /// Branch names on `remote`, without fetching
     /// (`ls-remote --heads <remote>`).
@@ -1582,13 +1583,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn upstream(&self, dir: &Path) -> Result<Option<String>> {
-        // `@{u}` resolves the configured upstream; with no upstream the command
-        // exits **128** — but so does a genuine failure (detached HEAD, not a repo),
-        // and git gives them all the same exit code, so a *non-zero exit* maps to
-        // `None` (the documented "no upstream"). A **timeout/signal** (no exit code
-        // at all), however, is a real failure and must surface — not be reported as
-        // "no upstream" — so it goes through `ensure_success` like the other
-        // exit-code-mapping sites.
+        // Validate that HEAD is attached before asking for `@{u}`. Git otherwise
+        // uses exit 128 both for "no upstream" and for detached HEAD/not-a-repo,
+        // so the upstream query alone cannot distinguish those states.
+        let head = self
+            .core
+            .output_string(
+                self.core
+                    .command_in(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+            )
+            .await?;
+        let _ = head.ensure_success()?;
+
+        // Once HEAD is known to be an attached branch, exit 128 is the documented
+        // "no upstream configured" case. Every other failure, including a timeout
+        // or signal (which has no exit code), remains a real error.
         let res = self
             .core
             .output_string(self.core.command_in(
@@ -1601,10 +1610,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 let name = res.stdout().trim();
                 Ok((!name.is_empty()).then(|| name.to_string()))
             }
-            Some(_) => Ok(None), // any non-zero exit ⇒ no upstream configured
-            None => {
-                let _ = res.ensure_success()?; // timeout/signal ⇒ a real error
-                Ok(None) // unreachable: ensure_success errors on a no-code outcome
+            Some(128) => Ok(None),
+            _ => {
+                let _ = res.ensure_success()?;
+                Ok(None) // unreachable: every remaining outcome is unsuccessful
             }
         }
     }
@@ -3851,24 +3860,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upstream_maps_unset_to_none() {
+    async fn upstream_distinguishes_no_upstream_from_errors() {
         let set = Git::with_runner(
-            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("origin/main\n")),
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::ok("origin/main\n")),
         );
         assert_eq!(
             set.upstream(Path::new(".")).await.unwrap().as_deref(),
             Some("origin/main")
         );
-        // No upstream configured exits 128 (indistinguishable from a real failure by
-        // code, since git uses 128 for both) → None.
-        let unset =
-            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(128, "")));
+        // On a valid attached branch, exit 128 from `@{u}` means no upstream.
+        let unset = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::fail(128, "")),
+        );
         assert!(unset.upstream(Path::new(".")).await.unwrap().is_none());
-        // A timeout (no exit code) is a real failure — it must surface, not read as
-        // "no upstream".
-        let timed_out =
-            Git::with_runner(ScriptedRunner::new().on(["git", "rev-parse"], Reply::timeout()));
+
+        // Detached HEAD is rejected by the attached-branch probe.
+        let detached =
+            Git::with_runner(ScriptedRunner::new().on(["git", "symbolic-ref"], Reply::fail(1, "")));
+        assert!(detached.upstream(Path::new(".")).await.is_err());
+
+        // A directory outside a repository is a real error too.
+        let not_repo = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "symbolic-ref"],
+            Reply::fail(128, "fatal: not a git repository"),
+        ));
+        assert!(not_repo.upstream(Path::new(".")).await.is_err());
+
+        // Other numeric failures and no-code outcomes must not read as "unset".
+        let broken = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::fail(1, "corrupt config")),
+        );
+        assert!(broken.upstream(Path::new(".")).await.is_err());
+
+        let timed_out = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::timeout()),
+        );
         assert!(timed_out.upstream(Path::new(".")).await.is_err());
+
+        let signalled = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "symbolic-ref"], Reply::ok("main\n"))
+                .on(["git", "rev-parse"], Reply::signalled(Some(9))),
+        );
+        assert!(signalled.upstream(Path::new(".")).await.is_err());
     }
 
     // remote_head_branch maps the `symbolic-ref --quiet` exit code: 0 → the branch

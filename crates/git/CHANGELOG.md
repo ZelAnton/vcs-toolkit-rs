@@ -22,6 +22,9 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- fix: distinguish an attached branch with no configured upstream from Git
+  errors in `GitApi::upstream`; detached HEAD and directories outside a Git
+  repository now return `Err` instead of `Ok(None)`.
 - **Breaking:** reference names and revision expressions are now taken as the
   validated newtypes `RefName` / `RevSpec` (previously constructible but accepted
   by no method — a false safety promise). Every `GitApi` op that names a branch,
