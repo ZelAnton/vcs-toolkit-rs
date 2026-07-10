@@ -4,7 +4,7 @@
 //! tests in `src/parse.rs` and the scripted-runner tests in `src/lib.rs`. Run
 //! with `cargo test -p vcs-github -- --ignored`.
 
-use vcs_github::{GitHub, GitHubApi};
+use vcs_github::{GitHub, GitHubApi, GitHubHost};
 
 #[tokio::test]
 #[ignore = "requires the gh binary"]
@@ -24,6 +24,18 @@ async fn auth_status_does_not_error() {
         .auth_status()
         .await
         .expect("auth_status should not error");
+}
+
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn auth_status_for_host_does_not_error() {
+    // The host-scoped probe reports the bool for one host (`gh auth status
+    // --hostname github.com`) whether or not the user is logged in; it must not
+    // error, just like the unscoped `auth_status`.
+    let _authed = GitHub::new()
+        .auth_status_for(&GitHubHost::github_com())
+        .await
+        .expect("auth_status_for should not error");
 }
 
 // Read-only, auth-gated checks against this very repository (it has real

@@ -464,19 +464,59 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
         .bookmark_create(dir, &BookmarkName::new(branch)?, &rev(&revset)?)
         .await
     {
-        // The two steps aren't atomic: `workspace add` already created the
-        // workspace and its on-disk dir, but the bookmark didn't land. Roll back
-        // so a failed call doesn't leak a half-made worktree — mirror
-        // `remove_worktree` (delete the dir first, then forget the workspace
-        // best-effort), then surface the original error. Only remove the dir if we
-        // created it (it didn't exist before `workspace add`).
-        if !preexisting && abs_path.exists() {
-            let _ = std::fs::remove_dir_all(&abs_path);
-        }
-        let _ = jj.workspace_forget(dir, &ws_name).await;
-        return Err(e.into());
+        // The two steps aren't atomic: `workspace add` already created the workspace
+        // and (unless it pre-existed) its on-disk dir, but the bookmark didn't land.
+        // Roll back the half-made worktree — but report any cleanup residue rather
+        // than swallowing it, so a leaked dir or a dangling registration is visible
+        // and the caller can finish (and safely re-run) the cleanup.
+        return Err(rollback_failed_create(jj, dir, &ws_name, &abs_path, preexisting, e).await);
     }
     Ok(CreateOutcome::Plain)
+}
+
+/// Roll back a [`create_worktree`] whose `bookmark create` step failed, **reporting**
+/// any cleanup residue instead of swallowing it. Removes the workspace directory
+/// (only when `create_worktree` created it — a `preexisting` dir is the caller's data
+/// and is left untouched, never `remove_dir_all`'d) and forgets the workspace, then
+/// composes the outcome: the `bookmark create` failure is the root `cause`; a
+/// directory that could not be removed or a registration that could not be forgotten
+/// is appended as still-to-clean state (so a partial rollback is diagnosable and can
+/// be re-run). A fully clean rollback surfaces the original `cause` unchanged.
+async fn rollback_failed_create<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    ws_name: &str,
+    abs_path: &Path,
+    preexisting: bool,
+    cause: processkit::Error,
+) -> Error {
+    let mut residue: Vec<String> = Vec::new();
+    // Only remove a dir WE created — a pre-existing one is not ours to delete
+    // (removing it would be silent data loss on an unrelated failure).
+    if !preexisting
+        && abs_path.exists()
+        && let Err(e) = std::fs::remove_dir_all(abs_path)
+    {
+        residue.push(format!(
+            "the workspace directory {} could not be removed ({e})",
+            abs_path.display()
+        ));
+    }
+    if let Err(e) = jj.workspace_forget(dir, ws_name).await {
+        residue.push(format!(
+            "the workspace `{ws_name}` could not be forgotten ({e})"
+        ));
+    }
+    if residue.is_empty() {
+        // A clean rollback: the bookmark-step failure is the whole story, surfaced
+        // with its original classification.
+        return Error::Vcs(cause);
+    }
+    Error::Io(std::io::Error::other(format!(
+        "creating the worktree failed at `bookmark create` ({cause}), and the rollback \
+         could not fully clean up: {}. Finish the cleanup manually and retry.",
+        residue.join("; ")
+    )))
 }
 
 /// jj's initial workspace — its directory is the repository's main working copy,
@@ -534,7 +574,20 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     // it would couple the facade to one runtime, a worse trade for a library
     // meant to run under any executor; see docs/audit-2026-07.md P2.)
     if abs_path.exists() {
-        std::fs::remove_dir_all(&abs_path)?;
+        std::fs::remove_dir_all(&abs_path).map_err(|e| {
+            // Report what remains so the failure is diagnosable and the cleanup is
+            // repeatable: the directory is still on disk AND the workspace is still
+            // registered (its name was resolved above). Once the directory is free, a
+            // retry re-resolves the same name and finishes the removal + forget.
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to remove the worktree directory {} ({e}); the jj workspace \
+                     `{name}` is still registered — free the directory and retry",
+                    abs_path.display()
+                ),
+            ))
+        })?;
     }
     // Then forget the workspace. jj happily forgets an already-deleted workspace
     // dir, so this normally succeeds; we *surface* a failure rather than swallow it
@@ -577,15 +630,37 @@ async fn workspace_name_for_path<R: ProcessRunner>(
         roots.len(),
         "workspace_roots must return one result per name"
     );
+    // Registered workspaces whose root couldn't be resolved via `workspace root
+    // --name`: a no-match must NOT be reported as a clean `WorktreeNotFound` when we
+    // merely failed to place a registered workspace — `path` may well be that one.
+    let mut unresolved: Vec<String> = Vec::new();
     for (ws, root) in workspaces.into_iter().zip(roots) {
-        let Ok(root) = root else {
-            continue;
-        };
-        if normalize_for_compare(&root) == target || root == path {
-            return Ok(ws.name);
+        match root {
+            Ok(root) => {
+                if normalize_for_compare(&root) == target || root == path {
+                    return Ok(ws.name);
+                }
+            }
+            Err(_) => unresolved.push(ws.name),
         }
     }
-    Err(Error::WorktreeNotFound(path.to_path_buf()))
+    if unresolved.is_empty() {
+        // Every registered workspace resolved and none matched: a genuine miss.
+        Err(Error::WorktreeNotFound(path.to_path_buf()))
+    } else {
+        // Some registered workspaces did not resolve, so `path`'s absence can't be
+        // proven — surface a DISTINCT, diagnosable error (not a clean
+        // `WorktreeNotFound`, so `is_resource_not_found` stays false) that names the
+        // unresolved workspaces, rather than misreporting a real one as "not found".
+        Err(Error::Io(std::io::Error::other(format!(
+            "could not resolve the worktree at {}: {} registered workspace(s) did not \
+             resolve via `jj workspace root --name` ({}); the path may belong to one of \
+             them — resolve or `jj workspace forget` it manually",
+            path.display(),
+            unresolved.len(),
+            unresolved.join(", "),
+        ))))
+    }
 }
 
 /// Normalise a path for comparison against jj's `workspace root` output:
@@ -779,6 +854,117 @@ mod tests {
         assert!(
             !resolved.exists(),
             "the rollback must remove dir/<rel>, the location jj created"
+        );
+    }
+
+    // R2: the rollback must NOT swallow a secondary cleanup error. `workspace add`
+    // created the dir (which the rollback removes fine), but `workspace forget`
+    // fails — the returned error must report the dangling registration rather than
+    // hide it behind the bookmark-step cause.
+    #[tokio::test]
+    async fn create_worktree_rollback_surfaces_forget_failure() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r2-rollback-forget");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+
+        let jj = Jj::with_runner(AddCreatesDir {
+            dir: wt.clone(),
+            inner: ScriptedRunner::new()
+                .on(["jj", "workspace", "add"], Reply::ok(""))
+                .on(
+                    ["jj", "bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
+                .on(
+                    ["jj", "workspace", "forget"],
+                    Reply::fail(1, "cannot forget workspace\n"),
+                ),
+        });
+
+        let err = create_worktree(&jj, repo, &wt, "feature", "@")
+            .await
+            .expect_err("the bookmark-step failure must propagate");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not be forgotten") && msg.contains("feature"),
+            "the swallowed forget failure must be reported: {msg}"
+        );
+        assert!(
+            !wt.exists(),
+            "the dir removal still ran (only the forget failed)"
+        );
+    }
+
+    // A `ScriptedRunner` whose mocked `workspace add` drops a *file* where the
+    // worktree directory should be, so the rollback's `remove_dir_all` fails
+    // deterministically and cross-platform — a hermetic stand-in for a Windows-like
+    // "the directory can't be removed" outcome (a locked/undeletable dir), letting a
+    // test assert the removal failure is REPORTED rather than swallowed.
+    struct AddCreatesFile {
+        inner: processkit::testing::ScriptedRunner,
+        path: std::path::PathBuf,
+    }
+
+    #[async_trait::async_trait]
+    impl processkit::ProcessRunner for AddCreatesFile {
+        async fn output_string(
+            &self,
+            command: &processkit::Command,
+        ) -> processkit::Result<processkit::ProcessResult<String>> {
+            let args: Vec<String> = command
+                .arguments()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            if args.iter().any(|a| a == "workspace") && args.iter().any(|a| a == "add") {
+                if let Some(parent) = self.path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&self.path, b"not a dir");
+            }
+            self.inner.output_string(command).await
+        }
+    }
+
+    // R2 (Windows-like removal failure): the rollback surfaces a dir-removal failure
+    // instead of swallowing it. `workspace add` leaves a *file* at the worktree path,
+    // so `remove_dir_all` errors; the returned error must report the leaked path.
+    #[tokio::test]
+    async fn create_worktree_rollback_surfaces_dir_removal_failure() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("r2-rollback-rmdir");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+        assert!(
+            !wt.exists(),
+            "must not pre-exist (so it counts as ours to remove)"
+        );
+
+        let jj = Jj::with_runner(AddCreatesFile {
+            path: wt.clone(),
+            inner: ScriptedRunner::new()
+                .on(["jj", "workspace", "add"], Reply::ok(""))
+                .on(
+                    ["jj", "bookmark", "create"],
+                    Reply::fail(1, "bookmark already exists\n"),
+                )
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
+        });
+
+        let err = create_worktree(&jj, repo, &wt, "feature", "@")
+            .await
+            .expect_err("the bookmark-step failure must propagate");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not be removed") && msg.contains("wt"),
+            "the swallowed dir-removal failure must be reported: {msg}"
         );
     }
 }

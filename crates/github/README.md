@@ -19,7 +19,12 @@ ever orphaned; calls return the structured `Error` and honour an optional timeou
 (CI, vault, multi-account), the one-liner is `GitHub::new().with_token(tok)` (or
 `.with_env_token("MY_TOKEN")`); for full control attach a `CredentialProvider` with
 `.with_credentials(...)`. Either way the token is injected as `GH_TOKEN`, kept out
-of `argv`.
+of `argv`. For a **GitHub Enterprise Server** host, add
+`.with_host(GitHubHost::from_remote_url(remote)?)` (or `GitHubHost::new("ghe.example.com")?`):
+the token then goes to `GH_ENTERPRISE_TOKEN` — the variable `gh` reads for that
+host, never the github.com `GH_TOKEN` — and `auth_status_for(&host)` probes just
+that host (`gh auth status --hostname …`), so a broken session for another host
+can't cause a false negative.
 
 [`processkit`]: https://crates.io/crates/processkit
 

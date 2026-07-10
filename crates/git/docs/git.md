@@ -356,7 +356,10 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
 - **`diff`** — parsed per-file unified diff for `spec`, layered on `diff_text`.
 - **`diff_text`** — raw git-format unified diff for `spec` (`diff <spec> --no-color
   --no-ext-diff -M`) — stable machine output. On an unborn repo,
-  `DiffSpec::WorkingTree` diffs against the empty tree rather than failing.
+  `DiffSpec::WorkingTree` diffs against the empty tree rather than failing; the
+  empty-tree id is resolved for the repo's active object format via
+  `Git::empty_tree_oid` (so it also works in a `sha256` repo), not the SHA-1-only
+  `EMPTY_TREE_SHA1` constant.
 - **`diff_is_empty`** — `git diff --quiet`, exit-code mapped: are there unstaged
   modifications to **tracked** files? Untracked files are not counted — not a full
   "is the working tree clean?" check; use `status` for that.

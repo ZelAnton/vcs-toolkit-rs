@@ -11,6 +11,12 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: add `Git::empty_tree_oid` — the empty-tree object id for a repository's
+  **active object format**, computed via `git hash-object -t tree --stdin` (an
+  empty tree is empty content; `--stdin`, not `-w`, only computes the id). This is
+  the format-correct stand-in for `HEAD` when diffing/stat-ing an unborn
+  (no-commits-yet) working tree, and unlike the old constant it is also correct in
+  a SHA-256 repo, where the SHA-1 empty-tree id does not exist. (T-043.)
 - feat: add `GitApi::log_paths` — like `log`, but scoped to commits that
   touched the given paths (`git log <revspec> -n <max> -- <paths>`), with the
   same `--` pathspec separator as `add`/`commit_paths` and a refusal of an
@@ -22,6 +28,17 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- **Breaking:** the public empty-tree constant `EMPTY_TREE` is renamed
+  `EMPTY_TREE_SHA1` and documented as **SHA-1 only**. It presented git's SHA-1
+  empty tree as a universal id, but that value does not exist in a repo created
+  with `extensions.objectFormat=sha256` — so `diff_text(DiffSpec::WorkingTree)`
+  and the facade `diff_stat` hard-failed on an *unborn* SHA-256 repo (they diffed
+  the working tree against a non-existent object). Both now resolve the id from
+  git via the new `Git::empty_tree_oid`, so the unborn working-tree diff/stat
+  works under either object format; behaviour after the first commit (the `HEAD`
+  path) is unchanged. Migrate `vcs_git::EMPTY_TREE` to `vcs_git::EMPTY_TREE_SHA1`
+  for the SHA-1-only literal, or to `git.empty_tree_oid(dir).await?` for the
+  object-format-correct id. (T-043; `docs/audit-2026-07.md` L6.)
 - **Breaking:** the raw escape hatches on the bound view (`GitAt::run`/`run_raw`/
   `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
   current directory. Previously they sat in the `bare` forwarder group, so
