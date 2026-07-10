@@ -26,6 +26,35 @@ jobs:
       - run: rustup component add rustfmt
       - run: cargo fmt --all --check
 
+  # Fail fast if the committed Cargo.lock is out of sync with the manifests. The
+  # release workflow packages and publishes with `--locked`, so a stale lock (a
+  # manifest edit not reflected in the lock) would only surface AT release time,
+  # after the version bump/commit — this catches it on every push/PR instead.
+  # `cargo metadata --locked` resolves against the committed lock and errors if
+  # it would need updating, without a full build.
+  lockfile:
+    name: Cargo.lock in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo metadata --format-version 1 --locked > /dev/null
+
+  # Unit-test the pure release DECISIONS (version math, dependency graph +
+  # publish order, the `cargo package` verify set, and the SemVer bump
+  # comparison) that scripts/release/lib.sh feeds the release workflow. Runs the
+  # same fixtures `scripts/gate` runs locally. A wrong decision here (a
+  # semver-breaking patch, a crate packaged out of dependency order) would only
+  # bite at release time against the irreversible crates.io upload, so it's
+  # gated on every push/PR. `test_manifest_deps_match` also pins the dependency
+  # map to the real Cargo.toml manifests so it can't silently rot.
+  release-lib:
+    name: release lib fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/release/lib.test.sh
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -83,11 +112,14 @@ jobs:
       # libs + bins only, deliberately NOT --all-targets: the MSRV contract is for
       # consumers compiling the LIBRARIES, not our tests/benches/examples (which may
       # use newer toolchain features). --all-features covers `mock` and `tracing`.
+      # `--locked` asserts the MSRV floor is checked against the committed
+      # Cargo.lock (the versions consumers actually resolve), not a silently
+      # updated graph.
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - run: cargo check --workspace --all-features
+      - run: cargo check --workspace --all-features --locked
 
   # Check every optional feature compiles SOLO on the crate that declares it. The
   # `clippy`/`test`/`msrv` jobs all build `--all-features` (every feature ON at
@@ -360,8 +392,10 @@ jobs:
       # Only crates with no *unpublished* workspace dependency can be packaged here:
       # vcs-diff (no deps), vcs-cli-support (only the published `processkit`), and
       # vcs-testkit (no deps). They package and verify-build fully — catching missing
-      # files or bad metadata before publish.
-      - run: cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit
+      # files or bad metadata before publish. `--locked` asserts the packaged build
+      # resolves against the committed Cargo.lock (the same guarantee the release
+      # workflow's package/publish steps rely on), so a stale lock is caught here.
+      - run: cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit --locked
       # vcs-git/vcs-jj/vcs-github/vcs-core depend (by version) on in-workspace crates
       # not yet on crates.io — vcs-diff/vcs-cli-support, and vcs-core also on
       # vcs-git/vcs-jj. `cargo package` (even `--no-verify`) refuses to prepare a
