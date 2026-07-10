@@ -25,6 +25,21 @@ pub(crate) async fn auth_status<R: ProcessRunner>(tea: &Gitea<R>) -> Result<bool
     Ok(tea.auth_status().await?)
 }
 
+/// Probe the `tea` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `tea --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `tea`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    tea: &Gitea<R>,
+) -> Result<(Option<vcs_gitea::GiteaVersion>, bool)> {
+    match tea.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub(crate) async fn pr_list<R: ProcessRunner>(tea: &Gitea<R>, dir: &Path) -> Result<Vec<ForgePr>> {
     Ok(tea.pr_list(dir).await?.into_iter().map(map_pr).collect())
 }

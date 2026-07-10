@@ -7,6 +7,15 @@ use serde::Deserialize;
 
 use crate::BINARY;
 
+/// Parse `glab --version` output (`glab 1.36.0` / `glab version 1.36.0 (…)`) into
+/// the shared [`vcs_diff::Version`]: the first dotted-numeric token wins, so any
+/// build/commit trailer is ignored. `None` when the banner carries no version
+/// token. Reuses the same tolerant parser `vcs-git`/`vcs-jj` gate on, so the three
+/// CLIs share one version-parsing contract.
+pub(crate) fn parse_glab_version(raw: &str) -> Option<vcs_diff::Version> {
+    vcs_diff::parse_dotted_version(raw)
+}
+
 /// A merge request (`glab mr list/view --output json`). The fields are GitLab's
 /// REST `MergeRequest` object, which `glab` passes through unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

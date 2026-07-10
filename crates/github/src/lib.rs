@@ -148,6 +148,11 @@ pub use parse::{
 // verbatim (`gh pr diff` emits the same git-format diff `git diff`/`jj diff
 // --git` do; `crates/diff/src/diff.rs`'s parser is shared, not duplicated).
 pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed `gh --version`, re-exported as `GitHubVersion` — the shared
+// `major.minor.patch` type `vcs-git`/`vcs-jj` also gate on (an alias of
+// `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
+// [`GitHubCapabilities::version`].
+pub use vcs_diff::Version as GitHubVersion;
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
@@ -627,6 +632,60 @@ impl ReviewAction {
     }
 }
 
+/// What the installed `gh` binary supports, probed via
+/// [`GitHubApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it). Mirrors
+/// [`vcs_git::GitCapabilities`](../vcs_git/struct.GitCapabilities.html) /
+/// [`vcs_jj::JjCapabilities`](../vcs_jj/struct.JjCapabilities.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitHubCapabilities {
+    /// The binary's parsed version.
+    pub version: GitHubVersion,
+}
+
+/// The oldest `gh` this crate is written against — **2.0.0**, the first release of
+/// the modern `gh` line. Every command this crate's argv drives lives in 2.x: the
+/// `--json` read surface (`pr`/`issue`/`repo`/`release … --json`, incl.
+/// `pr checks --json`), the `pr edit` / `pr checkout` / `pr ready` lifecycle verbs,
+/// and `api`. A `gh` from the 1.x line is missing parts of that surface, so gating
+/// here lets [`ensure_supported`](GitHubCapabilities::ensure_supported) reject a
+/// too-old binary up front with a clear message instead of letting an operation
+/// fail deep inside gh with a cryptic `unknown command`/`unknown flag`.
+const MIN_SUPPORTED: GitHubVersion = GitHubVersion {
+    major: 2,
+    minor: 0,
+    patch: 0,
+};
+
+impl GitHubCapabilities {
+    /// Whether the binary meets the supported floor (gh ≥ 2.0). Every typed
+    /// operation on [`GitHubApi`] is guaranteed against this minimum.
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs gh ≥ 2.0,
+    /// found 1.14.0" instead of a cryptic `unknown command`/`unknown flag` failure
+    /// once an operation reaches a command the old binary lacks. The pre-flight
+    /// check a caller runs before driving operations against an untrusted `gh`.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-github requires gh >= {MIN_SUPPORTED}, found {}",
+                    self.version
+                ),
+            ),
+        ))
+    }
+}
+
 /// The GitHub operations this crate exposes — the interface consumers code
 /// against and mock in tests.
 #[cfg_attr(feature = "mock", mockall::automock)]
@@ -646,6 +705,11 @@ pub trait GitHubApi: Send + Sync {
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed GitHub CLI version (`gh --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GitHubCapabilities`]
+    /// (`gh --version`). A value type — probe once and keep it; an unrecognisable
+    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `gh`
+    /// with [`GitHubCapabilities::ensure_supported`].
+    async fn capabilities(&self) -> Result<GitHubCapabilities>;
     /// Whether the user is authenticated (`gh auth status` exits zero). Reflects
     /// the exit code as a bool — any non-zero exit reads as `false`, never an
     /// error; only a spawn failure or timeout errors. Unscoped: it inspects
@@ -894,6 +958,17 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.run(["--version"]).await
+    }
+
+    async fn capabilities(&self) -> Result<GitHubCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_gh_version(&raw).ok_or_else(|| {
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `gh --version` output: {raw:?}"),
+            )
+        })?;
+        Ok(GitHubCapabilities { version })
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -1367,6 +1442,7 @@ vcs_cli_support::at_forwarders! {
     GitHubAt, gh, "GitHub",
     bare {
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GitHubCapabilities>;
         fn auth_status() -> Result<bool>;
         fn auth_status_for(host: &GitHubHost) -> Result<bool>;
     }
@@ -1415,6 +1491,66 @@ mod tests {
     #[test]
     fn binary_name_is_gh() {
         assert_eq!(BINARY, "gh");
+    }
+
+    // `capabilities()` parses the real `gh --version` banner and gates on the 2.0
+    // floor — covering the minimum, a modern release, and an unrecognisable banner
+    // (the three cases the scheduled-drift lane also exercises against a real gh).
+    #[tokio::test]
+    async fn capability_version_gate_parses_and_gates() {
+        // Modern gh (the `(date)` trailer and release-URL line are ignored).
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "--version"],
+            Reply::ok(
+                "gh version 2.40.1 (2024-01-05)\nhttps://github.com/cli/cli/releases/tag/v2.40.1\n",
+            ),
+        ));
+        let caps = gh.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "2.40.1");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Exactly at the floor (2.0.0) is supported.
+        let at_floor = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version 2.0.0\n")),
+        );
+        assert!(
+            at_floor.capabilities().await.unwrap().is_supported(),
+            "2.0.0 is exactly the floor"
+        );
+
+        // An old 1.x gh is rejected with a clear message naming the floor + found.
+        let old = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "--version"],
+            Reply::ok("gh version 1.14.0 (2021-11-02)\n"),
+        ));
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GitHubVersion {
+                major: 1,
+                minor: 14,
+                patch: 0
+            }
+        );
+        assert!(!caps.is_supported(), "1.14 is below the 2.0 floor");
+        let err = caps.ensure_supported().expect_err("unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 2.0.0"), "names the floor: {message}");
+        assert!(
+            message.contains("1.14.0"),
+            "names the found version: {message}"
+        );
+
+        // A banner with no version token is a parse error, not a silent zero.
+        let garbage = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version unknowable\n")),
+        );
+        let err = garbage.capabilities().await.expect_err("unrecognisable");
+        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.

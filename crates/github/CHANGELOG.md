@@ -10,6 +10,18 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **`gh` version floor + capability gate.** New `GitHubCapabilities` (`version:
+  GitHubVersion`), probed via `GitHubApi::capabilities()` (`gh --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so gh's `(date)`/release-URL trailers are
+  ignored; an unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **gh ≥ 2.0.0** — the
+  first modern `gh` line whose `--json` read surface, `pr edit`/`pr checkout`/
+  `pr ready` lifecycle verbs, and `api` this crate all drive. A too-old `gh` is now
+  rejected up front with a clear "needs gh ≥ 2.0.0, found 1.14.0" message rather
+  than failing deep inside an operation with a cryptic `unknown command`/`unknown
+  flag`. `GitHubVersion` (an alias of `vcs_diff::Version`) is re-exported, and the
+  bound `GitHubAt` view forwards `capabilities()`.
 - **GitHub Enterprise Server (GHES) credentials + host-scoped auth.** A new
   `GitHubHost` type models the target host (SaaS `github.com` vs a GHES host),
   built via `GitHubHost::github_com()`, `GitHubHost::new("ghe.example.com")`, or

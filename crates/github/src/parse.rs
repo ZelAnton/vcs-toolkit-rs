@@ -6,6 +6,15 @@ use serde::Deserialize;
 
 use crate::BINARY;
 
+/// Parse `gh --version` output (`gh version 2.40.1 (2024-01-05)`) into the shared
+/// [`vcs_diff::Version`]: the first dotted-numeric token wins, so gh's `(date)` and
+/// the release-URL trailer on the next line are ignored. `None` when the banner
+/// carries no version token. Reuses the same tolerant parser `vcs-git`/`vcs-jj`
+/// gate on, so the three CLIs share one version-parsing contract.
+pub(crate) fn parse_gh_version(raw: &str) -> Option<vcs_diff::Version> {
+    vcs_diff::parse_dotted_version(raw)
+}
+
 /// A pull request
 /// (`gh pr list/view --json number,title,state,isDraft,headRefName,baseRefName,url`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

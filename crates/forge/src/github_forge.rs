@@ -19,6 +19,21 @@ pub(crate) async fn auth_status<R: ProcessRunner>(gh: &GitHub<R>) -> Result<bool
     Ok(gh.auth_status().await?)
 }
 
+/// Probe the `gh` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `gh --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `gh`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    gh: &GitHub<R>,
+) -> Result<(Option<vcs_github::GitHubVersion>, bool)> {
+    match gh.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub(crate) async fn repo_view<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> Result<ForgeRepo> {
     Ok(map_repo(gh.repo_view(dir).await?))
 }

@@ -10,6 +10,19 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **`tea` version floor + capability gate.** New `GiteaCapabilities` (`version:
+  GiteaVersion`), probed via `GiteaApi::capabilities()` (`tea --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so any emoji/build trailer is ignored; an
+  unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **tea ≥ 0.9.0** — the
+  `tea` line whose `--output json`/`--fields` read surface, `pr create`/`merge`/
+  `close`/`checkout` lifecycle verbs, and `comment` this crate all drive. A too-old
+  `tea` is now rejected up front with a clear "needs tea ≥ 0.9.0, found 0.8.0"
+  message rather than failing deep inside an operation with a cryptic `unknown
+  command`/`unknown flag`. `GiteaVersion` (an alias of `vcs_diff::Version`) is
+  re-exported, and the bound `GiteaAt` view forwards `capabilities()`. Adds a
+  `vcs-diff` dependency (the shared version type/parser).
 - `GiteaApi::pr_checkout(dir, number)` — check a pull request's branch out into
   the working copy (`tea pr checkout <n>`); the head branch is fetched and
   switched to, so a build/test/edit runs against the PR locally. Mutates the

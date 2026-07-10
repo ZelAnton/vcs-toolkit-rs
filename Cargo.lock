@@ -1225,6 +1225,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "vcs-cli-support",
+ "vcs-diff",
 ]
 
 [[package]]

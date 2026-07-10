@@ -137,6 +137,11 @@ pub use parse::{CiStatus, Issue, MergeRequest, Release, RepoView};
 // `jj diff --git` do; `crates/diff/src/diff.rs`'s parser is shared, not
 // duplicated).
 pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed `glab --version`, re-exported as `GitLabVersion` — the shared
+// `major.minor.patch` type `vcs-git`/`vcs-jj` also gate on (an alias of
+// `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
+// [`GitLabCapabilities::version`].
+pub use vcs_diff::Version as GitLabVersion;
 
 /// Options for [`GitLabApi::mr_create`] (`glab mr create`).
 ///
@@ -382,6 +387,62 @@ impl MrMerge {
     }
 }
 
+/// What the installed `glab` binary supports, probed via
+/// [`GitLabApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it). Mirrors
+/// [`vcs_git::GitCapabilities`](../vcs_git/struct.GitCapabilities.html) /
+/// [`vcs_jj::JjCapabilities`](../vcs_jj/struct.JjCapabilities.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitLabCapabilities {
+    /// The binary's parsed version.
+    pub version: GitLabVersion,
+}
+
+/// The oldest `glab` this crate is written against — **1.25.0**. Every command
+/// this crate's argv drives is present across the modern `glab` 1.x line: the
+/// `--output json` read surface (`mr`/`issue`/`repo`/`release … --output json`),
+/// the `mr update` (edit) / `mr checkout` / `mr merge --yes --auto-merge=…`
+/// lifecycle verbs, and `api`. A `glab` older than this predates parts of that
+/// surface, so gating here lets
+/// [`ensure_supported`](GitLabCapabilities::ensure_supported) reject a too-old
+/// binary up front with a clear message instead of letting an operation fail deep
+/// inside glab with a cryptic `unknown command`/`unknown flag`.
+const MIN_SUPPORTED: GitLabVersion = GitLabVersion {
+    major: 1,
+    minor: 25,
+    patch: 0,
+};
+
+impl GitLabCapabilities {
+    /// Whether the binary meets the supported floor (glab ≥ 1.25). Every typed
+    /// operation on [`GitLabApi`] is guaranteed against this minimum.
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs glab
+    /// ≥ 1.25, found 1.20.0" instead of a cryptic `unknown command`/`unknown flag`
+    /// failure once an operation reaches a command the old binary lacks. The
+    /// pre-flight check a caller runs before driving operations against an
+    /// untrusted `glab`.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-gitlab requires glab >= {MIN_SUPPORTED}, found {}",
+                    self.version
+                ),
+            ),
+        ))
+    }
+}
+
 /// The GitLab operations this crate exposes — the interface consumers code
 /// against and mock in tests. The **lean MR lifecycle**; reach unmodelled `glab`
 /// commands through [`run`](GitLabApi::run).
@@ -411,6 +472,11 @@ pub trait GitLabApi: Send + Sync {
     async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;
     /// Installed GitLab CLI version (`glab --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GitLabCapabilities`]
+    /// (`glab --version`). A value type — probe once and keep it; an unrecognisable
+    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `glab`
+    /// with [`GitLabCapabilities::ensure_supported`].
+    async fn capabilities(&self) -> Result<GitLabCapabilities>;
     /// Whether the user is authenticated (`glab auth status` exits zero). Reflects
     /// the exit code as a bool — any non-zero exit reads as `false`, never an
     /// error; only a spawn failure or timeout errors.
@@ -593,6 +659,17 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.run(["--version"]).await
+    }
+
+    async fn capabilities(&self) -> Result<GitLabCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_glab_version(&raw).ok_or_else(|| {
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `glab --version` output: {raw:?}"),
+            )
+        })?;
+        Ok(GitLabCapabilities { version })
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -948,6 +1025,7 @@ vcs_cli_support::at_forwarders! {
     GitLabAt, glab, "GitLab",
     bare {
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GitLabCapabilities>;
         fn auth_status() -> Result<bool>;
     }
     dir {
@@ -990,6 +1068,63 @@ mod tests {
     #[test]
     fn binary_name_is_glab() {
         assert_eq!(BINARY, "glab");
+    }
+
+    // `capabilities()` parses the real `glab --version` banner and gates on the
+    // 1.25 floor — covering the minimum, a modern release, and an unrecognisable
+    // banner (the three cases the scheduled-drift lane also exercises against a
+    // real glab).
+    #[tokio::test]
+    async fn capability_version_gate_parses_and_gates() {
+        // Modern glab (`glab 1.36.0` shape; any build/commit trailer is ignored).
+        let glab = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab 1.36.0\n")),
+        );
+        let caps = glab.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "1.36.0");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Exactly at the floor (1.25.0) is supported.
+        let at_floor = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab version 1.25.0\n")),
+        );
+        assert!(
+            at_floor.capabilities().await.unwrap().is_supported(),
+            "1.25.0 is exactly the floor"
+        );
+
+        // An old glab is rejected with a clear message naming the floor + found.
+        let old = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab 1.20.0\n")),
+        );
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GitLabVersion {
+                major: 1,
+                minor: 20,
+                patch: 0
+            }
+        );
+        assert!(!caps.is_supported(), "1.20 is below the 1.25 floor");
+        let err = caps.ensure_supported().expect_err("unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 1.25.0"), "names the floor: {message}");
+        assert!(
+            message.contains("1.20.0"),
+            "names the found version: {message}"
+        );
+
+        // A banner with no version token is a parse error, not a silent zero.
+        let garbage = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab (unknown)\n")),
+        );
+        let err = garbage.capabilities().await.expect_err("unrecognisable");
+        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
