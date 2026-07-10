@@ -63,6 +63,10 @@ authors = ["Anton Zhelezniakou"]
 # `processkit::prelude::…`) hits no call site in this workspace (verified by rg).
 processkit = "2.1"
 
+# Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
+# Unified version: 0.15 satisfies both wrapper crate requirements (was 0.13) and processkit/mock needs.
+mockall = "0.15"
+
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.
 # ---------------------------------------------------------------------------

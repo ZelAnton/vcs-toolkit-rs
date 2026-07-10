@@ -26,8 +26,30 @@ crates; tag releases as `vcs-jj-v<version>`.
 - feat: add the `Rollback` enum and `TransactionError` struct describing a
   transaction's rollback outcome and preserving the closure's cause.
 
+### Fixed
+
+- A locally-deleted bookmark that a remote still tracks (a **tombstone**) no
+  longer masquerades as a live local bookmark: `bookmarks()` — and through it the
+  facade's `local_branches`/`branch_exists` — now filters it out. `bookmark list`
+  renders such a bookmark as a `present=0` local row plus a `present=1`
+  remote-tracking row; both are dropped, while a *conflicted* bookmark
+  (`present=1`, no single target) is correctly kept. (T-041.)
+
 ### Changed
 
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- Machine templates now follow one **framing/escaping contract**: free-text
+  fields (descriptions, bookmark/workspace names, the op-log user) are rendered
+  with jj's `.escape_json()` and decoded on parse, and per-commit/-workspace
+  bookmark lists are space-joined escaped names instead of comma/space-joined raw
+  ones. Names/descriptions carrying spaces, commas, tabs, quotes, or newlines now
+  round-trip unambiguously instead of mangling the row (e.g. a git-imported
+  `co,mma` bookmark, or a workspace name with a tab). (T-041.)
+- Identity/cross-reference commit ids are now the **full** id, not a short prefix:
+  `Bookmark::target`, `BookmarkRef::target`, and `Workspace::commit` (and thus the
+  facade's `WorktreeInfo.commit`) carry the full commit id so they can be matched
+  against a git oid / `RepoSnapshot.head` without a short-prefix collision. The
+  history-display `Change` (change/commit id) stays short by design. (T-041.)
 - **Breaking:** `blocking::workspace_name_for_path` now returns
   `io::Result<Option<String>>` instead of `Option<String>`, so a `Drop`-guard caller
   can tell a genuine "no such workspace" (`Ok(None)`) from a probe that could not

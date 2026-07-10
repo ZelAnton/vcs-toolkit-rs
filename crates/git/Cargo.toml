@@ -29,7 +29,7 @@ vcs-cli-support = { path = "../cli-support", version = "0.5" }
 async-trait = "0.1"
 # Auto-generated `MockGitApi` for consumers' tests. Test-only — enabled only via
 # the `mock` feature, never compiled into production builds.
-mockall = { version = "0.13", optional = true }
+mockall = { workspace = true, optional = true }
 
 [features]
 # Expose the `mockall`-generated `MockGitApi` (and pull in processkit's mocks).

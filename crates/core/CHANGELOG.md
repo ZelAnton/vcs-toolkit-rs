@@ -37,6 +37,11 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Changed
 
+- `WorktreeInfo.commit` is now the checked-out commit's **full** object id on
+  both backends (the jj side previously reported a short prefix), the same
+  identity `RepoSnapshot.head` carries — so the two can be compared directly to
+  tell whether a worktree sits on the snapshotted commit, without a short-prefix
+  collision. Documented as such on both fields. (T-041.)
 - The facade keeps its ergonomic `&str`-taking `Repo` API but now converts each
   ref-name / revision input into the backend's validated newtype
   (`vcs_git::RefName`/`RevSpec` / `vcs_jj::BookmarkName`/`RevsetExpr`) **at the

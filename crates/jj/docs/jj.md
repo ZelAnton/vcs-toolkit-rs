@@ -631,7 +631,7 @@ A jj change, parsed from a tab-delimited template row.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | `String` | Bookmark name. |
-| `target` | `String` | Short id of the commit it points at. |
+| `target` | `String` | **Full** commit id it points at (empty for a conflicted bookmark) — a cross-referenceable id, not a display prefix. |
 
 ### `BookmarkRef`
 From `bookmark list -a` — local *or* remote-tracking.
@@ -640,14 +640,14 @@ From `bookmark list -a` — local *or* remote-tracking.
 | --- | --- | --- |
 | `name` | `String` | Bookmark name. |
 | `remote` | `Option<String>` | Remote (e.g. `origin`/`git`); `None` for a local. |
-| `target` | `String` | Short commit id (empty for a conflicted bookmark). |
+| `target` | `String` | **Full** commit id (empty for a conflicted bookmark) — a cross-referenceable id, not a display prefix. |
 | `tracked` | `bool` | Whether this remote-tracking bookmark is tracked (`false` for locals). |
 
 ### `Workspace`
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | `String` | Workspace name (`default` for the main one). |
-| `commit` | `String` | Short commit id of the working-copy commit. |
+| `commit` | `String` | **Full** commit id of the working-copy commit (the identity `WorktreeInfo.commit` carries), not a display prefix. |
 | `bookmarks` | `Vec<String>` | Local bookmarks at that commit (empty when none). |
 
 ### `ChangedPath`

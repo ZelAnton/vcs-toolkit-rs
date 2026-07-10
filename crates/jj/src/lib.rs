@@ -410,11 +410,12 @@ impl GitClone {
     }
 }
 
-/// The first bookmark name from a comma-joined [`BOOKMARKS_TEMPLATE`](parse::BOOKMARKS_TEMPLATE)
-/// render; `None` when the commit carries no local bookmark.
+/// The first bookmark name from a [`BOOKMARKS_TEMPLATE`](parse::BOOKMARKS_TEMPLATE)
+/// render (space-joined `.escape_json()` names), decoded; `None` when the commit
+/// carries no local bookmark. Delegates to [`parse::first_bookmark_name`] so the
+/// escaping contract lives in one place.
 fn first_bookmark(rendered: &str) -> Option<String> {
-    let rendered = rendered.trim();
-    (!rendered.is_empty()).then(|| rendered.split(',').next().unwrap_or(rendered).to_string())
+    parse::first_bookmark_name(rendered)
 }
 
 /// Injection guard for bare positional argv slots: a caller-supplied value
@@ -2873,7 +2874,7 @@ mod tests {
     async fn workspace_list_parses_template_rows() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "workspace", "list"],
-            Reply::ok("default\te2aa3420\tmain\nws1\t12345678\t\n"),
+            Reply::ok("\"default\"\te2aa3420\t\"main\"\n\"ws1\"\t12345678\t\n"),
         ));
         let got = jj.workspace_list(Path::new(".")).await.expect("list");
         assert_eq!(got.len(), 2);
@@ -3192,7 +3193,9 @@ mod tests {
 
     #[tokio::test]
     async fn bookmarks_uses_template_and_parses_rows() {
-        let rec = RecordingRunner::replying(Reply::ok("main\tabc123\nfeature\tdef456\n"));
+        let rec = RecordingRunner::replying(Reply::ok(
+            "1\t\t\"main\"\tabc123\n1\t\t\"feature\"\tdef456\n",
+        ));
         let jj = Jj::with_runner(&rec);
         let marks = jj.bookmarks(Path::new(".")).await.unwrap();
         assert_eq!(
@@ -3216,7 +3219,7 @@ mod tests {
     async fn bookmarks_all_parses_local_and_remote() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "bookmark", "list"],
-            Reply::ok("main\t\t0\tabc123\nmain\torigin\t1\tabc123\n"),
+            Reply::ok("1\t\"main\"\t\t0\tabc123\n1\t\"main\"\torigin\t1\tabc123\n"),
         ));
         let refs = jj.bookmarks_all(Path::new(".")).await.unwrap();
         assert_eq!(refs.len(), 2);
@@ -3420,7 +3423,7 @@ mod tests {
 
     #[tokio::test]
     async fn reachable_bookmarks_queries_heads_revset() {
-        let rec = RecordingRunner::replying(Reply::ok("main\tabc123\n"));
+        let rec = RecordingRunner::replying(Reply::ok("\"main\"\tabc123\n"));
         let jj = Jj::with_runner(&rec);
         let got = jj.reachable_bookmarks(Path::new(".")).await.unwrap();
         assert_eq!(got.len(), 1);
@@ -3467,7 +3470,8 @@ mod tests {
 
     #[tokio::test]
     async fn current_bookmark_takes_first_or_none() {
-        let some = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\n")));
+        let some =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"main\"\n")));
         assert_eq!(
             some.current_bookmark(Path::new("."))
                 .await
@@ -3489,7 +3493,7 @@ mod tests {
     async fn current_change_parses_scripted_output() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(
             ["jj", "log"],
-            Reply::ok("kztuxlro\t38e00654\tfalse\thello jj\n"),
+            Reply::ok("kztuxlro\t38e00654\tfalse\t\"hello jj\"\n"),
         ));
         let change = jj
             .current_change(Path::new("."))
@@ -4224,7 +4228,7 @@ mod tests {
     async fn op_log_parses_template_rows() {
         let rec = RecordingRunner::new(ScriptedRunner::new().on(
             ["jj", "op", "log"],
-            Reply::ok("abc\tu@h\t2026-06-05T10:00:00+0200\tnew empty commit\n"),
+            Reply::ok("abc\t\"u@h\"\t2026-06-05T10:00:00+0200\t\"new empty commit\"\n"),
         ));
         let jj = Jj::with_runner(&rec);
         let ops = jj.op_log(Path::new("."), 5).await.expect("op_log");
@@ -4240,7 +4244,7 @@ mod tests {
     #[tokio::test]
     async fn evolog_uses_commit_context_template() {
         let rec = RecordingRunner::new(
-            ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
+            ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")),
         );
         let jj = Jj::with_runner(&rec);
         let rows = jj
