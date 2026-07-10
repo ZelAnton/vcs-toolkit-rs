@@ -165,7 +165,7 @@ pub use vcs_diff::Version;
 // constructors accept (a plain `&str`/`String` also coerces via `Into<Secret>`, so
 // most callers never name it). It is `vcs_cli_support::Secret`, the very type the
 // wrappers' `with_token` takes.
-pub use vcs_cli_support::Secret;
+pub use vcs_cli_support::{OutputBudget, Secret};
 // Re-export `processkit` itself so a `vcs-forge`-only consumer can match the
 // wrapped error — `Error::Forge(vcs_forge::processkit::Error::Timeout { .. })` —
 // and name the `CancellationToken` for a `default_cancel_on` client, without a
@@ -610,6 +610,22 @@ impl<R: ProcessRunner> Forge<R> {
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_diff(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_diff(c, &self.cwd, number).await,
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_diff")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_diff")),
+        }
+    }
+
+    /// [`pr_diff`](Forge::pr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of the underlying client's
+    /// [`default_output_budget`](vcs_github::GitHub::default_output_budget). Past
+    /// the ceiling the read errors with an `OutputTooLarge`-carrying
+    /// [`Error::Forge`] (actual and allowed sizes) rather than buffering an
+    /// unbounded diff — the override for a legitimately huge PR/MR.
+    /// **[`Unsupported`](Error::Unsupported) on Gitea** (`tea` has no diff command).
+    pub async fn pr_diff_within(&self, number: u64, budget: OutputBudget) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_diff_within(c, &self.cwd, number, budget).await,
+            Backend::GitLab(c) => gitlab_forge::pr_diff_within(c, &self.cwd, number, budget).await,
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_diff")),
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_diff")),
         }
@@ -1079,6 +1095,52 @@ mod tests {
             assert!(err.is_unsupported(), "{err:?}");
         }
         assert!(rec.calls().is_empty(), "unsupported ops must not spawn");
+    }
+
+    // T-049: the output budget set on the underlying client is INHERITED by the
+    // `Forge` facade — a `pr_diff` whose output exceeds it is refused with a
+    // `OutputTooLarge`-carrying error (actual + allowed sizes), never a truncated
+    // diff; the facade's `pr_diff_within` overrides the ceiling per-call. Verified
+    // on both GitHub (`gh pr diff`) and GitLab (`glab mr diff`).
+    #[tokio::test]
+    async fn pr_diff_inherits_client_budget_and_overrides_per_call() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+
+        // GitHub, budget inherited from the injected client.
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let forge = Forge::from_github("/repo", gh);
+        match forge.pr_diff(7).await {
+            Err(Error::Forge(processkit::Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            })) => {
+                assert_eq!(program, "gh");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected wrapped OutputTooLarge, got {other:?}"),
+        }
+        // The per-call override reads the same large PR in full.
+        let files = forge
+            .pr_diff_within(7, OutputBudget::unlimited())
+            .await
+            .expect("facade override reads the large diff");
+        assert_eq!(files[0].path, "m");
+
+        // GitLab, same inheritance through `glab mr diff`.
+        let glab =
+            GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let forge = Forge::from_gitlab("/repo", glab);
+        assert!(matches!(
+            forge.pr_diff(4).await,
+            Err(Error::Forge(processkit::Error::OutputTooLarge { .. }))
+        ));
     }
 
     // An Unknown handle (the remote didn't classify) reports Unsupported for

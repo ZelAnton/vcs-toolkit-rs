@@ -126,7 +126,7 @@ use std::sync::Arc;
 // token provider.
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
-    Secret, StaticCredential, provider_fn,
+    OutputBudget, Secret, StaticCredential, provider_fn,
 };
 // Re-export the processkit types in this crate's public API, so consumers needn't
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
@@ -1233,19 +1233,8 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
-        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
-        // last line, a missing trailing newline) — trimming it before parsing
-        // could desync the parser from `git`'s own byte-exact output. `--color
-        // never` keeps the output free of ANSI even if stdout were ever a tty.
-        let n = number.to_string();
-        let text = self
-            .core
-            .run_untrimmed(
-                self.core
-                    .command_in(dir, ["pr", "diff", n.as_str(), "--color", "never"]),
-            )
-            .await?;
-        Ok(vcs_diff::parse_diff(&text))
+        self.pr_diff_within(dir, number, self.core.output_budget())
+            .await
     }
 
     async fn run_list(
@@ -1295,10 +1284,21 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // Bound the retained buffer (drop-oldest) so a long watch can't accumulate
         // unboundedly; the last 256 lines / 256 KiB are plenty for a failure message.
         // (`docs/audit-2026-07.md` R5.)
+        //
+        // Expressed through the shared [`OutputBudget`] so this fixed watch cap and
+        // the configurable content-op budget are the *same* mechanism (T-049): this
+        // is the drop-oldest *diagnostic* projection (`diagnostic_policy`) — a bounded
+        // tail that never turns a real watch failure into `OutputTooLarge` — not the
+        // fail-loud *content* projection the diff/show verbs use.
+        let watch_budget = OutputBudget::bytes(256 * 1024).with_max_lines(256);
         let cmd = self
             .core
             .command_in(dir, ["run", "watch", id_str.as_str()])
-            .output_buffer(processkit::OutputBufferPolicy::bounded(256).with_max_bytes(256 * 1024));
+            .output_buffer(
+                watch_budget
+                    .diagnostic_policy()
+                    .expect("a byte/line budget yields a diagnostic policy"),
+            );
         let _ = self.core.output_string(cmd).await?.ensure_success()?;
         self.run_view(dir, id).await
     }
@@ -1357,6 +1357,34 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
 }
 
 impl<R: ProcessRunner> GitHub<R> {
+    /// [`pr_diff`](GitHubApi::pr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](GitHub::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff — the override for a
+    /// legitimately huge PR.
+    pub async fn pr_diff_within(
+        &self,
+        dir: &Path,
+        number: u64,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed_within`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing could
+        // desync the parser from `git`'s own byte-exact output. `--color never` keeps
+        // the output free of ANSI even if stdout were ever a tty. The budget bounds it.
+        let n = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed_within(
+                self.core
+                    .command_in(dir, ["pr", "diff", n.as_str(), "--color", "never"]),
+                budget,
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     /// Run `gh <args>` over string slices — `gh.run_args(&["pr", "list"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
     /// trait), so it can take `&[&str]`; forwards to the same path as
@@ -1976,6 +2004,75 @@ mod tests {
             rec.only_call().args_str(),
             ["pr", "diff", "7", "--color", "never"]
         );
+    }
+
+    // T-049: `pr_diff` over the client's default OutputBudget is refused with
+    // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff.
+    #[tokio::test]
+    async fn pr_diff_over_budget_errors_output_too_large() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match gh.pr_diff(Path::new("/r"), 7).await {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "gh");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // The per-call override reads a legitimately large PR diff past the tight
+    // client default that would otherwise refuse it.
+    #[tokio::test]
+    async fn pr_diff_within_override_reads_past_the_default() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)))
+                .default_output_budget(OutputBudget::bytes(4)); // absurdly tight default
+        assert!(matches!(
+            gh.pr_diff(Path::new("/r"), 7).await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let files = gh
+            .pr_diff_within(Path::new("/r"), 7, OutputBudget::unlimited())
+            .await
+            .expect("override reads the diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
+    }
+
+    // T-049: `gh run watch`'s fixed cap is reconciled onto the shared OutputBudget
+    // as its DROP-OLDEST *diagnostic* projection — a bounded tail that NEVER turns a
+    // long, chatty watch into `OutputTooLarge`. A watch that reprints far past the
+    // 256 KiB / 256-line cap still succeeds and reads the final run state.
+    #[tokio::test]
+    async fn run_watch_bounds_output_without_failing_loud() {
+        // ~5 MiB of repeated job-table frames — well past the watch cap.
+        let flood = "watching run… job A: running\n".repeat(180_000);
+        let run_json = r#"{"databaseId":42,"name":"CI","displayTitle":"t",
+            "status":"completed","conclusion":"success","workflowName":"CI",
+            "headBranch":"main","event":"push","url":"u","createdAt":"c"}"#;
+        let gh = GitHub::with_runner(
+            ScriptedRunner::new()
+                .on(["gh", "run", "watch"], Reply::ok(&flood))
+                .on(["gh", "run", "view"], Reply::ok(run_json)),
+        );
+        // Must NOT error out with OutputTooLarge — the diagnostic projection drops
+        // the oldest frames and keeps going, then `run view` yields the state.
+        let run = gh
+            .run_watch(Path::new("/r"), 42)
+            .await
+            .expect("a chatty watch is bounded, not failed loud");
+        assert_eq!(run.database_id, 42);
     }
 
     // Each review action maps to its flag; the body is carried on the action

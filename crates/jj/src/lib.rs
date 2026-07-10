@@ -174,7 +174,9 @@ pub use vcs_diff::{
 };
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
-pub use vcs_cli_support::{RetryPolicy, is_lock_contention, is_transient_fetch_error};
+pub use vcs_cli_support::{
+    OutputBudget, RetryPolicy, is_lock_contention, is_transient_fetch_error,
+};
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "jj";
@@ -1175,6 +1177,89 @@ impl<R: ProcessRunner> Jj<R> {
         // Callers that want a scalar trim it themselves (see `description`).
         self.core.run_untrimmed(self.cmd_in_wc(dir, args, wc)).await
     }
+
+    /// [`diff_text`](JjApi::diff_text) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff.
+    pub async fn diff_text_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_budgeted(dir, spec, budget).await
+    }
+
+    /// [`diff`](JjApi::diff) with an explicit per-call [`OutputBudget`] — the
+    /// parsed-model counterpart of [`diff_text_within`](Jj::diff_text_within).
+    pub async fn diff_within(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_budgeted(dir, spec, budget).await?;
+        Ok(parse_diff(&text))
+    }
+
+    /// Shared body of [`diff_text`](JjApi::diff_text) /
+    /// [`diff_text_within`](Jj::diff_text_within), run under `budget`.
+    async fn diff_text_budgeted(
+        &self,
+        dir: &Path,
+        spec: DiffSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // `@` selects the working-copy change; otherwise the caller's revset.
+        // `--git` emits stable git-format output the shared parser understands.
+        let revset = match spec {
+            DiffSpec::WorkingTree => "@".to_string(),
+            DiffSpec::Rev(rev) => rev,
+        };
+        // `run_untrimmed_within`: trimming the diff would drop a trailing blank
+        // context line, desyncing the last hunk from its `@@` line count for a
+        // consumer that re-parses/re-applies it — same as git's `diff_text` (H7);
+        // the budget bounds it.
+        self.core
+            .run_untrimmed_within(
+                self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]),
+                budget,
+            )
+            .await
+    }
+
+    /// [`file_show`](JjApi::file_show) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
+    /// Reads a file's bytes under `budget`: past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] rather than
+    /// buffering an unbounded file.
+    pub async fn file_show_within(
+        &self,
+        dir: &Path,
+        revset: &RevsetExpr,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // `file show` takes FILESETS, so a bare path with a fileset metacharacter
+        // (`(`, `*`, `~`, …) would be parsed as an expression — wrap it in the exact-
+        // path form. (`file annotate` is the opposite: it takes a plain PATH and
+        // rejects the `file:"…"` form.)
+        let fileset = JjFileset::path(path);
+        // `run_untrimmed_within`: a file's trailing newline(s) are part of its
+        // content; trimming corrupts a read-modify-write round-trip (H7). The budget
+        // bounds it.
+        self.core
+            .run_untrimmed_within(
+                self.cmd_in(
+                    dir,
+                    ["file", "show", "-r", revset.as_str(), fileset.as_str()],
+                ),
+                budget,
+            )
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -1365,11 +1450,16 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn git_fetch(&self, dir: &Path) -> Result<()> {
         // Idempotent → `retry` replays it on a transient (network) failure.
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch"]))
-            // Graceful terminate-then-kill on a per-client timeout, so a timed-out
-            // fetch can close its connection cleanly.
-            .timeout_grace(FETCH_TIMEOUT_GRACE)
-            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        // `budget_diagnostics`: bound the retained failure/progress output (a
+        // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
+        // still classifies the tail-preserved message). Unbounded by default.
+        let cmd = self.core.budget_diagnostics(
+            c_locale(self.cmd_in(dir, ["git", "fetch"]))
+                // Graceful terminate-then-kill on a per-client timeout, so a timed-out
+                // fetch can close its connection cleanly.
+                .timeout_grace(FETCH_TIMEOUT_GRACE)
+                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+        );
         self.core.run_unit(cmd).await
     }
 
@@ -1379,9 +1469,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // on a transient (network) failure.
         let remote_pat = exact(remote);
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
-            .timeout_grace(FETCH_TIMEOUT_GRACE)
-            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        let cmd = self.core.budget_diagnostics(
+            c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
+                .timeout_grace(FETCH_TIMEOUT_GRACE)
+                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+        );
         self.core.run_unit(cmd).await
     }
 
@@ -1526,17 +1618,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String> {
-        // `@` selects the working-copy change; otherwise the caller's revset.
-        // `--git` emits stable git-format output the shared parser understands.
-        let revset = match spec {
-            DiffSpec::WorkingTree => "@".to_string(),
-            DiffSpec::Rev(rev) => rev,
-        };
-        // `run_untrimmed`: trimming the diff would drop a trailing blank context
-        // line, desyncing the last hunk from its `@@` line count for a consumer
-        // that re-parses/re-applies it — same as git's `diff_text` (H7).
-        self.core
-            .run_untrimmed(self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]))
+        self.diff_text_budgeted(dir, spec, self.core.output_budget())
             .await
     }
 
@@ -1700,18 +1782,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn file_show(&self, dir: &Path, revset: &RevsetExpr, path: &str) -> Result<String> {
-        // `file show` takes FILESETS, so a bare path with a fileset
-        // metacharacter (`(`, `*`, `~`, …) would be parsed as an expression —
-        // wrap it in the exact-path form. (`file annotate` is the opposite: it
-        // takes a plain PATH and rejects the `file:"…"` form.)
-        let fileset = JjFileset::path(path);
-        // `run_untrimmed`: a file's trailing newline(s) are part of its content;
-        // trimming corrupts a read-modify-write round-trip (H7).
-        self.core
-            .run_untrimmed(self.cmd_in(
-                dir,
-                ["file", "show", "-r", revset.as_str(), fileset.as_str()],
-            ))
+        self.file_show_within(dir, revset, path, self.core.output_budget())
             .await
     }
 
@@ -1853,10 +1924,14 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                 "--no-colocate"
             });
         // Graceful terminate-then-kill on a per-client timeout. No-op without a deadline.
-        let command = command
-            .arg("--color")
-            .arg("never")
-            .timeout_grace(FETCH_TIMEOUT_GRACE);
+        // `budget_diagnostics`: bound the retained clone progress/failure output (a
+        // drop-oldest tail — never `OutputTooLarge`). Unbounded by default.
+        let command = self.core.budget_diagnostics(
+            command
+                .arg("--color")
+                .arg("never")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+        );
 
         // R7: like `vcs_git::clone_repo`, a failed clone can leave a partial `dest`
         // that blocks a retry ("destination already exists"); `timeout_grace` can't
@@ -4420,6 +4495,71 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "m");
         assert_eq!(files[0].change, ChangeKind::Modified);
+    }
+
+    // T-049: a content read (`diff_text`) over the client's default OutputBudget is
+    // refused with `OutputTooLarge` (actual `total_bytes` + allowed `max_bytes`),
+    // never a silently truncated diff. The oversized output is drained but not
+    // retained (the error carries only counts): the bounded-memory contract.
+    #[tokio::test]
+    async fn diff_text_over_budget_errors_output_too_large() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match jj
+            .diff_text(Path::new("."), DiffSpec::Rev("@-".into()))
+            .await
+        {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "jj");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // Below the budget the diff parses in full — the ceiling only fires over-cap.
+    #[tokio::test]
+    async fn diff_under_budget_parses_full_output() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(out)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        let files = jj
+            .diff(Path::new("."), DiffSpec::Rev("@-".into()))
+            .await
+            .expect("under-budget diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "m");
+    }
+
+    // A blob read (`file_show`) honours the same budget, and its per-call override
+    // reads a legitimately large file the default budget would refuse.
+    #[tokio::test]
+    async fn file_show_over_budget_errors_and_override_reads() {
+        let big = "x".repeat(200_000);
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "file", "show"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            jj.file_show(Path::new("."), &rv("@"), "big.bin").await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let got = jj
+            .file_show_within(
+                Path::new("."),
+                &rv("@"),
+                "big.bin",
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect("override reads the large file");
+        assert_eq!(got, big);
     }
 
     #[cfg(feature = "mock")]

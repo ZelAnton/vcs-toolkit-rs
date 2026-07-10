@@ -1108,6 +1108,49 @@ mod tests {
         assert!(json.contains("fn main"), "{json}");
     }
 
+    // T-049: the MCP server INHERITS the output budget of the client its `Repo` was
+    // built over — a `repo_show_file` whose content exceeds the budget surfaces as a
+    // tool error (the wrapped `OutputTooLarge`), never a silently truncated file. A
+    // budget below the ceiling returns the content in full.
+    #[tokio::test]
+    async fn repo_show_file_honours_inherited_output_budget() {
+        let big = "x".repeat(200_000);
+        // Over budget → the tool errors instead of returning a clipped file.
+        let budgeted = Git::with_runner(ScriptedRunner::new().on(["git", "show"], Reply::ok(&big)))
+            .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", budgeted));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let err = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "big.bin".into(),
+            }))
+            .await
+            .expect_err("over-budget show_file must error, not truncate");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("ceiling")
+                || format!("{err:?}").to_lowercase().contains("too large")
+                || format!("{err:?}").to_lowercase().contains("exceeded"),
+            "error should name the output ceiling: {err:?}"
+        );
+
+        // Under the same budget a small file still reads in full.
+        let small = Git::with_runner(
+            ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", small));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let out = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "src/main.rs".into(),
+            }))
+            .await
+            .expect("under-budget show_file ok");
+        assert!(result_json(&out).contains("fn main"));
+    }
+
     // A mutation tool is gated when writes are disabled — it errors WITHOUT
     // reaching the runner. The scripted runner has NO `checkout` rule, so if the
     // gate failed and the tool spawned, the call would error differently than the
@@ -1327,6 +1370,35 @@ mod tests {
         let json = result_json(&out);
         assert!(json.contains("notes.txt"), "{json}");
         assert!(json.contains("Modified"), "{json}");
+    }
+
+    // T-049: `forge_pr_diff` inherits the output budget of the forge client the
+    // server was built over — an over-budget PR diff surfaces as a tool error
+    // (the wrapped `OutputTooLarge`), never a truncated diff.
+    #[tokio::test]
+    async fn forge_pr_diff_honours_inherited_output_budget() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_diff(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect_err("over-budget pr_diff must error, not truncate");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("ceiling")
+                || format!("{err:?}").to_lowercase().contains("too large")
+                || format!("{err:?}").to_lowercase().contains("exceeded"),
+            "error should name the output ceiling: {err:?}"
+        );
     }
 
     // A forge op the backend can't do (tea has no single-release view) surfaces

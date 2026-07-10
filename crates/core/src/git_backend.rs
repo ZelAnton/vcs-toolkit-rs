@@ -4,7 +4,9 @@
 use std::path::Path;
 
 use processkit::ProcessRunner;
-use vcs_git::{CheckoutTarget, Git, GitApi, GitPush, RefName, RevSpec, StatusEntry, WorktreeAdd};
+use vcs_git::{
+    CheckoutTarget, Git, GitApi, GitPush, OutputBudget, RefName, RevSpec, StatusEntry, WorktreeAdd,
+};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
@@ -142,6 +144,18 @@ pub(crate) async fn show_file<R: ProcessRunner>(
     path: &str,
 ) -> Result<String> {
     Ok(git.show_file(dir, &RevSpec::new(rev)?, path).await?)
+}
+
+pub(crate) async fn show_file_within<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    rev: &str,
+    path: &str,
+    budget: OutputBudget,
+) -> Result<String> {
+    Ok(git
+        .show_file_within(dir, &RevSpec::new(rev)?, path, budget)
+        .await?)
 }
 
 pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<RepoSnapshot> {
