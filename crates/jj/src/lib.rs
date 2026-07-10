@@ -621,12 +621,18 @@ impl JjCapabilities {
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait JjApi: Send + Sync {
-    /// Run `jj <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `jj <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit).
     ///
     /// **Unguarded escape hatch — you own its safety.** `args` is forwarded
     /// verbatim, so never pass untrusted tokens here: jj's `--config`/
     /// `--config-toml` and user-defined aliases can reach code execution. The
     /// guarded typed methods are the safe path.
+    ///
+    /// This method on the client is the **process-cwd** escape hatch; the
+    /// `at(dir)` bound view's [`run`](JjAt::run) is instead **bound to `dir`** (it
+    /// forwards to [`Jj::run_in`], so `jj.at(dir).run(…)` runs in the bound repo).
+    /// Use `jj.at(dir).run(…)` (or [`Jj::run_in`]) for the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`JjApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`]. Same unguarded-escape-hatch caveat as
@@ -2008,6 +2014,45 @@ impl<R: ProcessRunner> Jj<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `jj <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](JjApi::run). This is what [`JjAt::run`] forwards to; call
+    /// [`run`](JjApi::run) on the client for the process-cwd escape hatch. Argv is
+    /// forwarded verbatim (the same unguarded escape hatch — only the working
+    /// directory is bound; unlike the modelled methods it does **not** inject
+    /// `--color never`).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Jj::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](JjApi::run_raw). What [`JjAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(
+        &self,
+        dir: &Path,
+        args: &[String],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_args`](Jj::run_args) but **bound to `dir`** — the `&[&str]` twin
+    /// of [`run_in`](Jj::run_in). What [`JjAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Jj::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Jj::run_raw_in). What [`JjAt::run_raw_args`]
+    /// forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
     /// Bind this client to `dir`, returning a [`JjAt`] handle whose methods omit
     /// the `dir` argument: `jj.at(dir).status()` runs [`status`](JjApi::status)
     /// against `dir`. The dir-taking [`JjApi`] methods stay on [`Jj`] for driving
@@ -2211,10 +2256,6 @@ impl<R: ProcessRunner> Copy for JjAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     JjAt, jj, "Jj",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn capabilities() -> Result<JjCapabilities>;
         fn git_clone(url: &str, dest: &Path, spec: GitClone) -> Result<()>;
@@ -2279,6 +2320,15 @@ vcs_cli_support::at_forwarders! {
         fn workspace_root(name: Option<String>) -> Result<PathBuf>;
         fn workspace_add(spec: WorkspaceAdd) -> Result<()>;
         fn workspace_forget(name: &str) -> Result<()>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `jj.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Jj` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -2455,6 +2505,47 @@ mod tests {
         assert_eq!(calls[4].args_str(), calls[5].args_str());
         assert_eq!(calls[6].args_str(), calls[7].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`jj.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd. The bound raw hatch is verbatim — no
+    // `--color never` is injected (unlike the modelled methods).
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        jj.at(dir).run(&["status".to_string()]).await.unwrap();
+        let _ = jj.at(dir).run_raw(&["status".to_string()]).await.unwrap();
+        jj.at(dir).run_args(&["status"]).await.unwrap();
+        let _ = jj.at(dir).run_raw_args(&["status"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        jj.run(&["status".to_string()]).await.unwrap();
+        let _ = jj.run_raw(&["status".to_string()]).await.unwrap();
+        jj.run_args(&["status"]).await.unwrap();
+        let _ = jj.run_raw_args(&["status"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            // Verbatim argv: no `--color never` appended.
+            assert_eq!(c.args_str(), ["status"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
     }
 
     #[tokio::test]

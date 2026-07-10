@@ -165,13 +165,17 @@ for rel in glab.release_list(repo).await? {
 `run(args)` / `run_raw(args)` (and the inherent `run_args(&[&str])` /
 `run_raw_args`) drive any unmodelled `glab` command; `run` returns trimmed stdout
 and errors on a non-zero exit, `run_raw` hands back the captured `ProcessResult`.
-These run in the **process's current directory** — the raw hatch supplies the whole
-argv, so target a specific repo with `-R group/project`; the bound `at(dir)` view
-does *not* re-bind them.
+On the **client** (`glab.run(…)`) these run in the **process's current
+directory** — the raw hatch supplies the whole argv, so target a specific repo
+with `-R group/project`. On the **bound view** (`glab.at(dir).run(…)`) they are
+instead bound to `dir` (T-035): the view forwards to the client's dir-taking
+`run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in`, so a raw call through the
+handle runs in the bound project's cwd, like every other `GitLabAt` method. Reach
+for the client's `run` when you deliberately want the process cwd.
 `api(dir, endpoint)` is the `glab api <endpoint>` shortcut for any REST/GraphQL
 endpoint (mirrors `vcs-github`'s `api`), with the `endpoint` guarded against flag
-injection. Unlike `run`, it **is** dir-bound, so a relative endpoint resolves the
-project against `dir`'s remote (its `at(dir)` form is `api(endpoint)`).
+injection. Like the bound raw hatches, it **is** dir-bound, so a relative endpoint
+resolves the project against `dir`'s remote (its `at(dir)` form is `api(endpoint)`).
 
 ## See also
 

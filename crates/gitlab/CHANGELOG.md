@@ -25,6 +25,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   all three backends.
 
 ### Changed
+- **Breaking:** the raw escape hatches on the bound view (`GitLabAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `glab.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw
+  call could target a *different* project (`glab` infers the project from the cwd's
+  remote) than the one it was bound to, now consistent with `api`. New dir-taking
+  client methods `GitLab::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `GitLab` itself (`glab.run(…)`) — migrate a caller that relied
+  on `glab.at(dir).run(…)` running in the process cwd to `glab.run(…)`. (T-035.)
 - **Breaking:** `GitLabApi::mr_merge` takes an `MrMerge` spec instead of a bare
   `MergeStrategy` — `mr_merge(dir, id, MergeStrategy::Squash)` →
   `mr_merge(dir, id, MrMerge::squash())`. The `GitLabAt` bound view moves to the

@@ -21,6 +21,17 @@ crates; tag releases as `vcs-github-v<version>`.
 
 ### Changed
 
+- **Breaking:** the raw escape hatches on the bound view (`GitHubAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `gh.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository (`gh` infers the repo from the cwd's remote)
+  than the one it was bound to, now consistent with `api`. New dir-taking client
+  methods `GitHub::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the bound
+  forwarders (argv forwarded verbatim; only the cwd is bound). The **process-cwd**
+  escape hatch is unchanged and still reached by calling `run`/`run_raw`/… on `GitHub`
+  itself (`gh.run(…)`) — migrate a caller that relied on `gh.at(dir).run(…)` running
+  in the process cwd to `gh.run(…)`. (T-035.)
 - **Breaking:** `GitHubApi::pr_close` drops its trailing positional
   `delete_branch: bool` for a named `#[non_exhaustive]` `PrClose` spec —
   `pr_close(dir, number, true)` → `pr_close(dir, number,

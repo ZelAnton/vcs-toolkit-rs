@@ -583,6 +583,14 @@ exit). `run_raw` never errors on a non-zero exit — it returns the captured
 are **not** injection-guarded; the inherent `run_args`/`run_raw_args` are the
 `&[&str]` siblings.
 
+**cwd (T-035).** On the **client** (`jj.run(…)`) these run in the **process's
+current directory**. On the **bound view** (`jj.at(dir).run(…)`) they are instead
+bound to `dir`: the view forwards to the client's dir-taking `run_in`/`run_raw_in`/
+`run_args_in`/`run_raw_args_in`, so a raw call through the handle runs in the bound
+repo, like every other `JjAt` method. The bound raw hatch stays verbatim — unlike
+the modelled methods it does **not** inject `--color never`. Reach for the client's
+`run` when you deliberately want the process cwd.
+
 ```rust,ignore
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {

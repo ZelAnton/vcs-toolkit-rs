@@ -361,7 +361,12 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GiteaApi: Send + Sync {
-    /// Run `tea <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `tea <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit). This method on the client is the
+    /// **process-cwd** escape hatch; the `at(dir)` bound view's
+    /// [`run`](GiteaAt::run) is instead **bound to `dir`** (it forwards to
+    /// [`Gitea::run_in`], so `tea.at(dir).run(…)` runs in the bound repo). Use
+    /// `tea.at(dir).run(…)` (or [`Gitea::run_in`]) for the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GiteaApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -784,6 +789,44 @@ impl<R: ProcessRunner> Gitea<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `tea <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](GiteaApi::run). This is what [`GiteaAt::run`] forwards to;
+    /// call [`run`](GiteaApi::run) on the client for the process-cwd escape hatch.
+    /// Argv is forwarded verbatim (only the working directory is bound, no extra flag
+    /// is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Gitea::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GiteaApi::run_raw). What [`GiteaAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(
+        &self,
+        dir: &Path,
+        args: &[String],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_args`](Gitea::run_args) but **bound to `dir`** — the `&[&str]`
+    /// twin of [`run_in`](Gitea::run_in). What [`GiteaAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Gitea::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Gitea::run_raw_in). What
+    /// [`GiteaAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
     /// Bind a working directory, so the repo-scoped methods omit that argument:
     /// `tea.at(dir).pr_list()` runs [`pr_list`](GiteaApi::pr_list) against `dir`.
     pub fn at<'a>(&'a self, dir: &'a Path) -> GiteaAt<'a, R> {
@@ -815,10 +858,6 @@ impl<R: ProcessRunner> Copy for GiteaAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GiteaAt, tea, "Gitea",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn auth_status() -> Result<bool>;
     }
@@ -835,6 +874,15 @@ vcs_cli_support::at_forwarders! {
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `tea.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Gitea` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -872,6 +920,45 @@ mod tests {
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`tea.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        tea.at(dir).run(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        let _ = tea.at(dir).run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        tea.at(dir).run_args(&["pr", "list"]).await.unwrap();
+        let _ = tea.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        tea.run(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        let _ = tea.run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        tea.run_args(&["pr", "list"]).await.unwrap();
+        let _ = tea.run_raw_args(&["pr", "list"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
     }
 
     #[tokio::test]

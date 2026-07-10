@@ -66,9 +66,12 @@ let issues = at.issue_list().await?;
 
 `gh.at(dir)` returns a [`GitHubAt`] — a `Copy` view holding two references. Its
 bound methods produce byte-identical argv to the `dir`-taking calls (the crate
-guards this with a test); the only difference is ergonomics. `bare` methods that
-take no `dir` (`version`, `auth_status`, `api`, the raw escape hatches) forward
-verbatim.
+guards this with a test); the only difference is ergonomics. The genuinely
+dir-independent methods (`version`, `auth_status`) forward verbatim. The raw
+escape hatches (`run`/`run_raw`/`run_args`/`run_raw_args`) are **bound to `dir`**
+on the view — `gh.at(dir).run(…)` runs in the bound repo's cwd; call `run` on the
+`GitHub` client itself for the process-cwd form (see [Raw escape
+hatches](#raw-escape-hatches)).
 
 ### Inherent `&[&str]` helpers
 
@@ -85,7 +88,9 @@ let res = gh.run_raw_args(&["pr", "list"]).await?;    // ProcessResult<String> �
 # Ok(()) }
 ```
 
-Both are also available on the bound handle (`gh.at(dir).run_args(…)`).
+Both are also available on the bound handle (`gh.at(dir).run_args(…)`) — where,
+unlike on the client, they run **in the bound `dir`** (see [Raw escape
+hatches](#raw-escape-hatches)).
 
 ## Auth & repo
 
@@ -339,6 +344,14 @@ as an error — inspect `.code()` / `.stdout()` / `.stderr()` yourself. Use thes
 for any `gh` subcommand the typed API doesn't wrap. (The inherent `&[&str]`
 variants `run_args` / `run_raw_args` are documented under
 [Construction](#inherent-str-helpers).)
+
+**cwd (T-035).** On the **client** (`gh.run(…)`) these run in the **process's
+current directory** — supply the whole argv, so target a specific repo with `-R
+owner/repo`. On the **bound view** (`gh.at(dir).run(…)`) they are instead bound to
+`dir`: the view forwards to the client's dir-taking `run_in`/`run_raw_in`/
+`run_args_in`/`run_raw_args_in`, so a raw call through the handle runs in the bound
+repo's cwd, like every other `GitHubAt` method (and like `api`). Reach for the
+client's `run` when you deliberately want the process cwd.
 
 ## Result types
 

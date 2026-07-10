@@ -22,6 +22,17 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- **Breaking:** the raw escape hatches on the bound view (`GitAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `git.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw
+  call could target a *different* repository than the one it was bound to. New
+  dir-taking client methods `Git::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in`
+  back the bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `Git` itself (`git.run(…)`) — migrate a caller that relied on
+  `git.at(dir).run(…)` running in the process cwd to `git.run(…)`. (Supersedes the
+  M15 docs-only note below; T-035.)
 - fix: distinguish an attached branch with no configured upstream from Git
   errors in `GitApi::upstream`; detached HEAD and directories outside a Git
   repository now return `Err` instead of `Ok(None)`.

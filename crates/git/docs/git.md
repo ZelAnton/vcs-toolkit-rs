@@ -660,13 +660,21 @@ async fn run(&self, args: &[String]) -> Result<String>;
 async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
 ```
 
-- **`run`** — `git <args>` in the current directory, returning trimmed stdout
-  (errors on a non-zero exit). For unmodelled commands.
+- **`run`** — `git <args>` in the process's current directory, returning trimmed
+  stdout (errors on a non-zero exit). For unmodelled commands.
 - **`run_raw`** — like `run` but never errors on a non-zero exit — returns the
   captured `ProcessResult`.
 
 These are **not** flag-guarded — the caller owns the argv. The inherent
 `run_args` / `run_raw_args` take `&[&str]` to skip the `Vec<String>` allocation.
+
+**cwd (T-035).** On the **client** (`git.run(…)`) these run in the **process's
+current directory** — target a specific repo with `-C <dir>` in the argv. On the
+**bound view** (`git.at(dir).run(…)`) they are instead bound to `dir`: the view
+forwards to the client's dir-taking `run_in`/`run_raw_in`/`run_args_in`/
+`run_raw_args_in`, so a raw call through the handle runs in the bound repo, like
+every other `GitAt` method. Reach for the client's `run` when you deliberately
+want the process cwd.
 
 ```rust,ignore
 # use vcs_git::{Git, GitApi};

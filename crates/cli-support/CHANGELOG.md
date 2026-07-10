@@ -13,7 +13,14 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 -
 
 ### Changed
--
+
+- **Breaking (macro):** `at_forwarders!` gained a third section, `raw { fn view(args…)
+  -> Ret => target; }`, and the raw escape hatches (`run`/`run_raw`/`run_args`/
+  `run_raw_args`) moved out of `bare` into it. `bare` now forwards a method verbatim
+  (dropping `dir`); `raw` forwards the view method to the client's **dir-taking**
+  `target` (`self.$field.target(self.dir, args…)`), so a raw call through a `…At` view
+  runs in the bound `dir` instead of the process cwd. A wrapper that lists `run*` under
+  `bare` must move them to `raw` and add the matching `*_in` client methods (T-035).
 
 ### Fixed
 -

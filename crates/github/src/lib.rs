@@ -442,8 +442,12 @@ impl ReviewAction {
 pub trait GitHubApi: Send + Sync {
     /// Run `gh <args>` **in the process's current directory**, returning trimmed
     /// stdout (throws on a non-zero exit). A raw escape hatch — you supply the whole
-    /// argv, so pass `-R owner/repo` to target a specific repo; the `at(dir)` bound
-    /// view does *not* re-bind it (unlike [`api`](GitHubApi::api), which is dir-bound).
+    /// argv, so pass `-R owner/repo` to target a specific repo. This method on the
+    /// client is the **process-cwd** escape hatch; the `at(dir)` bound view's
+    /// [`run`](GitHubAt::run) is instead **bound to `dir`** (it forwards to
+    /// [`GitHub::run_in`], so `gh.at(dir).run(…)` runs in the bound repo's cwd, like
+    /// [`api`](GitHubApi::api)). Use `gh.at(dir).run(…)` (or [`GitHub::run_in`]) for
+    /// the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitHubApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -1021,6 +1025,44 @@ impl<R: ProcessRunner> GitHub<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `gh <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory, so `gh` infers the repo from `dir`'s remote), returning
+    /// trimmed stdout — the dir-bound twin of the process-cwd [`run`](GitHubApi::run).
+    /// This is what [`GitHubAt::run`] forwards to; call [`run`](GitHubApi::run) on the
+    /// client for the process-cwd escape hatch. Argv is forwarded verbatim (only the
+    /// working directory is bound, no `-R`/extra flag is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](GitHub::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GitHubApi::run_raw). What [`GitHubAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(
+        &self,
+        dir: &Path,
+        args: &[String],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_args`](GitHub::run_args) but **bound to `dir`** — the `&[&str]`
+    /// twin of [`run_in`](GitHub::run_in). What [`GitHubAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](GitHub::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](GitHub::run_raw_in). What
+    /// [`GitHubAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking
     /// methods omit that argument: `gh.at(dir).pr_list()` runs
     /// [`pr_list`](GitHubApi::pr_list) against `dir`.
@@ -1053,10 +1095,6 @@ impl<R: ProcessRunner> Copy for GitHubAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GitHubAt, gh, "GitHub",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn auth_status() -> Result<bool>;
     }
@@ -1085,6 +1123,15 @@ vcs_cli_support::at_forwarders! {
         fn issue_view(number: u64) -> Result<Issue>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `gh.at(dir).run(…)` targets the bound repo's cwd, not the process
+    // cwd. For the process-cwd hatch call `run`/`run_raw`/… on `GitHub` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -1123,6 +1170,45 @@ mod tests {
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`gh.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        gh.at(dir).run(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        let _ = gh.at(dir).run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        gh.at(dir).run_args(&["pr", "list"]).await.unwrap();
+        let _ = gh.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        gh.run(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        let _ = gh.run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        gh.run_args(&["pr", "list"]).await.unwrap();
+        let _ = gh.run_raw_args(&["pr", "list"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
     }
 
     #[tokio::test]

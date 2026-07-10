@@ -114,8 +114,8 @@ pub mod json {
 /// exposes a cwd-bound view — `GitAt`, `JjAt`, `GitHubAt`, `GitLabAt`, `GiteaAt` —
 /// that holds a reference to the client plus a pre-bound `dir`, and re-exposes the
 /// client's methods with `dir` already supplied. The forwarder bodies are
-/// byte-identical across the five backends but for three things, so they live here
-/// once instead of as a copied `macro_rules!` per crate:
+/// byte-identical across the five backends but for a handful of names, so they live
+/// here once instead of as a copied `macro_rules!` per crate:
 ///
 /// - `$view` — the bound view type (e.g. `GitAt`). It must be generic over
 ///   `<'a, R: ProcessRunner>` and have a field named `$field` holding the client
@@ -125,8 +125,20 @@ pub mod json {
 /// - `$client` — a **string literal** naming the client type, used in the
 ///   generated doc strings and rendered as an intra-doc link (e.g. `"Git"` →
 ///   ``[`Git`]``).
-/// - `bare { … }` — methods forwarded verbatim to `self.$field`.
+/// - `bare { … }` — methods forwarded verbatim to `self.$field`. Reserve this for
+///   the genuinely dir-*independent* calls (`version`, `capabilities`, a
+///   `clone`/`git_clone` that names its own destination): the view drops `dir`
+///   entirely, so a `bare` method never touches it.
 /// - `dir  { … }` — methods that take `self.dir` as their first argument.
+/// - `raw  { fn view(args…) -> Ret => target; … }` — the **raw escape hatches**
+///   (`run`/`run_raw`/`run_args`/`run_raw_args`). These used to sit in `bare`, so
+///   `git.at(dir).run(…)` silently ran in the *process* cwd, not the bound `dir` —
+///   a bound handle whose raw call could hit a different repository (M15/T-035).
+///   They are now **bound**: the view method `view` forwards to the client's
+///   dir-taking `target` (`self.$field.target(self.dir, args…)`), so a raw call
+///   *through the view* runs in `dir` like every other `…At` method. The
+///   **process-cwd** escape hatch is still there — call `run`/`run_raw`/… on the
+///   client itself (`git.run(…)`), not through `.at(dir)`.
 ///
 /// The argument and return types in the method lists resolve in the **calling**
 /// crate, so they are written exactly as that wrapper's own methods are. The
@@ -138,6 +150,7 @@ pub mod json {
 ///     GitAt, git, "Git",
 ///     bare { fn version() -> Result<String>; }
 ///     dir  { fn status() -> Result<Vec<StatusEntry>>; }
+///     raw  { fn run(args: &[String]) -> Result<String> => run_in; }
 /// }
 /// ```
 #[macro_export]
@@ -146,6 +159,7 @@ macro_rules! at_forwarders {
         $view:ident, $field:ident, $client:literal,
         bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
         dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
+        $( raw  { $( fn $rn:ident( $($ra:ident: $rt:ty),* $(,)? ) -> $rr:ty => $rtgt:ident; )* } )?
     ) => {
         impl<'a, R: ::processkit::ProcessRunner> $view<'a, R> {
             $(
@@ -160,6 +174,18 @@ macro_rules! at_forwarders {
                     self.$field.$dn(self.dir, $($da),*).await
                 }
             )*
+            $($(
+                #[doc = concat!(
+                    "Bound form of [`", $client, "`]'s `", stringify!($rn),
+                    "` raw escape hatch — runs the given argv **in the bound `dir`** \
+                     (forwards to the client's `", stringify!($rtgt), "`). For the \
+                     process-cwd escape hatch, call `", stringify!($rn),
+                    "` on [`", $client, "`] directly."
+                )]
+                pub async fn $rn(&self, $($ra: $rt),*) -> $rr {
+                    self.$field.$rtgt(self.dir, $($ra),*).await
+                }
+            )*)?
         }
     };
 }

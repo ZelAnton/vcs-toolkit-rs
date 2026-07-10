@@ -185,6 +185,13 @@ for rel in tea.release_list(repo).await? {
 `tea` command — e.g. flipping a Gitea draft (a `WIP:` title prefix) via
 `tea pr edit`.
 
+**cwd (T-035).** On the **client** (`tea.run(…)`) these run in the **process's
+current directory**. On the **bound view** (`tea.at(dir).run(…)`) they are instead
+bound to `dir`: the view forwards to the client's dir-taking `run_in`/`run_raw_in`/
+`run_args_in`/`run_raw_args_in`, so a raw call through the handle runs in the bound
+repo, like every other `GiteaAt` method. Reach for the client's `run` when you
+deliberately want the process cwd.
+
 ## See also
 
 - [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the facade; note the Gitea `Unsupported` ops.

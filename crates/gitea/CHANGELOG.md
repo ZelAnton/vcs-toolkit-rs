@@ -22,6 +22,16 @@ crates; tag releases as `vcs-gitea-v<version>`.
   all three backends.
 
 ### Changed
+- **Breaking:** the raw escape hatches on the bound view (`GiteaAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `tea.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository than the one it was bound to. New dir-taking
+  client methods `Gitea::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `Gitea` itself (`tea.run(…)`) — migrate a caller that relied on
+  `tea.at(dir).run(…)` running in the process cwd to `tea.run(…)`. (T-035.)
 - **Breaking:** `GiteaApi::pr_merge` takes a `PrMerge` spec instead of a bare
   `MergeStrategy` — `pr_merge(dir, n, MergeStrategy::Squash)` →
   `pr_merge(dir, n, PrMerge::squash())`. The `GiteaAt` bound view moves to the

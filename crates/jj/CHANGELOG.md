@@ -28,6 +28,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ### Changed
 
+- **Breaking:** the raw escape hatches on the bound view (`JjAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `jj.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository than the one it was bound to. New dir-taking
+  client methods `Jj::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim — like the process-cwd `run`, they do
+  **not** inject `--color never`; only the cwd is bound). The **process-cwd** escape
+  hatch is unchanged and still reached by calling `run`/`run_raw`/… on `Jj` itself
+  (`jj.run(…)`) — migrate a caller that relied on `jj.at(dir).run(…)` running in the
+  process cwd to `jj.run(…)`. (T-035.)
 - **Breaking:** bookmark names and revsets are now taken as the validated newtypes
   `BookmarkName` (new — jj's equivalent of a branch) and `RevsetExpr` (previously
   constructible but accepted by no method). Every `JjApi` op that names a bookmark

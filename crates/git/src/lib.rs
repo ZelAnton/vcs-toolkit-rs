@@ -773,9 +773,11 @@ pub trait GitApi: Send + Sync {
     /// Run `git <args>` **in the process's current directory**, returning trimmed
     /// stdout (throws on a non-zero exit). A raw escape hatch for unmodelled commands
     /// — you supply the whole argv, so target a specific repo with `-C <dir>` in the
-    /// args. The `at(dir)` bound view does **not** re-bind `run`/`run_args` (they and
-    /// the other `run*` hatches stay process-cwd, unlike every modelled `GitAt`
-    /// method); pass `-C dir` explicitly if you need the bound repo (M15).
+    /// args. This method on the client is the **process-cwd** escape hatch; the
+    /// `at(dir)` bound view's [`run`](GitAt::run) is instead **bound to `dir`** (it
+    /// forwards to [`Git::run_in`], so `git.at(dir).run(…)` runs in the bound repo).
+    /// Use `git.at(dir).run(…)` (or [`Git::run_in`]) for the bound repo; use this for
+    /// the process cwd (T-035, was M15).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -2366,6 +2368,44 @@ impl<R: ProcessRunner> Git<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `git <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](GitApi::run). This is what [`GitAt::run`] forwards to;
+    /// call [`run`](GitApi::run) on the client for the process-cwd escape hatch.
+    /// Argv is forwarded verbatim (the same unguarded escape hatch — only the
+    /// working directory is bound, no `-C`/extra flag is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Git::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GitApi::run_raw). What [`GitAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(
+        &self,
+        dir: &Path,
+        args: &[String],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_args`](Git::run_args) but **bound to `dir`** — the `&[&str]` twin
+    /// of [`run_in`](Git::run_in). What [`GitAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Git::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Git::run_raw_in). What
+    /// [`GitAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core.output_string(self.core.command_in(dir, args)).await
+    }
+
     /// Bind this client to `dir`, returning a [`GitAt`] handle whose methods omit
     /// the `dir` argument: `git.at(dir).status()` runs [`status`](GitApi::status)
     /// against `dir`. The dir-taking [`GitApi`] methods stay on [`Git`] for
@@ -2640,10 +2680,6 @@ impl<R: ProcessRunner> Copy for GitAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GitAt, git, "Git",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
         fn capabilities() -> Result<GitCapabilities>;
         fn clone_repo(url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
@@ -2728,6 +2764,15 @@ vcs_cli_support::at_forwarders! {
         fn cherry_pick(rev: &RevSpec) -> Result<()>;
         fn revert(rev: &RevSpec) -> Result<()>;
         fn rebase_skip() -> Result<()>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `git.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Git` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -2833,6 +2878,47 @@ mod tests {
         // The bound calls also carried the bound dir as their working directory.
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
         assert_eq!(calls[3].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`git.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd. Guards that a bound handle's raw call
+    // can no longer silently target another repo, and that the explicit process-cwd
+    // hatch is preserved.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        git.at(dir).run(&["status".to_string()]).await.unwrap();
+        let _ = git.at(dir).run_raw(&["status".to_string()]).await.unwrap();
+        git.at(dir).run_args(&["status"]).await.unwrap();
+        let _ = git.at(dir).run_raw_args(&["status"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        git.run(&["status".to_string()]).await.unwrap();
+        let _ = git.run_raw(&["status".to_string()]).await.unwrap();
+        git.run_args(&["status"]).await.unwrap();
+        let _ = git.run_raw_args(&["status"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["status"]);
+        }
     }
 
     // Hermetic: the real status() command-building + porcelain parsing run
