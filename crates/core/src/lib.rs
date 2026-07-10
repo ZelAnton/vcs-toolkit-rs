@@ -916,8 +916,12 @@ impl<R: ProcessRunner> Repo<R> {
     /// then `bookmark create`) and is not atomic, but a failed bookmark step
     /// **rolls back**: the workspace directory is removed only when `workspace add`
     /// created it (a pre-existing directory the caller already had is left intact),
-    /// the workspace is forgotten best-effort, and the original error is surfaced —
-    /// so a failed call doesn't leak a half-made worktree.
+    /// then the workspace is forgotten. Residue is no longer swallowed: if the
+    /// rollback can't remove that directory or can't `forget` the workspace, the call
+    /// fails with a composite [`Error::Io`] naming what still needs cleaning up (and
+    /// is safe to re-run); a clean rollback instead surfaces the original
+    /// bookmark-step error unchanged (its [`Error::Vcs`] classification) — so a failed
+    /// call never silently leaks a half-made worktree.
     pub async fn create_worktree(&self, spec: WorktreeCreate) -> Result<CreateOutcome> {
         let WorktreeCreate { path, branch, base } = &spec;
         match &self.backend {
@@ -928,9 +932,15 @@ impl<R: ProcessRunner> Repo<R> {
 
     /// Remove the worktree/workspace at `path`. For jj this resolves the
     /// workspace name by matching `path`, deletes the directory, then forgets it;
-    /// a `path` that matches no attached jj workspace returns
-    /// [`Error::WorktreeNotFound`]. (For the best-effort, never-erroring variant,
-    /// see [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
+    /// a `path` that matches none of the **resolvable** jj workspaces returns
+    /// [`Error::WorktreeNotFound`], but when some registered workspace can't be
+    /// resolved via `jj workspace root --name` the path's absence is unprovable, so a
+    /// distinct diagnosable [`Error::Io`] (naming the unresolved workspaces;
+    /// [`is_resource_not_found`](Error::is_resource_not_found) stays `false`) is
+    /// returned instead. A directory that can't be deleted is likewise surfaced (an
+    /// [`Error::Io`] naming the still-registered workspace, with the `forget` left for
+    /// the retry). (For the short-lived, blocking `Drop`-path variant, see
+    /// [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
     ///
     /// The [`WorktreeRemove`] spec's [`force`](WorktreeRemove::force) mirrors git's
     /// `worktree remove`: without it a worktree that still has **uncommitted changes**
@@ -955,9 +965,12 @@ impl<R: ProcessRunner> Repo<R> {
     /// **Synchronous** worktree cleanup for a context that cannot `.await` —
     /// chiefly a `Drop` guard. Force-removes the worktree at `path` (git:
     /// `worktree remove --force`; jj: resolve the workspace name by `path`, delete
-    /// the directory, then `workspace forget`). Best-effort and short-lived: it
-    /// shells out directly (no job-containment); a jj `path` that matches no
-    /// workspace is a no-op (`Ok`). Like the async
+    /// the directory, then `workspace forget`). Short-lived and shells out directly
+    /// (no job-containment), but not error-swallowing: a jj `path` that genuinely
+    /// matches no workspace is an `Ok` no-op, yet a probe failure (the `workspace
+    /// list`, or a registered workspace that won't resolve) and a `remove_dir_all`
+    /// failure are surfaced as `Err` (the `forget` is skipped on a failed removal, so
+    /// a surviving directory isn't orphaned). Like the async
     /// [`remove_worktree`](Self::remove_worktree), it **refuses the repository's
     /// main workspace** (whose directory is the main working copy) — deleting it
     /// would wipe the repo — even on this force-by-contract path.
@@ -974,7 +987,13 @@ impl<R: ProcessRunner> Repo<R> {
                 // removal must target the location jj used, not one under the process
                 // cwd (which may differ from `self.cwd`).
                 let abs_path = self.cwd.join(path);
-                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path) {
+                // Tell a genuine "no such workspace" (`Ok(None)` → nothing to clean
+                // up, a no-op) apart from a probe failure (`Err` → surfaced, not
+                // silently treated as a no-op): the blocking resolver no longer folds
+                // both into `None`.
+                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path)
+                    .map_err(Error::Io)?
+                {
                     Some(name) => {
                         // Same main-workspace guard as the async `remove_worktree`
                         // (jj_backend.rs): never `remove_dir_all` the repository's
@@ -991,8 +1010,25 @@ impl<R: ProcessRunner> Repo<R> {
                             )));
                         }
                         // Delete the on-disk dir first (jj `forget` leaves it), then
-                        // drop jj's record of the workspace.
-                        let _ = std::fs::remove_dir_all(&abs_path);
+                        // drop jj's record of the workspace. A removal failure is
+                        // SURFACED (not swallowed with `let _ =`) and the forget is
+                        // skipped: forgetting a workspace whose directory survived
+                        // would orphan that dir — worse than a still-attached workspace
+                        // — and the reported error names what is still registered so
+                        // the cleanup can be safely re-run once the directory is free.
+                        if abs_path.exists() {
+                            std::fs::remove_dir_all(&abs_path).map_err(|e| {
+                                Error::Io(std::io::Error::new(
+                                    e.kind(),
+                                    format!(
+                                        "failed to remove the worktree directory {} ({e}); the jj \
+                                         workspace `{name}` is still registered — free the \
+                                         directory and retry the cleanup",
+                                        abs_path.display()
+                                    ),
+                                ))
+                            })?;
+                        }
                         vcs_jj::blocking::workspace_forget(&self.cwd, &name).map_err(Error::Io)
                     }
                     None => Ok(()),
@@ -1717,6 +1753,131 @@ mod tests {
         // the forget error is the sole outcome.
         let res = repo.remove_worktree(WorktreeRemove::new("/repo/ws1")).await;
         assert!(res.is_err(), "a forget failure is surfaced, not swallowed");
+    }
+
+    // Windows-like removal failure: `remove_worktree` surfaces a `remove_dir_all`
+    // failure and names what remains (the still-registered workspace) rather than
+    // swallowing it. A *file* sits where the workspace dir should be, so
+    // `remove_dir_all` errors deterministically on every platform.
+    #[tokio::test]
+    async fn jj_remove_worktree_surfaces_dir_removal_failure() {
+        let tmp = TempDir::new("rmw-rmdir-fail");
+        let ws = tmp.path().join("ws1");
+        std::fs::write(&ws, b"not a dir").expect("write file where the dir should be");
+        let root = tmp.path().to_string_lossy().into_owned();
+        let ws_str = ws.to_string_lossy().into_owned();
+        let repo = Repo::from_jj(
+            &root,
+            &root,
+            Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "ws1",
+                        ],
+                        Reply::ok(format!("{ws_str}\n")),
+                    ),
+            ),
+        );
+        // force skips the dirty check, so the removal step is reached directly.
+        let err = repo
+            .remove_worktree(WorktreeRemove::new(ws.clone()).force())
+            .await
+            .expect_err("a dir-removal failure must be surfaced");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("still registered") && msg.contains("ws1"),
+            "the failure must name what remains to clean up: {msg}"
+        );
+        assert!(
+            ws.exists(),
+            "the undeletable path must survive the failed removal"
+        );
+    }
+
+    // Compatible fallback / diagnosable error: when a registered workspace's root
+    // can't be resolved via `workspace root --name`, a path matching none of the
+    // resolvable ones is NOT reported as a clean `WorktreeNotFound` — absence can't be
+    // proven, so a distinct diagnosable error naming the unresolved workspace is
+    // raised instead (so a real-but-unresolvable workspace isn't misreported).
+    #[tokio::test]
+    async fn jj_remove_worktree_reports_unresolvable_workspaces() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("ws1\tc0ffee\t\ngone\tdecaf0\t\n"),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
+                    Reply::ok("/repo/ws1\n"),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "gone",
+                    ],
+                    Reply::fail(1, "Error: No such workspace"),
+                ),
+        );
+        let err = repo
+            .remove_worktree(WorktreeRemove::new("/repo/missing"))
+            .await
+            .expect_err("an unresolvable workspace must not be reported as a clean not-found");
+        assert!(
+            !err.is_resource_not_found(),
+            "a partial resolution is not a clean WorktreeNotFound: {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not resolve") && msg.contains("gone"),
+            "the diagnosable error must name the unresolved workspace: {msg}"
+        );
+    }
+
+    // Repeated cleanup is idempotent: after a first pass removed the directory but its
+    // `workspace forget` failed, a retry finds the dir already gone, re-resolves the
+    // still-registered workspace by name, and completes the forget — no error.
+    #[tokio::test]
+    async fn jj_remove_worktree_retry_after_dir_gone_forgets_cleanly() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
+                    Reply::ok("/repo/ws1\n"),
+                )
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
+        );
+        // `/repo/ws1` does not exist on disk (a prior pass removed it), so the removal
+        // step is skipped and the forget clears the dangling registration.
+        repo.remove_worktree(WorktreeRemove::new("/repo/ws1"))
+            .await
+            .expect("a retry with the dir already gone completes the forget");
     }
 
     // C1: the default workspace resolves at the repo root; removing it would wipe
