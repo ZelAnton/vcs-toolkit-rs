@@ -10,10 +10,45 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Documented **non-UTF-8 path policy (fail-closed)** for path-bearing results
+  (`repo_status`'s `FileChange.path`, `repo_conflicts`'s list, `repo_diff`'s
+  `FileDiff.path`): the facade carries each path losslessly as a `PathBuf`, and since
+  JSON strings are UTF-8, a path that is not valid UTF-8 (possible on Unix) is now
+  **refused with an explicit serialization error** rather than emitted with `U+FFFD`
+  replacement — an agent is never handed a silently-corrupted path it would feed back
+  into `repo_commit`. The ordinary UTF-8 case is unchanged (a plain JSON string).
+  (T-050.)
+- `repo_log` read tool: recent history (up to `max` commits reachable from a
+  git revspec / jj revset), backed by the new `Repo::log` facade method. Always
+  available (read-only, no `WriteGate`).
+- `forge_pr_checkout` write tool (`{ number }`): check a PR/MR's branch out into
+  the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr
+  checkout`). Mutating, so it is `WriteGate`-gated (annotated `destructiveHint`)
+  and added to `WRITE_TOOLS`; refused unless `--allow-write` or `--allow-tools
+  forge_pr_checkout`.
 
 ### Changed
--
+- **`forge_info` result** now carries two extra `capabilities` fields tracking the
+  facade's version-aware capability map: `version` (the installed `gh`/`glab`/`tea`
+  version as `{major,minor,patch}`, or `null` when unknown/unrecognisable) and
+  `supported` (whether the CLI meets its declared version floor). The per-op flags
+  are now the intersection of "the CLI ships the command", `supported`, and
+  `authed` — so an old CLI below the floor reports its ops as unavailable rather
+  than advertising a command that would fail deep with a cryptic error. Purely
+  additive to the JSON object; existing fields are unchanged.
+- **Breaking (tool schema):** the `forge_pr_merge` tool gained two optional
+  boolean params, `auto` and `delete_branch` (both default `false`), tracking the
+  facade's new unified `PrMerge` merge spec. Both are **GitHub-only** (`gh pr merge
+  --auto --delete-branch`); on GitLab/Gitea, requesting either is rejected as
+  `invalid_params` (the facade's `Unsupported`, a client-fixable request) rather
+  than merging without it. `{ number, strategy }` calls keep working unchanged.
+- Tool parameters that carry a git revspec / jj revset or a branch/bookmark name
+  (e.g. `repo_log`, `repo_show_file`, `repo_checkout`) now surface a classifiable
+  input-validation error when given a flag-like or malformed value: the `Repo`
+  facade converts the JSON string into the backend's validated newtype at the
+  boundary and rejects it **before** any child process spawns. No tool-schema
+  change — the validation is enforced through the facade rather than the raw
+  string being passed through.
 
 ### Fixed
 - forge_pr_comment / forge_pr_edit: stop rejecting a legitimate leading-`-` body/title

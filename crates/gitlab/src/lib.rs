@@ -13,7 +13,8 @@
 //! # What you can do
 //!
 //! Check auth · view the project · the lean merge-request lifecycle (list / view /
-//! create / merge / mark-ready / close) · CI/pipeline status · issues · releases.
+//! create / merge / mark-ready / close / checkout) · CI/pipeline status · issues ·
+//! releases.
 //! One tiny call to start:
 //!
 //! ```no_run
@@ -54,9 +55,10 @@
 //!   `glab.mr_list(dir)` — handy when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`MrCreate`] (title, body,
 //!   optional source/target branch), [`MrEdit`] (optional `title` and/or `body` for
-//!   `mr update`), and the [`MergeStrategy`] enum (`Merge`/`Squash`/`Rebase`) —
-//!   `#[non_exhaustive]`, built with a constructor + chained setters, named after
-//!   the flags they emit.
+//!   `mr update`), and [`MrMerge`] (the [`MergeStrategy`] `Merge`/`Squash`/`Rebase`
+//!   plus the gh-style `auto`/`delete_branch` options, which `glab` reports
+//!   `Unsupported` rather than silently drop) — `#[non_exhaustive]`, built with a
+//!   constructor + chained setters, named after the flags they emit.
 //! - **[`auth_status`](GitLabApi::auth_status)** — a best-effort signal, *not* a
 //!   guarantee: a long-standing glab bug can make `glab auth status` exit `0` even
 //!   when unauthenticated, so a `true` means "probably"; a subsequent API call is
@@ -83,13 +85,13 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
+//! use vcs_gitlab::{GitLab, GitLabApi, MrCreate, MrMerge};
 //! # async fn demo(glab: &GitLab) -> Result<(), processkit::Error> {
 //! let dir = Path::new(".");
 //! let url = glab
 //!     .mr_create(dir, MrCreate::new("Add streaming", "Implements …").target("main"))
 //!     .await?;                                          // the new MR's URL
-//! glab.mr_merge(dir, 12, MergeStrategy::Squash).await?;
+//! glab.mr_merge(dir, 12, MrMerge::squash()).await?;
 //! # let _ = url; Ok(()) }
 //! ```
 //!
@@ -115,7 +117,7 @@ use std::sync::Arc;
 // token provider.
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
-    Secret, StaticCredential, provider_fn,
+    OutputBudget, Secret, StaticCredential, provider_fn,
 };
 // Re-export the processkit types in this crate's public API, so consumers needn't
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
@@ -135,6 +137,11 @@ pub use parse::{CiStatus, Issue, MergeRequest, Release, RepoView};
 // `jj diff --git` do; `crates/diff/src/diff.rs`'s parser is shared, not
 // duplicated).
 pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed `glab --version`, re-exported as `GitLabVersion` — the shared
+// `major.minor.patch` type `vcs-git`/`vcs-jj` also gate on (an alias of
+// `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
+// [`GitLabCapabilities::version`].
+pub use vcs_diff::Version as GitLabVersion;
 
 /// Options for [`GitLabApi::mr_create`] (`glab mr create`).
 ///
@@ -235,6 +242,10 @@ impl Default for MrEdit {
 /// is [`release_view`](GitLabApi::release_view)'s bare `<tag>` positional, which
 /// is guarded with `reject_flag_like` (mirroring `vcs-github`'s
 /// `api`/`release_view`); guard any future bare positional the same way.
+/// Separately, the description/body/comment flag-VALUE fields (`mr_create`,
+/// `mr_edit`, `issue_create`, `mr_comment`) are guarded with
+/// `reject_dash_sentinel` against glab's *own* `"-"` stdin/editor sentinel —
+/// unrelated to argv injection, but the same "refuse before spawning" shape.
 pub const BINARY: &str = "glab";
 
 /// Injection guard for bare positional argv slots: a caller-supplied value with
@@ -244,6 +255,35 @@ pub const BINARY: &str = "glab";
 /// the next token verbatim there.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// Guard against glab's dash-sentinel quirk: a description/comment body that is
+/// *exactly* `"-"` makes glab treat the flag as "read from stdin"/"open
+/// `$EDITOR`" instead of the literal string — a headless caller would hang
+/// waiting on input that never comes (no `glab` timeout of its own). This is
+/// **not** the shared `reject_flag_like` injection guard (these fields ride in
+/// flag-VALUE positions, so a leading `-` is not parsed as a flag) — it is a
+/// glab-specific value with special meaning to the CLI itself, so it lives here
+/// rather than in `vcs-cli-support`. Refuse the bare `"-"` before anything
+/// spawns, surfacing an `Error::Spawn` whose source is
+/// `io::ErrorKind::InvalidInput`, naming `what` in the message. A caller who
+/// needs a literal single-dash body must pick a different, non-sentinel
+/// representation (e.g. `"-\u{200B}"` or wrap it) — there is no way to make
+/// glab itself accept a byte-exact `"-"` non-interactively.
+fn reject_dash_sentinel(what: &str, value: &str) -> Result<()> {
+    if value == "-" {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} is a literal \"-\", which glab treats as a request to open an \
+                     editor or read from stdin — refusing to pass it through non-interactively"
+                ),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// How [`GitLabApi::mr_merge`] merges the MR. GitLab's default is a merge commit;
@@ -270,6 +310,139 @@ impl MergeStrategy {
     }
 }
 
+/// Options for [`GitLabApi::mr_merge`] (`glab mr merge`).
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](MrMerge::merge) / [`squash`](MrMerge::squash) /
+/// [`rebase`](MrMerge::rebase), then [`auto`](MrMerge::auto) /
+/// [`delete_branch`](MrMerge::delete_branch) — rather than a struct literal. The
+/// shape mirrors `vcs-github`'s `PrMerge` and `vcs-gitea`'s `PrMerge` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one merge spec
+/// across all three backends.
+///
+/// **Backend capability.** `glab mr merge` merges **immediately**
+/// (`--auto-merge=false`), and this wrapper deliberately does **not** map the
+/// gh-style [`auto`](MrMerge::auto) (merge once requirements are met) or
+/// [`delete_branch`](MrMerge::delete_branch) options: glab's own `--auto-merge` is
+/// *merge-when-pipeline-succeeds*, a different contract from gh's `--auto`. So when
+/// either option is set, [`mr_merge`](GitLabApi::mr_merge) returns a structured
+/// `Error::Unsupported` rather than *silently* ignoring the request — for an
+/// irreversible merge, quietly dropping an option could produce the wrong side
+/// effects. The default (neither set) is the plain immediate merge.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MrMerge {
+    /// The merge strategy (`Merge` = glab's default merge commit; `Squash`;
+    /// `Rebase`).
+    pub strategy: MergeStrategy,
+    /// Request gh-style auto-merge (merge once requirements are met). **Not
+    /// expressible on `glab`** — when set, [`mr_merge`](GitLabApi::mr_merge)
+    /// returns `Error::Unsupported` instead of merging immediately anyway (see the
+    /// type docs).
+    pub auto: bool,
+    /// Delete the source branch after merging. **Not expressible here** — when
+    /// set, [`mr_merge`](GitLabApi::mr_merge) returns `Error::Unsupported` instead
+    /// of silently leaving the branch in place.
+    pub delete_branch: bool,
+}
+
+impl MrMerge {
+    /// Merge with a merge commit (glab's default — no strategy flag).
+    pub fn merge() -> Self {
+        Self::with(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge (`--squash`).
+    pub fn squash() -> Self {
+        Self::with(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge (`--rebase`).
+    pub fn rebase() -> Self {
+        Self::with(MergeStrategy::Rebase)
+    }
+
+    fn with(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Request auto-merge (merge once requirements are met). **Unsupported on
+    /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
+    /// `Error::Unsupported` (see the type docs).
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Request deleting the source branch after merging. **Unsupported on
+    /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
+    /// `Error::Unsupported`.
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
+/// What the installed `glab` binary supports, probed via
+/// [`GitLabApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it). Mirrors
+/// [`vcs_git::GitCapabilities`](../vcs_git/struct.GitCapabilities.html) /
+/// [`vcs_jj::JjCapabilities`](../vcs_jj/struct.JjCapabilities.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitLabCapabilities {
+    /// The binary's parsed version.
+    pub version: GitLabVersion,
+}
+
+/// The oldest `glab` this crate is written against — **1.25.0**. Every command
+/// this crate's argv drives is present across the modern `glab` 1.x line: the
+/// `--output json` read surface (`mr`/`issue`/`repo`/`release … --output json`),
+/// the `mr update` (edit) / `mr checkout` / `mr merge --yes --auto-merge=…`
+/// lifecycle verbs, and `api`. A `glab` older than this predates parts of that
+/// surface, so gating here lets
+/// [`ensure_supported`](GitLabCapabilities::ensure_supported) reject a too-old
+/// binary up front with a clear message instead of letting an operation fail deep
+/// inside glab with a cryptic `unknown command`/`unknown flag`.
+const MIN_SUPPORTED: GitLabVersion = GitLabVersion {
+    major: 1,
+    minor: 25,
+    patch: 0,
+};
+
+impl GitLabCapabilities {
+    /// Whether the binary meets the supported floor (glab ≥ 1.25). Every typed
+    /// operation on [`GitLabApi`] is guaranteed against this minimum.
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs glab
+    /// ≥ 1.25, found 1.20.0" instead of a cryptic `unknown command`/`unknown flag`
+    /// failure once an operation reaches a command the old binary lacks. The
+    /// pre-flight check a caller runs before driving operations against an
+    /// untrusted `glab`.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-gitlab requires glab >= {MIN_SUPPORTED}, found {}",
+                    self.version
+                ),
+            ),
+        ))
+    }
+}
+
 /// The GitLab operations this crate exposes — the interface consumers code
 /// against and mock in tests. The **lean MR lifecycle**; reach unmodelled `glab`
 /// commands through [`run`](GitLabApi::run).
@@ -278,8 +451,12 @@ impl MergeStrategy {
 pub trait GitLabApi: Send + Sync {
     /// Run `glab <args>` **in the process's current directory**, returning trimmed
     /// stdout (throws on a non-zero exit). A raw escape hatch — you supply the whole
-    /// argv, so pass `-R group/project` to target a specific repo; the `at(dir)` bound
-    /// view does *not* re-bind it (unlike [`api`](GitLabApi::api), which is dir-bound).
+    /// argv, so pass `-R group/project` to target a specific repo. This method on the
+    /// client is the **process-cwd** escape hatch; the `at(dir)` bound view's
+    /// [`run`](GitLabAt::run) is instead **bound to `dir`** (it forwards to
+    /// [`GitLab::run_in`], so `glab.at(dir).run(…)` runs in the bound project's cwd,
+    /// like [`api`](GitLabApi::api)). Use `glab.at(dir).run(…)` (or [`GitLab::run_in`])
+    /// for the bound project (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitLabApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
@@ -295,6 +472,11 @@ pub trait GitLabApi: Send + Sync {
     async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;
     /// Installed GitLab CLI version (`glab --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GitLabCapabilities`]
+    /// (`glab --version`). A value type — probe once and keep it; an unrecognisable
+    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `glab`
+    /// with [`GitLabCapabilities::ensure_supported`].
+    async fn capabilities(&self) -> Result<GitLabCapabilities>;
     /// Whether the user is authenticated (`glab auth status` exits zero). Reflects
     /// the exit code as a bool — any non-zero exit reads as `false`, never an
     /// error; only a spawn failure or timeout errors.
@@ -321,20 +503,42 @@ pub trait GitLabApi: Send + Sync {
     /// Open a merge request, returning the command's output (the MR URL on
     /// success) (`glab mr create`). The [`MrCreate`] spec carries the title,
     /// body, and the optional source (`None` = the current branch) and target
-    /// (`None` = the project default) branches.
+    /// (`None` = the project default) branches. A body that is *exactly* `"-"`
+    /// is glab's own stdin/editor sentinel (not the literal string) — refused
+    /// with an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput`
+    /// before anything spawns, so a headless caller never hangs waiting on an
+    /// editor/stdin that never comes.
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String>;
     /// Merge a merge request **immediately** (`glab mr merge <id> --yes
     /// --auto-merge=false [--squash|--rebase]`) — `--auto-merge=false` overrides
-    /// glab's default of enabling merge-when-pipeline-succeeds. See
-    /// [`MergeStrategy`].
-    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
+    /// glab's default of enabling merge-when-pipeline-succeeds. Takes a [`MrMerge`]
+    /// spec (the [`MergeStrategy`] plus the gh-style `auto`/`delete_branch`
+    /// options). `glab` can express **neither** `auto` nor `delete_branch` through
+    /// this wrapper, so requesting either returns a structured `Error::Unsupported`
+    /// rather than silently dropping it (see [`MrMerge`]).
+    async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()>;
     /// Mark a draft merge request as ready (`glab mr update <id> --ready`).
     async fn mr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
     async fn mr_close(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Check out a merge request's source branch into the working copy at `dir`
+    /// (`glab mr checkout <id>`) — the branch is fetched and switched to, so a
+    /// subsequent build/test/edit runs against the MR locally. Mutates the working
+    /// copy. **Defaulted** to `Error::Unsupported` so external implementers keep
+    /// compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "mr_checkout".into(),
+        })
+    }
     /// Add a comment to a merge request, returning the command's output
     /// (`glab mr note <id> -m <message>`). The note body rides in a
-    /// flag-VALUE position, so no argv-guard is needed. **Defaulted** to
+    /// flag-VALUE position, so no argv-injection guard is needed — but a body
+    /// that is *exactly* `"-"` is glab's stdin/editor sentinel, refused with
+    /// an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput` before
+    /// anything spawns (same rule as [`mr_create`](GitLabApi::mr_create)).
+    /// **Defaulted** to
     /// `Error::Unsupported` so external implementers keep compiling when the
     /// crate bumps.
     #[allow(unused_variables)]
@@ -347,7 +551,11 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
     /// At least one of `title` or `body` must be `Some` — the facade rejects
     /// both-`None` before reaching the wrapper. `--yes` skips glab's
-    /// confirmation prompt. **Defaulted** to `Error::Unsupported`.
+    /// confirmation prompt. A `Some` body that is *exactly* `"-"` is glab's
+    /// stdin/editor sentinel, refused with an `Error::Spawn` whose source is
+    /// `io::ErrorKind::InvalidInput` before anything spawns (same rule as
+    /// [`mr_create`](GitLabApi::mr_create)). **Defaulted** to
+    /// `Error::Unsupported`.
     #[allow(unused_variables)]
     async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
         Err(Error::Unsupported {
@@ -372,7 +580,9 @@ pub trait GitLabApi: Send + Sync {
     /// Open an issue, returning the command's output (the issue URL on success)
     /// (`glab issue create --title <t> --description <d> --yes`). `--yes` skips
     /// glab's interactive submission prompt — mirrors
-    /// [`mr_create`](GitLabApi::mr_create).
+    /// [`mr_create`](GitLabApi::mr_create), including the same `"-"`
+    /// dash-sentinel guard on `body` (refused with an `Error::Spawn` whose
+    /// source is `io::ErrorKind::InvalidInput` before anything spawns).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
     /// Releases for `dir` (`glab release list --per-page 100 --output json`).
     /// Returns up to 100 (100 is the GitLab API per-page max); use
@@ -400,6 +610,13 @@ impl<R: ProcessRunner> GitLab<R> {
     /// Supply credentials per operation via a [`CredentialProvider`] — opt-in, off
     /// by default (ambient `glab` auth). The resolved token is injected as
     /// `GITLAB_TOKEN` on every `glab` invocation, overriding the ambient login.
+    ///
+    /// This client has **no host binding** yet, so each [`CredentialRequest`] carries
+    /// no host. A simple provider ([`StaticCredential`] / [`EnvToken`]) is unaffected;
+    /// a *host-keyed* provider sees `None` and should defer to ambient for a host it
+    /// can't place (per [`ManagedClient::resolve_credential`](vcs_cli_support::ManagedClient::resolve_credential)),
+    /// rather than substitute a default secret — so a self-hosted-vs-SaaS provider
+    /// stays safe until GitLab grows an explicit host binding (as `vcs-github` has).
     #[must_use]
     pub fn with_credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
         self.core = self.core.with_credentials(provider);
@@ -442,6 +659,17 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.run(["--version"]).await
+    }
+
+    async fn capabilities(&self) -> Result<GitLabCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_glab_version(&raw).ok_or_else(|| {
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `glab --version` output: {raw:?}"),
+            )
+        })?;
+        Ok(GitLabCapabilities { version })
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -489,6 +717,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String> {
+        // A literal `-` description is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("description", spec.body.as_str())?;
         // `--yes` skips glab's interactive submission confirmation (a headless run
         // would otherwise hang waiting on the prompt).
         let mut args = vec![
@@ -511,7 +742,24 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()> {
+    async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()> {
+        // `glab mr merge` can express neither gh-style auto-merge nor
+        // source-branch deletion through this wrapper: glab's own `--auto-merge`
+        // is *merge-when-pipeline-succeeds* (a different contract from gh's
+        // `--auto`), and we drive an *immediate* merge. Rather than silently
+        // ignore a requested option — which, for an irreversible merge, could
+        // produce the wrong side effects — report it as `Unsupported`. The default
+        // (neither set) is the plain immediate merge.
+        if merge.auto {
+            return Err(Error::Unsupported {
+                operation: "mr_merge(auto)".into(),
+            });
+        }
+        if merge.delete_branch {
+            return Err(Error::Unsupported {
+                operation: "mr_merge(delete_branch)".into(),
+            });
+        }
         let id = number.to_string();
         // `--yes` skips the confirmation prompt. `--auto-merge=false` forces an
         // *immediate* merge: glab's `--auto-merge` defaults to `true`, which —
@@ -520,7 +768,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // merge. The strategy flag is added only for squash/rebase (a plain merge
         // commit is glab's default).
         let mut args = vec!["mr", "merge", id.as_str(), "--yes", "--auto-merge=false"];
-        if let Some(flag) = strategy.flag() {
+        if let Some(flag) = merge.strategy.flag() {
             args.push(flag);
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
@@ -543,11 +791,24 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
+    async fn mr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard. `glab mr checkout` fetches the MR's source branch and switches
+        // the working copy to it (no structured output).
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["mr", "checkout", id.as_str()]))
+            .await
+    }
+
     async fn mr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
         // `-m` is a flag-VALUE position; glab consumes the next token verbatim.
         // No `--yes` here: `mr note` is non-destructive in spirit (adds a
         // comment, doesn't change the MR's state) and doesn't trigger the
         // submission prompt `mr create` does.
+        // A literal `-` note body is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("comment body", body)?;
         let id = number.to_string();
         self.core
             .run(
@@ -558,8 +819,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
-        // `--title` and `--description` are flag-VALUE positions: no argv-guard
-        // needed. `--yes` skips the confirmation prompt `mr update` would
+        // `--title` and `--description` are flag-VALUE positions: no argv-injection
+        // guard needed. `--yes` skips the confirmation prompt `mr update` would
         // otherwise show when neither --fill nor --ready is passed.
         let id = number.to_string();
         let mut args = vec!["mr", "update", id.as_str()];
@@ -568,6 +829,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             args.push(title);
         }
         if let Some(body) = edit.body.as_deref() {
+            // A literal `-` description is glab's stdin/editor sentinel, not the
+            // string itself — refuse it before spawning.
+            reject_dash_sentinel("description", body)?;
             args.push("--description");
             args.push(body);
         }
@@ -587,19 +851,8 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
-        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
-        // last line, a missing trailing newline) — trimming it before parsing
-        // could desync the parser from `git`'s own byte-exact output. `--color
-        // never` keeps the output free of ANSI even if stdout were ever a tty.
-        let id = number.to_string();
-        let text = self
-            .core
-            .run_untrimmed(
-                self.core
-                    .command_in(dir, ["mr", "diff", id.as_str(), "--color", "never"]),
-            )
-            .await?;
-        Ok(vcs_diff::parse_diff(&text))
+        self.mr_diff_within(dir, number, self.core.output_budget())
+            .await
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
@@ -628,6 +881,9 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
+        // A literal `-` description is glab's stdin/editor sentinel, not the
+        // string itself — refuse it before spawning (see `reject_dash_sentinel`).
+        reject_dash_sentinel("description", body)?;
         // `--yes` skips glab's interactive submission confirmation (a headless
         // run would otherwise hang on the prompt) — same as `mr_create`.
         self.core
@@ -673,6 +929,34 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
 }
 
 impl<R: ProcessRunner> GitLab<R> {
+    /// [`mr_diff`](GitLabApi::mr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](GitLab::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff — the override for a
+    /// legitimately huge MR.
+    pub async fn mr_diff_within(
+        &self,
+        dir: &Path,
+        number: u64,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed_within`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing could
+        // desync the parser from `git`'s own byte-exact output. `--color never` keeps
+        // the output free of ANSI even if stdout were ever a tty. The budget bounds it.
+        let id = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed_within(
+                self.core
+                    .command_in(dir, ["mr", "diff", id.as_str(), "--color", "never"]),
+                budget,
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     /// Run `glab <args>` over string slices — `glab.run_args(&["mr", "list"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
     /// trait), so it can take `&[&str]`; forwards to the same path as
@@ -685,6 +969,45 @@ impl<R: ProcessRunner> GitLab<R> {
     /// (mirrors [`GitLabApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
         self.core.output_string(args).await
+    }
+
+    /// Run `glab <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory, so `glab` infers the project from `dir`'s remote),
+    /// returning trimmed stdout — the dir-bound twin of the process-cwd
+    /// [`run`](GitLabApi::run). This is what [`GitLabAt::run`] forwards to; call
+    /// [`run`](GitLabApi::run) on the client for the process-cwd escape hatch. Argv
+    /// is forwarded verbatim (only the working directory is bound, no `-R`/extra
+    /// flag is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](GitLab::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GitLabApi::run_raw). What [`GitLabAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// Like [`run_args`](GitLab::run_args) but **bound to `dir`** — the `&[&str]`
+    /// twin of [`run_in`](GitLab::run_in). What [`GitLabAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](GitLab::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](GitLab::run_raw_in). What
+    /// [`GitLabAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind a working directory, so the project-scoped methods omit that argument:
@@ -718,11 +1041,8 @@ impl<R: ProcessRunner> Copy for GitLabAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GitLabAt, glab, "GitLab",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GitLabCapabilities>;
         fn auth_status() -> Result<bool>;
     }
     dir {
@@ -731,9 +1051,10 @@ vcs_cli_support::at_forwarders! {
         fn mr_list() -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
-        fn mr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn mr_merge(number: u64, merge: MrMerge) -> Result<()>;
         fn mr_mark_ready(number: u64) -> Result<()>;
         fn mr_close(number: u64) -> Result<()>;
+        fn mr_checkout(number: u64) -> Result<()>;
         fn mr_comment(number: u64, body: &str) -> Result<String>;
         fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
         fn mr_checks(number: u64) -> Result<CiStatus>;
@@ -743,6 +1064,16 @@ vcs_cli_support::at_forwarders! {
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `glab.at(dir).run(…)` targets the bound project's cwd, not the
+    // process cwd. For the process-cwd hatch call `run`/`run_raw`/… on `GitLab`
+    // directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -754,6 +1085,63 @@ mod tests {
     #[test]
     fn binary_name_is_glab() {
         assert_eq!(BINARY, "glab");
+    }
+
+    // `capabilities()` parses the real `glab --version` banner and gates on the
+    // 1.25 floor — covering the minimum, a modern release, and an unrecognisable
+    // banner (the three cases the scheduled-drift lane also exercises against a
+    // real glab).
+    #[tokio::test]
+    async fn capability_version_gate_parses_and_gates() {
+        // Modern glab (`glab 1.36.0` shape; any build/commit trailer is ignored).
+        let glab = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab 1.36.0\n")),
+        );
+        let caps = glab.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "1.36.0");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Exactly at the floor (1.25.0) is supported.
+        let at_floor = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab version 1.25.0\n")),
+        );
+        assert!(
+            at_floor.capabilities().await.unwrap().is_supported(),
+            "1.25.0 is exactly the floor"
+        );
+
+        // An old glab is rejected with a clear message naming the floor + found.
+        let old = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab 1.20.0\n")),
+        );
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GitLabVersion {
+                major: 1,
+                minor: 20,
+                patch: 0
+            }
+        );
+        assert!(!caps.is_supported(), "1.20 is below the 1.25 floor");
+        let err = caps.ensure_supported().expect_err("unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 1.25.0"), "names the floor: {message}");
+        assert!(
+            message.contains("1.20.0"),
+            "names the found version: {message}"
+        );
+
+        // A banner with no version token is a parse error, not a silent zero.
+        let garbage = GitLab::with_runner(
+            ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab (unknown)\n")),
+        );
+        let err = garbage.capabilities().await.expect_err("unrecognisable");
+        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -780,6 +1168,57 @@ mod tests {
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`glab.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        glab.at(dir)
+            .run(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = glab
+            .at(dir)
+            .run_raw(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        glab.at(dir).run_args(&["mr", "list"]).await.unwrap();
+        let _ = glab.at(dir).run_raw_args(&["mr", "list"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        glab.run(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = glab
+            .run_raw(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        glab.run_args(&["mr", "list"]).await.unwrap();
+        let _ = glab.run_raw_args(&["mr", "list"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["mr", "list"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["mr", "list"]);
+        }
     }
 
     #[tokio::test]
@@ -965,16 +1404,123 @@ mod tests {
         );
     }
 
-    // mr_merge adds `--yes`, and the strategy flag only for squash/rebase.
+    // A literal `-` description/comment body is glab's stdin/editor sentinel —
+    // every entry point that carries one must refuse it BEFORE any spawn (the
+    // scripted runner has no rule, so a leak-through would fail differently),
+    // and a non-sentinel value (even one that merely contains a dash) must go
+    // through untouched.
+    #[tokio::test]
+    async fn dash_sentinel_body_rejected_before_spawn_everywhere() {
+        let no_run = || GitLab::with_runner(ScriptedRunner::new());
+
+        let err = no_run()
+            .mr_create(Path::new("/repo"), MrCreate::new("T", "-"))
+            .await
+            .expect_err("mr_create must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .mr_edit(Path::new("/repo"), 1, MrEdit::new().body("-"))
+            .await
+            .expect_err("mr_edit must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .issue_create(Path::new("/repo"), "T", "-")
+            .await
+            .expect_err("issue_create must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        let err = no_run()
+            .mr_comment(Path::new("/repo"), 1, "-")
+            .await
+            .expect_err("mr_comment must reject a bare dash body");
+        assert!(
+            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            "expected Spawn(InvalidInput), got {err:?}"
+        );
+
+        // A value that merely *contains* a dash (not exactly "-") is a real,
+        // literal body — it must pass through untouched, byte-exact, for every
+        // entry point that carries a guarded body (not just mr_create).
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/9\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_create(Path::new("/repo"), MrCreate::new("T", "- not a sentinel"))
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_edit(
+            Path::new("/repo"),
+            1,
+            MrEdit::new().body("- not a sentinel"),
+        )
+        .await
+        .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach mr_edit's argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/i/9\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.issue_create(Path::new("/repo"), "T", "- not a sentinel")
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach issue_create's argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/1#note_1\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_comment(Path::new("/repo"), 1, "- not a sentinel")
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach mr_comment's argv byte-exact"
+        );
+    }
+
+    // mr_merge adds `--yes --auto-merge=false`, and the strategy flag only for
+    // squash/rebase. The default `MrMerge` (no auto/delete_branch) is the plain
+    // immediate merge.
     #[tokio::test]
     async fn mr_merge_builds_strategy_argv() {
-        for (strategy, expected) in [
+        for (merge, expected) in [
             (
-                MergeStrategy::Merge,
+                MrMerge::merge(),
                 vec!["mr", "merge", "5", "--yes", "--auto-merge=false"],
             ),
             (
-                MergeStrategy::Squash,
+                MrMerge::squash(),
                 vec![
                     "mr",
                     "merge",
@@ -985,7 +1531,7 @@ mod tests {
                 ],
             ),
             (
-                MergeStrategy::Rebase,
+                MrMerge::rebase(),
                 vec![
                     "mr",
                     "merge",
@@ -998,10 +1544,29 @@ mod tests {
         ] {
             let rec = RecordingRunner::replying(Reply::ok(""));
             let glab = GitLab::with_runner(&rec);
-            glab.mr_merge(Path::new("/repo"), 5, strategy)
+            glab.mr_merge(Path::new("/repo"), 5, merge)
                 .await
                 .expect("mr_merge");
             assert_eq!(rec.only_call().args_str(), expected);
+        }
+    }
+
+    // `glab` cannot express gh-style auto-merge or source-branch deletion, so
+    // requesting either is a structured `Unsupported` — never a silent drop that
+    // would merge with the wrong side effects. The check happens BEFORE any spawn
+    // (the runner has no rule; a leak-through would fail differently).
+    #[tokio::test]
+    async fn mr_merge_rejects_unexpressible_options() {
+        for merge in [MrMerge::squash().auto(), MrMerge::merge().delete_branch()] {
+            let glab = GitLab::with_runner(ScriptedRunner::new());
+            let err = glab
+                .mr_merge(Path::new("/repo"), 5, merge)
+                .await
+                .expect_err("auto/delete_branch are Unsupported on glab");
+            assert!(
+                matches!(err, Error::Unsupported { .. }),
+                "expected Unsupported, got {err:?}"
+            );
         }
     }
 
@@ -1019,6 +1584,28 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
         glab.mr_close(Path::new("/repo"), 3).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["mr", "close", "3"]);
+    }
+
+    // mr_checkout maps to `mr checkout <id>` and runs in the bound repo dir; the
+    // bound view produces byte-identical argv.
+    #[tokio::test]
+    async fn mr_checkout_builds_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("mr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["mr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.at(Path::new("/repo"))
+            .mr_checkout(7)
+            .await
+            .expect("mr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["mr", "checkout", "7"]);
     }
 
     // mr_checks reads the MR's head_pipeline status and buckets it.
@@ -1042,12 +1629,43 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
         let files = glab.mr_diff(Path::new("/r"), 4).await.expect("mr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert_eq!(
             rec.only_call().args_str(),
             ["mr", "diff", "4", "--color", "never"]
         );
+    }
+
+    // T-049: `mr_diff` over the client's default OutputBudget is refused with
+    // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff;
+    // the per-call override reads a legitimately large MR past a tight default.
+    #[tokio::test]
+    async fn mr_diff_over_budget_errors_and_override_reads() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let glab =
+            GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match glab.mr_diff(Path::new("/r"), 4).await {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "glab");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+        // The unlimited override reads the same large MR in full.
+        let files = glab
+            .mr_diff_within(Path::new("/r"), 4, OutputBudget::unlimited())
+            .await
+            .expect("override reads the large MR diff");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
     }
 
     // issue_list builds the `--per-page 100 --output json` argv (per-page max

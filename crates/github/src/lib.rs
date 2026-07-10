@@ -41,13 +41,18 @@
 //!   [`with_credentials`](GitHub::with_credentials) attaches a
 //!   [`CredentialProvider`] to supply a token per operation (injected as
 //!   `GH_TOKEN`, never in `argv`) — opt-in, off by default (ambient `gh` auth).
+//!   [`with_host`](GitHub::with_host) targets a specific host (a [`GitHubHost`] —
+//!   github.com or a GitHub Enterprise Server host), so the credential lands in
+//!   the env var `gh` reads for *that* host (`GH_TOKEN` vs `GH_ENTERPRISE_TOKEN`)
+//!   and [`auth_status_for`](GitHubApi::auth_status_for) probes just that host.
 //! - **[`GitHubAt`]** — a cwd-bound view ([`GitHub::at`]) whose methods drop the
 //!   leading `dir`, so `gh.at(dir).pr_list()` reads as `gh.pr_list(dir)` — handy
 //!   when one client drives one checkout.
 //! - **Method groups** on the trait: PRs ([`pr_list`](GitHubApi::pr_list),
 //!   [`pr_view`](GitHubApi::pr_view), [`pr_create`](GitHubApi::pr_create),
 //!   [`pr_merge`](GitHubApi::pr_merge), [`pr_mark_ready`](GitHubApi::pr_mark_ready),
-//!   [`pr_close`](GitHubApi::pr_close), [`pr_review`](GitHubApi::pr_review),
+//!   [`pr_close`](GitHubApi::pr_close), [`pr_checkout`](GitHubApi::pr_checkout),
+//!   [`pr_review`](GitHubApi::pr_review),
 //!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
 //!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
@@ -58,7 +63,8 @@
 //! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
 //!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
 //!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
-//!   `--auto`, `--delete-branch`), and [`ReviewAction`] (whose private fields make
+//!   `--auto`, `--delete-branch`), [`PrClose`] (optional `--delete-branch`), and
+//!   [`ReviewAction`] (whose private fields make
 //!   an empty-body request-changes unrepresentable) — each `#[non_exhaustive]`,
 //!   built with a constructor and chained setters, named after the flags they emit.
 //!
@@ -120,7 +126,7 @@ use std::sync::Arc;
 // token provider.
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, FnProvider,
-    Secret, StaticCredential, provider_fn,
+    OutputBudget, Secret, StaticCredential, provider_fn,
 };
 // Re-export the processkit types in this crate's public API, so consumers needn't
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
@@ -142,14 +148,19 @@ pub use parse::{
 // verbatim (`gh pr diff` emits the same git-format diff `git diff`/`jj diff
 // --git` do; `crates/diff/src/diff.rs`'s parser is shared, not duplicated).
 pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed `gh --version`, re-exported as `GitHubVersion` — the shared
+// `major.minor.patch` type `vcs-git`/`vcs-jj` also gate on (an alias of
+// `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
+// [`GitHubCapabilities::version`].
+pub use vcs_diff::Version as GitHubVersion;
 
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
-const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url";
+const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
-const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url";
-const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url";
+const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url,labels,assignees";
+const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url,labels,assignees";
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
 const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedAt";
@@ -164,6 +175,194 @@ const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isP
 /// verbatim there (verified).
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// The GitHub host an operation targets: SaaS `github.com` or a **GitHub
+/// Enterprise Server** (GHES) host. `gh` picks the credential environment variable
+/// it reads *per host* — `GH_TOKEN` for github.com, `GH_ENTERPRISE_TOKEN` for a
+/// GHES host — and its `auth status` can be scoped to a single host, so this type
+/// carries that host so the client (1) injects a supplied credential into the
+/// variable `gh` actually reads for it (see [`GitHub::with_host`]) and (2) can
+/// probe auth for exactly that host (see [`GitHubApi::auth_status_for`]).
+///
+/// Build it for github.com ([`github_com`](GitHubHost::github_com)), from a bare
+/// hostname ([`new`](GitHubHost::new)), or from a repository's remote URL
+/// ([`from_remote_url`](GitHubHost::from_remote_url)). A hostname that cannot be
+/// determined is an **error**, never a silent fall back to github.com — so an
+/// ambiguous or unknown host is a diagnosable result at the call site rather than
+/// a quiet authentication against the wrong host with the github.com token.
+///
+/// ```
+/// # use vcs_github::GitHubHost;
+/// let saas = GitHubHost::github_com();
+/// assert!(saas.is_github_com() && !saas.is_enterprise());
+///
+/// let ghes = GitHubHost::new("ghe.example.com").unwrap();
+/// assert!(ghes.is_enterprise());
+/// assert_eq!(ghes.as_str(), "ghe.example.com");
+///
+/// // github.com (any case) classifies as SaaS; every other valid host is GHES.
+/// assert!(GitHubHost::new("GitHub.com").unwrap().is_github_com());
+/// // An unparseable / hostless remote is an error, not a github.com guess.
+/// assert!(GitHubHost::from_remote_url("not-a-url").is_err());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitHubHost {
+    /// The canonical (lower-cased) hostname, e.g. `github.com` / `ghe.example.com`.
+    host: String,
+    /// `true` for a GitHub Enterprise Server host; `false` for SaaS github.com.
+    enterprise: bool,
+}
+
+impl GitHubHost {
+    /// The SaaS GitHub hostname (`github.com`).
+    pub const SAAS_HOST: &'static str = "github.com";
+
+    /// The SaaS github.com host — a supplied credential is injected as `GH_TOKEN`.
+    #[must_use]
+    pub fn github_com() -> Self {
+        Self {
+            host: Self::SAAS_HOST.to_string(),
+            enterprise: false,
+        }
+    }
+
+    /// Classify a bare `host`: `github.com` (case-insensitive) is SaaS; any other
+    /// valid hostname is treated as a GitHub Enterprise Server host (its credential
+    /// goes to `GH_ENTERPRISE_TOKEN`). Returns an error for an empty, flag-like, or
+    /// otherwise malformed hostname (a scheme, path, port, userinfo, or whitespace)
+    /// rather than guessing — the value must be a bare DNS-style host.
+    pub fn new(host: impl AsRef<str>) -> Result<Self> {
+        let host = validate_host(host.as_ref())?;
+        let enterprise = host != Self::SAAS_HOST;
+        Ok(Self { host, enterprise })
+    }
+
+    /// Derive the host from a repository **remote URL** and classify it. Handles
+    /// `scheme://[user@]host[:port]/…` (HTTPS/SSH/…) and the scp-like
+    /// `[user@]host:path` SSH form; any userinfo and port are dropped. A remote
+    /// whose host can't be determined (unparseable, hostless, or ambiguous — an
+    /// IPv6 literal, a bare single-label scp authority, a local path) is an
+    /// **error**, not a silent github.com fallback, so the caller can surface an
+    /// ambiguous remote as a diagnosable result.
+    pub fn from_remote_url(url: &str) -> Result<Self> {
+        match host_from_remote_url(url) {
+            Some(host) => Self::new(host),
+            None => Err(invalid_host_error(
+                url,
+                "no GitHub host could be determined from the remote URL",
+            )),
+        }
+    }
+
+    /// The canonical hostname (`github.com`, `ghe.example.com`).
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.host
+    }
+
+    /// Whether this is a GitHub Enterprise Server host (anything but github.com).
+    #[must_use]
+    pub fn is_enterprise(&self) -> bool {
+        self.enterprise
+    }
+
+    /// Whether this is SaaS github.com.
+    #[must_use]
+    pub fn is_github_com(&self) -> bool {
+        !self.enterprise
+    }
+
+    /// The environment variable `gh` reads for a credential on this host —
+    /// `GH_TOKEN` for github.com, `GH_ENTERPRISE_TOKEN` for a GHES host. `'static`
+    /// so it can seed the client's token-env binding.
+    fn token_env_var(&self) -> &'static str {
+        if self.enterprise {
+            "GH_ENTERPRISE_TOKEN"
+        } else {
+            "GH_TOKEN"
+        }
+    }
+}
+
+/// Validate a bare gh hostname, returning it **lower-cased** (its canonical form —
+/// hostnames are case-insensitive and `gh` stores them lower-cased). A host must
+/// be a non-empty DNS-style name (ASCII letters/digits/`.`/`-`), not start with
+/// `-`/`.` nor end with `.`, and carry no scheme, path, port, userinfo, or
+/// whitespace. Anything else is refused as invalid input — `gh` would misread it,
+/// or it is not a host at all.
+fn validate_host(host: &str) -> Result<String> {
+    let trimmed = host.trim();
+    let well_formed = !trimmed.is_empty()
+        && !trimmed.starts_with('-')
+        && !trimmed.starts_with('.')
+        && !trimmed.ends_with('.')
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    if !well_formed {
+        return Err(invalid_host_error(host, "not a valid GitHub hostname"));
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+/// The `Error::Spawn` / `InvalidInput` the crate raises for a rejected caller
+/// value (the same shape as [`reject_flag_like`], classified by
+/// `vcs_cli_support::is_invalid_input`), naming the bad host and why.
+fn invalid_host_error(value: &str, reason: &str) -> Error {
+    Error::spawn(
+        BINARY,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("GitHub host {value:?}: {reason}"),
+        ),
+    )
+}
+
+/// Extract the hostname from a repository remote URL (HTTPS / SSH / scp-like),
+/// dropping any userinfo and port. Returns `None` when no unambiguous host is
+/// present, so [`GitHubHost::from_remote_url`] surfaces a diagnosable error rather
+/// than defaulting to github.com. An IPv6-literal authority (`[::1]`) and a bare
+/// single-label scp authority (indistinguishable from a Windows drive path) return
+/// `None` too — a GitHub host is a dotted DNS name.
+fn host_from_remote_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    // scheme://[user@]host[:port]/…  (https, http, ssh, git, …). The authority
+    // ends at the first `/`, `?`, or `#`; drop any `user:pass@` userinfo.
+    if let Some((_scheme, rest)) = url.split_once("://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        return strip_port(host_port);
+    }
+    // scp-like SSH: `[user@]host:path` (no scheme). The host ends at the first `:`.
+    if let Some((authority, _path)) = url.split_once(':') {
+        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        // Require a dotted host so a Windows drive path (`C:\…`) or a bare
+        // single-label authority isn't misread as a remote host — those are
+        // ambiguous, and the caller gets a diagnosable error instead of a guess.
+        if host.contains('.') && !host.contains('/') && !host.contains('\\') {
+            return Some(host.to_string());
+        }
+    }
+    None
+}
+
+/// Drop a trailing `:port` from `host[:port]`, refusing an IPv6-literal authority
+/// (`[::1]`) — a GitHub host is never a bracketed literal, and gh names hosts
+/// without a port.
+fn strip_port(host_port: &str) -> Option<String> {
+    if host_port.is_empty() || host_port.starts_with('[') {
+        return None;
+    }
+    Some(
+        host_port
+            .split_once(':')
+            .map_or(host_port, |(h, _)| h)
+            .to_string(),
+    )
 }
 
 /// How [`GitHubApi::pr_merge`] merges the PR — exactly one of gh's mutually
@@ -237,6 +436,31 @@ impl PrMerge {
     }
 
     /// Delete the head branch after merging (`--delete-branch`).
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
+/// Options for [`GitHubApi::pr_close`] (`gh pr close`).
+///
+/// `#[non_exhaustive]`, so build it through [`PrClose::new`] and the chained
+/// [`delete_branch`](PrClose::delete_branch) setter rather than a bare `bool`
+/// (`pr_close(n, true)` doesn't say what `true` does).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrClose {
+    /// Delete the head branch after closing the PR (`--delete-branch`).
+    pub delete_branch: bool,
+}
+
+impl PrClose {
+    /// Close the PR, leaving the head branch in place.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Delete the head branch after closing (`--delete-branch`).
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
         self
@@ -408,6 +632,60 @@ impl ReviewAction {
     }
 }
 
+/// What the installed `gh` binary supports, probed via
+/// [`GitHubApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it). Mirrors
+/// [`vcs_git::GitCapabilities`](../vcs_git/struct.GitCapabilities.html) /
+/// [`vcs_jj::JjCapabilities`](../vcs_jj/struct.JjCapabilities.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitHubCapabilities {
+    /// The binary's parsed version.
+    pub version: GitHubVersion,
+}
+
+/// The oldest `gh` this crate is written against — **2.0.0**, the first release of
+/// the modern `gh` line. Every command this crate's argv drives lives in 2.x: the
+/// `--json` read surface (`pr`/`issue`/`repo`/`release … --json`, incl.
+/// `pr checks --json`), the `pr edit` / `pr checkout` / `pr ready` lifecycle verbs,
+/// and `api`. A `gh` from the 1.x line is missing parts of that surface, so gating
+/// here lets [`ensure_supported`](GitHubCapabilities::ensure_supported) reject a
+/// too-old binary up front with a clear message instead of letting an operation
+/// fail deep inside gh with a cryptic `unknown command`/`unknown flag`.
+const MIN_SUPPORTED: GitHubVersion = GitHubVersion {
+    major: 2,
+    minor: 0,
+    patch: 0,
+};
+
+impl GitHubCapabilities {
+    /// Whether the binary meets the supported floor (gh ≥ 2.0). Every typed
+    /// operation on [`GitHubApi`] is guaranteed against this minimum.
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs gh ≥ 2.0,
+    /// found 1.14.0" instead of a cryptic `unknown command`/`unknown flag` failure
+    /// once an operation reaches a command the old binary lacks. The pre-flight
+    /// check a caller runs before driving operations against an untrusted `gh`.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-github requires gh >= {MIN_SUPPORTED}, found {}",
+                    self.version
+                ),
+            ),
+        ))
+    }
+}
+
 /// The GitHub operations this crate exposes — the interface consumers code
 /// against and mock in tests.
 #[cfg_attr(feature = "mock", mockall::automock)]
@@ -415,18 +693,47 @@ impl ReviewAction {
 pub trait GitHubApi: Send + Sync {
     /// Run `gh <args>` **in the process's current directory**, returning trimmed
     /// stdout (throws on a non-zero exit). A raw escape hatch — you supply the whole
-    /// argv, so pass `-R owner/repo` to target a specific repo; the `at(dir)` bound
-    /// view does *not* re-bind it (unlike [`api`](GitHubApi::api), which is dir-bound).
+    /// argv, so pass `-R owner/repo` to target a specific repo. This method on the
+    /// client is the **process-cwd** escape hatch; the `at(dir)` bound view's
+    /// [`run`](GitHubAt::run) is instead **bound to `dir`** (it forwards to
+    /// [`GitHub::run_in`], so `gh.at(dir).run(…)` runs in the bound repo's cwd, like
+    /// [`api`](GitHubApi::api)). Use `gh.at(dir).run(…)` (or [`GitHub::run_in`]) for
+    /// the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GitHubApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed GitHub CLI version (`gh --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GitHubCapabilities`]
+    /// (`gh --version`). A value type — probe once and keep it; an unrecognisable
+    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `gh`
+    /// with [`GitHubCapabilities::ensure_supported`].
+    async fn capabilities(&self) -> Result<GitHubCapabilities>;
     /// Whether the user is authenticated (`gh auth status` exits zero). Reflects
     /// the exit code as a bool — any non-zero exit reads as `false`, never an
-    /// error; only a spawn failure or timeout errors.
+    /// error; only a spawn failure or timeout errors. Unscoped: it inspects
+    /// *every* configured host, so a broken session for one host can make it
+    /// report `false` even when the host you care about is fine — reach for
+    /// [`auth_status_for`](GitHubApi::auth_status_for) to scope it.
     async fn auth_status(&self) -> Result<bool>;
+    /// Whether the user is authenticated **for `host`** (`gh auth status
+    /// --hostname <host>` exits zero) — the host-scoped twin of
+    /// [`auth_status`](GitHubApi::auth_status). Scoping to the repository's host
+    /// (build a [`GitHubHost`] from its remote, e.g.
+    /// [`GitHubHost::from_remote_url`]) means a broken or absent session for
+    /// *another* host can't turn this into a false negative for the host you
+    /// target. Like `auth_status`, it folds only the exit code into the bool (any
+    /// non-zero exit → `false`); a spawn failure or timeout still errors.
+    /// **Defaulted** to `Error::Unsupported` so external implementers of the trait
+    /// keep compiling when the crate bumps (only the `GitHub` concrete impl and the
+    /// regenerated `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool> {
+        Err(Error::Unsupported {
+            operation: "auth_status_for".into(),
+        })
+    }
     /// The repository for `dir` (`gh repo view --json …`).
     async fn repo_view(&self, dir: &Path) -> Result<RepoView>;
     /// Pull requests for `dir` (`gh pr list --limit 100 --json …`). Returns up to
@@ -464,8 +771,20 @@ pub trait GitHubApi: Send + Sync {
     /// Mark a draft pull request as ready for review (`gh pr ready <n>`).
     async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a pull request without merging (`gh pr close <n>
-    /// [--delete-branch]`).
-    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
+    /// [--delete-branch]`); see [`PrClose`].
+    async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()>;
+    /// Check out a pull request's branch into the working copy at `dir`
+    /// (`gh pr checkout <n>`) — the head branch is fetched and switched to, so a
+    /// subsequent build/test/edit runs against the PR locally. Mutates the working
+    /// copy. **Defaulted** to `Error::Unsupported` so external implementers of the
+    /// trait keep compiling when the crate bumps (only the `GitHub` concrete impl
+    /// and the regenerated `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_checkout".into(),
+        })
+    }
     /// The PR's checks (`gh pr checks <n> --json …`). gh signals the overall
     /// outcome through its exit code — 0 all passed, 8 still pending, 1 some
     /// failed — and emits the same JSON either way, so all three return the
@@ -552,7 +871,9 @@ vcs_cli_support::managed_client! {
     /// Wraps a [`ManagedClient`](vcs_cli_support::ManagedClient). By default it authenticates through `gh`'s own
     /// ambient login; attach a [`CredentialProvider`] with
     /// [`with_credentials`](GitHub::with_credentials) to supply a token per operation
-    /// — it is injected as `GH_TOKEN` on every `gh` invocation.
+    /// — it is injected as `GH_TOKEN` on every `gh` invocation (or, after
+    /// [`with_host`](GitHub::with_host) targets a GitHub Enterprise Server host,
+    /// as `GH_ENTERPRISE_TOKEN` — the variable `gh` reads for that host).
     pub struct GitHub => BINARY, token_env = (CredentialService::GitHub, "GH_TOKEN")
 }
 
@@ -581,6 +902,48 @@ impl<R: ProcessRunner> GitHub<R> {
     pub fn with_env_token(self, var: impl Into<String>) -> Self {
         self.with_credentials(Arc::new(EnvToken::new(var)))
     }
+
+    /// Bind this client to a GitHub `host`, so a supplied credential is injected
+    /// into the environment variable `gh` reads for **that** host, and gh's default
+    /// host is set accordingly:
+    ///
+    /// - **github.com** ([`GitHubHost::github_com`]) → the token goes to `GH_TOKEN`
+    ///   (the SaaS default, unchanged) and `GH_HOST` is `github.com`.
+    /// - a **GitHub Enterprise Server** host → the token goes to
+    ///   `GH_ENTERPRISE_TOKEN` (the variable `gh` uses for a non-github.com host)
+    ///   and `GH_HOST` is set to that host, so gh's non-repo commands resolve
+    ///   against it. The github.com `GH_TOKEN` is **not** set, so an enterprise
+    ///   secret never lands in the github.com token env (nor vice versa).
+    ///
+    /// Compose with [`with_credentials`](GitHub::with_credentials) /
+    /// [`with_token`](GitHub::with_token) / [`with_env_token`](GitHub::with_env_token)
+    /// in either order — the host selects the env var, the provider supplies the
+    /// secret. The bound host also travels in each operation's [`CredentialRequest`],
+    /// so a **host-keyed** provider returns the secret for *this* host and never a
+    /// neighbouring instance's. For several hosts, build **one client per host**:
+    /// each injects only its own host's token, so a broken or missing credential for
+    /// one host can't leak into another. Without a host binding the client behaves
+    /// exactly as before — github.com semantics, credential injected as `GH_TOKEN`,
+    /// and the request carries no host (a host-keyed provider that can't place it
+    /// defers to ambient auth).
+    ///
+    /// `GH_HOST` only steers gh's host inference for commands with **no repository
+    /// context**; a repo-scoped command still resolves its host from the working
+    /// directory's remote, so binding a host does not override a repo you point a
+    /// method at — use a host-bound client with repositories on that host.
+    #[must_use]
+    pub fn with_host(mut self, host: GitHubHost) -> Self {
+        self.core = self
+            .core
+            .with_token_env(CredentialService::GitHub, host.token_env_var())
+            // Carry the (canonical, lower-cased) host into every operation's
+            // `CredentialRequest`, so a host-keyed `CredentialProvider` resolves the
+            // secret for *this* host and nothing else — one instance's token can't
+            // land in another host's `gh` command.
+            .with_expected_host(host.as_str())
+            .default_env("GH_HOST", host.as_str());
+        self
+    }
 }
 
 #[async_trait::async_trait]
@@ -597,6 +960,17 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         self.core.run(["--version"]).await
     }
 
+    async fn capabilities(&self) -> Result<GitHubCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_gh_version(&raw).ok_or_else(|| {
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `gh --version` output: {raw:?}"),
+            )
+        })?;
+        Ok(GitHubCapabilities { version })
+    }
+
     async fn auth_status(&self) -> Result<bool> {
         // `gh auth status` exits 0 when authenticated, non-zero when not — an
         // exit-code answer. `exit_code` reads the exit code without erroring on a
@@ -604,6 +978,21 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // exit — not just the documented 1 — maps to "not authenticated" rather
         // than surfacing as an error. `probe` would reject an unusual exit code.
         Ok(self.core.exit_code(["auth", "status"]).await? == 0)
+    }
+
+    async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool> {
+        // `--hostname <host>` scopes the probe to one host: `gh auth status` with
+        // no hostname inspects *every* configured host, so a single broken session
+        // (a different host, an expired enterprise login) can flip the exit code
+        // non-zero — a false negative for the host we actually target. Same
+        // exit-code-as-bool contract as `auth_status` (a spawn failure or timeout
+        // still errors — see `exit_code`). `host` is a validated `GitHubHost`, so
+        // the `--hostname` value can never be flag-like or empty.
+        Ok(self
+            .core
+            .exit_code(["auth", "status", "--hostname", host.as_str()])
+            .await?
+            == 0)
     }
 
     async fn repo_view(&self, dir: &Path) -> Result<RepoView> {
@@ -724,13 +1113,23 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
-    async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()> {
+    async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()> {
         let n = number.to_string();
         let mut args = vec!["pr", "close", n.as_str()];
-        if delete_branch {
+        if spec.delete_branch {
             args.push("--delete-branch");
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard with `reject_flag_like`. `gh pr checkout` fetches the PR's head
+        // branch and switches the working copy to it (no structured output).
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["pr", "checkout", n.as_str()]))
+            .await
     }
 
     async fn pr_checks(&self, dir: &Path, number: u64) -> Result<Vec<CheckRun>> {
@@ -834,19 +1233,8 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>> {
-        // `run_untrimmed`: a diff's trailing content is meaningful (a hunk's
-        // last line, a missing trailing newline) — trimming it before parsing
-        // could desync the parser from `git`'s own byte-exact output. `--color
-        // never` keeps the output free of ANSI even if stdout were ever a tty.
-        let n = number.to_string();
-        let text = self
-            .core
-            .run_untrimmed(
-                self.core
-                    .command_in(dir, ["pr", "diff", n.as_str(), "--color", "never"]),
-            )
-            .await?;
-        Ok(vcs_diff::parse_diff(&text))
+        self.pr_diff_within(dir, number, self.core.output_budget())
+            .await
     }
 
     async fn run_list(
@@ -896,10 +1284,21 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // Bound the retained buffer (drop-oldest) so a long watch can't accumulate
         // unboundedly; the last 256 lines / 256 KiB are plenty for a failure message.
         // (`docs/audit-2026-07.md` R5.)
+        //
+        // Expressed through the shared [`OutputBudget`] so this fixed watch cap and
+        // the configurable content-op budget are the *same* mechanism (T-049): this
+        // is the drop-oldest *diagnostic* projection (`diagnostic_policy`) — a bounded
+        // tail that never turns a real watch failure into `OutputTooLarge` — not the
+        // fail-loud *content* projection the diff/show verbs use.
+        let watch_budget = OutputBudget::bytes(256 * 1024).with_max_lines(256);
         let cmd = self
             .core
             .command_in(dir, ["run", "watch", id_str.as_str()])
-            .output_buffer(processkit::OutputBufferPolicy::bounded(256).with_max_bytes(256 * 1024));
+            .output_buffer(
+                watch_budget
+                    .diagnostic_policy()
+                    .expect("a byte/line budget yields a diagnostic policy"),
+            );
         let _ = self.core.output_string(cmd).await?.ensure_success()?;
         self.run_view(dir, id).await
     }
@@ -958,6 +1357,34 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
 }
 
 impl<R: ProcessRunner> GitHub<R> {
+    /// [`pr_diff`](GitHubApi::pr_diff) with an explicit per-call [`OutputBudget`],
+    /// instead of this client's [`default_output_budget`](GitHub::default_output_budget).
+    /// Past the ceiling the read errors with
+    /// [`Error::OutputTooLarge`] (actual and
+    /// allowed sizes) rather than buffering an unbounded diff — the override for a
+    /// legitimately huge PR.
+    pub async fn pr_diff_within(
+        &self,
+        dir: &Path,
+        number: u64,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        // `run_untrimmed_within`: a diff's trailing content is meaningful (a hunk's
+        // last line, a missing trailing newline) — trimming it before parsing could
+        // desync the parser from `git`'s own byte-exact output. `--color never` keeps
+        // the output free of ANSI even if stdout were ever a tty. The budget bounds it.
+        let n = number.to_string();
+        let text = self
+            .core
+            .run_untrimmed_within(
+                self.core
+                    .command_in(dir, ["pr", "diff", n.as_str(), "--color", "never"]),
+                budget,
+            )
+            .await?;
+        Ok(vcs_diff::parse_diff(&text))
+    }
+
     /// Run `gh <args>` over string slices — `gh.run_args(&["pr", "list"])`
     /// without allocating a `Vec<String>`. Inherent (not on the object-safe
     /// trait), so it can take `&[&str]`; forwards to the same path as
@@ -970,6 +1397,44 @@ impl<R: ProcessRunner> GitHub<R> {
     /// (mirrors [`GitHubApi::run_raw`]).
     pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
         self.core.output_string(args).await
+    }
+
+    /// Run `gh <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory, so `gh` infers the repo from `dir`'s remote), returning
+    /// trimmed stdout — the dir-bound twin of the process-cwd [`run`](GitHubApi::run).
+    /// This is what [`GitHubAt::run`] forwards to; call [`run`](GitHubApi::run) on the
+    /// client for the process-cwd escape hatch. Argv is forwarded verbatim (only the
+    /// working directory is bound, no `-R`/extra flag is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](GitHub::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GitHubApi::run_raw). What [`GitHubAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// Like [`run_args`](GitHub::run_args) but **bound to `dir`** — the `&[&str]`
+    /// twin of [`run_in`](GitHub::run_in). What [`GitHubAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](GitHub::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](GitHub::run_raw_in). What
+    /// [`GitHubAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking
@@ -1004,12 +1469,10 @@ impl<R: ProcessRunner> Copy for GitHubAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GitHubAt, gh, "GitHub",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GitHubCapabilities>;
         fn auth_status() -> Result<bool>;
+        fn auth_status_for(host: &GitHubHost) -> Result<bool>;
     }
     dir {
         fn api(endpoint: &str) -> Result<String>;
@@ -1021,7 +1484,8 @@ vcs_cli_support::at_forwarders! {
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_mark_ready(number: u64) -> Result<()>;
-        fn pr_close(number: u64, delete_branch: bool) -> Result<()>;
+        fn pr_close(number: u64, spec: PrClose) -> Result<()>;
+        fn pr_checkout(number: u64) -> Result<()>;
         fn pr_checks(number: u64) -> Result<Vec<CheckRun>>;
         fn pr_review(number: u64, action: ReviewAction) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
@@ -1036,6 +1500,15 @@ vcs_cli_support::at_forwarders! {
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
     }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `gh.at(dir).run(…)` targets the bound repo's cwd, not the process
+    // cwd. For the process-cwd hatch call `run`/`run_raw`/… on `GitHub` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
+    }
 }
 
 #[cfg(test)]
@@ -1046,6 +1519,66 @@ mod tests {
     #[test]
     fn binary_name_is_gh() {
         assert_eq!(BINARY, "gh");
+    }
+
+    // `capabilities()` parses the real `gh --version` banner and gates on the 2.0
+    // floor — covering the minimum, a modern release, and an unrecognisable banner
+    // (the three cases the scheduled-drift lane also exercises against a real gh).
+    #[tokio::test]
+    async fn capability_version_gate_parses_and_gates() {
+        // Modern gh (the `(date)` trailer and release-URL line are ignored).
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "--version"],
+            Reply::ok(
+                "gh version 2.40.1 (2024-01-05)\nhttps://github.com/cli/cli/releases/tag/v2.40.1\n",
+            ),
+        ));
+        let caps = gh.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "2.40.1");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Exactly at the floor (2.0.0) is supported.
+        let at_floor = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version 2.0.0\n")),
+        );
+        assert!(
+            at_floor.capabilities().await.unwrap().is_supported(),
+            "2.0.0 is exactly the floor"
+        );
+
+        // An old 1.x gh is rejected with a clear message naming the floor + found.
+        let old = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "--version"],
+            Reply::ok("gh version 1.14.0 (2021-11-02)\n"),
+        ));
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GitHubVersion {
+                major: 1,
+                minor: 14,
+                patch: 0
+            }
+        );
+        assert!(!caps.is_supported(), "1.14 is below the 2.0 floor");
+        let err = caps.ensure_supported().expect_err("unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 2.0.0"), "names the floor: {message}");
+        assert!(
+            message.contains("1.14.0"),
+            "names the found version: {message}"
+        );
+
+        // A banner with no version token is a parse error, not a silent zero.
+        let garbage = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version unknowable\n")),
+        );
+        let err = garbage.capabilities().await.expect_err("unrecognisable");
+        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -1073,6 +1606,57 @@ mod tests {
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`gh.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        gh.at(dir)
+            .run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = gh
+            .at(dir)
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        gh.at(dir).run_args(&["pr", "list"]).await.unwrap();
+        let _ = gh.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        gh.run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = gh
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        gh.run_args(&["pr", "list"]).await.unwrap();
+        let _ = gh.run_raw_args(&["pr", "list"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
     }
 
     #[tokio::test]
@@ -1309,12 +1893,37 @@ mod tests {
         gh.pr_mark_ready(Path::new("/r"), 3)
             .await
             .expect("pr_mark_ready");
-        gh.pr_close(Path::new("/r"), 3, true).await.expect("close");
-        gh.pr_close(Path::new("/r"), 4, false).await.expect("close");
+        gh.pr_close(Path::new("/r"), 3, PrClose::new().delete_branch())
+            .await
+            .expect("close");
+        gh.pr_close(Path::new("/r"), 4, PrClose::new())
+            .await
+            .expect("close");
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["pr", "ready", "3"]);
         assert_eq!(calls[1].args_str(), ["pr", "close", "3", "--delete-branch"]);
         assert_eq!(calls[2].args_str(), ["pr", "close", "4"]);
+    }
+
+    // pr_checkout maps to `pr checkout <n>` and runs in the bound repo dir.
+    #[tokio::test]
+    async fn pr_checkout_builds_args_in_repo_dir() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("pr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+        // The bound view produces byte-identical argv.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.at(Path::new("/repo"))
+            .pr_checkout(7)
+            .await
+            .expect("pr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // gh signals the checks outcome via exit code (0 pass / 8 pending / 1 some
@@ -1389,12 +1998,81 @@ mod tests {
         let gh = GitHub::with_runner(&rec);
         let files = gh.pr_diff(Path::new("/r"), 7).await.expect("pr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert_eq!(
             rec.only_call().args_str(),
             ["pr", "diff", "7", "--color", "never"]
         );
+    }
+
+    // T-049: `pr_diff` over the client's default OutputBudget is refused with
+    // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff.
+    #[tokio::test]
+    async fn pr_diff_over_budget_errors_output_too_large() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        assert!(big.len() > 64 * 1024, "fixture must exceed the budget");
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)))
+                .default_output_budget(OutputBudget::bytes(64 * 1024));
+        match gh.pr_diff(Path::new("/r"), 7).await {
+            Err(Error::OutputTooLarge {
+                program,
+                max_bytes,
+                total_bytes,
+                ..
+            }) => {
+                assert_eq!(program, "gh");
+                assert_eq!(max_bytes, Some(64 * 1024));
+                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // The per-call override reads a legitimately large PR diff past the tight
+    // client default that would otherwise refuse it.
+    #[tokio::test]
+    async fn pr_diff_within_override_reads_past_the_default() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let gh =
+            GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)))
+                .default_output_budget(OutputBudget::bytes(4)); // absurdly tight default
+        assert!(matches!(
+            gh.pr_diff(Path::new("/r"), 7).await,
+            Err(Error::OutputTooLarge { .. })
+        ));
+        let files = gh
+            .pr_diff_within(Path::new("/r"), 7, OutputBudget::unlimited())
+            .await
+            .expect("override reads the diff");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, std::path::Path::new("m"));
+    }
+
+    // T-049: `gh run watch`'s fixed cap is reconciled onto the shared OutputBudget
+    // as its DROP-OLDEST *diagnostic* projection — a bounded tail that NEVER turns a
+    // long, chatty watch into `OutputTooLarge`. A watch that reprints far past the
+    // 256 KiB / 256-line cap still succeeds and reads the final run state.
+    #[tokio::test]
+    async fn run_watch_bounds_output_without_failing_loud() {
+        // ~5 MiB of repeated job-table frames — well past the watch cap.
+        let flood = "watching run… job A: running\n".repeat(180_000);
+        let run_json = r#"{"databaseId":42,"name":"CI","displayTitle":"t",
+            "status":"completed","conclusion":"success","workflowName":"CI",
+            "headBranch":"main","event":"push","url":"u","createdAt":"c"}"#;
+        let gh = GitHub::with_runner(
+            ScriptedRunner::new()
+                .on(["gh", "run", "watch"], Reply::ok(&flood))
+                .on(["gh", "run", "view"], Reply::ok(run_json)),
+        );
+        // Must NOT error out with OutputTooLarge — the diagnostic projection drops
+        // the oldest frames and keeps going, then `run view` yields the state.
+        let run = gh
+            .run_watch(Path::new("/r"), 42)
+            .await
+            .expect("a chatty watch is bounded, not failed loud");
+        assert_eq!(run.database_id, 42);
     }
 
     // Each review action maps to its flag; the body is carried on the action
@@ -1620,6 +2298,380 @@ mod tests {
         assert_eq!(winner, Some("provider-token"), "provider token wins");
     }
 
+    // --- Enterprise host + host-scoped auth (T-046) ------------------------
+
+    // GitHubHost classifies github.com (any case) as SaaS and every other valid
+    // host as GHES, canonicalizing to a lower-cased hostname.
+    #[test]
+    fn github_host_classifies_saas_and_enterprise() {
+        let saas = GitHubHost::github_com();
+        assert!(saas.is_github_com() && !saas.is_enterprise());
+        assert_eq!(saas.as_str(), "github.com");
+
+        for h in ["github.com", "GitHub.com", "GITHUB.COM"] {
+            let host = GitHubHost::new(h).unwrap();
+            assert!(host.is_github_com(), "{h} should classify as SaaS");
+            assert_eq!(host.as_str(), "github.com", "canonicalized to lower-case");
+        }
+
+        let ghes = GitHubHost::new("GHE.Example.COM").unwrap();
+        assert!(ghes.is_enterprise());
+        assert_eq!(ghes.as_str(), "ghe.example.com");
+    }
+
+    // A malformed hostname is a diagnosable invalid-input error, not a silent
+    // github.com guess — so a bad host can't quietly become the SaaS default.
+    #[test]
+    fn github_host_new_rejects_malformed_hosts() {
+        for bad in [
+            "",
+            "  ",
+            "-evil",
+            "has space",
+            "https://github.com",
+            "github.com/owner",
+            "ghe.example.com:8443",
+            "user@github.com",
+            ".leading",
+            "trailing.",
+        ] {
+            let err = GitHubHost::new(bad).unwrap_err();
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{bad:?} should be rejected as invalid input, got {err:?}"
+            );
+        }
+    }
+
+    // from_remote_url derives + classifies the host across HTTPS / SSH / scp-like
+    // remotes, dropping userinfo and port.
+    #[test]
+    fn github_host_from_remote_url_parses_and_classifies() {
+        let cases = [
+            ("https://github.com/o/r.git", "github.com", false),
+            (
+                "https://x-access-token:tok@ghe.example.com:8443/o/r",
+                "ghe.example.com",
+                true,
+            ),
+            ("http://ghe.internal.corp/o/r", "ghe.internal.corp", true),
+            ("ssh://git@github.com/o/r", "github.com", false),
+            ("ssh://git@ghe.example.com:22/o/r", "ghe.example.com", true),
+            ("git@github.com:o/r.git", "github.com", false),
+            ("git@ghe.example.com:o/r.git", "ghe.example.com", true),
+        ];
+        for (url, host, enterprise) in cases {
+            let parsed =
+                GitHubHost::from_remote_url(url).unwrap_or_else(|e| panic!("parse {url}: {e:?}"));
+            assert_eq!(parsed.as_str(), host, "host for {url}");
+            assert_eq!(parsed.is_enterprise(), enterprise, "class for {url}");
+        }
+    }
+
+    // An unparseable / hostless / ambiguous remote is a diagnosable error, never a
+    // silent github.com fallback (which would authenticate the wrong host).
+    #[test]
+    fn github_host_from_remote_url_rejects_ambiguous() {
+        for url in [
+            "",
+            "   ",
+            "not-a-url",
+            "https://",
+            "ssh://",
+            "git@internalhost:repo.git",
+            "C:\\repo\\path",
+            "https://[::1]:8443/x",
+        ] {
+            let err = GitHubHost::from_remote_url(url).unwrap_err();
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{url:?} should be a diagnosable error, got {err:?}"
+            );
+        }
+    }
+
+    // Binding a github.com host injects the credential as GH_TOKEN (the SaaS
+    // default) and pins GH_HOST — never the enterprise env.
+    #[tokio::test]
+    async fn with_host_github_com_injects_gh_token() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec)
+            .with_host(GitHubHost::github_com())
+            .with_token("saas-tok");
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        assert!(call.env_is("GH_TOKEN", "saas-tok"));
+        assert!(
+            !call.has_env("GH_ENTERPRISE_TOKEN"),
+            "github.com must not touch the enterprise token env"
+        );
+        assert!(call.env_is("GH_HOST", "github.com"));
+        assert!(!call.args_str().iter().any(|a| a.contains("saas-tok")));
+    }
+
+    // Binding a GHES host injects the credential as GH_ENTERPRISE_TOKEN — the env
+    // gh reads for a non-github.com host — plus GH_HOST, and NEVER as GH_TOKEN, so
+    // an enterprise secret can't leak into the github.com token env. The secret
+    // stays out of argv.
+    #[tokio::test]
+    async fn with_host_enterprise_injects_enterprise_token_and_host() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec)
+            .with_host(GitHubHost::new("ghe.example.com").unwrap())
+            .with_token("ent-tok");
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        assert!(call.env_is("GH_ENTERPRISE_TOKEN", "ent-tok"));
+        assert!(
+            !call.has_env("GH_TOKEN"),
+            "enterprise token must not land in the github.com env"
+        );
+        assert!(call.env_is("GH_HOST", "ghe.example.com"));
+        assert!(
+            !call.args_str().iter().any(|a| a.contains("ent-tok")),
+            "secret must never appear in argv"
+        );
+    }
+
+    // A host-bound client with NO provider injects no token at all (ambient gh
+    // login for that host) but still pins GH_HOST, so gh targets the right server.
+    #[tokio::test]
+    async fn with_host_enterprise_without_credentials_is_ambient() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec).with_host(GitHubHost::new("ghe.corp.example").unwrap());
+        gh.pr_list(Path::new("/r")).await.unwrap();
+        let call = rec.only_call();
+        assert!(!call.has_env("GH_ENTERPRISE_TOKEN"));
+        assert!(!call.has_env("GH_TOKEN"));
+        assert!(call.env_is("GH_HOST", "ghe.corp.example"));
+    }
+
+    // Several hosts, one client each: every client injects only its own host's
+    // token/env — a credential for one host never leaks into another.
+    #[tokio::test]
+    async fn multiple_hosts_inject_independently() {
+        let rec_a = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_a)
+            .with_host(GitHubHost::new("ghe.a.example").unwrap())
+            .with_token("tok-a")
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+
+        let rec_b = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_b)
+            .with_host(GitHubHost::new("ghe.b.example").unwrap())
+            .with_token("tok-b")
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+
+        let rec_saas = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_saas)
+            .with_host(GitHubHost::github_com())
+            .with_token("tok-saas")
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+
+        let ca = rec_a.only_call();
+        assert!(ca.env_is("GH_ENTERPRISE_TOKEN", "tok-a") && ca.env_is("GH_HOST", "ghe.a.example"));
+        assert!(
+            !ca.args_str()
+                .iter()
+                .any(|s| s.contains("tok-b") || s.contains("tok-saas")),
+            "host A must not carry another host's secret"
+        );
+
+        let cb = rec_b.only_call();
+        assert!(cb.env_is("GH_ENTERPRISE_TOKEN", "tok-b") && cb.env_is("GH_HOST", "ghe.b.example"));
+
+        let cs = rec_saas.only_call();
+        assert!(cs.env_is("GH_TOKEN", "tok-saas") && cs.env_is("GH_HOST", "github.com"));
+        assert!(!cs.has_env("GH_ENTERPRISE_TOKEN"));
+    }
+
+    // A HOST-KEYED provider on a host-bound client injects ONLY that host's secret,
+    // into the env gh reads for it — and a client bound to a *different* host draws a
+    // different secret from the SAME provider, so one instance's token never lands in
+    // another's command. (T-045: the bound host now reaches the CredentialRequest, so
+    // the provider can tell SaaS from a self-hosted GHES instance.)
+    #[tokio::test]
+    async fn host_keyed_provider_injects_only_the_bound_hosts_token() {
+        // Typed as the trait object so `Arc::clone` yields `Arc<dyn …>` directly
+        // (the unsized coercion doesn't flow back through `Arc::clone`'s inference).
+        let provider: Arc<dyn CredentialProvider> =
+            Arc::new(provider_fn(|r: &CredentialRequest<'_>| {
+                Ok(match r.host {
+                    Some("github.com") => Some(Credential::token("saas-secret")),
+                    Some("ghe.example.com") => Some(Credential::token("ent-secret")),
+                    _ => None,
+                })
+            }));
+
+        // SaaS client → GH_TOKEN carries the github.com secret, never the ent one.
+        let rec_saas = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_saas)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::clone(&provider))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let cs = rec_saas.only_call();
+        assert!(cs.env_is("GH_TOKEN", "saas-secret"));
+        assert!(!cs.has_env("GH_ENTERPRISE_TOKEN"));
+        assert!(!cs.args_str().iter().any(|a| a.contains("saas-secret")));
+
+        // Enterprise client → the ENT secret in GH_ENTERPRISE_TOKEN only, from the
+        // very same provider; the github.com token env is untouched.
+        let rec_ent = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_ent)
+            .with_host(GitHubHost::new("ghe.example.com").unwrap())
+            .with_credentials(Arc::clone(&provider))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let ce = rec_ent.only_call();
+        assert!(ce.env_is("GH_ENTERPRISE_TOKEN", "ent-secret"));
+        assert!(
+            !ce.has_env("GH_TOKEN"),
+            "the enterprise command must not carry the github.com token env"
+        );
+        assert!(!ce.args_str().iter().any(|a| a.contains("ent-secret")));
+    }
+
+    // Fallback policy, read vs write — `Ok(None)` (a host-keyed provider with nothing
+    // for this host) leaves the command on ambient gh auth (no token env injected)
+    // for BOTH a read (`pr_list`) and a write (`pr_merge`). (T-045)
+    #[tokio::test]
+    async fn provider_none_defers_to_ambient_for_read_and_write() {
+        let rec_read = RecordingRunner::replying(Reply::ok("[]"));
+        GitHub::with_runner(&rec_read)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))))
+            .pr_list(Path::new("/r"))
+            .await
+            .unwrap();
+        let cr = rec_read.only_call();
+        assert!(
+            !cr.has_env("GH_TOKEN") && !cr.has_env("GH_ENTERPRISE_TOKEN"),
+            "read defers to ambient on Ok(None)"
+        );
+
+        let rec_write = RecordingRunner::replying(Reply::ok(""));
+        GitHub::with_runner(&rec_write)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(Arc::new(provider_fn(|_r: &CredentialRequest<'_>| Ok(None))))
+            .pr_merge(Path::new("/r"), 7, PrMerge::squash())
+            .await
+            .unwrap();
+        let cw = rec_write.only_call();
+        assert!(
+            !cw.has_env("GH_TOKEN") && !cw.has_env("GH_ENTERPRISE_TOKEN"),
+            "write defers to ambient on Ok(None)"
+        );
+    }
+
+    // Fallback policy, read vs write — a provider `Err` is FAIL-CLOSED: it aborts the
+    // operation rather than silently running on ambient auth, proven separately for a
+    // read (`pr_list`) and a write (`pr_merge`). gh is never spawned: the error
+    // surfaces in `prepare`, before the process. (T-045)
+    #[tokio::test]
+    async fn provider_error_aborts_read_and_write_fail_closed() {
+        fn boom() -> Arc<dyn CredentialProvider> {
+            Arc::new(provider_fn(|_r: &CredentialRequest<'_>| {
+                Err(Error::spawn(
+                    BINARY,
+                    std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault down"),
+                ))
+            }))
+        }
+
+        let rec_read = RecordingRunner::replying(Reply::ok("[]"));
+        let read = GitHub::with_runner(&rec_read)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(boom())
+            .pr_list(Path::new("/r"))
+            .await;
+        assert!(read.is_err(), "a provider error must abort the read");
+        assert!(
+            rec_read.calls().is_empty(),
+            "gh must not spawn when the provider errored (read)"
+        );
+
+        let rec_write = RecordingRunner::replying(Reply::ok(""));
+        let write = GitHub::with_runner(&rec_write)
+            .with_host(GitHubHost::github_com())
+            .with_credentials(boom())
+            .pr_merge(Path::new("/r"), 7, PrMerge::squash())
+            .await;
+        assert!(write.is_err(), "a provider error must abort the write");
+        assert!(
+            rec_write.calls().is_empty(),
+            "gh must not spawn when the provider errored (write)"
+        );
+    }
+
+    // auth_status_for pins `--hostname <host>` and reflects the exit code as a bool.
+    #[tokio::test]
+    async fn auth_status_for_scopes_to_hostname() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        let host = GitHubHost::new("ghe.example.com").unwrap();
+        assert!(gh.auth_status_for(&host).await.unwrap());
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["auth", "status", "--hostname", "ghe.example.com"]
+        );
+    }
+
+    // The scoped probe reports the TARGET host truthfully even when a DIFFERENT
+    // host's session is broken — no false negative from the aggregate `gh auth
+    // status` that the unscoped `auth_status` would fold together.
+    #[tokio::test]
+    async fn auth_status_for_is_independent_of_other_host_sessions() {
+        let runner = ScriptedRunner::new()
+            .on(
+                ["gh", "auth", "status", "--hostname", "broken.example.com"],
+                Reply::fail(1, "not logged in to broken.example.com"),
+            )
+            .on(
+                ["gh", "auth", "status", "--hostname", "good.example.com"],
+                Reply::ok(""),
+            );
+        let gh = GitHub::with_runner(runner);
+        assert!(
+            gh.auth_status_for(&GitHubHost::new("good.example.com").unwrap())
+                .await
+                .unwrap(),
+            "the healthy target host reads as authenticated"
+        );
+        assert!(
+            !gh.auth_status_for(&GitHubHost::new("broken.example.com").unwrap())
+                .await
+                .unwrap(),
+            "a broken host reads as not authenticated, independently"
+        );
+    }
+
+    // The bound view forwards auth_status_for verbatim (a bare, dir-independent
+    // method): byte-identical argv, no cwd bound.
+    #[tokio::test]
+    async fn bound_view_auth_status_for_matches_client() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.at(Path::new("/repo"))
+            .auth_status_for(&GitHubHost::github_com())
+            .await
+            .unwrap();
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            ["auth", "status", "--hostname", "github.com"]
+        );
+        assert_eq!(call.cwd.as_deref(), None, "bare method binds no cwd");
+    }
+
     #[tokio::test]
     async fn pr_feedback_requests_reviews_and_comments() {
         let json = r#"{"reviews":[{"author":{"login":"a"},"state":"APPROVED",
@@ -1749,7 +2801,8 @@ mod tests {
             .await
             .expect("release_view");
         assert_eq!(release.tag_name, "v1");
-        assert_eq!(release.body, "notes");
+        assert_eq!(release.body.as_deref(), Some("notes"));
+        assert_eq!(release.url.as_deref(), Some("u"));
         assert_eq!(
             rec.only_call().args_str(),
             ["release", "view", "v1", "--json", RELEASE_VIEW_FIELDS]

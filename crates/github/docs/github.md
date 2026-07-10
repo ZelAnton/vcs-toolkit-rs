@@ -66,9 +66,12 @@ let issues = at.issue_list().await?;
 
 `gh.at(dir)` returns a [`GitHubAt`] — a `Copy` view holding two references. Its
 bound methods produce byte-identical argv to the `dir`-taking calls (the crate
-guards this with a test); the only difference is ergonomics. `bare` methods that
-take no `dir` (`version`, `auth_status`, `api`, the raw escape hatches) forward
-verbatim.
+guards this with a test); the only difference is ergonomics. The genuinely
+dir-independent methods (`version`, `auth_status`) forward verbatim. The raw
+escape hatches (`run`/`run_raw`/`run_args`/`run_raw_args`) are **bound to `dir`**
+on the view — `gh.at(dir).run(…)` runs in the bound repo's cwd; call `run` on the
+`GitHub` client itself for the process-cwd form (see [Raw escape
+hatches](#raw-escape-hatches)).
 
 ### Inherent `&[&str]` helpers
 
@@ -85,13 +88,16 @@ let res = gh.run_raw_args(&["pr", "list"]).await?;    // ProcessResult<String> �
 # Ok(()) }
 ```
 
-Both are also available on the bound handle (`gh.at(dir).run_args(…)`).
+Both are also available on the bound handle (`gh.at(dir).run_args(…)`) — where,
+unlike on the client, they run **in the bound `dir`** (see [Raw escape
+hatches](#raw-escape-hatches)).
 
 ## Auth & repo
 
 ```rust,ignore
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
+async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool>;// `gh auth status --hostname <host>`
 async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;// `gh api <endpoint>` in `dir`
 async fn repo_view(&self, dir: &Path) -> Result<RepoView>;// `gh repo view --json …`
 ```
@@ -113,6 +119,55 @@ match gh.auth_status().await {
 }
 # Ok(()) }
 ```
+
+### Host selection — github.com vs GitHub Enterprise Server
+
+`gh` reads a **different** credential environment variable per host — `GH_TOKEN`
+for github.com, `GH_ENTERPRISE_TOKEN` for a GitHub Enterprise Server (GHES) host
+— and its `auth status` can be scoped to one host. `vcs-github` models the target
+host as a [`GitHubHost`] so a supplied credential lands in the variable `gh`
+*actually reads* for that host, and an auth probe checks exactly the host you care
+about.
+
+```rust,ignore
+# use vcs_github::{GitHub, GitHubApi, GitHubHost};
+# async fn demo() -> Result<(), processkit::Error> {
+// SaaS (the default): the token is injected as GH_TOKEN.
+let saas = GitHubHost::github_com();
+
+// A GHES host: derive it from the repo's remote (an unparseable/hostless remote
+// is an Err, never a silent github.com fallback), or name it directly.
+let ghes = GitHubHost::from_remote_url("https://ghe.example.com/acme/app.git")?;
+let ghes = GitHubHost::new("ghe.example.com")?; // equivalent, from a bare host
+
+// Bind the host + a token: for a GHES host the token goes to GH_ENTERPRISE_TOKEN
+// (never GH_TOKEN) and GH_HOST is set, so an enterprise secret can't leak into the
+// github.com env. One client per host keeps hosts isolated.
+let gh = GitHub::new().with_host(ghes.clone()).with_token("ghe-pat");
+
+// Probe auth for just that host — a broken session for another host can't turn
+// this into a false negative for the one you target.
+if !gh.auth_status_for(&ghes).await? {
+    eprintln!("not logged in to {}", ghes.as_str());
+}
+# let _ = saas; Ok(()) }
+```
+
+`with_host` selects the credential env var (`GH_TOKEN` for github.com,
+`GH_ENTERPRISE_TOKEN` for a GHES host) and pins `GH_HOST`; combine it with
+`with_token`/`with_env_token`/`with_credentials` in either order. `GH_HOST` only
+steers gh's host inference for commands with **no** repository context — a
+repo-scoped method still resolves its host from the working directory's remote —
+so use a host-bound client with repositories on that host. Without `with_host` the
+client keeps the previous behaviour: github.com semantics, credential as
+`GH_TOKEN`.
+
+`GitHubHost::new` / `from_remote_url` **reject** an empty, malformed, or
+undeterminable host with a diagnosable error rather than defaulting to github.com,
+so an ambiguous host never quietly authenticates against the wrong server with the
+github.com token. `auth_status_for` runs `gh auth status --hostname <host>` and,
+like `auth_status`, folds only the exit code into the bool (a spawn failure or
+timeout still errors).
 
 `api` returns the raw REST/GraphQL response body unparsed — your escape hatch
 to any endpoint the typed methods don't cover. The `endpoint` is guarded
@@ -164,22 +219,23 @@ println!("opened {url}");
 ```rust,ignore
 async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
 async fn pr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
-async fn pr_close(&self, dir: &Path, number: u64, delete_branch: bool) -> Result<()>;
+async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()>;
 ```
 
 `pr_merge` takes a [`PrMerge`] config (strategy + optional `--auto` /
 `--delete-branch`). `pr_mark_ready` flips a draft to ready-for-review. `pr_close`
-closes without merging, optionally deleting the head branch.
+takes a [`PrClose`] config and closes without merging, optionally deleting the
+head branch (`PrClose::new().delete_branch()`).
 
 ```rust,ignore
-# use vcs_github::{GitHub, GitHubApi, PrMerge};
+# use vcs_github::{GitHub, GitHubApi, PrClose, PrMerge};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
 let gh = GitHub::new();
 gh.pr_mark_ready(repo, 7).await?;
 gh.pr_merge(repo, 7, PrMerge::squash().delete_branch()).await?;
 // or bail out:
-gh.pr_close(repo, 8, true).await?; // --delete-branch
+gh.pr_close(repo, 8, PrClose::new().delete_branch()).await?; // --delete-branch
 # Ok(()) }
 ```
 
@@ -319,11 +375,11 @@ async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
 async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 ```
 
-`release_list` returns releases newest first; it does **not** fetch
-`body`/`url` (both empty — use `release_view`), but it *is* the only endpoint
-that reports [`is_latest`](#release). `release_view` fills `body`/`url` for one
-tag but has no `isLatest` field, so `is_latest` defaults to `false` there. The
-`tag` is flag-injection guarded like `api`'s endpoint.
+`release_list` returns releases newest first; it does **not** request
+`body`/`url` (both `None` — use `release_view`), but it *is* the only endpoint
+that reports [`is_latest`](#release). `release_view` fills `body`/`url` (as `Some`)
+for one tag but has no `isLatest` field, so `is_latest` defaults to `false` there.
+The `tag` is flag-injection guarded like `api`'s endpoint.
 
 ## Raw escape hatches
 
@@ -338,6 +394,14 @@ as an error — inspect `.code()` / `.stdout()` / `.stderr()` yourself. Use thes
 for any `gh` subcommand the typed API doesn't wrap. (The inherent `&[&str]`
 variants `run_args` / `run_raw_args` are documented under
 [Construction](#inherent-str-helpers).)
+
+**cwd (T-035).** On the **client** (`gh.run(…)`) these run in the **process's
+current directory** — supply the whole argv, so target a specific repo with `-R
+owner/repo`. On the **bound view** (`gh.at(dir).run(…)`) they are instead bound to
+`dir`: the view forwards to the client's dir-taking `run_in`/`run_raw_in`/
+`run_args_in`/`run_raw_args_in`, so a raw call through the handle runs in the bound
+repo's cwd, like every other `GitHubAt` method (and like `api`). Reach for the
+client's `run` when you deliberately want the process cwd.
 
 ## Result types
 
@@ -380,11 +444,12 @@ From `pr_checks`. Fields: `name: String`, `state: String` (`"SUCCESS"`,
 ### `Release`
 
 From `release_list` / `release_view`. Fields: `tag_name: String`,
-`name: String` (may be empty), `body: String` — **empty from `release_list`**,
-`url: String` — **empty from `release_list`**, `published_at: String` (ISO 8601,
-empty for a draft), `is_draft: bool`, `is_prerelease: bool`, `is_latest: bool` —
-**only `release_list` reports this; from `release_view` it defaults to
-`false`**.
+`name: String` (may be empty), `body: Option<String>` — **`None` from
+`release_list`** (it doesn't request the field; `Some` from `release_view`),
+`url: Option<String>` — **`None` from `release_list`** (`Some` from
+`release_view`), `published_at: String` (ISO 8601, empty for a draft),
+`is_draft: bool`, `is_prerelease: bool`, `is_latest: bool` — **only `release_list`
+reports this; from `release_view` it defaults to `false`**.
 
 ### `Review`
 

@@ -156,7 +156,7 @@ pub async fn current_branch(&self) -> Result<Option<String>>;
 pub async fn trunk(&self)          -> Result<Option<String>>;
 pub async fn local_branches(&self) -> Result<Vec<String>>;
 pub async fn branch_exists(&self, name: &str) -> Result<bool>;
-pub async fn conflicted_files(&self) -> Result<Vec<String>>;
+pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>>;
 pub async fn changed_files(&self)    -> Result<Vec<FileChange>>;
 pub async fn diff_stat(&self)        -> Result<DiffStat>;
 pub async fn snapshot(&self)         -> Result<RepoSnapshot>;
@@ -182,6 +182,13 @@ copy — **repo-relative, `/` separators** (git `diff --diff-filter=U` / jj
 `diff -r @ --summary`), as `Vec<FileChange>`. `diff_stat` is the aggregate
 insertion/deletion counts.
 
+> **Lossless paths.** `changed_files`/`conflicted_files` carry each path as a
+> `PathBuf` (not a `String`): a filename whose bytes are not valid UTF-8 — legal on
+> Unix — is preserved byte-for-byte, so it can be fed straight back into
+> `commit_paths` (which also takes `PathBuf`) and address the *same* file. A
+> `String::from_utf8_lossy` would substitute `U+FFFD` and silently retarget the
+> path. Use `.display()` for human output; keep the `PathBuf` for a round-trip.
+
 `snapshot` is the **batched** state query for a prompt/status-bar/TUI refresh —
 branch, upstream, ahead/behind, HEAD, dirtiness, change count, and operation
 state in a **small fixed** number of spawns rather than a call per field
@@ -201,9 +208,11 @@ git-style upstream tracking).
 ```rust,no_run
 # async fn f(repo: vcs_core::Repo) -> vcs_core::Result<()> {
 for c in repo.changed_files().await? {
+    // `path`/`old_path` are `PathBuf` (lossless for a non-UTF-8 name on Unix);
+    // use `.display()` for lossy display, or the bytes for an exact round-trip.
     match c.old_path {
-        Some(from) => println!("rename {from} -> {}", c.path),
-        None       => println!("{:?} {}", c.kind, c.path),
+        Some(from) => println!("rename {} -> {}", from.display(), c.path.display()),
+        None       => println!("{:?} {}", c.kind, c.path.display()),
     }
 }
 let stat = repo.diff_stat().await?;
@@ -241,7 +250,7 @@ to git only** (`branch -D` vs `-d`); jj has no force and ignores the flag.
 ## Commits & paths
 
 ```rust,ignore
-pub async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()>;
+pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()>;
 ```
 
 Commit exactly `paths` with `message` (git `commit --only`, jj
@@ -309,13 +318,16 @@ pub async fn abort_in_progress(&self)          -> Result<OperationState>;
 `try_merge` probes whether merging `source` into the current work would conflict,
 **without leaving any trace** — the probe is rolled back before returning,
 whatever the outcome (git: `merge --no-commit --no-ff` then `merge --abort`; jj:
-a merge change probed and undone via `op restore`). It only *reports* what a real
-merge would do.
+a merge change probed and rolled back through the concurrency-safe
+`Jj::rollback_to`). It only *reports* what a real merge would do.
 
 - git requires a clean-enough working tree: a dirty-tree refusal propagates as a
   plain error, **not** as `MergeProbe::Conflicts`.
 - A failing *rollback* **propagates as an error** rather than returning a result
-  that would misdescribe the on-disk state.
+  that would misdescribe the on-disk state. On the jj backend this includes a
+  rollback **refused** because a concurrent jj process advanced the operation log
+  during the trial merge (reverting would clobber that work): it surfaces as
+  `Error::Rollback` rather than a stale `MergeProbe::Clean`/`Conflicts`.
 
 ```rust,ignore
 # use vcs_core::MergeProbe;
@@ -328,31 +340,39 @@ match repo.try_merge("feature").await? {
 ```
 
 The remaining three deal with operation state, and this is the sharpest
-git-vs-jj asymmetry the facade has to paper over. git models an in-progress merge
-or rebase as *paused on-disk state* (`MERGE_HEAD`, a `rebase-*` dir); jj has no
+git-vs-jj asymmetry the facade has to paper over. git models an in-progress merge,
+rebase, `am`, cherry-pick, revert, or bisect as *paused on-disk state* (`MERGE_HEAD`,
+a `rebase-*` dir, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`); jj has no
 paused multi-step operations at all — it records a conflict directly on the
 working-copy change.
 
 `in_progress_state` reports whether the working copy is mid-operation. On git it
-returns `Merge`/`Rebase`/`ApplyMailbox` (a `git am`) and **never `Conflict`** — a git
-conflict *is* that paused state, and the conflict itself surfaces on the failed op
-(via `Error::is_merge_conflict`) or via `continue_in_progress`. On jj, which has no
-paused op, it reports `Conflict` directly.
+returns `Merge`/`Rebase`/`ApplyMailbox` (a `git am`)/`CherryPick`/`Revert`/`Bisect`
+and **never `Conflict`** — a git conflict *is* that paused state, and the conflict
+itself surfaces on the failed op (via `Error::is_merge_conflict`) or via
+`continue_in_progress`. The sequencer states are kept distinct because each is
+driven by its own git command: a cherry-pick/revert conflict writes
+`CHERRY_PICK_HEAD`/`REVERT_HEAD` (never `MERGE_HEAD`), so dispatching `merge --abort`
+on one would be wrong. On jj, which has no paused op, it reports `Conflict` directly.
 
-`continue_in_progress` continues after conflict resolution (git:
-`commit --no-edit` for a merge / `rebase --continue`; jj: a **no-op** —
-resolving the files *is* the continuation). It returns the fresh *post-call*
-state:
+`continue_in_progress` continues after conflict resolution (git: `commit --no-edit`
+for a merge / `rebase --continue` / `cherry-pick --continue` / `revert --continue`;
+jj: a **no-op** — resolving the files *is* the continuation). It returns the fresh
+*post-call* state:
 - `Conflict` when unresolved paths still block continuing (and **here git
   *does* report `Conflict`**, unlike `in_progress_state`), or when a continued
-  rebase stops on the next patch's conflict.
+  rebase/cherry-pick/revert stops on the next commit's conflict.
 - `Clear` when the operation finished.
+- A `Bisect` has no continue step, so it returns `Error::Unsupported`
+  (`is_unsupported()`) instead of a misleading success — end it with
+  `abort_in_progress`, or mark commits with `git bisect good`/`bad` directly.
 
-`abort_in_progress` aborts the in-progress operation, if any (git:
-`merge --abort` / `rebase --abort`; jj: a **no-op** — nothing is ever paused;
-roll back explicitly via the jj client's `transaction` / `op_restore`). It
-returns the fresh *post-call* state — `Clear` when nothing was, or remains, in
-progress.
+`abort_in_progress` aborts the in-progress operation, if any, dispatching the
+state's own git command (`merge --abort` / `rebase --abort` / `am --abort` /
+`cherry-pick --abort` / `revert --abort` / `bisect reset`; jj: a **no-op** —
+nothing is ever paused; roll back explicitly via the jj client's `transaction` /
+`op_restore`). It returns the fresh *post-call* state — `Clear` when nothing was,
+or remains, in progress.
 
 ## Worktrees / workspaces
 
@@ -371,13 +391,27 @@ strategy stays in the consumer. `branch` must not already exist. **The jj path i
 two steps** (`workspace add`, then `bookmark create`) and is not atomic, but a
 failed bookmark step **rolls back**: the workspace directory is removed only when
 `workspace add` created it (a pre-existing directory the caller already had is
-left intact), the workspace is forgotten best-effort, and the original error is
-surfaced — so a failed call doesn't leak a half-made worktree.
+left intact), then the workspace is forgotten. The rollback no longer discards its
+own residue — if it can't remove that directory or can't `forget` the workspace,
+the call fails with a composite `Error::Io` that **names** what still needs
+cleaning up (and is safe to re-run) instead of hiding it. A **clean** rollback
+instead surfaces the original bookmark-step error unchanged (keeping its
+`Error::Vcs` classification) — so a failed call never silently leaks a half-made
+worktree.
 
 `remove_worktree` removes the worktree/workspace at `path`. For jj this resolves
 the workspace name by matching `path`, deletes the directory, then forgets it; a
-jj `path` that matches no attached workspace returns `Error::WorktreeNotFound`
-(contrast `cleanup_worktree_blocking` below, where no-match is a `Ok` no-op).
+directory that can't be deleted is **reported** — an `Error::Io` naming the jj
+workspace still registered, so the retry is obvious, with the `forget` deferred to
+that retry rather than orphaning the directory. Path resolution has two failure
+shapes: a `path` that matches none of the **resolvable** workspaces — every
+registered workspace resolved and none matched — returns `Error::WorktreeNotFound`
+(`is_resource_not_found() == true`); but when some registered workspace can **not**
+be resolved via `jj workspace root --name`, the path's absence can't be proven, so
+a **distinct** diagnosable `Error::Io` (naming the unresolved workspaces;
+`is_resource_not_found()` stays `false`) is returned instead of a misleading
+`WorktreeNotFound`. (Contrast `cleanup_worktree_blocking` below, where a genuine
+no-match is an `Ok` no-op.)
 `force` mirrors git's `worktree remove`: with `force = false` a worktree that
 still has **uncommitted changes** is refused rather than deleted (on jj the
 changes are snapshotted into the op log first, so a refusal keeps them
@@ -387,10 +421,15 @@ workspace is always refused — deleting its directory would destroy the repo.
 `cleanup_worktree_blocking` is the **synchronous** counterpart — for a context
 that cannot `.await`, chiefly a `Drop` guard. It force-removes the worktree at
 `path` (git: `worktree remove --force`; jj: resolve the workspace name by
-`path`, delete the directory, then `workspace forget`). It is best-effort and
-short-lived: it **shells out directly with no job-containment**, unlike the async
-methods. A jj `path` that matches no workspace is a no-op (`Ok`); like the async
-method it still **refuses the main workspace** (a repo-wipe is never intended).
+`path`, delete the directory, then `workspace forget`). It stays short-lived and
+**shells out directly with no job-containment**, unlike the async methods, but it
+no longer swallows failures. A jj `path` that genuinely matches no workspace is
+still an `Ok` no-op; a **probe** failure, though — the `workspace list`, or a
+registered workspace that won't resolve — is now surfaced as `Err` rather than
+folded into a silent no-op, and a `remove_dir_all` failure is likewise surfaced,
+with the `forget` **skipped** on a failed removal so a surviving directory isn't
+orphaned by a workspace record that outlived it. Like the async method it still
+**refuses the main workspace** (a repo-wipe is never intended).
 
 ```rust,no_run
 # use std::path::Path;
@@ -427,8 +466,8 @@ to return despite the `#[non_exhaustive]`.
 ```rust,ignore
 #[non_exhaustive]
 pub struct FileChange {
-    pub path: String,             // the path (the *new* path for a rename)
-    pub old_path: Option<String>, // original path for a rename (both backends); None for non-renames
+    pub path: PathBuf,             // the path (the *new* path for a rename); lossless, non-UTF-8-safe
+    pub old_path: Option<PathBuf>, // original path for a rename (both backends); None for non-renames
     pub kind: ChangeKind,
 }
 ```
@@ -468,6 +507,9 @@ Unifies the backends' different models of "mid-operation":
 | `Merge`    | A git merge is in progress (`MERGE_HEAD` present). git only. |
 | `Rebase`   | A git rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir *not* left by `git am`). git only. |
 | `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts with `am --abort`. git only. |
+| `CherryPick` | A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Aborts with `cherry-pick --abort`, continues with `cherry-pick --continue`. A cherry-pick conflict writes `CHERRY_PICK_HEAD`, *not* `MERGE_HEAD`, so it's never read as a `Merge`. git only. |
+| `Revert`   | A git revert is in progress (`REVERT_HEAD` present). Aborts with `revert --abort`, continues with `revert --continue`. git only. |
+| `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `Error::Unsupported`. git only. |
 | `Conflict` | The working copy has an unresolved conflict — chiefly jj, which records conflicts on the change rather than pausing an operation. On git this surfaces from `continue_in_progress`, not `in_progress_state`. |
 
 ### `RepoSnapshot`

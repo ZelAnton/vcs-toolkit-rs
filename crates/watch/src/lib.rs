@@ -41,15 +41,29 @@
 //! - **[`RepoChange`]** — a settled change: the fresh [`RepoSnapshot`] (render a
 //!   status line off it) plus the non-empty `events` vec (react to it).
 //! - **Consumption** — pull changes with [`recv`](RepoWatcher::recv)
-//!   (`Option<RepoChange>`; `None` once dropped), or, under the **`stream`**
-//!   feature, poll the watcher as a `futures_core::Stream`. Both pull from the
-//!   same channel and advance [`current`](RepoWatcher::current), the last-pulled
-//!   snapshot.
+//!   (`Option<RepoChange>`; `None` once the watch backend dies, is dropped, or
+//!   otherwise ends), or, under the **`stream`** feature, poll the watcher as a
+//!   `futures_core::Stream`. Both pull from the same channel and advance
+//!   [`current`](RepoWatcher::current), the last-pulled snapshot. A timed-out or
+//!   transiently failed re-query is **retried automatically** with bounded
+//!   exponential backoff — even with no new filesystem event — so a miss on the
+//!   last signal isn't stuck until the next one; a *permanent* OS-watch backend
+//!   failure (e.g. the watched `.git`/`.jj` dir was removed) closes this channel,
+//!   so `recv`/the stream observe it directly instead of requiring separate
+//!   stats polling.
 //! - **[`WatcherStats`]** ([`stats`](RepoWatcher::stats)) — lock-free health
-//!   counters (re-queries run, changes emitted, skips, and the last skip's
-//!   [`WatcherErrorKind`]). Climbing [`skipped`](WatcherStats::skipped) with flat
-//!   [`changes`](WatcherStats::changes) means a wedged repo — poll it from a
-//!   health check rather than inferring health from event silence.
+//!   counters (re-queries run, changes emitted, skips, retries, recoveries,
+//!   terminal failures, and the last skip's [`WatcherErrorKind`]). Climbing
+//!   [`skipped`](WatcherStats::skipped) with flat [`changes`](WatcherStats::changes)
+//!   means a wedged repo — poll it from a health check rather than inferring
+//!   health from event silence.
+//! - **[`Error`]** — a setup/build failure: a [`Vcs`](Error::Vcs) baseline
+//!   re-query error, an [`Io`](Error::Io) filesystem error, or a
+//!   [`Notify`](Error::Notify) filesystem-watch backend failure. The watch
+//!   backend is a **private** dependency, so its failures are the opaque
+//!   [`WatchError`] — classify them (`is_path_not_found` / `is_watch_limit` /
+//!   `io_error`) and source-chain them through `vcs-watch` alone, with no direct
+//!   dependency on the third-party watch crate to keep version-matched.
 //!
 //! # Recipes
 //!
@@ -109,7 +123,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
@@ -119,7 +133,7 @@ use vcs_core::{BackendKind, VcsRepo};
 mod error;
 mod event;
 
-pub use error::{Error, Result};
+pub use error::{Error, Result, WatchError};
 pub use event::{RepoChange, RepoEvent};
 // Re-export the snapshot types a consumer reads off a `RepoChange`, so depending
 // on `vcs-watch` alone suffices.
@@ -150,6 +164,15 @@ pub const DEFAULT_REQUERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bounded output channel: a slow consumer applies backpressure (the loop pauses
 /// re-querying), and pending filesystem signals coalesce into one catch-up query.
 const OUTPUT_CAPACITY: usize = 64;
+const REQUERY_RETRY_LIMIT: u32 = 3;
+const REQUERY_RETRY_BACKOFF: Duration = Duration::from_millis(100);
+const REQUERY_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy)]
+enum WatchSignal {
+    Change,
+    BackendFailed,
+}
 
 /// The timing/capacity knobs the background loop runs under — bundled so the
 /// loop signature stays small and the hermetic tests can vary them (notably
@@ -159,7 +182,12 @@ struct LoopConfig {
     max_wait: Duration,
     /// `None` disables the per-re-query deadline.
     requery_timeout: Option<Duration>,
+    /// Whether a re-query may snapshot the jj working copy (opt-in mutation) or
+    /// must stay read-only (the default). See [`Builder::snapshot_working_copy`].
+    snapshot_working_copy: bool,
     output_capacity: usize,
+    retry_limit: u32,
+    retry_backoff: Duration,
 }
 
 /// Builder for a [`RepoWatcher`] — set the watch scope and debounce timing, then
@@ -167,6 +195,7 @@ struct LoopConfig {
 pub struct Builder {
     repo: Box<dyn VcsRepo>,
     working_tree: bool,
+    snapshot_working_copy: bool,
     debounce: Duration,
     max_wait: Duration,
     requery_timeout: Option<Duration>,
@@ -180,8 +209,50 @@ impl Builder {
     ///
     /// Note: `notify` is `.gitignore`-unaware, so this also watches ignored and
     /// build directories — heavier on a large tree.
+    ///
+    /// **jj note:** on jj, a bare working-tree edit only becomes an observable
+    /// state change once *something* snapshots the working copy. The re-query is
+    /// **read-only by default** (it must not itself snapshot — see
+    /// [`snapshot_working_copy`](Self::snapshot_working_copy)), so watching the
+    /// tree alone will not surface an unsnapshotted edit as a
+    /// [`WorkingCopyChanged`](RepoEvent::WorkingCopyChanged): the event fires once
+    /// a jj command (or another watcher opted into
+    /// [`snapshot_working_copy`](Self::snapshot_working_copy)) records it. Opt into
+    /// [`snapshot_working_copy(true)`](Self::snapshot_working_copy) to have the
+    /// re-query itself snapshot, at the cost of the watcher recording jj
+    /// operations.
     pub fn working_tree(mut self, yes: bool) -> Self {
         self.working_tree = yes;
+        self
+    }
+
+    /// Whether each re-query may let **jj snapshot the working copy** — off by
+    /// default, which keeps the watcher a pure *observer*.
+    ///
+    /// By default (`false`) the re-query is **read-only**: on jj it passes
+    /// `--ignore-working-copy` (via
+    /// [`Repo::snapshot_readonly`](vcs_core::Repo::snapshot_readonly)), so
+    /// observing the repo records **no** jj operation and never moves `@`. This is
+    /// almost always what you want: an ordinary jj query snapshots the working
+    /// copy as a side effect (taking the working-copy lock, recording an
+    /// operation, possibly moving `@`), so a naive watcher would *mutate* the very
+    /// state it reports — and, worse, a [`requery_timeout`](Self::requery_timeout)
+    /// firing mid-snapshot would abort that mutation.
+    ///
+    /// The trade-off (jj only): a bare working-tree edit that no jj command has
+    /// snapshotted yet is **not** reflected until a real jj operation records it.
+    /// If your consumer genuinely needs to observe such unsnapshotted edits (e.g.
+    /// a live "dirty" indicator driven purely by filesystem edits), set this
+    /// `true`: each re-query then snapshots the working copy (via
+    /// [`Repo::snapshot`](vcs_core::Repo::snapshot)), **recording a jj operation
+    /// and possibly moving `@`** — an explicit, opt-in mutation, not a hidden side
+    /// effect of reading. Pair it with [`working_tree(true)`](Self::working_tree)
+    /// so the tree edits actually trigger a re-query.
+    ///
+    /// On **git** this knob has no effect — git's status/branch queries never
+    /// record operations or move refs, so both modes behave identically.
+    pub fn snapshot_working_copy(mut self, yes: bool) -> Self {
+        self.snapshot_working_copy = yes;
         self
     }
 
@@ -204,8 +275,9 @@ impl Builder {
     /// [`DEFAULT_REQUERY_TIMEOUT`] (30 s); `None` disables it. Orthogonal to
     /// [`max_wait`](Self::max_wait): that bounds how long signals may *defer* a
     /// re-query, this bounds how long one re-query may *run*. On overrun the
-    /// spawned commands are killed (kill-on-drop) and the re-query is skipped as
-    /// transient — the next filesystem event re-checks.
+    /// spawned commands are killed (kill-on-drop) and the re-query is retried
+    /// three times with bounded exponential backoff, even if no new filesystem
+    /// event arrives.
     ///
     /// It **also bounds the startup baseline** captured by [`build`](Self::build): a
     /// baseline that overruns fails `build()` with a transient `Io` `TimedOut`
@@ -247,24 +319,35 @@ impl Builder {
         // the output while a filesystem storm churned (R2). Build the watcher and
         // register paths *before* the baseline snapshot, so a change racing the
         // baseline is queued, not lost.
-        let (raw_tx, raw_rx) = mpsc::channel::<()>(1);
+        let (raw_tx, raw_rx) = mpsc::channel::<WatchSignal>(1);
         let stats = Arc::new(StatsInner::default());
         let cb_stats = Arc::clone(&stats);
+        // Sticky because the capacity-1 coalescing channel may already contain a
+        // change when notify reports its terminal backend error.
+        let watch_failed = Arc::new(AtomicBool::new(false));
+        let cb_watch_failed = Arc::clone(&watch_failed);
         let mut watcher =
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                // A backend **error** (e.g. the watched dir was removed — on Windows
-                // `ReadDirectoryChangesW` fails the watch) is counted so a consumer can
-                // notice via `stats().watch_errors` and rebuild; we can't auto-re-register
-                // from here. Either way, re-query: content is irrelevant, any event (or
-                // error) just means "re-check". `send` fails only after the loop ends.
+                // A backend error is sticky and terminal: the loop closes its
+                // public output channel so recv/Stream observes the failure
+                // without requiring stats polling. Ordinary events just mean
+                // "re-check"; their content is irrelevant.
                 if res.is_err() {
                     cb_stats.note_watch_error();
+                    if !cb_watch_failed.swap(true, Ordering::AcqRel) {
+                        cb_stats.note_terminal_failure();
+                    }
                 }
                 // `try_send` on the capacity-1 channel: succeeds when no signal is
                 // pending, drops (coalesces) when one already is. Never blocks the
                 // notify callback thread; `Err` (full or loop-ended) is intentionally
                 // ignored.
-                let _ = raw_tx.try_send(());
+                let signal = if res.is_err() {
+                    WatchSignal::BackendFailed
+                } else {
+                    WatchSignal::Change
+                };
+                let _ = raw_tx.try_send(signal);
             })?;
         if self.working_tree {
             watcher.watch(&root, RecursiveMode::Recursive)?;
@@ -286,7 +369,12 @@ impl Builder {
         // fsmonitor, a network filesystem, a held jj lock) on a `Repo` built without
         // its own `default_timeout` would hang `build()` at startup, the very failure
         // the loop-side deadline exists to prevent.
-        let (snapshot, branches) = capture_baseline(&*self.repo, self.requery_timeout).await?;
+        let (snapshot, branches) = capture_baseline(
+            &*self.repo,
+            self.requery_timeout,
+            self.snapshot_working_copy,
+        )
+        .await?;
         let baseline = snapshot.clone();
         let prev = event::WatchState::from_snapshot(&snapshot, branches);
 
@@ -294,7 +382,10 @@ impl Builder {
             debounce: self.debounce,
             max_wait: self.max_wait,
             requery_timeout: self.requery_timeout,
+            snapshot_working_copy: self.snapshot_working_copy,
             output_capacity: OUTPUT_CAPACITY,
+            retry_limit: REQUERY_RETRY_LIMIT,
+            retry_backoff: REQUERY_RETRY_BACKOFF,
         };
         let (out_tx, out_rx) = mpsc::channel::<RepoChange>(config.output_capacity);
         let task = tokio::spawn(watch_loop(
@@ -304,6 +395,7 @@ impl Builder {
             prev,
             config,
             Arc::clone(&stats),
+            watch_failed,
         ));
 
         Ok(RepoWatcher {
@@ -337,21 +429,27 @@ pub enum WatcherErrorKind {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct WatcherStats {
-    /// Re-query attempts started (settled bursts that reached the query step).
+    /// Re-query attempts started, including automatic retry attempts.
     pub requeries: u64,
     /// Re-queries that emitted a [`RepoChange`] (the rest found no difference).
     pub changes: u64,
     /// Re-queries skipped — transient query failures plus deadline overruns.
     pub skipped: u64,
+    /// Automatic re-query retries scheduled after transient failures/timeouts.
+    pub retries: u64,
+    /// Failed re-query sequences that later succeeded during automatic retry.
+    pub recoveries: u64,
+    /// Terminal filesystem-watch backend failures. When this increments, the
+    /// output channel is closed and [`RepoWatcher::recv`] returns `None`.
+    pub terminal_failures: u64,
     /// What the most recent skip failed on; `None` when nothing was ever skipped.
     pub last_error: Option<WatcherErrorKind>,
     /// Filesystem-watch **errors** reported by the OS backend (via `notify`). A
     /// non-zero — especially *climbing* — count means the underlying watch is
     /// failing: most often the watched `.git`/`.jj` directory was **removed and
     /// re-created** (a re-clone / `jj git init`), which invalidates the OS watch on
-    /// the old directory. The watcher does **not** auto-re-register in that case, so
-    /// it can silently stop delivering changes; treat a rising `watch_errors` as
-    /// "rebuild the watcher" (drop it and call [`RepoWatcher::watch`] again).
+    /// the old directory. Such a reported error terminates the watch: `recv`
+    /// returns `None` (and the stream ends), so the consumer can rebuild it.
     ///
     /// **Best-effort, platform-dependent.** It is reliable on **Windows**, where
     /// removing the watched directory fails `ReadDirectoryChangesW` and `notify`
@@ -373,6 +471,9 @@ struct StatsInner {
     /// 0 = none, else `WatcherErrorKind as u8 + 1`.
     last_error: AtomicU8,
     watch_errors: AtomicU64,
+    retries: AtomicU64,
+    recoveries: AtomicU64,
+    terminal_failures: AtomicU64,
 }
 
 impl StatsInner {
@@ -386,6 +487,18 @@ impl StatsInner {
 
     fn note_watch_error(&self) {
         self.watch_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn note_retry(&self) {
+        self.retries.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn note_recovery(&self) {
+        self.recoveries.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn note_terminal_failure(&self) {
+        self.terminal_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     fn note_skip(&self, kind: WatcherErrorKind) {
@@ -409,6 +522,9 @@ impl StatsInner {
             requeries: self.requeries.load(Ordering::Relaxed),
             changes: self.changes.load(Ordering::Relaxed),
             skipped: self.skipped.load(Ordering::Relaxed),
+            retries: self.retries.load(Ordering::Relaxed),
+            recoveries: self.recoveries.load(Ordering::Relaxed),
+            terminal_failures: self.terminal_failures.load(Ordering::Relaxed),
             last_error,
             watch_errors: self.watch_errors.load(Ordering::Relaxed),
         }
@@ -432,6 +548,9 @@ impl RepoWatcher {
         Builder {
             repo: Box::new(repo),
             working_tree: false,
+            // Read-only re-query by default: an observer must not snapshot the jj
+            // working copy (record an operation / move `@`) merely by looking.
+            snapshot_working_copy: false,
             debounce: DEFAULT_DEBOUNCE,
             max_wait: DEFAULT_MAX_WAIT,
             requery_timeout: Some(DEFAULT_REQUERY_TIMEOUT),
@@ -443,8 +562,10 @@ impl RepoWatcher {
         Self::builder(repo).build().await
     }
 
-    /// Await the next settled change. Returns `None` once the watcher is dropped
-    /// or its background task ends.
+    /// Await the next settled change. Returns `None` when the filesystem backend
+    /// reports a terminal error, the watcher is dropped, or its task otherwise
+    /// ends. A backend error also increments
+    /// [`WatcherStats::terminal_failures`].
     pub async fn recv(&mut self) -> Option<RepoChange> {
         let change = self.rx.recv().await?;
         self.current = change.snapshot.clone();
@@ -460,12 +581,13 @@ impl RepoWatcher {
     }
 
     /// The watcher's health counters (re-queries run / changes emitted / skips,
-    /// what the last skip failed on, and OS-watch errors). Cheap relaxed-atomic
+    /// retry/recovery/terminal outcomes, the last skip, and OS-watch errors).
+    /// Cheap relaxed-atomic
     /// reads — poll it from a health check or log it periodically; a climbing
     /// [`skipped`](WatcherStats::skipped) with flat
     /// [`changes`](WatcherStats::changes) means the repository is wedged, and a
-    /// non-zero [`watch_errors`](WatcherStats::watch_errors) means the OS watch is
-    /// failing (e.g. the watched dir was re-created) — rebuild the watcher.
+    /// non-zero [`terminal_failures`](WatcherStats::terminal_failures) means the
+    /// output channel has terminated after an OS-watch backend error.
     pub fn stats(&self) -> WatcherStats {
         self.stats.snapshot()
     }
@@ -504,19 +626,48 @@ impl Drop for RepoWatcher {
     }
 }
 
+/// The batched state read a re-query (and the startup baseline) performs: the
+/// snapshot plus the local-branch set. Routed through the **read-only** facade
+/// methods by default (`snapshot_working_copy == false`) so an observer never
+/// snapshots the jj working copy — no operation recorded, `@` unmoved. When the
+/// consumer opts into [`Builder::snapshot_working_copy`], it uses the ordinary
+/// (working-copy-snapshotting) facade methods instead, an explicit mutation.
+///
+/// The two calls are sequenced (branches after the snapshot) so both reflect the
+/// same observation, matching the previous behaviour.
+async fn read_state(
+    repo: &dyn VcsRepo,
+    snapshot_working_copy: bool,
+) -> vcs_core::Result<(vcs_core::RepoSnapshot, Vec<String>)> {
+    if snapshot_working_copy {
+        let snapshot = repo.snapshot().await?;
+        let branches = repo.local_branches().await?;
+        Ok((snapshot, branches))
+    } else {
+        let snapshot = repo.snapshot_readonly().await?;
+        let branches = repo.local_branches_readonly().await?;
+        Ok((snapshot, branches))
+    }
+}
+
 /// Capture the startup baseline (snapshot + local branches) under `requery_timeout`
 /// (R4). A `Some(limit)` bounds the whole capture with `tokio::time::timeout`; on
 /// expiry it returns [`Error::Io`] `TimedOut` and dropping the future kills the
 /// underlying process (kill-on-drop), exactly as the loop does for a re-query — so a
 /// wedged snapshot can't hang `build()` forever. `None` leaves it unbounded.
+///
+/// `snapshot_working_copy` picks the read-only vs working-copy-snapshotting facade
+/// methods (see [`read_state`]), so the baseline is captured under the **same**
+/// observation contract the loop then uses for every re-query.
 async fn capture_baseline(
     repo: &dyn VcsRepo,
     requery_timeout: Option<Duration>,
+    snapshot_working_copy: bool,
 ) -> Result<(vcs_core::RepoSnapshot, Vec<String>)> {
     let query = async {
-        let snapshot = repo.snapshot().await?;
-        let branches = repo.local_branches().await?;
-        Ok::<_, Error>((snapshot, branches))
+        read_state(repo, snapshot_working_copy)
+            .await
+            .map_err(Error::from)
     };
     match requery_timeout {
         Some(limit) => match tokio::time::timeout(limit, query).await {
@@ -540,23 +691,28 @@ async fn capture_baseline(
 /// the debounce/ceiling/skip semantics without any real filesystem or process.
 async fn watch_loop(
     repo: Box<dyn VcsRepo>,
-    mut raw_rx: mpsc::Receiver<()>,
+    mut raw_rx: mpsc::Receiver<WatchSignal>,
     out_tx: mpsc::Sender<RepoChange>,
     mut prev: event::WatchState,
     config: LoopConfig,
     stats: Arc<StatsInner>,
+    watch_failed: Arc<AtomicBool>,
 ) {
-    loop {
+    'watch: loop {
         // Block until the first signal (or exit when the watcher is dropped).
-        if raw_rx.recv().await.is_none() {
-            return;
+        match raw_rx.recv().await {
+            None | Some(WatchSignal::BackendFailed) => return,
+            Some(WatchSignal::Change) if watch_failed.load(Ordering::Acquire) => return,
+            Some(WatchSignal::Change) => {}
         }
         // Coalesce the burst: reset a `debounce` quiet-timer on every new signal,
         // but never wait past `max_wait` total. The dedicated `sleep_until` arm
         // makes the ceiling exact (it fires even when no further signal arrives);
         // the in-arm deadline check guards against a signal stream so dense that
         // the `biased` select never polls the timer arms.
-        drain(&mut raw_rx);
+        if drain(&mut raw_rx) || watch_failed.load(Ordering::Acquire) {
+            return;
+        }
         // Clamp the addend: `Instant + Duration` panics on overflow, and a huge
         // caller `max_wait` (e.g. `Duration::MAX`) must disable the ceiling, not
         // crash the loop. See [`MAX_WAIT_CEILING`].
@@ -565,14 +721,20 @@ async fn watch_loop(
             tokio::select! {
                 biased;
                 sig = raw_rx.recv() => {
-                    if sig.is_none() {
-                        return; // watcher dropped mid-burst
+                    match sig {
+                        None | Some(WatchSignal::BackendFailed) => return,
+                        Some(WatchSignal::Change) => {}
+                    }
+                    if watch_failed.load(Ordering::Acquire) {
+                        return;
                     }
                     // Collapse the queued backlog: under a notify storm each
                     // queued unit signal would otherwise cost a select iteration
                     // that re-creates BOTH timer futures — a burst is one
                     // "still busy" observation, not N.
-                    drain(&mut raw_rx);
+                    if drain(&mut raw_rx) {
+                        return;
+                    }
                     if tokio::time::Instant::now() >= deadline {
                         break; // ceiling reached — re-query now
                     }
@@ -587,45 +749,110 @@ async fn watch_loop(
         // wedged command (a held `index.lock` on a client with no timeout) must
         // not stall the watch forever. Dropping the overrun future kills the
         // spawned process tree (processkit's kill-on-drop group), so a timed-out
-        // query leaves no orphan. Failures and overruns are *transient skips*:
-        // counted, traced, and re-checked on the next filesystem event.
-        stats.note_requery();
-        let requery = async {
-            let snapshot = repo
-                .snapshot()
-                .await
-                .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
-            let branches = repo
-                .local_branches()
-                .await
-                .map_err(|e| (WatcherErrorKind::Branches, e))?;
-            Ok::<_, (WatcherErrorKind, vcs_core::Error)>((snapshot, branches))
-        };
-        let outcome = match config.requery_timeout {
-            Some(limit) => match tokio::time::timeout(limit, requery).await {
-                Ok(result) => result,
-                Err(_elapsed) => {
-                    stats.note_skip(WatcherErrorKind::Timeout);
+        // query leaves no orphan. Failures and overruns are transient skips:
+        // counted, traced, and retried with bounded exponential backoff.
+        //
+        // Deadline safety (jj): the default re-query is **read-only**
+        // (`snapshot_working_copy == false` → `snapshot_readonly`/
+        // `local_branches_readonly`, i.e. jj `--ignore-working-copy`), so it takes
+        // no working-copy lock and records no operation — a `requery_timeout`
+        // kill-on-drop can only interrupt a pure read, never a working-copy
+        // snapshot mid-write. Only the explicit opt-in
+        // (`snapshot_working_copy == true`) runs a mutating snapshot here, and that
+        // is the caller's documented choice, not a read masquerading as read-only.
+        let mut retry = 0;
+        let (snapshot, branches) = loop {
+            stats.note_requery();
+            let requery = async {
+                let (snapshot, branches) = if config.snapshot_working_copy {
+                    let snapshot = repo
+                        .snapshot()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
+                    let branches = repo
+                        .local_branches()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Branches, e))?;
+                    (snapshot, branches)
+                } else {
+                    let snapshot = repo
+                        .snapshot_readonly()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Snapshot, e))?;
+                    let branches = repo
+                        .local_branches_readonly()
+                        .await
+                        .map_err(|e| (WatcherErrorKind::Branches, e))?;
+                    (snapshot, branches)
+                };
+                Ok::<_, (WatcherErrorKind, vcs_core::Error)>((snapshot, branches))
+            };
+            let outcome = match config.requery_timeout {
+                Some(limit) => match tokio::time::timeout(limit, requery).await {
+                    Ok(result) => result.map_err(Some),
+                    Err(_elapsed) => {
+                        stats.note_skip(WatcherErrorKind::Timeout);
+                        #[cfg(feature = "tracing")]
+                        tracing::debug!(
+                            timeout = ?limit,
+                            retry,
+                            "vcs-watch: re-query exceeded its deadline; scheduling retry"
+                        );
+                        Err(None)
+                    }
+                },
+                None => requery.await.map_err(Some),
+            };
+            let result = match outcome {
+                Ok(pair) => Some(pair),
+                Err(Some((kind, _e))) => {
+                    stats.note_skip(kind);
                     #[cfg(feature = "tracing")]
                     tracing::debug!(
-                        timeout = ?limit,
-                        "vcs-watch: re-query exceeded its deadline; killed and skipped"
+                        error = %_e,
+                        retry,
+                        "vcs-watch: re-query failed; scheduling retry"
                     );
-                    continue;
+                    None
                 }
-            },
-            None => requery.await,
-        };
-        let (snapshot, branches) = match outcome {
-            Ok(pair) => pair,
-            Err((kind, _e)) => {
-                stats.note_skip(kind);
-                #[cfg(feature = "tracing")]
-                tracing::debug!(error = %_e, "vcs-watch: re-query failed; skipping");
-                continue;
+                Err(None) => None,
+            };
+            if let Some(pair) = result {
+                if retry > 0 {
+                    stats.note_recovery();
+                }
+                break pair;
+            }
+            if retry >= config.retry_limit {
+                // The bounded sequence is exhausted. A future filesystem event
+                // starts a fresh sequence, preserving long-term recovery without
+                // spinning forever on a permanently broken repository.
+                continue 'watch;
+            }
+            stats.note_retry();
+            let delay = retry_backoff(config.retry_backoff, retry);
+            retry += 1;
+            let deadline = tokio::time::Instant::now() + delay;
+            loop {
+                tokio::select! {
+                    signal = raw_rx.recv() => match signal {
+                        None | Some(WatchSignal::BackendFailed) => return,
+                        Some(WatchSignal::Change) => {
+                            if drain(&mut raw_rx) || watch_failed.load(Ordering::Acquire) {
+                                return;
+                            }
+                            // Coalesce new changes into the already-scheduled
+                            // catch-up query, but retain the backoff deadline.
+                        }
+                    },
+                    _ = tokio::time::sleep_until(deadline) => break,
+                }
             }
         };
 
+        if watch_failed.load(Ordering::Acquire) {
+            return;
+        }
         let next = event::WatchState::from_snapshot(&snapshot, branches);
         let events = event::diff(&prev, &next);
         prev = next;
@@ -642,8 +869,17 @@ async fn watch_loop(
 /// Drop every already-queued unit signal — the burst is one observation. Leaves
 /// channel-closed detection to the caller's next `recv` (a drained-empty and a
 /// closed channel both just stop yielding here).
-fn drain(raw_rx: &mut mpsc::Receiver<()>) {
-    while raw_rx.try_recv().is_ok() {}
+fn drain(raw_rx: &mut mpsc::Receiver<WatchSignal>) -> bool {
+    let mut failed = false;
+    while let Ok(signal) = raw_rx.try_recv() {
+        failed |= matches!(signal, WatchSignal::BackendFailed);
+    }
+    failed
+}
+
+fn retry_backoff(base: Duration, retry: u32) -> Duration {
+    base.saturating_mul(1_u32.checked_shl(retry).unwrap_or(u32::MAX))
+        .min(REQUERY_RETRY_BACKOFF_MAX)
 }
 
 /// The directories to watch for a backend, deduplicated. Normally one — the
@@ -929,6 +1165,11 @@ mod tests {
             (0, 0, 0),
             "other counters unaffected"
         );
+        assert_eq!(
+            (snap.retries, snap.recoveries, snap.terminal_failures),
+            (0, 0, 0),
+            "retry lifecycle counters unaffected"
+        );
         assert!(snap.last_error.is_none());
     }
 }
@@ -989,14 +1230,21 @@ mod pipeline_tests {
             debounce: Duration::from_millis(250),
             max_wait: Duration::from_secs(1),
             requery_timeout: Some(Duration::from_secs(30)),
+            // The hermetic pipeline drives a git-backed scripted repo, where
+            // read-only and snapshotting re-queries issue the same commands; the
+            // default (read-only) mirrors production.
+            snapshot_working_copy: false,
             output_capacity: 64,
+            retry_limit: REQUERY_RETRY_LIMIT,
+            retry_backoff: REQUERY_RETRY_BACKOFF,
         }
     }
 
     struct Harness {
-        sig: mpsc::Sender<()>,
+        sig: mpsc::Sender<WatchSignal>,
         out: mpsc::Receiver<RepoChange>,
         stats: Arc<StatsInner>,
+        watch_failed: Arc<AtomicBool>,
         task: tokio::task::JoinHandle<()>,
     }
 
@@ -1006,7 +1254,15 @@ mod pipeline_tests {
         // loop-ended) is intentionally ignored — a still-pending signal already
         // triggers the re-query the caller wants.
         fn signal(&self) {
-            let _ = self.sig.try_send(());
+            let _ = self.sig.try_send(WatchSignal::Change);
+        }
+
+        fn backend_failed(&self) {
+            self.stats.note_watch_error();
+            if !self.watch_failed.swap(true, Ordering::AcqRel) {
+                self.stats.note_terminal_failure();
+            }
+            let _ = self.sig.try_send(WatchSignal::BackendFailed);
         }
     }
 
@@ -1014,6 +1270,7 @@ mod pipeline_tests {
         let (sig, raw_rx) = mpsc::channel(1);
         let (out_tx, out) = mpsc::channel(config.output_capacity);
         let stats = Arc::new(StatsInner::default());
+        let watch_failed = Arc::new(AtomicBool::new(false));
         let task = tokio::spawn(watch_loop(
             repo,
             raw_rx,
@@ -1021,11 +1278,13 @@ mod pipeline_tests {
             prev,
             config,
             Arc::clone(&stats),
+            Arc::clone(&watch_failed),
         ));
         Harness {
             sig,
             out,
             stats,
+            watch_failed,
             task,
         }
     }
@@ -1091,7 +1350,9 @@ mod pipeline_tests {
                 // `try_send` mirrors the notify callback. `Full` means our previous
                 // signal is still pending (coalesced) — keep pumping; `Closed` means
                 // the loop ended — stop.
-                if let Err(mpsc::error::TrySendError::Closed(())) = pump_sig.try_send(()) {
+                if let Err(mpsc::error::TrySendError::Closed(WatchSignal::Change)) =
+                    pump_sig.try_send(WatchSignal::Change)
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1270,6 +1531,174 @@ mod pipeline_tests {
         }
     }
 
+    /// Only the first status query is slow. Its timeout drops the sleeping
+    /// future after the counter has advanced, so the automatic retry succeeds.
+    struct SlowFirstStatus {
+        slow_left: AtomicBool,
+        delay: Duration,
+        gitdir: PathBuf,
+        head: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl ProcessRunner for SlowFirstStatus {
+        async fn output_string(
+            &self,
+            command: &processkit::Command,
+        ) -> processkit::Result<processkit::ProcessResult<String>> {
+            let is_status = command.arguments().first().map(|a| a == "status") == Some(true);
+            if is_status && self.slow_left.swap(false, Ordering::Relaxed) {
+                tokio::time::sleep(self.delay).await;
+            }
+            scripted(&self.gitdir, self.head)
+                .output_string(command)
+                .await
+        }
+    }
+
+    // A timeout on the final filesystem signal schedules its own retry. No new
+    // signal is needed to observe the state that the timed-out query missed.
+    #[tokio::test(start_paused = true)]
+    async fn timeout_on_last_signal_recovers_via_backoff_retry() {
+        let scratch = Scratch::new();
+        let prev = baseline(&scratch.0, "aaa").await;
+        let repo = Box::new(Repo::from_git(
+            "/r",
+            "/r",
+            Git::with_runner(SlowFirstStatus {
+                slow_left: AtomicBool::new(true),
+                delay: Duration::from_secs(10),
+                gitdir: scratch.0.clone(),
+                head: "bbb",
+            }),
+        ));
+        let config = LoopConfig {
+            requery_timeout: Some(Duration::from_secs(5)),
+            retry_backoff: Duration::from_secs(1),
+            ..defaults()
+        };
+        let mut h = spawn_loop(repo, prev, config);
+
+        h.signal();
+        settle().await;
+        tokio::time::advance(Duration::from_millis(300)).await;
+        settle().await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+        settle().await;
+        assert_eq!(
+            (h.stats.snapshot().requeries, h.stats.snapshot().retries),
+            (1, 1)
+        );
+        assert!(h.out.try_recv().is_err());
+
+        // Only virtual time advances here: there is deliberately no h.signal().
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle().await;
+        let change = h.out.try_recv().expect("retry emits the missed change");
+        assert!(
+            change
+                .events
+                .iter()
+                .any(|e| matches!(e, RepoEvent::HeadMoved { .. }))
+        );
+        let stats = h.stats.snapshot();
+        assert_eq!((stats.requeries, stats.skipped, stats.retries), (2, 1, 1));
+        assert_eq!((stats.recoveries, stats.changes), (1, 1));
+    }
+
+    // Retry exhaustion is bounded and then becomes idle until another event.
+    #[tokio::test(start_paused = true)]
+    async fn persistent_requery_failure_exhausts_retries_without_busy_loop() {
+        let scratch = Scratch::new();
+        let prev = baseline(&scratch.0, "aaa").await;
+        let repo = Box::new(Repo::from_git(
+            "/r",
+            "/r",
+            Git::with_runner(FlakyStatus {
+                fails_left: AtomicU64::new(100),
+                gitdir: scratch.0.clone(),
+                head: "bbb",
+            }),
+        ));
+        let config = LoopConfig {
+            retry_limit: 2,
+            retry_backoff: Duration::from_millis(100),
+            ..defaults()
+        };
+        let h = spawn_loop(repo, prev, config);
+
+        h.signal();
+        settle().await;
+        tokio::time::advance(Duration::from_millis(300)).await;
+        settle().await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        settle().await;
+        tokio::time::advance(Duration::from_millis(200)).await;
+        settle().await;
+        let stats = h.stats.snapshot();
+        assert_eq!((stats.requeries, stats.skipped, stats.retries), (3, 3, 2));
+        assert_eq!(stats.recoveries, 0);
+
+        tokio::time::advance(Duration::from_secs(60 * 60)).await;
+        settle().await;
+        assert_eq!(
+            h.stats.snapshot().requeries,
+            3,
+            "exhaustion must park on the signal receiver"
+        );
+    }
+
+    // Closing the producer while parked in backoff cancels the retry promptly.
+    #[tokio::test(start_paused = true)]
+    async fn drop_teardown_during_retry_backoff() {
+        let scratch = Scratch::new();
+        let prev = baseline(&scratch.0, "aaa").await;
+        let repo = Box::new(Repo::from_git(
+            "/r",
+            "/r",
+            Git::with_runner(FlakyStatus {
+                fails_left: AtomicU64::new(1),
+                gitdir: scratch.0.clone(),
+                head: "bbb",
+            }),
+        ));
+        let config = LoopConfig {
+            retry_backoff: Duration::from_secs(60 * 60),
+            ..defaults()
+        };
+        let Harness {
+            sig,
+            mut out,
+            stats,
+            watch_failed: _,
+            task,
+        } = spawn_loop(repo, prev, config);
+
+        sig.try_send(WatchSignal::Change).expect("send");
+        settle().await;
+        tokio::time::advance(Duration::from_millis(300)).await;
+        settle().await;
+        assert_eq!((stats.snapshot().skipped, stats.snapshot().retries), (1, 1));
+        drop(sig);
+        task.await.expect("loop exits while retry timer is pending");
+        assert!(out.recv().await.is_none());
+    }
+
+    // A notify backend death is terminal through the primary API: recv/Stream
+    // observes channel closure, without requiring separate stats polling.
+    #[tokio::test(start_paused = true)]
+    async fn permanent_backend_failure_closes_main_channel() {
+        let scratch = Scratch::new();
+        let prev = baseline(&scratch.0, "aaa").await;
+        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+
+        h.backend_failed();
+        assert!(h.out.recv().await.is_none(), "backend death closes recv");
+        let stats = h.stats.snapshot();
+        assert_eq!((stats.watch_errors, stats.terminal_failures), (1, 1));
+        assert_eq!((stats.retries, stats.recoveries), (0, 0));
+    }
+
     // A re-query exceeding the configured deadline is killed and skipped as
     // transient; the loop survives (a later attempt runs and is also bounded).
     #[tokio::test(start_paused = true)]
@@ -1328,7 +1757,7 @@ mod pipeline_tests {
                 head: "bbb",
             }),
         );
-        let err = capture_baseline(&repo, Some(Duration::from_secs(5)))
+        let err = capture_baseline(&repo, Some(Duration::from_secs(5)), false)
             .await
             .expect_err("a wedged baseline must time out, not hang");
         assert!(
@@ -1342,7 +1771,7 @@ mod pipeline_tests {
         // With no deadline the same query completes (Sleepy still returns, just late);
         // advancing the clock lets it finish so we prove the timeout — not the repo —
         // is what produced the error above.
-        let ok = capture_baseline(&repo, None).await;
+        let ok = capture_baseline(&repo, None, false).await;
         assert!(ok.is_ok(), "an unbounded baseline still succeeds: {ok:?}");
     }
 
@@ -1356,10 +1785,11 @@ mod pipeline_tests {
             sig,
             mut out,
             stats: _,
+            watch_failed: _,
             task,
         } = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
 
-        sig.try_send(()).expect("send"); // empty capacity-1 channel → succeeds
+        sig.try_send(WatchSignal::Change).expect("send");
         tokio::time::advance(Duration::from_millis(100)).await; // mid-debounce
         drop(sig);
 
@@ -1482,7 +1912,7 @@ mod pipeline_tests {
         // `h` is partially moved into `watcher` above, so reach the remaining `sig`
         // field directly rather than through the `h.signal()` method (which would
         // borrow all of `h`).
-        let _ = h.sig.try_send(());
+        let _ = h.sig.try_send(WatchSignal::Change);
         let change = watcher.next().await.expect("stream item");
         assert!(
             change

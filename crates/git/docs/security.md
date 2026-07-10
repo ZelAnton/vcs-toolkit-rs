@@ -6,19 +6,23 @@ flag into argv, and a repository you didn't create whose hooks and config run
 arbitrary code the moment you touch it. Two layers answer those, both **on by
 default or one call away**:
 
-- **Injection guards** — automatic, in every typed method. Nothing to opt into.
+- **Validated types + injection guards** — automatic, in every typed method.
+  Nothing to opt into.
 - **`Git::hardened()`** — one constructor for the untrusted-repo case.
 
-Pre-validation at your input boundary (the [newtypes](#validating-newtypes-eager-at-your-input-boundary))
-is the optional third layer, for failing fast on bad input *before* it reaches a
-method.
+The first layer is now two-tier: reference names and revisions/revsets are taken
+as validated newtypes (`RefName` / `RevSpec` / `vcs_jj::BookmarkName` /
+`RevsetExpr`), so a bad value is rejected at construction — at your input boundary
+— before it can reach a method; the remaining bare-positional `&str` inputs that
+are *not* refs/revisions (remote names, URLs, config keys) keep an internal
+flag-injection guard.
 
 A separate, opt-in concern is **supplying** a credential rather than guarding
 against one — see [Credential provisioning](#credential-provisioning-opt-in) below.
 
 ---
 
-## Injection guards (automatic)
+## Validated types & injection guards (automatic)
 
 Every exposed positional argument — branch/tag/bookmark names, revisions,
 revsets, ranges, remotes, operation ids, clone/fetch endpoints — is checked
@@ -26,21 +30,33 @@ revsets, ranges, remotes, operation ids, clone/fetch endpoints — is checked
 because `git`/`jj` would parse a leading-`-` string as a *flag* rather than the
 name you meant. That is the whole attack: a caller string like
 `--upload-pack=/bin/evil` in a remote slot, or `--config=core.pager=…` in a
-revset slot, would otherwise run an arbitrary program. The guard makes the
+revset slot, would otherwise run an arbitrary program. The check makes the
 smuggle impossible at the argv level, so it holds regardless of how the value
 reached you.
 
-A rejected argument surfaces as a spawn-side **`processkit::Error::Spawn`** —
-the same variant a missing binary produces — carrying the program name and an
-`InvalidInput` IO source describing the rejected value. (It is raised *instead*
-of spawning, not by the child.)
+For **ref names and revisions/revsets** the check is the newtype constructor
+itself: `RefName::new` / `RevSpec::new` (git) and `BookmarkName::new` /
+`RevsetExpr::new` (jj) reject the bad value up front, and the method only accepts
+the validated type — so the guarantee is in the type, not an easily-forgotten
+call. For the remaining bare-positional `&str` inputs (remote names, URLs, config
+keys) an internal `reject_flag_like` guard runs on every call.
+
+A rejected value surfaces as a spawn-side **`processkit::Error::Spawn`** — the
+same variant a missing binary produces — carrying the program name and an
+`InvalidInput` IO source describing it (classifiable via `Error::is_invalid_input`).
+It is raised *instead* of spawning, not by the child.
 
 ```rust,ignore
-# use vcs_git::{Git, GitApi};
+# use vcs_git::{CheckoutTarget, Git, GitApi, RevSpec};
 # async fn demo(git: &Git, repo: &std::path::Path) {
-// A caller-supplied branch name that starts with `-`:
-let err = git.checkout(repo, "--upload-pack=/bin/evil").await.unwrap_err();
+// A caller-supplied revision that starts with `-` is refused at construction,
+// before it can ever reach `checkout`:
+let err = RevSpec::new("--upload-pack=/bin/evil").unwrap_err();
 assert!(matches!(err, processkit::Error::Spawn { .. })); // never spawned
+// The valid path: build the target at your boundary, then switch.
+git.checkout(repo, &CheckoutTarget::Ref(RevSpec::new("main").unwrap()))
+    .await
+    .ok();
 # }
 ```
 

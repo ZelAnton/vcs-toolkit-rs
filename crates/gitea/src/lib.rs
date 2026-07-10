@@ -13,7 +13,7 @@
 //! # What you can do
 //!
 //! Check auth · the lean pull-request lifecycle (list / view / create / merge /
-//! close) · issues (list / view / create) · release listing. This is deliberately
+//! close / checkout) · issues (list / view / create) · release listing. This is deliberately
 //! narrower than `gh`/`glab` — `tea` itself lacks some operations (see the surface
 //! notes below). One tiny call to start:
 //!
@@ -42,15 +42,17 @@
 //!   `tea.pr_list(dir)` — handy when one client drives one checkout.
 //! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
 //!   chained `.head` / `.base` setters named after the flags they emit),
-//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), and
-//!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`).
+//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), [`MergeStrategy`]
+//!   (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`), and [`PrMerge`]
+//!   (that strategy plus the gh-style `auto`/`delete_branch` options, which `tea`
+//!   reports `Unsupported` rather than silently drop).
 //!
 //! The exposed operations are the **lean lifecycle** `tea` actually supports:
 //! auth ([`auth_status`](GiteaApi::auth_status)), the PR lifecycle
 //! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
 //! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
-//! [close](GiteaApi::pr_close) / [comment](GiteaApi::pr_comment) /
-//! [edit](GiteaApi::pr_edit)), issues
+//! [close](GiteaApi::pr_close) / [checkout](GiteaApi::pr_checkout) /
+//! [comment](GiteaApi::pr_comment) / [edit](GiteaApi::pr_edit)), issues
 //! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
 //! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
 //! It is deliberately narrower than
@@ -90,16 +92,16 @@
 //! # let _ = authed; Ok(()) }
 //! ```
 //!
-//! Drive the PR lifecycle — `pr_create` takes the [`PrCreate`] spec; merge picks a
-//! [`MergeStrategy`]:
+//! Drive the PR lifecycle — `pr_create` takes the [`PrCreate`] spec; merge takes a
+//! [`PrMerge`] spec:
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
+//! use vcs_gitea::{Gitea, GiteaApi, PrCreate, PrMerge};
 //! # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
 //! tea.pr_create(repo, PrCreate::new("Add streaming", "Implements …")
 //!         .head("feat/streaming").base("main")).await?;
-//! tea.pr_merge(repo, 7, MergeStrategy::Squash).await?;
+//! tea.pr_merge(repo, 7, PrMerge::squash()).await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -130,6 +132,11 @@ pub use processkit::CancellationToken;
 
 mod parse;
 pub use parse::{Issue, PullRequest, Release};
+// The parsed `tea --version`, re-exported as `GiteaVersion` — the shared
+// `major.minor.patch` type `vcs-git`/`vcs-jj`/`vcs-github` also gate on (an alias
+// of `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
+// [`GiteaCapabilities::version`].
+pub use vcs_diff::Version as GiteaVersion;
 
 /// Options for [`GiteaApi::pr_create`] (`tea pr create`).
 ///
@@ -269,6 +276,80 @@ impl MergeStrategy {
     }
 }
 
+/// Options for [`GiteaApi::pr_merge`] (`tea pr merge`).
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](PrMerge::merge) / [`squash`](PrMerge::squash) /
+/// [`rebase`](PrMerge::rebase), then [`auto`](PrMerge::auto) /
+/// [`delete_branch`](PrMerge::delete_branch) — rather than a struct literal. The
+/// shape mirrors `vcs-github`'s `PrMerge` and `vcs-gitlab`'s `MrMerge` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one merge spec
+/// across all three backends.
+///
+/// **Backend capability.** `tea pr merge` merges with `--style`, but `tea` has
+/// **no** merge-when-checks-succeed (`auto`) flag, and this wrapper does not drive
+/// source-branch deletion, so when either the gh-style [`auto`](PrMerge::auto) or
+/// [`delete_branch`](PrMerge::delete_branch) option is set,
+/// [`pr_merge`](GiteaApi::pr_merge) returns a structured `Error::Unsupported`
+/// rather than *silently* ignoring it — for an irreversible merge, quietly
+/// dropping an option could produce the wrong side effects. The default (neither
+/// set) is the plain merge.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PrMerge {
+    /// The merge strategy → `tea pr merge --style merge|squash|rebase`.
+    pub strategy: MergeStrategy,
+    /// Request gh-style auto-merge (merge once checks pass). **Not expressible on
+    /// `tea`** — when set, [`pr_merge`](GiteaApi::pr_merge) returns
+    /// `Error::Unsupported` (see the type docs).
+    pub auto: bool,
+    /// Delete the source branch after merging. **Not expressible here** — when
+    /// set, [`pr_merge`](GiteaApi::pr_merge) returns `Error::Unsupported` instead
+    /// of silently leaving the branch in place.
+    pub delete_branch: bool,
+}
+
+impl PrMerge {
+    /// Merge with a merge commit (`--style merge`).
+    pub fn merge() -> Self {
+        Self::with(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge (`--style squash`).
+    pub fn squash() -> Self {
+        Self::with(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge (`--style rebase`).
+    pub fn rebase() -> Self {
+        Self::with(MergeStrategy::Rebase)
+    }
+
+    fn with(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Request auto-merge (merge once checks pass). **Unsupported on `tea`**:
+    /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
+    /// `Error::Unsupported` (see the type docs).
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Request deleting the source branch after merging. **Unsupported on `tea`**:
+    /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
+    /// `Error::Unsupported`.
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
 /// Injection guard for bare positional argv slots: a caller-supplied value
 /// with a leading `-` would be parsed by tea's CLI as a *flag* (verified:
 /// `tea … -evil` → "unknown switch"), and an empty value changes a command's
@@ -279,19 +360,84 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
+/// What the installed `tea` binary supports, probed via
+/// [`GiteaApi::capabilities`]. A value type — the client holds no state, so
+/// probe once and keep the result (callers cache it). Mirrors
+/// [`vcs_git::GitCapabilities`](../vcs_git/struct.GitCapabilities.html) /
+/// [`vcs_jj::JjCapabilities`](../vcs_jj/struct.JjCapabilities.html).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GiteaCapabilities {
+    /// The binary's parsed version.
+    pub version: GiteaVersion,
+}
+
+/// The oldest `tea` this crate is written against — **0.9.0**. Every command this
+/// crate's argv drives is present across the `tea` 0.9+ line: the `--output json`
+/// print-table read surface (`pr`/`issues`/`releases list`, `login list`) selected
+/// with `--fields`, the `pr create`/`merge`/`close`/`checkout` lifecycle verbs, and
+/// `comment`. A `tea` older than this predates parts of that JSON/`--fields`
+/// surface, so gating here lets
+/// [`ensure_supported`](GiteaCapabilities::ensure_supported) reject a too-old binary
+/// up front with a clear message instead of letting an operation fail deep inside
+/// tea with a cryptic `unknown command`/`unknown flag`.
+const MIN_SUPPORTED: GiteaVersion = GiteaVersion {
+    major: 0,
+    minor: 9,
+    patch: 0,
+};
+
+impl GiteaCapabilities {
+    /// Whether the binary meets the supported floor (tea ≥ 0.9). Every typed
+    /// operation on [`GiteaApi`] is guaranteed against this minimum.
+    pub fn is_supported(&self) -> bool {
+        self.version >= MIN_SUPPORTED
+    }
+
+    /// Error unless [`is_supported`](Self::is_supported) — a clear "needs tea ≥ 0.9,
+    /// found 0.8.0" instead of a cryptic `unknown command`/`unknown flag` failure
+    /// once an operation reaches a command the old binary lacks. The pre-flight
+    /// check a caller runs before driving operations against an untrusted `tea`.
+    pub fn ensure_supported(&self) -> Result<()> {
+        if self.is_supported() {
+            return Ok(());
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!(
+                    "vcs-gitea requires tea >= {MIN_SUPPORTED}, found {}",
+                    self.version
+                ),
+            ),
+        ))
+    }
+}
+
 /// The Gitea operations this crate exposes — the interface consumers code
 /// against and mock in tests. The **lean PR lifecycle** `tea` supports; reach
 /// unmodelled `tea` commands through [`run`](GiteaApi::run).
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
 pub trait GiteaApi: Send + Sync {
-    /// Run `tea <args>`, returning trimmed stdout (throws on a non-zero exit).
+    /// Run `tea <args>` **in the process's current directory**, returning trimmed
+    /// stdout (throws on a non-zero exit). This method on the client is the
+    /// **process-cwd** escape hatch; the `at(dir)` bound view's
+    /// [`run`](GiteaAt::run) is instead **bound to `dir`** (it forwards to
+    /// [`Gitea::run_in`], so `tea.at(dir).run(…)` runs in the bound repo). Use
+    /// `tea.at(dir).run(…)` (or [`Gitea::run_in`]) for the bound repo (T-035).
     async fn run(&self, args: &[String]) -> Result<String>;
     /// Like [`GiteaApi::run`] but never errors on a non-zero exit — returns the
     /// captured [`ProcessResult`].
     async fn run_raw(&self, args: &[String]) -> Result<ProcessResult<String>>;
     /// Installed Gitea CLI version (`tea --version`).
     async fn version(&self) -> Result<String>;
+    /// The installed binary's parsed version, as [`GiteaCapabilities`]
+    /// (`tea --version`). A value type — probe once and keep it; an unrecognisable
+    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `tea`
+    /// with [`GiteaCapabilities::ensure_supported`].
+    async fn capabilities(&self) -> Result<GiteaCapabilities>;
     /// Whether at least one login is configured (`tea login list --output json`
     /// is a non-empty array). `tea` has no per-instance `auth status`, so this is
     /// the closest "are we logged in" signal. Must not error on an unusual
@@ -318,11 +464,26 @@ pub trait GiteaApi: Send + Sync {
     /// body, and the optional head (`None` = the current branch) and base
     /// (`None` = the repo default) branches.
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
-    /// Merge a pull request (`tea pr merge <number> --style merge|rebase|squash`)
-    /// — see [`MergeStrategy`].
-    async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
+    /// Merge a pull request (`tea pr merge <number> --style merge|rebase|squash`).
+    /// Takes a [`PrMerge`] spec (the [`MergeStrategy`] plus the gh-style
+    /// `auto`/`delete_branch` options). `tea` can express **neither** `auto` nor
+    /// `delete_branch` through this wrapper, so requesting either returns a
+    /// structured `Error::Unsupported` rather than silently dropping it (see
+    /// [`PrMerge`]).
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
     /// Close a pull request without merging (`tea pr close <number>`).
     async fn pr_close(&self, dir: &Path, number: u64) -> Result<()>;
+    /// Check out a pull request's branch into the working copy at `dir`
+    /// (`tea pr checkout <number>`) — the head branch is fetched and switched to,
+    /// so a subsequent build/test/edit runs against the PR locally. Mutates the
+    /// working copy. **Defaulted** to `Error::Unsupported` so external implementers
+    /// keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_checkout".into(),
+        })
+    }
     /// Add a comment to a pull request, returning the command's output
     /// (`tea comment <index> <body>`). Gitea PRs and issues share the `index`
     /// space and the same `tea comment` subcommand hits both. The `body` is a
@@ -410,6 +571,17 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
 
     async fn version(&self) -> Result<String> {
         self.core.run(["--version"]).await
+    }
+
+    async fn capabilities(&self) -> Result<GiteaCapabilities> {
+        let raw = self.version().await?;
+        let version = parse::parse_tea_version(&raw).ok_or_else(|| {
+            Error::parse(
+                BINARY,
+                format!("unrecognisable `tea --version` output: {raw:?}"),
+            )
+        })?;
+        Ok(GiteaCapabilities { version })
     }
 
     async fn auth_status(&self) -> Result<bool> {
@@ -543,12 +715,27 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()> {
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()> {
+        // `tea` has no merge-when-checks-succeed (`auto`) flag, and we do not drive
+        // source-branch deletion here. Rather than silently ignore a requested
+        // option — which, for an irreversible merge, could produce the wrong side
+        // effects — report it as `Unsupported`. The default (neither set) is the
+        // plain `--style` merge.
+        if merge.auto {
+            return Err(Error::Unsupported {
+                operation: "pr_merge(auto)".into(),
+            });
+        }
+        if merge.delete_branch {
+            return Err(Error::Unsupported {
+                operation: "pr_merge(delete_branch)".into(),
+            });
+        }
         let n = number.to_string();
         self.core
             .run_unit(self.core.command_in(
                 dir,
-                ["pr", "merge", n.as_str(), "--style", strategy.style()],
+                ["pr", "merge", n.as_str(), "--style", merge.strategy.style()],
             ))
             .await
     }
@@ -557,6 +744,16 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         let n = number.to_string();
         self.core
             .run_unit(self.core.command_in(dir, ["pr", "close", n.as_str()]))
+            .await
+    }
+
+    async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so it can never look like a flag — nothing to
+        // guard with `reject_flag_like`. `tea pr checkout` fetches the PR's head
+        // branch and switches the working copy to it (no structured output).
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["pr", "checkout", n.as_str()]))
             .await
     }
 
@@ -668,6 +865,44 @@ impl<R: ProcessRunner> Gitea<R> {
         self.core.output_string(args).await
     }
 
+    /// Run `tea <args>` **in `dir`** (the process is spawned with `dir` as its
+    /// working directory), returning trimmed stdout — the dir-bound twin of the
+    /// process-cwd [`run`](GiteaApi::run). This is what [`GiteaAt::run`] forwards to;
+    /// call [`run`](GiteaApi::run) on the client for the process-cwd escape hatch.
+    /// Argv is forwarded verbatim (only the working directory is bound, no extra flag
+    /// is injected).
+    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_in`](Gitea::run_in) but never errors on a non-zero exit — the
+    /// dir-bound twin of [`run_raw`](GiteaApi::run_raw). What [`GiteaAt::run_raw`]
+    /// forwards to.
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
+    /// Like [`run_args`](Gitea::run_args) but **bound to `dir`** — the `&[&str]`
+    /// twin of [`run_in`](Gitea::run_in). What [`GiteaAt::run_args`] forwards to.
+    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    /// Like [`run_raw_args`](Gitea::run_raw_args) but **bound to `dir`** — the
+    /// `&[&str]` twin of [`run_raw_in`](Gitea::run_raw_in). What
+    /// [`GiteaAt::run_raw_args`] forwards to.
+    pub async fn run_raw_args_in(
+        &self,
+        dir: &Path,
+        args: &[&str],
+    ) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
+    }
+
     /// Bind a working directory, so the repo-scoped methods omit that argument:
     /// `tea.at(dir).pr_list()` runs [`pr_list`](GiteaApi::pr_list) against `dir`.
     pub fn at<'a>(&'a self, dir: &'a Path) -> GiteaAt<'a, R> {
@@ -699,25 +934,32 @@ impl<R: ProcessRunner> Copy for GiteaAt<'_, R> {}
 vcs_cli_support::at_forwarders! {
     GiteaAt, tea, "Gitea",
     bare {
-        fn run(args: &[String]) -> Result<String>;
-        fn run_raw(args: &[String]) -> Result<ProcessResult<String>>;
-        fn run_args(args: &[&str]) -> Result<String>;
-        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>>;
         fn version() -> Result<String>;
+        fn capabilities() -> Result<GiteaCapabilities>;
         fn auth_status() -> Result<bool>;
     }
     dir {
         fn pr_list() -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn pr_create(spec: PrCreate) -> Result<String>;
-        fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_close(number: u64) -> Result<()>;
+        fn pr_checkout(number: u64) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
         fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
+    }
+    // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
+    // twins) so `tea.at(dir).run(…)` runs in the bound repo, not the process cwd.
+    // For the process-cwd hatch call `run`/`run_raw`/… on `Gitea` directly.
+    raw {
+        fn run(args: &[String]) -> Result<String> => run_in;
+        fn run_raw(args: &[String]) -> Result<ProcessResult<String>> => run_raw_in;
+        fn run_args(args: &[&str]) -> Result<String> => run_args_in;
+        fn run_raw_args(args: &[&str]) -> Result<ProcessResult<String>> => run_raw_args_in;
     }
 }
 
@@ -729,6 +971,62 @@ mod tests {
     #[test]
     fn binary_name_is_tea() {
         assert_eq!(BINARY, "tea");
+    }
+
+    // `capabilities()` parses the real `tea --version` banner and gates on the 0.9
+    // floor — covering the minimum, a modern release, and an unrecognisable banner
+    // (the three cases the scheduled-drift lane also exercises against a real tea).
+    #[tokio::test]
+    async fn capability_version_gate_parses_and_gates() {
+        // Modern tea (`tea version 0.9.2` shape; any emoji/build trailer ignored).
+        let tea = Gitea::with_runner(
+            ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea version 0.9.2\n")),
+        );
+        let caps = tea.capabilities().await.expect("capabilities");
+        assert_eq!(caps.version.to_string(), "0.9.2");
+        assert!(caps.is_supported());
+        caps.ensure_supported().expect("supported");
+
+        // Exactly at the floor (0.9.0) is supported.
+        let at_floor = Gitea::with_runner(
+            ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea version 0.9.0\n")),
+        );
+        assert!(
+            at_floor.capabilities().await.unwrap().is_supported(),
+            "0.9.0 is exactly the floor"
+        );
+
+        // An old tea is rejected with a clear message naming the floor + found.
+        let old = Gitea::with_runner(
+            ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea version 0.8.0\n")),
+        );
+        let caps = old.capabilities().await.expect("capabilities");
+        assert_eq!(
+            caps.version,
+            GiteaVersion {
+                major: 0,
+                minor: 8,
+                patch: 0
+            }
+        );
+        assert!(!caps.is_supported(), "0.8 is below the 0.9 floor");
+        let err = caps.ensure_supported().expect_err("unsupported");
+        let Error::Spawn { source, .. } = &err else {
+            panic!("expected Spawn, got {err:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains(">= 0.9.0"), "names the floor: {message}");
+        assert!(
+            message.contains("0.8.0"),
+            "names the found version: {message}"
+        );
+
+        // A banner with no version token is a parse error, not a silent zero.
+        let garbage = Gitea::with_runner(
+            ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea (unknown build)\n")),
+        );
+        let err = garbage.capabilities().await.expect_err("unrecognisable");
+        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -755,6 +1053,57 @@ mod tests {
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+    }
+
+    // T-035: the raw escape hatches reached *through* the bound view
+    // (`tea.at(dir).run…`) now run in the bound `dir`, while the same-named methods
+    // on the client stay in the process cwd.
+    #[tokio::test]
+    async fn bound_view_raw_hatch_runs_in_bound_dir() {
+        let dir = Path::new("/repo");
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+
+        // Through the bound view: every raw form carries the bound dir as its cwd.
+        tea.at(dir)
+            .run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = tea
+            .at(dir)
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        tea.at(dir).run_args(&["pr", "list"]).await.unwrap();
+        let _ = tea.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
+        // On the client directly: the process-cwd escape hatch (no bound dir).
+        tea.run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = tea
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        tea.run_args(&["pr", "list"]).await.unwrap();
+        let _ = tea.run_raw_args(&["pr", "list"]).await.unwrap();
+
+        let calls = rec.calls();
+        for c in &calls[0..4] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                Some(dir),
+                "raw call through the bound view runs in the bound dir"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
+        for c in &calls[4..8] {
+            assert_eq!(
+                c.cwd.as_deref(),
+                None,
+                "raw call on the client stays in the process cwd"
+            );
+            assert_eq!(c.args_str(), ["pr", "list"]);
+        }
     }
 
     #[tokio::test]
@@ -963,12 +1312,13 @@ mod tests {
         );
     }
 
-    // pr_merge maps the strategy to `--style`; pr_close to `pr close <n>`.
+    // pr_merge maps the strategy to `--style`; pr_close to `pr close <n>`. The
+    // default `PrMerge` (no auto/delete_branch) is the plain `--style` merge.
     #[tokio::test]
     async fn pr_merge_and_close_build_expected_argv() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
-        tea.pr_merge(Path::new("/repo"), 5, MergeStrategy::Squash)
+        tea.pr_merge(Path::new("/repo"), 5, PrMerge::squash())
             .await
             .expect("merge");
         assert_eq!(
@@ -980,6 +1330,46 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         tea.pr_close(Path::new("/repo"), 5).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+    }
+
+    // `tea` cannot express gh-style auto-merge or source-branch deletion, so
+    // requesting either is a structured `Unsupported` — never a silent drop that
+    // would merge with the wrong side effects. The check happens BEFORE any spawn.
+    #[tokio::test]
+    async fn pr_merge_rejects_unexpressible_options() {
+        for merge in [PrMerge::squash().auto(), PrMerge::merge().delete_branch()] {
+            let tea = Gitea::with_runner(ScriptedRunner::new());
+            let err = tea
+                .pr_merge(Path::new("/repo"), 5, merge)
+                .await
+                .expect_err("auto/delete_branch are Unsupported on tea");
+            assert!(
+                matches!(err, Error::Unsupported { .. }),
+                "expected Unsupported, got {err:?}"
+            );
+        }
+    }
+
+    // pr_checkout maps to `pr checkout <n>` and runs in the bound repo dir; the
+    // bound view produces byte-identical argv.
+    #[tokio::test]
+    async fn pr_checkout_builds_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.pr_checkout(Path::new("/repo"), 7)
+            .await
+            .expect("pr_checkout");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.at(Path::new("/repo"))
+            .pr_checkout(7)
+            .await
+            .expect("pr_checkout");
+        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
     }
 
     // pr_comment builds `comment <n> <body>` — the body is a bare positional,

@@ -72,6 +72,21 @@
 //! a pure-jj repo with no recognised remote resolves to no forge (the `repo_*`
 //! tools still work, the `forge_*` tools return a clear error).
 //!
+//! # Non-UTF-8 paths (fail-closed policy)
+//!
+//! Path-bearing results — [`repo_status`](VcsMcpServer::repo_status)'s
+//! `FileChange.path`, [`repo_conflicts`](VcsMcpServer::repo_conflicts)'s list — carry
+//! the facade's [`PathBuf`](std::path::PathBuf), which the toolkit reads
+//! **losslessly** from the backend (a filename need not be valid UTF-8 on Unix).
+//! JSON strings, however, are UTF-8. A path that is not valid UTF-8 is therefore
+//! **refused with an explicit serialization error** rather than emitted with
+//! `U+FFFD` replacement characters: an agent must never be handed a
+//! silently-corrupted path it would feed back into a mutating tool
+//! ([`repo_commit`](VcsMcpServer::repo_commit)) and so address the wrong file. The
+//! ordinary UTF-8 case is unchanged — a plain JSON string. (Tool *inputs* are JSON
+//! strings too, so a non-UTF-8 path cannot be named over MCP in the first place;
+//! the lossless round-trip is a property of the Rust [`vcs_core::Repo`] API.)
+//!
 //! # In-depth guide
 //!
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
@@ -147,6 +162,26 @@ pub struct RemoveWorktreeParams {
     pub force: bool,
 }
 
+/// List recent history.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct LogParams {
+    /// The revspec (git) / revset (jj) to list history from, e.g. `"HEAD"` (git) or
+    /// `"@"` (jj).
+    pub revspec_or_revset: String,
+    /// Maximum number of commits to return.
+    pub max: usize,
+}
+
+/// Read a file's content at a revision.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ShowFileParams {
+    /// The revspec (git) / revset (jj) to read the file from, e.g. `"HEAD"` (git)
+    /// or `"@-"` (jj).
+    pub rev: String,
+    /// Repo-relative path of the file to read.
+    pub path: String,
+}
+
 /// A pull/merge request by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrNumberParams {
@@ -176,6 +211,16 @@ pub struct PrMergeParams {
     pub number: u64,
     /// Merge strategy.
     pub strategy: MergeStrategyArg,
+    /// Enable auto-merge — merge once requirements/checks are met. **GitHub only**;
+    /// GitLab/Gitea reject it as unsupported (`invalid_params`) rather than merging
+    /// immediately anyway. Defaults to `false`.
+    #[serde(default)]
+    pub auto: bool,
+    /// Delete the source branch after merging. **GitHub only**; GitLab/Gitea reject
+    /// it as unsupported (`invalid_params`) rather than silently leaving the branch.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub delete_branch: bool,
 }
 
 /// Close a pull/merge request.
@@ -280,6 +325,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "forge_pr_mark_ready",
     "forge_pr_comment",
     "forge_pr_edit",
+    "forge_pr_checkout",
 ];
 
 /// Which mutating tools are callable — the server's write policy.
@@ -402,9 +448,26 @@ impl VcsMcpServer {
 }
 
 /// Encode a serializable value as a JSON text result.
+///
+/// **Non-UTF-8 path policy (fail-closed).** Path-bearing DTOs carry a
+/// [`PathBuf`](std::path::PathBuf), which serialises to a JSON string only when it
+/// is valid UTF-8. A path whose bytes are not valid UTF-8 (possible on Unix) makes
+/// serialisation fail, and this returns an **explicit error** rather than emitting
+/// the path with `U+FFFD` substitution — so an agent never receives a
+/// silently-corrupted path it would feed back into a mutating tool. The ordinary
+/// UTF-8 case is unaffected (a plain JSON string). See the crate-level
+/// *Non-UTF-8 paths* section.
 fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> {
-    let json = serde_json::to_string_pretty(value)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    let json = serde_json::to_string_pretty(value).map_err(|e| {
+        ErrorData::internal_error(
+            format!(
+                "failed to serialise the result to JSON: {e} (a filesystem path that is \
+                 not valid UTF-8 cannot be represented as a JSON string; it is refused \
+                 rather than emitted with U+FFFD substitution)"
+            ),
+            None,
+        )
+    })?;
     Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
@@ -413,11 +476,15 @@ fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> 
 /// `InvalidInput` io error — that's the client's call to fix, so surface it as
 /// an invalid-params error rather than an internal one.
 fn core_err(e: vcs_core::Error) -> ErrorData {
-    match &e {
-        vcs_core::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidInput => {
-            ErrorData::invalid_params(e.to_string(), None)
-        }
-        _ => ErrorData::internal_error(e.to_string(), None),
+    // A bad-argument failure — a facade precondition (`Error::Io`/`InvalidInput`)
+    // OR the boundary refusal of a flag-like/malformed ref/revision (which the
+    // facade now raises as `Error::Vcs` carrying an `InvalidInput` spawn source
+    // when it converts a tool string into a validated newtype) — is a client-facing
+    // invalid-request, not an internal error. `is_invalid_input` classifies both.
+    if e.is_invalid_input() {
+        ErrorData::invalid_params(e.to_string(), None)
+    } else {
+        ErrorData::internal_error(e.to_string(), None)
     }
 }
 
@@ -471,6 +538,40 @@ impl VcsMcpServer {
     )]
     pub async fn repo_diff_stat(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.diff_stat().await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Recent history: up to `max` commits reachable from `revspec_or_revset` (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@\"), most-recent-first. `author`/`date` are null on jj — its typed log doesn't currently surface authorship or a timestamp.",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_log(
+        &self,
+        Parameters(p): Parameters<LogParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .repo
+                .log(&p.revspec_or_revset, p.max)
+                .await
+                .map_err(core_err)?,
+        )
+    }
+
+    #[tool(
+        description = "The content of a file at a revision (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@-\"). Returns the file's bytes verbatim (including any trailing newline).",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_show_file(
+        &self,
+        Parameters(p): Parameters<ShowFileParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .repo
+                .show_file(&p.rev, &p.path)
+                .await
+                .map_err(core_err)?,
+        )
     }
 
     #[tool(
@@ -532,11 +633,14 @@ impl VcsMcpServer {
         Parameters(p): Parameters<CommitParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_commit").await?;
+        // The facade takes `PathBuf`s (lossless for a non-UTF-8 path on Unix); a tool
+        // input arrives as JSON `String`s (always UTF-8), so the conversion is exact.
+        let paths: Vec<std::path::PathBuf> = p.paths.iter().map(std::path::PathBuf::from).collect();
         self.repo
-            .commit_paths(&p.paths, &p.message)
+            .commit_paths(&paths, &p.message)
             .await
             .map_err(core_err)?;
-        ok_json(&serde_json::json!({ "committed_paths": p.paths.len() }))
+        ok_json(&serde_json::json!({ "committed_paths": paths.len() }))
     }
 
     #[tool(
@@ -762,7 +866,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Merge a pull/merge request with a strategy (merge|squash|rebase). Requires write access (--allow-write, or --allow-tools naming this tool).",
+        description = "Merge a pull/merge request with a strategy (merge|squash|rebase). Optional `auto` (merge once requirements are met) and `delete_branch` are GitHub-only — GitLab/Gitea reject them as unsupported rather than merging without them. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
     pub async fn forge_pr_merge(
@@ -770,8 +874,15 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrMergeParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_merge")?;
+        let mut merge = vcs_forge::PrMerge::new(p.strategy.into());
+        if p.auto {
+            merge = merge.auto();
+        }
+        if p.delete_branch {
+            merge = merge.delete_branch();
+        }
         self.forge()?
-            .pr_merge(p.number, p.strategy.into())
+            .pr_merge(p.number, merge)
             .await
             .map_err(forge_err)?;
         ok_json(&serde_json::json!({ "merged": p.number }))
@@ -868,7 +979,23 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }` for the configured forge. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "Check out a pull/merge request's branch into the local working copy (gh pr checkout / glab mr checkout / tea pr checkout). Mutates the working copy — the head/source branch is fetched and switched to. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_checkout(
+        &self,
+        Parameters(p): Parameters<PrNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_checkout")?;
+        self.forge()?
+            .pr_checkout(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "checked_out": p.number }))
+    }
+
+    #[tool(
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
@@ -969,6 +1096,94 @@ mod tests {
         );
         let out = server.repo_status().await.expect("status ok");
         assert!(result_json(&out).contains("a.rs"));
+    }
+
+    // `repo_log` is a read tool (no write gate) that surfaces the facade's
+    // unified `Commit` DTO as JSON, author/date included on git.
+    #[tokio::test]
+    async fn repo_log_returns_commit_json() {
+        let server = git_server(
+            ScriptedRunner::new().on(
+                ["git", "log"],
+                Reply::ok(
+                    "deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0",
+                ),
+            ),
+            WriteGate::None,
+        );
+        let out = server
+            .repo_log(Parameters(LogParams {
+                revspec_or_revset: "HEAD".into(),
+                max: 10,
+            }))
+            .await
+            .expect("repo_log ok");
+        let json = result_json(&out);
+        assert!(json.contains("deadbeef"), "{json}");
+        assert!(json.contains("Fix bug"), "{json}");
+        assert!(json.contains("Jane"), "{json}");
+    }
+
+    // `repo_show_file` is a read tool (no write gate) that surfaces the facade's
+    // file content verbatim.
+    #[tokio::test]
+    async fn repo_show_file_returns_content() {
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")),
+            WriteGate::None,
+        );
+        let out = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "src/main.rs".into(),
+            }))
+            .await
+            .expect("repo_show_file ok");
+        let json = result_json(&out);
+        assert!(json.contains("fn main"), "{json}");
+    }
+
+    // T-049: the MCP server INHERITS the output budget of the client its `Repo` was
+    // built over — a `repo_show_file` whose content exceeds the budget surfaces as a
+    // tool error (the wrapped `OutputTooLarge`), never a silently truncated file. A
+    // budget below the ceiling returns the content in full.
+    #[tokio::test]
+    async fn repo_show_file_honours_inherited_output_budget() {
+        let big = "x".repeat(200_000);
+        // Over budget → the tool errors instead of returning a clipped file.
+        let budgeted = Git::with_runner(ScriptedRunner::new().on(["git", "show"], Reply::ok(&big)))
+            .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", budgeted));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let err = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "big.bin".into(),
+            }))
+            .await
+            .expect_err("over-budget show_file must error, not truncate");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("ceiling")
+                || format!("{err:?}").to_lowercase().contains("too large")
+                || format!("{err:?}").to_lowercase().contains("exceeded"),
+            "error should name the output ceiling: {err:?}"
+        );
+
+        // Under the same budget a small file still reads in full.
+        let small = Git::with_runner(
+            ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", small));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let out = server
+            .repo_show_file(Parameters(ShowFileParams {
+                rev: "HEAD".into(),
+                path: "src/main.rs".into(),
+            }))
+            .await
+            .expect("under-budget show_file ok");
+        assert!(result_json(&out).contains("fn main"));
     }
 
     // A mutation tool is gated when writes are disabled — it errors WITHOUT
@@ -1105,6 +1320,26 @@ mod tests {
         );
     }
 
+    // A flag-like ref/revision tool parameter is rejected the moment the facade
+    // converts it into the validated newtype (`RefName`/`RevSpec`) — surfacing as
+    // INVALID_PARAMS (a classifiable client mistake) *before* any git process
+    // spawns, rather than an opaque internal error. The runner has no `git log`
+    // scripted, so had the value NOT been refused pre-spawn the command would have
+    // surfaced as an internal error instead — the INVALID_PARAMS code is the proof
+    // the rejection happened at the boundary.
+    #[tokio::test]
+    async fn flag_like_revspec_surfaces_as_invalid_params() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_log(Parameters(LogParams {
+                revspec_or_revset: "--upload-pack=/bin/evil".into(),
+                max: 10,
+            }))
+            .await
+            .expect_err("a flag-like revspec must be refused");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
     // Forge tools report a clear error when no forge was configured.
     #[tokio::test]
     async fn forge_tools_error_without_a_forge() {
@@ -1170,6 +1405,35 @@ mod tests {
         let json = result_json(&out);
         assert!(json.contains("notes.txt"), "{json}");
         assert!(json.contains("Modified"), "{json}");
+    }
+
+    // T-049: `forge_pr_diff` inherits the output budget of the forge client the
+    // server was built over — an over-budget PR diff surfaces as a tool error
+    // (the wrapped `OutputTooLarge`), never a truncated diff.
+    #[tokio::test]
+    async fn forge_pr_diff_honours_inherited_output_budget() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_diff(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect_err("over-budget pr_diff must error, not truncate");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("ceiling")
+                || format!("{err:?}").to_lowercase().contains("too large")
+                || format!("{err:?}").to_lowercase().contains("exceeded"),
+            "error should name the output ceiling: {err:?}"
+        );
     }
 
     // A forge op the backend can't do (tea has no single-release view) surfaces
@@ -1278,6 +1542,109 @@ mod tests {
             .await
             .expect_err("gated");
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+    }
+
+    // `forge_pr_checkout` is write-gated like the other forge mutations: refused
+    // under `WriteGate::None`, but routed to `gh pr checkout <n>` when allowed.
+    #[tokio::test]
+    async fn forge_pr_checkout_gates_and_routes() {
+        // Gated: refused before any spawn.
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+            "/repo",
+            vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_checkout(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        // Allowed: routes to `gh pr checkout` and reports the checked-out number.
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "checkout"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let out = server
+            .forge_pr_checkout(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect("checkout ok");
+        assert!(
+            result_json(&out).contains("checked_out"),
+            "{}",
+            result_json(&out)
+        );
+    }
+
+    // `forge_pr_merge` is write-gated; when allowed it maps the strategy plus the
+    // GitHub-only `auto`/`delete_branch` params onto gh's own flags. The runner
+    // rule matches only `["gh", "pr", "merge"]`, so reaching the reply proves the
+    // whole spec was routed to the wrapper.
+    #[tokio::test]
+    async fn forge_pr_merge_routes_strategy_and_github_options() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "merge"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let out = server
+            .forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Squash,
+                auto: true,
+                delete_branch: true,
+            }))
+            .await
+            .expect("merge ok");
+        assert!(
+            result_json(&out).contains("merged"),
+            "{}",
+            result_json(&out)
+        );
+    }
+
+    // The GitHub-only `auto`/`delete_branch` merge options are rejected as
+    // `invalid_params` on GitLab/Gitea — the facade's `Unsupported` (bubbled from
+    // the wrapper) is a client-fixable request, not an internal error — and nothing
+    // spawns (the runner has no rule).
+    #[tokio::test]
+    async fn forge_pr_merge_unsupported_options_map_to_invalid_params() {
+        let tea = vcs_forge::vcs_gitea::Gitea::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitea("/repo", tea));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let err = server
+            .forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Merge,
+                auto: true,
+                delete_branch: false,
+            }))
+            .await
+            .expect_err("auto is unsupported on gitea");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
     // T-013: on GitHub a `body` that begins with `-` is a legitimate Markdown
@@ -1484,12 +1851,19 @@ mod tests {
     }
 
     // `forge_info` returns the kind string + capability map for an authed
-    // GitHub handle. The auth probe is a single `auth status` call (mocked
-    // to exit 0); every static cap is `true` post-fork.
+    // GitHub handle on a modern `gh`. `capabilities()` probes the CLI version
+    // (`gh --version`, scripted to a modern banner above the 2.0 floor) and auth
+    // (`auth status`, exit 0); every static cap is `true` post-fork, and the map
+    // now also carries `version`/`supported`.
     #[tokio::test]
     async fn forge_info_with_authed_github_reports_all_true() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["gh", "auth", "status"], Reply::ok("")),
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
+                )
+                .on(["gh", "auth", "status"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1512,6 +1886,13 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(value["kind"], "github");
         assert_eq!(value["capabilities"]["authed"], true);
+        assert_eq!(value["capabilities"]["supported"], true);
+        // `version` serialises as the structured `{major,minor,patch}` shape of
+        // `vcs_diff::Version` (its derived `Serialize`).
+        assert_eq!(
+            value["capabilities"]["version"],
+            serde_json::json!({ "major": 2, "minor": 40, "patch": 1 })
+        );
         assert_eq!(value["capabilities"]["pr_create"], true);
         assert_eq!(value["capabilities"]["pr_comment"], true);
         assert_eq!(value["capabilities"]["pr_edit"], true);
@@ -1536,6 +1917,12 @@ mod tests {
         assert_eq!(a.read_only_hint, None);
 
         let tool = VcsMcpServer::forge_pr_edit_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+
+        // `forge_pr_checkout` mutates the working copy — destructive, not read-only.
+        let tool = VcsMcpServer::forge_pr_checkout_tool_attr();
         let a = tool.annotations.expect("annotations present");
         assert_eq!(a.destructive_hint, Some(true));
         assert_eq!(a.read_only_hint, None);
@@ -1598,6 +1985,7 @@ mod tests {
         assert!(names.contains(&"forge_pr_list"), "{names:?}");
         assert!(names.contains(&"forge_pr_comment"), "{names:?}");
         assert!(names.contains(&"forge_pr_edit"), "{names:?}");
+        assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
         assert!(names.contains(&"forge_info"), "{names:?}");
 
         let result = client

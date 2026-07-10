@@ -185,11 +185,17 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, BranchDelete, ChangeKind, CreateOutcome, DiffStat, FileChange, MergeProbe,
+    BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
     OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial,
     WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
+// The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
+// per-client default ([`Repo::from_git`]/[`from_jj`] over a client built with
+// `default_output_budget`) or a per-call override
+// ([`Repo::show_file_within`](Repo::show_file_within)) for the content read this
+// facade exposes. `vcs-git` and `vcs-jj` re-export the same type.
+pub use vcs_git::OutputBudget;
 
 // Re-export the underlying typed clients so a consumer depending only on
 // `vcs-core` can still reach raw, tool-specific operations — and their types
@@ -590,6 +596,23 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// A **read-only** [`local_branches`](Repo::local_branches): the same result,
+    /// but on **jj** it passes `--ignore-working-copy`, so listing the bookmarks
+    /// records no jj operation and never moves `@`. On **git** it is exactly
+    /// [`local_branches`](Repo::local_branches) — git's branch listing records no
+    /// operation and moves no ref, so there is nothing to make read-only.
+    ///
+    /// Use it (with [`snapshot_readonly`](Repo::snapshot_readonly)) from an
+    /// *observer* — a watcher or a prompt refresh — that must not perturb the
+    /// state it reads. See [`snapshot_readonly`](Repo::snapshot_readonly) for the
+    /// jj working-copy trade-off this shares.
+    pub async fn local_branches_readonly(&self) -> Result<Vec<String>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::local_branches(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::local_branches_readonly(j, &self.cwd).await,
+        }
+    }
+
     /// Whether a local branch/bookmark named `name` exists. See
     /// [`local_branches`](Repo::local_branches) for the jj deleted-but-tracked
     /// *tombstone* divergence (a just-deleted tracked bookmark can still read as
@@ -625,8 +648,10 @@ impl<R: ProcessRunner> Repo<R> {
 
     /// Paths with unresolved merge conflicts in the working copy, repo-relative
     /// with `/` separators (git `diff --diff-filter=U` / jj `resolve --list -r @`).
-    /// Empty when there are none.
-    pub async fn conflicted_files(&self) -> Result<Vec<String>> {
+    /// Empty when there are none. Each path is a [`PathBuf`] carried losslessly from
+    /// the backend, so a non-UTF-8 conflicted filename (legal on Unix) is not
+    /// corrupted to `U+FFFD`.
+    pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>> {
         match &self.backend {
             Backend::Git(g) => git_backend::conflicted_files(g, &self.cwd).await,
             Backend::Jj(j) => jj_backend::conflicted_files(j, &self.cwd).await,
@@ -677,6 +702,54 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Recent history: up to `max` commits reachable from `revspec_or_revset`
+    /// (git revspec / jj revset), most-recent-first (git `log`'s default order /
+    /// jj `log`'s topological order).
+    ///
+    /// Backend nuance: [`Commit::author`]/[`Commit::date`] are `Some` only on
+    /// git — jj's typed log doesn't currently surface authorship or a
+    /// timestamp, so they're `None` there rather than guessed (see the
+    /// [`Commit`] type docs).
+    pub async fn log(&self, revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::log(g, &self.cwd, revspec_or_revset, max).await,
+            Backend::Jj(j) => jj_backend::log(j, &self.cwd, revspec_or_revset, max).await,
+        }
+    }
+
+    /// The content of `path` as it exists at `rev` (git revspec / jj revset), e.g.
+    /// `HEAD:src/lib.rs` on git or `@-` + a fileset on jj — both normalise
+    /// backslash path separators and return the file's bytes verbatim (including
+    /// any trailing newline).
+    pub async fn show_file(&self, rev: &str, path: &str) -> Result<String> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::show_file(g, &self.cwd, rev, path).await,
+            Backend::Jj(j) => jj_backend::show_file(j, &self.cwd, rev, path).await,
+        }
+    }
+
+    /// [`show_file`](Repo::show_file) with an explicit per-call [`OutputBudget`],
+    /// instead of the budget the backend client was built with
+    /// ([`default_output_budget`](vcs_git::Git::default_output_budget), inherited
+    /// through [`from_git`](Repo::from_git)/[`from_jj`](Repo::from_jj)). Reads the
+    /// blob under `budget`: past the ceiling it errors with an
+    /// [`OutputTooLarge`](processkit::Error::OutputTooLarge)-carrying
+    /// [`Error::Vcs`] (actual and allowed sizes) rather than buffering an unbounded
+    /// file — use it to read a legitimately large file
+    /// ([`OutputBudget::unlimited`], or a higher cap) or to tighten the cap for one
+    /// call. A truncated blob is never returned as if complete.
+    pub async fn show_file_within(
+        &self,
+        rev: &str,
+        path: &str,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::show_file_within(g, &self.cwd, rev, path, budget).await,
+            Backend::Jj(j) => jj_backend::show_file_within(j, &self.cwd, rev, path, budget).await,
+        }
+    }
+
     /// A batched [`RepoSnapshot`] of the common repo state — branch, upstream,
     /// ahead/behind, dirtiness, change count, and operation state — in a **small
     /// fixed** number of spawns instead of a call per field (git: `status
@@ -693,12 +766,43 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// A **read-only** [`snapshot`](Repo::snapshot): the same [`RepoSnapshot`],
+    /// but on **jj** it never snapshots the working copy — every underlying query
+    /// passes `--ignore-working-copy`, so the batched read records **no** jj
+    /// operation and never moves `@`. On **git** it is exactly
+    /// [`snapshot`](Repo::snapshot) (git's status query records no operation and
+    /// moves no ref).
+    ///
+    /// Use it for an *observer* — a repository watcher, a prompt/status-bar
+    /// refresh — that must not perturb the state it reports: an ordinary jj query
+    /// snapshots the working copy as a side effect (taking the lock, recording an
+    /// operation, possibly moving `@`), so the observer would otherwise *mutate*
+    /// the repo it merely means to read.
+    ///
+    /// **jj trade-off:** because the working copy isn't snapshotted, a bare
+    /// working-tree edit that no jj command has recorded yet is **not** reflected
+    /// — [`dirty`](RepoSnapshot::dirty)/[`head`](RepoSnapshot::head) are as of the
+    /// last recorded operation. To observe such unsnapshotted edits, accept the
+    /// mutation and call [`snapshot`](Repo::snapshot).
+    pub async fn snapshot_readonly(&self) -> Result<RepoSnapshot> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::snapshot(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::snapshot_readonly(j, &self.cwd).await,
+        }
+    }
+
     /// Commit exactly `paths` with `message` (git `commit --only`, jj
     /// `commit <filesets>`). Paths are repo-relative. `paths` must be non-empty:
     /// an empty set is refused up front, because the backends would diverge
     /// dangerously — git errors out, while jj's `commit` with no filesets would
     /// silently commit the **entire** working copy.
-    pub async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()> {
+    ///
+    /// Takes [`PathBuf`]s so a path obtained from [`changed_files`](Self::changed_files)
+    /// / [`conflicted_files`](Self::conflicted_files) round-trips **losslessly** — on
+    /// git a non-UTF-8 path (legal on Unix) reaches the commit unchanged via the
+    /// NUL-safe pathspec transport; on jj the fileset language is text, so jj's own
+    /// (non-UTF-8-incapable) fileset handling applies.
+    pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()> {
         if paths.is_empty() {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -890,8 +994,12 @@ impl<R: ProcessRunner> Repo<R> {
     /// then `bookmark create`) and is not atomic, but a failed bookmark step
     /// **rolls back**: the workspace directory is removed only when `workspace add`
     /// created it (a pre-existing directory the caller already had is left intact),
-    /// the workspace is forgotten best-effort, and the original error is surfaced —
-    /// so a failed call doesn't leak a half-made worktree.
+    /// then the workspace is forgotten. Residue is no longer swallowed: if the
+    /// rollback can't remove that directory or can't `forget` the workspace, the call
+    /// fails with a composite [`Error::Io`] naming what still needs cleaning up (and
+    /// is safe to re-run); a clean rollback instead surfaces the original
+    /// bookmark-step error unchanged (its [`Error::Vcs`] classification) — so a failed
+    /// call never silently leaks a half-made worktree.
     pub async fn create_worktree(&self, spec: WorktreeCreate) -> Result<CreateOutcome> {
         let WorktreeCreate { path, branch, base } = &spec;
         match &self.backend {
@@ -902,9 +1010,15 @@ impl<R: ProcessRunner> Repo<R> {
 
     /// Remove the worktree/workspace at `path`. For jj this resolves the
     /// workspace name by matching `path`, deletes the directory, then forgets it;
-    /// a `path` that matches no attached jj workspace returns
-    /// [`Error::WorktreeNotFound`]. (For the best-effort, never-erroring variant,
-    /// see [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
+    /// a `path` that matches none of the **resolvable** jj workspaces returns
+    /// [`Error::WorktreeNotFound`], but when some registered workspace can't be
+    /// resolved via `jj workspace root --name` the path's absence is unprovable, so a
+    /// distinct diagnosable [`Error::Io`] (naming the unresolved workspaces;
+    /// [`is_resource_not_found`](Error::is_resource_not_found) stays `false`) is
+    /// returned instead. A directory that can't be deleted is likewise surfaced (an
+    /// [`Error::Io`] naming the still-registered workspace, with the `forget` left for
+    /// the retry). (For the short-lived, blocking `Drop`-path variant, see
+    /// [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
     ///
     /// The [`WorktreeRemove`] spec's [`force`](WorktreeRemove::force) mirrors git's
     /// `worktree remove`: without it a worktree that still has **uncommitted changes**
@@ -929,24 +1043,35 @@ impl<R: ProcessRunner> Repo<R> {
     /// **Synchronous** worktree cleanup for a context that cannot `.await` —
     /// chiefly a `Drop` guard. Force-removes the worktree at `path` (git:
     /// `worktree remove --force`; jj: resolve the workspace name by `path`, delete
-    /// the directory, then `workspace forget`). Best-effort and short-lived: it
-    /// shells out directly (no job-containment); a jj `path` that matches no
-    /// workspace is a no-op (`Ok`). Like the async
+    /// the directory, then `workspace forget`). Short-lived and shells out directly
+    /// (no job-containment), but not error-swallowing: a jj `path` that genuinely
+    /// matches no workspace is an `Ok` no-op, yet a probe failure (the `workspace
+    /// list`, or a registered workspace that won't resolve) and a `remove_dir_all`
+    /// failure are surfaced as `Err` (the `forget` is skipped on a failed removal, so
+    /// a surviving directory isn't orphaned). Like the async
     /// [`remove_worktree`](Self::remove_worktree), it **refuses the repository's
     /// main workspace** (whose directory is the main working copy) — deleting it
     /// would wipe the repo — even on this force-by-contract path.
     pub fn cleanup_worktree_blocking(&self, path: &Path) -> Result<()> {
         match &self.backend {
-            Backend::Git(_) => {
-                vcs_git::blocking::worktree_remove(&self.cwd, path, true).map_err(Error::Io)
-            }
+            Backend::Git(_) => vcs_git::blocking::worktree_remove(
+                &self.cwd,
+                vcs_git::WorktreeRemove::new(path).force(),
+            )
+            .map_err(Error::Io),
             Backend::Jj(_) => {
                 // jj resolves a relative worktree path against the repo dir (its
                 // cwd), so resolve it the same way here — the lookup and the dir
                 // removal must target the location jj used, not one under the process
                 // cwd (which may differ from `self.cwd`).
                 let abs_path = self.cwd.join(path);
-                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path) {
+                // Tell a genuine "no such workspace" (`Ok(None)` → nothing to clean
+                // up, a no-op) apart from a probe failure (`Err` → surfaced, not
+                // silently treated as a no-op): the blocking resolver no longer folds
+                // both into `None`.
+                match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path)
+                    .map_err(Error::Io)?
+                {
                     Some(name) => {
                         // Same main-workspace guard as the async `remove_worktree`
                         // (jj_backend.rs): never `remove_dir_all` the repository's
@@ -963,8 +1088,25 @@ impl<R: ProcessRunner> Repo<R> {
                             )));
                         }
                         // Delete the on-disk dir first (jj `forget` leaves it), then
-                        // drop jj's record of the workspace.
-                        let _ = std::fs::remove_dir_all(&abs_path);
+                        // drop jj's record of the workspace. A removal failure is
+                        // SURFACED (not swallowed with `let _ =`) and the forget is
+                        // skipped: forgetting a workspace whose directory survived
+                        // would orphan that dir — worse than a still-attached workspace
+                        // — and the reported error names what is still registered so
+                        // the cleanup can be safely re-run once the directory is free.
+                        if abs_path.exists() {
+                            std::fs::remove_dir_all(&abs_path).map_err(|e| {
+                                Error::Io(std::io::Error::new(
+                                    e.kind(),
+                                    format!(
+                                        "failed to remove the worktree directory {} ({e}); the jj \
+                                         workspace `{name}` is still registered — free the \
+                                         directory and retry the cleanup",
+                                        abs_path.display()
+                                    ),
+                                ))
+                            })?;
+                        }
                         vcs_jj::blocking::workspace_forget(&self.cwd, &name).map_err(Error::Io)
                     }
                     None => Ok(()),
@@ -1068,16 +1210,21 @@ facade_trait! {
         fn current_branch() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
         fn local_branches() -> Result<Vec<String>>;
+        fn local_branches_readonly() -> Result<Vec<String>>;
         fn branch_exists(name: &str) -> Result<bool>;
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
-        fn conflicted_files() -> Result<Vec<String>>;
+        fn conflicted_files() -> Result<Vec<PathBuf>>;
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
+        fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
+        fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn show_file_within(rev: &str, path: &str, budget: OutputBudget) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
-        fn commit_paths(paths: &[String], message: &str) -> Result<()>;
+        fn snapshot_readonly() -> Result<RepoSnapshot>;
+        fn commit_paths(paths: &[PathBuf], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_branch(branch: &str) -> Result<()>;
@@ -1520,8 +1667,9 @@ mod tests {
                 // (`jj log -r heads(::@ & bookmarks())`): bookmarks \t commit
                 .on(
                     ["jj", "log", "-r", "heads(::@ & bookmarks())"],
-                    Reply::ok("main\tdeadbeef\n"),
+                    Reply::ok("\"main\"\tdeadbeef\n"),
                 )
+                .on(["jj", "root"], Reply::ok("/repo\n"))
                 .on(["jj", "diff"], Reply::ok("M a.rs\nA b.rs\n")), // status -r @ --summary → 2
         );
         let s = repo.snapshot().await.unwrap();
@@ -1568,6 +1716,7 @@ mod tests {
                     ["jj", "log", "-r", "heads(::@ & bookmarks())"],
                     Reply::ok(""),
                 ) // no bookmark
+                .on(["jj", "root"], Reply::ok("/repo\n"))
                 .on(["jj", "diff"], Reply::ok("M conflicted.rs\n")), // status → 1
         );
         let s = repo.snapshot().await.unwrap();
@@ -1588,7 +1737,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\tmain\nws1\tdecaf0\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\"main\"\n\"ws1\"\tdecaf0\t\n"),
                 )
                 .on(
                     [
@@ -1629,7 +1778,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\tmain\ngone\tdecaf0\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\"main\"\n\"gone\"\tdecaf0\t\n"),
                 )
                 .on(
                     [
@@ -1666,7 +1815,10 @@ mod tests {
     async fn jj_remove_worktree_surfaces_forget_error() {
         let repo = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                )
                 .on(
                     [
                         "jj",
@@ -1689,6 +1841,137 @@ mod tests {
         assert!(res.is_err(), "a forget failure is surfaced, not swallowed");
     }
 
+    // Windows-like removal failure: `remove_worktree` surfaces a `remove_dir_all`
+    // failure and names what remains (the still-registered workspace) rather than
+    // swallowing it. A *file* sits where the workspace dir should be, so
+    // `remove_dir_all` errors deterministically on every platform.
+    #[tokio::test]
+    async fn jj_remove_worktree_surfaces_dir_removal_failure() {
+        let tmp = TempDir::new("rmw-rmdir-fail");
+        let ws = tmp.path().join("ws1");
+        std::fs::write(&ws, b"not a dir").expect("write file where the dir should be");
+        let root = tmp.path().to_string_lossy().into_owned();
+        let ws_str = ws.to_string_lossy().into_owned();
+        let repo = Repo::from_jj(
+            &root,
+            &root,
+            Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
+                    .on(
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "ws1",
+                        ],
+                        Reply::ok(format!("{ws_str}\n")),
+                    ),
+            ),
+        );
+        // force skips the dirty check, so the removal step is reached directly.
+        let err = repo
+            .remove_worktree(WorktreeRemove::new(ws.clone()).force())
+            .await
+            .expect_err("a dir-removal failure must be surfaced");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("still registered") && msg.contains("ws1"),
+            "the failure must name what remains to clean up: {msg}"
+        );
+        assert!(
+            ws.exists(),
+            "the undeletable path must survive the failed removal"
+        );
+    }
+
+    // Compatible fallback / diagnosable error: when a registered workspace's root
+    // can't be resolved via `workspace root --name`, a path matching none of the
+    // resolvable ones is NOT reported as a clean `WorktreeNotFound` — absence can't be
+    // proven, so a distinct diagnosable error naming the unresolved workspace is
+    // raised instead (so a real-but-unresolvable workspace isn't misreported).
+    #[tokio::test]
+    async fn jj_remove_worktree_reports_unresolvable_workspaces() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("\"ws1\"\tc0ffee\t\n\"gone\"\tdecaf0\t\n"),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
+                    Reply::ok("/repo/ws1\n"),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "gone",
+                    ],
+                    Reply::fail(1, "Error: No such workspace"),
+                ),
+        );
+        let err = repo
+            .remove_worktree(WorktreeRemove::new("/repo/missing"))
+            .await
+            .expect_err("an unresolvable workspace must not be reported as a clean not-found");
+        assert!(
+            !err.is_resource_not_found(),
+            "a partial resolution is not a clean WorktreeNotFound: {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("could not resolve") && msg.contains("gone"),
+            "the diagnosable error must name the unresolved workspace: {msg}"
+        );
+    }
+
+    // Repeated cleanup is idempotent: after a first pass removed the directory but its
+    // `workspace forget` failed, a retry finds the dir already gone, re-resolves the
+    // still-registered workspace by name, and completes the forget — no error.
+    #[tokio::test]
+    async fn jj_remove_worktree_retry_after_dir_gone_forgets_cleanly() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "ws1",
+                    ],
+                    Reply::ok("/repo/ws1\n"),
+                )
+                .on(["jj", "workspace", "forget"], Reply::ok("")),
+        );
+        // `/repo/ws1` does not exist on disk (a prior pass removed it), so the removal
+        // step is skipped and the forget clears the dangling registration.
+        repo.remove_worktree(WorktreeRemove::new("/repo/ws1"))
+            .await
+            .expect("a retry with the dir already gone completes the forget");
+    }
+
     // C1: the default workspace resolves at the repo root; removing it would wipe
     // the whole repository, so it is refused even with force = true and WITHOUT
     // running `workspace forget` (no such cassette rule — a miss would also error,
@@ -1699,7 +1982,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\n"),
                 )
                 .on(
                     [
@@ -1734,7 +2017,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -1747,7 +2033,7 @@ mod tests {
                         Reply::ok(format!("{root}\n")),
                     )
                     // `current_change` → 3rd field `false` = not empty = dirty.
-                    .on(["jj", "log"], Reply::ok("aaa\tbbb\tfalse\twork\n")),
+                    .on(["jj", "log"], Reply::ok("aaa\tbbb\tfalse\t\"work\"\n")),
             ),
         );
         let err = repo
@@ -1778,7 +2064,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -1815,7 +2104,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("mainws\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"mainws\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -1892,7 +2184,7 @@ mod tests {
         assert_eq!(changes[0].kind, ChangeKind::Modified);
         assert_eq!(changes[1].kind, ChangeKind::Added);
         assert_eq!(changes[2].kind, ChangeKind::Renamed);
-        assert_eq!(changes[2].old_path.as_deref(), Some("old.rs"));
+        assert_eq!(changes[2].old_path.as_deref(), Some(Path::new("old.rs")));
     }
 
     #[tokio::test]
@@ -1941,7 +2233,8 @@ mod tests {
         // current_branch derives from `reachable_bookmarks`, whose template is
         // `<bookmarks space-joined>\t<commit>` — distinct from the strict
         // `current_bookmark(@)` comma-joined template.
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\t53e4e879\n")));
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"main\"\t53e4e879\n")));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("main")
@@ -1956,7 +2249,8 @@ mod tests {
         // still on my branch". Under the old strict `current_bookmark(@)` rule
         // this returned `None`; feeding the reachable template (`feat\t…`,
         // unparseable as a comma-joined bookmark name) pins the new derivation.
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("feat\tc8d49332\n")));
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"feat\"\tc8d49332\n")));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("feat")
@@ -1972,7 +2266,7 @@ mod tests {
         // result is stable. Here: rows `zeta` then `alpha beta` ⇒ `alpha`.
         let repo = jj_repo(ScriptedRunner::new().on(
             ["jj", "log"],
-            Reply::ok("zeta\tabc1234\nalpha beta\tdef5678\n"),
+            Reply::ok("\"zeta\"\tabc1234\n\"alpha\" \"beta\"\tdef5678\n"),
         ));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
@@ -1982,21 +2276,25 @@ mod tests {
 
     #[tokio::test]
     async fn jj_local_branches_maps_bookmark_list() {
-        // BOOKMARK_LIST_TEMPLATE rows: `name\t<commit>`.
+        // BOOKMARK_LIST_TEMPLATE rows: `<present>\t<remote>\t"<name>"\t<commit>`.
         let repo = jj_repo(ScriptedRunner::new().on(
             ["jj", "bookmark", "list"],
-            Reply::ok("main\tcmt\nfeat\tm2\n"),
+            Reply::ok("1\t\t\"main\"\tcmt\n1\t\t\"feat\"\tm2\n"),
         ));
         assert_eq!(repo.local_branches().await.unwrap(), ["main", "feat"]);
     }
 
     #[tokio::test]
     async fn jj_branch_exists_scans_bookmarks() {
-        let repo =
-            jj_repo(ScriptedRunner::new().on(["jj", "bookmark", "list"], Reply::ok("main\tcmt\n")));
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok("1\t\t\"main\"\tcmt\n"),
+        ));
         assert!(repo.branch_exists("main").await.unwrap());
-        let repo2 =
-            jj_repo(ScriptedRunner::new().on(["jj", "bookmark", "list"], Reply::ok("main\tcmt\n")));
+        let repo2 = jj_repo(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok("1\t\t\"main\"\tcmt\n"),
+        ));
         assert!(!repo2.branch_exists("missing").await.unwrap());
     }
 
@@ -2004,9 +2302,10 @@ mod tests {
     async fn jj_has_uncommitted_changes_reads_empty_flag() {
         // CHANGE_TEMPLATE row: change_id \t commit_id \t empty \t description
         let dirty =
-            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\twip\n")));
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")));
         assert!(dirty.has_uncommitted_changes().await.unwrap());
-        let clean = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\ttrue\t\n")));
+        let clean =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\ttrue\t\"\"\n")));
         assert!(!clean.has_uncommitted_changes().await.unwrap());
     }
 
@@ -2019,8 +2318,8 @@ mod tests {
         let repo = jj_repo(ScriptedRunner::new().on_sequence(
             ["jj", "log"],
             [
-                Reply::ok("kz\t38\ttrue\t\n"), // current_change: empty = true
-                Reply::ok("1\n"),              // is_conflicted: conflicted
+                Reply::ok("kz\t38\ttrue\t\"\"\n"), // current_change: empty = true
+                Reply::ok("1\n"),                  // is_conflicted: conflicted
             ],
         ));
         assert!(
@@ -2032,7 +2331,9 @@ mod tests {
     #[tokio::test]
     async fn jj_changed_files_maps_diff_summary() {
         let repo = jj_repo(
-            ScriptedRunner::new().on(["jj", "diff"], Reply::ok("M src/a.rs\nA b.rs\nD gone.rs\n")),
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(["jj", "diff"], Reply::ok("M src/a.rs\nA b.rs\nD gone.rs\n")),
         );
         let changes = repo.changed_files().await.unwrap();
         assert_eq!(changes.len(), 3);
@@ -2047,13 +2348,18 @@ mod tests {
     #[tokio::test]
     async fn jj_changed_files_populates_rename_old_path() {
         let repo = jj_repo(
-            ScriptedRunner::new().on(["jj", "diff"], Reply::ok("R src/{old.rs => new.rs}\n")),
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(["jj", "diff"], Reply::ok("R src/{old.rs => new.rs}\n")),
         );
         let changes = repo.changed_files().await.unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].kind, ChangeKind::Renamed);
-        assert_eq!(changes[0].path, "src/new.rs");
-        assert_eq!(changes[0].old_path.as_deref(), Some("src/old.rs"));
+        assert_eq!(changes[0].path, Path::new("src/new.rs"));
+        assert_eq!(
+            changes[0].old_path.as_deref(),
+            Some(Path::new("src/old.rs"))
+        );
     }
 
     // `commit_paths(&[])` is refused up front on BOTH backends: the runners have
@@ -2221,36 +2527,29 @@ mod tests {
         assert_eq!(&args[..4], &["git", "push", "-b", "exact:feature"]);
     }
 
-    // The two backends handle a flag-like branch per the documented guard
-    // convention: git rejects it BEFORE spawning (the branch lands in GitPush's
-    // bare-positional refspec slot, where `--force` would otherwise be parsed
-    // as a flag); jj passes it verbatim in the `-b` flag-VALUE slot, where jj
-    // reads it as a bookmark name and errors itself — no flag injection is
-    // possible there, so no pre-spawn guard exists (same as rebase/fetch_from).
+    // A flag-like branch is now rejected the same way on BOTH backends: the
+    // facade converts the branch string into the validated newtype at the
+    // boundary (`vcs_git::RefName` / `vcs_jj::BookmarkName`), so `--force` is
+    // refused with a classifiable input-validation error BEFORE any process
+    // spawns — no longer a per-backend difference.
     #[tokio::test]
-    async fn push_flag_like_branch_follows_guard_convention() {
+    async fn push_flag_like_branch_rejected_before_spawn_on_both_backends() {
         use processkit::testing::RecordingRunner;
         let grec = RecordingRunner::replying(Reply::ok(""));
         let err = Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
             .push("--force")
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, Error::Vcs(processkit::Error::Spawn { .. })),
-            "got: {err:?}"
-        );
-        assert_eq!(grec.calls().len(), 0, "no process must have spawned");
+        assert!(err.is_invalid_input(), "git: got {err:?}");
+        assert_eq!(grec.calls().len(), 0, "git: no process must have spawned");
 
         let jrec = RecordingRunner::replying(Reply::ok(""));
-        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
+        let err = Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
             .push("--force")
             .await
-            .expect("jj path spawns; the value rides -b verbatim");
-        assert_eq!(
-            &jrec.only_call().args_str()[..4],
-            &["git", "push", "-b", "exact:--force"],
-            "the flag-like value must ride the -b flag-VALUE slot, not become argv"
-        );
+            .unwrap_err();
+        assert!(err.is_invalid_input(), "jj: got {err:?}");
+        assert_eq!(jrec.calls().len(), 0, "jj: no process must have spawned");
     }
 
     #[tokio::test]
@@ -2291,7 +2590,7 @@ mod tests {
     #[tokio::test]
     async fn jj_has_tracked_changes_follows_working_copy() {
         let dirty =
-            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\twip\n")));
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")));
         assert!(dirty.has_tracked_changes().await.unwrap());
     }
 
@@ -2301,13 +2600,16 @@ mod tests {
             git_repo(ScriptedRunner::new().on(["git", "diff"], Reply::ok("a.rs\0b dir/c.rs\0")));
         assert_eq!(
             git.conflicted_files().await.unwrap(),
-            ["a.rs", "b dir/c.rs"]
+            [PathBuf::from("a.rs"), PathBuf::from("b dir/c.rs")]
         );
 
         let jj = jj_repo(
             ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
         );
-        assert_eq!(jj.conflicted_files().await.unwrap(), ["a.rs"]);
+        assert_eq!(
+            jj.conflicted_files().await.unwrap(),
+            [PathBuf::from("a.rs")]
+        );
         // The benign "no conflicts" non-zero exit still reads as an empty list.
         let clean = jj_repo(ScriptedRunner::new().on(
             ["jj", "resolve"],
@@ -2360,7 +2662,7 @@ mod tests {
         let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
         assert_eq!(
             repo.try_merge("other").await.unwrap(),
-            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+            MergeProbe::Conflicts(vec![PathBuf::from("a.rs")])
         );
         let calls = rec.calls();
         let diff_pos = calls.iter().position(|c| c.args_str()[0] == "diff");
@@ -2406,7 +2708,7 @@ mod tests {
         let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
         assert_eq!(
             repo.try_merge("feature").await.unwrap(),
-            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+            MergeProbe::Conflicts(vec![PathBuf::from("a.rs")])
         );
         let calls = rec.calls();
         assert_eq!(calls[0].args_str()[..2], ["op", "log"]);
@@ -2436,6 +2738,45 @@ mod tests {
                 .on(["jj", "log"], Reply::ok("0\n")),
         );
         assert!(broken.try_merge("feature").await.is_err());
+    }
+
+    // jj try_merge shares `Jj::rollback_to`'s concurrency guard: if a concurrent jj
+    // process advances the op log during the trial merge (jj records a `>= 2`-parent
+    // "reconcile divergent operations" merge), the rollback is REFUSED rather than
+    // clobbering that work — try_merge surfaces `Error::Rollback` instead of a stale,
+    // untrustworthy `Clean`, and issues no `op restore`.
+    #[tokio::test]
+    async fn jj_try_merge_refuses_rollback_on_op_log_divergence() {
+        use processkit::testing::RecordingRunner;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [
+                        Reply::ok("op42\n"),              // capture → pre
+                        Reply::ok("merge\t2\nop42\t1\n"), // probe → foreign reconcile merge
+                    ],
+                )
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "new"], Reply::ok(""))
+                .on(["jj", "log"], Reply::ok("0\n")),
+        );
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        let err = repo
+            .try_merge("feature")
+            .await
+            .expect_err("a divergence must error, not report a stale Clean");
+        assert!(
+            matches!(err, Error::Rollback(vcs_jj::Rollback::SkippedDiverged)),
+            "expected Error::Rollback(SkippedDiverged), got {err:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| c.args_str()[..2] != ["op", "restore"]),
+            "the concurrent op must not be clobbered by a restore: {:?}",
+            rec.calls()
+        );
     }
 
     // continue_in_progress with unresolved paths reports `Conflict` and must NOT
@@ -2557,15 +2898,172 @@ mod tests {
         );
     }
 
+    // T-044: the sequencer states are read from their own git-dir markers and,
+    // crucially, a cherry-pick/revert marker is NOT mistaken for a merge (which
+    // would then dispatch `merge --abort`). `snapshot().operation` must agree with
+    // `in_progress_state`, since the watcher diffs the snapshot.
+    #[tokio::test]
+    async fn git_in_progress_state_maps_cherry_pick_revert_and_bisect() {
+        for (marker, expected) in [
+            ("CHERRY_PICK_HEAD", OperationState::CherryPick),
+            ("REVERT_HEAD", OperationState::Revert),
+            ("BISECT_LOG", OperationState::Bisect),
+        ] {
+            let gd = TempDir::new("inprog-seq");
+            std::fs::write(gd.path().join(marker), "deadbeef\n").unwrap();
+            let repo = Repo::from_git(
+                "/repo",
+                "/repo",
+                // `snapshot` also runs `status --porcelain=v2 --branch`; a clean reply
+                // lets it reach the operation probe. Both methods resolve the git dir
+                // via `rev-parse`.
+                Git::with_runner(
+                    ScriptedRunner::new()
+                        .on(["git", "status"], Reply::ok(""))
+                        .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap())),
+                ),
+            );
+            assert_eq!(
+                repo.in_progress_state().await.unwrap(),
+                expected,
+                "{marker} must read as {expected:?}"
+            );
+            assert_eq!(
+                repo.snapshot().await.unwrap().operation,
+                expected,
+                "snapshot().operation must agree for {marker}"
+            );
+        }
+    }
+
+    // T-044: abort dispatches the state's OWN git command — the whole point of
+    // keeping the states distinct. A cherry-pick must abort with `cherry-pick
+    // --abort`, never `merge --abort`.
+    #[tokio::test]
+    async fn git_abort_dispatches_each_sequencer_command() {
+        use processkit::testing::RecordingRunner;
+        for (marker, argv) in [
+            ("CHERRY_PICK_HEAD", vec!["cherry-pick", "--abort"]),
+            ("REVERT_HEAD", vec!["revert", "--abort"]),
+            ("BISECT_LOG", vec!["bisect", "reset"]),
+        ] {
+            let gd = TempDir::new("abort-seq");
+            let marker_path = gd.path().join(marker);
+            std::fs::write(&marker_path, "x\n").unwrap();
+            // The abort command's ScriptedRunner side-effect: remove the marker so the
+            // *post-call* `in_progress_state` re-probe reads `Clear`.
+            let mp = marker_path.clone();
+            let rec = RecordingRunner::new(
+                ScriptedRunner::new()
+                    .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                    .when(
+                        move |cmd| {
+                            let a0 = cmd.arguments().first().and_then(|a| a.to_str());
+                            let is_abort = matches!(a0, Some("cherry-pick" | "revert" | "bisect"));
+                            if is_abort {
+                                let _ = std::fs::remove_file(&mp);
+                            }
+                            is_abort
+                        },
+                        Reply::ok(""),
+                    ),
+            );
+            let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+            assert_eq!(
+                repo.abort_in_progress().await.unwrap(),
+                OperationState::Clear,
+                "{marker} abort must leave the repo Clear"
+            );
+            assert!(
+                rec.calls().iter().any(|c| c.args_str() == argv),
+                "{marker} must dispatch {argv:?}, got {:?}",
+                rec.calls()
+            );
+        }
+    }
+
+    // T-044: a bisect has no continue step — `continue_in_progress` must refuse it
+    // with `Error::Unsupported`, not silently report it still in progress. And no
+    // git mutation may run (only the conflict probe + git-dir resolution).
+    #[tokio::test]
+    async fn git_continue_on_bisect_is_unsupported_and_inert() {
+        use processkit::testing::RecordingRunner;
+        let gd = TempDir::new("continue-bisect");
+        std::fs::write(gd.path().join("BISECT_LOG"), "x\n").unwrap();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok("")) // no conflicted paths
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap())),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        let err = repo
+            .continue_in_progress()
+            .await
+            .expect_err("bisect continue must be refused");
+        assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| matches!(c.args_str()[0].as_str(), "diff" | "rev-parse")),
+            "no git mutation may run for an unsupported continue: {:?}",
+            rec.calls()
+        );
+    }
+
+    // T-044: a cherry-pick that continues cleanly commits and reports the post-call
+    // state; the routing calls `cherry-pick --continue`, not a merge/rebase continue.
+    #[tokio::test]
+    async fn git_continue_dispatches_cherry_pick_continue() {
+        use processkit::testing::RecordingRunner;
+        let gd = TempDir::new("continue-cp");
+        let marker = gd.path().join("CHERRY_PICK_HEAD");
+        std::fs::write(&marker, "x\n").unwrap();
+        let mp = marker.clone();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok("")) // nothing conflicted → not blocked
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                .when(
+                    move |cmd| {
+                        let is_cont =
+                            cmd.arguments().first().and_then(|a| a.to_str()) == Some("cherry-pick");
+                        if is_cont {
+                            let _ = std::fs::remove_file(&mp); // completes the pick
+                        }
+                        is_cont
+                    },
+                    Reply::ok(""),
+                ),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Clear
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["cherry-pick", "--continue"]),
+            "must dispatch cherry-pick --continue: {:?}",
+            rec.calls()
+        );
+    }
+
     // On an unborn git repo (no commits) diff_stat probes is_unborn and stats
     // against the empty tree instead of the unresolvable HEAD, so a fresh working
-    // tree reports its additions rather than erroring.
+    // tree reports its additions rather than erroring. The empty-tree id is
+    // resolved from git (`hash-object`), so it tracks the repo's object format
+    // rather than being a hard-coded SHA-1 value.
     #[tokio::test]
     async fn git_diff_stat_unborn_uses_empty_tree() {
         use processkit::testing::RecordingRunner;
+        // A SHA-256 repo's empty-tree id (64 hex): the value `hash-object` returns,
+        // which `diff_stat` must then target verbatim.
+        let oid = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(["git", "rev-parse"], Reply::fail(1, "")) // HEAD unborn
+                .on(["git", "hash-object"], Reply::ok(format!("{oid}\n")))
                 .on(
                     ["git", "diff", "--shortstat"],
                     Reply::ok(" 1 file changed, 2 insertions(+)\n"),
@@ -2577,10 +3075,65 @@ mod tests {
         assert!(
             rec.calls()
                 .iter()
-                .any(|c| c.args_str() == ["diff", "--shortstat", vcs_git::EMPTY_TREE, "--"]),
-            "diff_stat should target the empty tree on an unborn repo: {:?}",
+                .any(|c| c.args_str() == ["diff", "--shortstat", oid, "--"]),
+            "diff_stat should target the resolved empty tree on an unborn repo: {:?}",
             rec.calls()
         );
+    }
+
+    // `Repo::log` on git maps `GitApi::log`'s typed `Commit` (hash/author/date/
+    // subject) onto the facade `Commit`, with author/date populated.
+    #[tokio::test]
+    async fn git_log_maps_commit_fields() {
+        let repo = git_repo(ScriptedRunner::new().on(
+            ["git", "log"],
+            Reply::ok("deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0"),
+        ));
+        let commits = repo.log("HEAD", 10).await.unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].id, "deadbeef");
+        assert_eq!(commits[0].description, "Fix bug");
+        assert_eq!(commits[0].author.as_deref(), Some("Jane"));
+        assert_eq!(
+            commits[0].date.as_deref(),
+            Some("2026-05-31T10:00:00+00:00")
+        );
+    }
+
+    // `Repo::log` on jj maps `JjApi::log`'s typed `Change` (change-id/commit-id/
+    // empty/description) onto the facade `Commit` — author/date stay `None`, since
+    // jj's typed log doesn't surface them.
+    #[tokio::test]
+    async fn jj_log_maps_change_with_no_author_or_date() {
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "log"],
+            Reply::ok("kztuxlro\t38e00654\tfalse\t\"wip\"\n"),
+        ));
+        let commits = repo.log("@", 10).await.unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].id, "38e00654");
+        assert_eq!(commits[0].description, "wip");
+        assert_eq!(commits[0].author, None);
+        assert_eq!(commits[0].date, None);
+    }
+
+    // `Repo::show_file` on git dispatches to `GitApi::show_file` and forwards its
+    // content verbatim.
+    #[tokio::test]
+    async fn git_show_file_dispatches_to_git_backend() {
+        let repo = git_repo(ScriptedRunner::new().on(["git", "show"], Reply::ok("fn main() {}\n")));
+        let content = repo.show_file("HEAD", "src/main.rs").await.unwrap();
+        assert_eq!(content, "fn main() {}\n");
+    }
+
+    // `Repo::show_file` on jj dispatches to `JjApi::file_show` and forwards its
+    // content verbatim.
+    #[tokio::test]
+    async fn jj_show_file_dispatches_to_jj_backend() {
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "file", "show"], Reply::ok("fn main() {}\n")));
+        let content = repo.show_file("@-", "src/main.rs").await.unwrap();
+        assert_eq!(content, "fn main() {}\n");
     }
 
     // On jj, abort/continue are reporting no-ops (nothing is ever paused).

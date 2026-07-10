@@ -55,6 +55,27 @@ async fn version_runs() {
     assert!(!v.trim().is_empty(), "expected a version string");
 }
 
+// The real `tea --version` banner must parse into a version at/above the crate
+// floor. This is the "modern real binary" arm of the version-gate check the
+// scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
+// minimum and unrecognisable arms): if a future `tea` reshapes its `--version`
+// output so the shared parser can't read it, `capabilities()` returns
+// `Error::Parse` and this fails, flagging the drift.
+#[tokio::test]
+#[ignore = "requires the tea binary"]
+async fn capability_version_gate_real_binary() {
+    if !tea_present().await {
+        eprintln!("skipping: tea not installed");
+        return;
+    }
+    let caps = Gitea::new().capabilities().await.expect("tea capabilities");
+    assert!(
+        caps.is_supported(),
+        "the installed tea ({}) is below vcs-gitea's supported floor",
+        caps.version
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires the tea binary"]
 async fn auth_status_does_not_error() {

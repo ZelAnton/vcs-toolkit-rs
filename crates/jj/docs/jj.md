@@ -71,14 +71,15 @@ let res = jj.run_raw_args(&["status"]).await?;              // ProcessResult<Str
 
 ### `transaction` — op-log rollback
 
-Run a closure with op-log rollback: capture the current operation
-([`op_head`]), run `f` against a bound `JjAt`, and on `Err` restore the repo to
-that operation ([`op_restore`]) before propagating the error.
+Run a closure with concurrency-safe op-log rollback: capture the current operation
+([`op_head`]), run `f` against a bound `JjAt`, and on `Err` roll the repo back to
+that operation ([`rollback_to`]), reporting what the rollback did on the returned
+`TransactionError`.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::Jj;
-# async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
+# use vcs_jj::{Jj, TransactionError};
+# async fn demo(jj: &Jj, repo: &Path) -> Result<(), TransactionError> {
 jj.transaction(repo, |tx| async move {
     tx.describe("wip").await?;
     tx.new_change("next").await        // an Err here rolls back the describe
@@ -90,7 +91,11 @@ jj.transaction(repo, |tx| async move {
 Signature:
 
 ```rust,ignore
-pub async fn transaction<'a, T, F, Fut>(&'a self, dir: &'a Path, f: F) -> Result<T>
+pub async fn transaction<'a, T, F, Fut>(
+    &'a self,
+    dir: &'a Path,
+    f: F,
+) -> Result<T, TransactionError>
 where
     F: FnOnce(JjAt<'a, R>) -> Fut,
     Fut: Future<Output = Result<T>> + 'a;
@@ -99,16 +104,23 @@ where
 Inherent (not on the object-safe trait): the closure parameter is generic, which
 `mockall`/trait objects can't express. `JjAt::transaction(f)` is the bound form.
 
-**Caveats** (see the rustdoc for the full wording): it is **single-actor** — the
-rollback is `op_restore <pre>`, which restores the *whole* repo view, so a change
-another jj process landed between the `op_head` capture and the restore is reverted
-too. Rollback runs on `Err` only — **not** on panic or a dropped future (no async
-`Drop`); convert panics to `Err` inside `f` if you need that. A **cancelled `f` also
-cancels the rollback**: if `f`'s `Err` is a fired `default_cancel_on` token, the
-restore short-circuits before spawning and is skipped — run it yourself on a
-token-free client if it must survive cancellation. If the restore itself fails, the
-*original* error is returned and the repo may be left mid-transaction — re-probe
-[`op_head`] to detect that.
+On the closure's `Err`, the `TransactionError` preserves that error as `cause` and
+carries the `rollback` outcome (`Rollback`: `Restored` / `SkippedDiverged` /
+`Failed` / `NotAttempted`) — so a failed or refused rollback is visible, not
+swallowed. Use `TransactionError::into_cause()` for just the old closure error.
+
+**Caveats** (see the rustdoc for the full wording): it is **single-actor**, but no
+longer silent about it — the rollback restores the *whole* repo view, so if another
+jj process advances the op log between the [`op_head`] capture and the restore, the
+rollback now **detects** the divergence and **refuses** to revert (returning
+`Rollback::SkippedDiverged`) rather than clobbering that foreign work. Rollback runs
+on `Err` only — **not** on panic or a dropped future (no async `Drop`); convert
+panics to `Err` inside `f` if you need that. A **cancelled `f` no longer cancels the
+rollback**: the cleanup runs on a fresh cancellation context with its own deadline,
+so a fired `default_cancel_on` token does not short-circuit the restore. If the
+restore itself fails, the closure's error is still returned as `cause` and the
+failure is surfaced as `Rollback::Failed` (no longer discarded); the repo may be
+left mid-transaction.
 
 ---
 
@@ -130,7 +142,7 @@ async fn current_change(&self, dir: &Path) -> Result<Change>;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 for c in jj.status(repo).await? {                  // Vec<ChangedPath>
-    println!("{} {}", c.status, c.path);           // e.g. 'M' src/lib.rs
+    println!("{} {}", c.status, c.path.display());  // e.g. 'M' src/lib.rs
 }
 let head = jj.current_change(repo).await?;         // Change { change_id, commit_id, empty, description }
 # Ok(()) }
@@ -198,7 +210,7 @@ async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()>;
 async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()>;
 async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()>;
-async fn bookmark_move(&self, dir: &Path, name: &str, to: &str, allow_backwards: bool) -> Result<()>;
+async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 ```
 
 - `bookmarks` — local bookmarks (`bookmark list`).
@@ -213,7 +225,8 @@ async fn bookmark_move(&self, dir: &Path, name: &str, to: &str, allow_backwards:
 - `bookmark_create` / `bookmark_delete` / `bookmark_rename` — at/by name.
 - `bookmark_track` — track a remote bookmark (`bookmark track <name>@<remote>`).
 - `bookmark_set` — point a bookmark at `revision` (`bookmark set <name> -r`).
-- `bookmark_move` — move to `to`; pass `allow_backwards` to append
+- `bookmark_move` — move a bookmark to a revision, built with
+  `BookmarkMove::new(name, to)`; chain `.allow_backwards()` to append
   `--allow-backwards`.
 
 Every name-taking method rejects an empty or leading-`-` name *before* spawning
@@ -302,7 +315,7 @@ for line in jj.file_annotate(repo, "src/lib.rs", None).await? {   // Vec<Annotat
 ```rust,ignore
 async fn is_conflicted(&self, dir: &Path, revset: &str) -> Result<bool>;
 async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
-async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>>;
+async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<PathBuf>>;
 ```
 
 `is_conflicted` asks the template engine whether the commit a revset resolves to
@@ -317,8 +330,8 @@ file is a separate, pure module: see [Conflict resolution](https://docs.rs/vcs-g
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 if jj.has_workingcopy_conflict(repo).await? {
-    for p in jj.resolve_list(repo, "@").await? {     // Vec<String>
-        eprintln!("conflict: {p}");
+    for p in jj.resolve_list(repo, "@").await? {     // Vec<PathBuf>
+        eprintln!("conflict: {}", p.display());
     }
 }
 # Ok(()) }
@@ -355,16 +368,16 @@ jj.edit(repo, "@-").await?;
 ## Squash & split
 
 ```rust,ignore
-async fn squash_into(&self, dir: &Path, into: &str, use_destination_message: bool) -> Result<()>;
+async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()>;
 async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
 async fn squash_paths(&self, dir: &Path, spec: SquashPaths) -> Result<()>;
 async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
 async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset]) -> Result<()>;
 ```
 
-- `squash_into` — squash the working copy into `into` (`squash --into`). With
-  `use_destination_message`, keep the destination's description
-  (`--use-destination-message`) instead of combining the two.
+- `squash_into` — squash the working copy into `into` (`squash --into`), built
+  with `SquashInto::new(into)`. Chain `.use_destination_message()` to keep the
+  destination's description (`--use-destination-message`) instead of combining the two.
 - `commit_paths` — finalise a commit from exactly these [`JjFileset`]s
   (`commit -m <message> <filesets>`); the rest stay in the new working-copy
   change. Like `split_paths`, `filesets` must be **non-empty** — a fileset-less
@@ -382,12 +395,12 @@ async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset])
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::{Jj, JjApi, JjFileset, SquashPaths};
+# use vcs_jj::{Jj, JjApi, JjFileset, SquashInto, SquashPaths};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 let only = [JjFileset::path("src/parser.rs")];
 jj.split_paths(repo, &only, "feat: parser").await?;
 jj.commit_paths(repo, &only, "feat: parser").await?;
-jj.squash_into(repo, "@-", false).await?;
+jj.squash_into(repo, SquashInto::new("@-")).await?;
 jj.squash_paths(repo, SquashPaths::new("@", "@-").filesets(only)).await?;
 jj.absorb(repo, None, &[]).await?;            // absorb everything into ancestors
 # Ok(()) }
@@ -442,7 +455,7 @@ async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
 async fn git_fetch_branch(&self, dir: &Path, branch: &str) -> Result<()>;
 async fn git_push(&self, dir: &Path, bookmark: Option<String>) -> Result<()>;
 async fn git_import(&self, dir: &Path) -> Result<()>;
-async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
+async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
 ```
 
 - `git_fetch` — `jj git fetch`. Transient (network) failures are retried: 3
@@ -454,22 +467,23 @@ async fn git_clone(&self, url: &str, dest: &Path, colocate: bool) -> Result<()>;
 - `git_fetch_branch` — fetch a single bookmark from origin (`git fetch --remote
   origin -b <branch>`); same retry policy.
 - `git_push` — `jj git push`, optionally `-b <bookmark>`. The bookmark is owned
-  (`Option<String>`) to keep the trait `mockall`-friendly.
+  (`Option<BookmarkName>`) to keep the trait `mockall`-friendly.
 - `git_import` — import git refs into jj (`jj git import`) — colocated-repo sync.
 - `git_clone` — clone into `dest` (`git clone <url> <dest>
-  --colocate|--no-colocate`). Runs **without** a working directory — pass an
+  --colocate|--no-colocate`), the colocation chosen by `GitClone::colocated()`
+  or `GitClone::separate()`. Runs **without** a working directory — pass an
   **absolute** `dest`. The colocate flag is *always* passed explicitly:
   whether colocation is jj's default depends on the jj version and the user's
-  `git.colocate` config, so `colocate` decides deterministically. `url` is
+  `git.colocate` config, so the `GitClone` choice decides deterministically. `url` is
   guarded against a leading-`-` value.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::{Jj, JjApi};
+# use vcs_jj::{GitClone, Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 jj.git_fetch(repo).await?;
 jj.git_push(repo, Some("main".to_string())).await?;     // `jj git push -b main`
-jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), true).await?;
+jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), GitClone::colocated()).await?;
 # Ok(()) }
 ```
 
@@ -502,7 +516,12 @@ jj.workspace_forget(repo, "feature").await?;
 > A synchronous, best-effort `vcs_jj::blocking` module mirrors `workspace_forget`
 > (and `workspace_name_for_path`) for `Drop` guards that cannot `.await`. It
 > shells out via `std::process` directly — no async, no job containment — so
-> reserve it for short-lived cleanup.
+> reserve it for short-lived cleanup. `workspace_name_for_path` returns
+> `io::Result<Option<String>>`: `Ok(Some(name))` on a match, `Ok(None)` for a
+> clean "no such workspace" (skip the cleanup), and `Err` when the probe itself
+> could not answer (`jj` missing, `workspace list` failed, or a registered
+> workspace did not resolve) — so a real failure is no longer folded into a silent
+> `None`.
 
 ## Operation log
 
@@ -569,6 +588,14 @@ exit). `run_raw` never errors on a non-zero exit — it returns the captured
 are **not** injection-guarded; the inherent `run_args`/`run_raw_args` are the
 `&[&str]` siblings.
 
+**cwd (T-035).** On the **client** (`jj.run(…)`) these run in the **process's
+current directory**. On the **bound view** (`jj.at(dir).run(…)`) they are instead
+bound to `dir`: the view forwards to the client's dir-taking `run_in`/`run_raw_in`/
+`run_args_in`/`run_raw_args_in`, so a raw call through the handle runs in the bound
+repo, like every other `JjAt` method. The bound raw hatch stays verbatim — unlike
+the modelled methods it does **not** inject `--color never`. Reach for the client's
+`run` when you deliberately want the process cwd.
+
 ```rust,ignore
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj) -> Result<(), processkit::Error> {
@@ -604,7 +631,7 @@ A jj change, parsed from a tab-delimited template row.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | `String` | Bookmark name. |
-| `target` | `String` | Short id of the commit it points at. |
+| `target` | `String` | **Full** commit id it points at (empty for a conflicted bookmark) — a cross-referenceable id, not a display prefix. |
 
 ### `BookmarkRef`
 From `bookmark list -a` — local *or* remote-tracking.
@@ -613,14 +640,14 @@ From `bookmark list -a` — local *or* remote-tracking.
 | --- | --- | --- |
 | `name` | `String` | Bookmark name. |
 | `remote` | `Option<String>` | Remote (e.g. `origin`/`git`); `None` for a local. |
-| `target` | `String` | Short commit id (empty for a conflicted bookmark). |
+| `target` | `String` | **Full** commit id (empty for a conflicted bookmark) — a cross-referenceable id, not a display prefix. |
 | `tracked` | `bool` | Whether this remote-tracking bookmark is tracked (`false` for locals). |
 
 ### `Workspace`
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | `String` | Workspace name (`default` for the main one). |
-| `commit` | `String` | Short commit id of the working-copy commit. |
+| `commit` | `String` | **Full** commit id of the working-copy commit (the identity `WorktreeInfo.commit` carries), not a display prefix. |
 | `bookmarks` | `Vec<String>` | Local bookmarks at that commit (empty when none). |
 
 ### `ChangedPath`
@@ -629,8 +656,8 @@ One `jj diff --summary` entry.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `status` | `char` | `M` modified, `A` added, `D` deleted, `R` renamed, `C` copied. |
-| `path` | `String` | The path the status applies to — the *new* path for a rename/copy (forward-slash normalised). |
-| `old_path` | `Option<String>` | For `R`/`C`, the original path; `None` otherwise. |
+| `path` | `PathBuf` | The path the status applies to — the *new* path for a rename/copy (forward-slash normalised); lossless (non-UTF-8-safe on Unix). |
+| `old_path` | `Option<PathBuf>` | For `R`/`C`, the original path; `None` otherwise. |
 
 ### `DiffStat`
 Aggregate counts from the `diff --stat` footer (`Copy`, `Default`).
@@ -773,25 +800,33 @@ destination's description instead of combining the two.
 
 ## Validating newtypes & filesets
 
-### `RevsetExpr`
-Optional up-front validation for callers that accept revsets from untrusted
-input (UIs, bots, agents) and want to fail early. Deliberately *minimal* — jj's
-revset grammar is too rich to validate here — it only guarantees the expression
-is non-empty and cannot be parsed as a flag (no leading `-`), matching the
-internal guard the positional-revset methods apply anyway. The dir-taking
-methods stay `&str`; this type is optional validation, **not** a required
-wrapper.
+### `RevsetExpr` and `BookmarkName`
+Every operation that resolves a **revset** takes a `RevsetExpr`, and every
+operation that names a **bookmark** (jj's equivalent of a branch) to
+create/move/rename/delete/track/fetch/push takes a `BookmarkName` — not a bare
+`&str`. Construct one at your input boundary; a flag-like or malformed value is
+rejected there (a classifiable `Error::is_invalid_input`) and can never reach an
+argv slot. Both are deliberately *minimal* — jj's revset grammar is too rich to
+validate, and jj bookmark names are permissive — so the load-bearing guarantee is
+non-empty and not flag-shaped (no leading `-`). The typed bookmark methods
+additionally wrap the name in jj's `exact:` pattern so a `*`/`?` can never fan the
+operation out across every bookmark.
 
 ```rust,ignore
-# use vcs_jj::RevsetExpr;
-let r = RevsetExpr::new("main..@")?;       // Ok
-assert!(RevsetExpr::new("").is_err());     // empty
-assert!(RevsetExpr::new("-x").is_err());   // leading `-` → would parse as a flag
+# use vcs_jj::{BookmarkName, RevsetExpr};
+let r = RevsetExpr::new("main..@")?;        // Ok
+let b = BookmarkName::new("feature/x")?;    // Ok
+assert!(RevsetExpr::new("").is_err());      // empty
+assert!(RevsetExpr::new("-x").is_err());    // leading `-` → would parse as a flag
+assert!(BookmarkName::new("--all").is_err());
+# let _ = (r, b);
 # Ok::<(), processkit::Error>(())
 ```
 
-`RevsetExpr::new(impl Into<String>) -> Result<Self>`; `.as_str() -> &str`;
-implements `Display`.
+`RevsetExpr::new` / `BookmarkName::new(impl Into<String>) -> Result<Self>`;
+`.as_str() -> &str`; both implement `Display`. The remaining bare-positional
+`&str` inputs that are *not* bookmarks/revsets (remote names, operation ids,
+workspace names) keep an internal flag-injection guard.
 
 ### `JjFileset`
 An exact-path jj fileset (`root-file:"<path>"`), so path metacharacters like `(`,
@@ -811,12 +846,14 @@ assert_eq!(fs.as_str(), r#"root-file:"src/a (copy).rs""#);
 
 ### Why injection guards, and why filesets
 
-Every method that places a caller-supplied bookmark name, revset, parent, url,
-or operation id in a *bare positional* argv slot refuses an empty or leading-`-`
-value with an `Error::Spawn` **before** spawning (verified: `jj edit -evil` →
-"unexpected argument"). Flag-*value* slots (`-r <revset>`, `-m <msg>`) and the
-`run`/`run_raw` escape hatches are *not* guarded — jj itself rejects dash-values
-there with a clear error rather than misparsing them.
+Bookmark names and revsets are taken as the validated `BookmarkName` /
+`RevsetExpr` newtypes, so an empty or leading-`-` value is refused at
+construction — before it can reach any argv slot (verified: `jj edit -evil` →
+"unexpected argument"). The remaining caller-supplied bare positionals that are
+*not* bookmarks/revsets (remote names, operation ids, workspace names, urls) keep
+an internal guard that refuses an empty or leading-`-` value with an
+`Error::Spawn` **before** spawning. The `run`/`run_raw` escape hatches are *not*
+guarded — you build the whole argv.
 
 `split_paths`/`commit_paths`/`squash_paths`/`absorb` take `&[JjFileset]` rather
 than raw strings so path metacharacters can never be reinterpreted as fileset
@@ -840,8 +877,9 @@ before spawning.
 
 [`op_head`]: #operation-log
 [`op_restore`]: #operation-log
-[`Error::Spawn`]: process-model.md
-[`ProcessResult`]: process-model.md
+[`rollback_to`]: #operation-log
+[`Error::Spawn`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
+[`ProcessResult`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`Change`]: #change
 [`Bookmark`]: #bookmark
 [`BookmarkRef`]: #bookmarkref

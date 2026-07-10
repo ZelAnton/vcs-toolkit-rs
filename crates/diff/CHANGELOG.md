@@ -10,10 +10,18 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `os_from_bytes` / `path_from_bytes` — a lossless raw-bytes → `OsString` / `PathBuf`
+  bridge for filesystem paths taken from `git`/`jj` machine output. On Unix the bytes
+  are wrapped verbatim (a non-UTF-8 filename survives byte-for-byte); elsewhere they
+  are decoded as UTF-8 (the encoding `git`/`jj` emit there). Shared by `vcs-git` and
+  `vcs-jj` so a path never has to detour through `String::from_utf8_lossy`. (T-050.)
 
 ### Changed
--
+- **Breaking:** `FileDiff.path` and `FileDiff.old_path` are now `PathBuf` /
+  `Option<PathBuf>` (were `String` / `Option<String>`). A git C-quoted non-ASCII
+  path now decodes to its exact bytes via `path_from_bytes` instead of being flattened
+  by `String::from_utf8_lossy`, so a non-UTF-8 filename round-trips. Use `.display()`
+  for lossy display. (T-050.)
 
 ### Fixed
 -

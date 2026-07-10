@@ -4,11 +4,13 @@
 #
 # Reproduces, in the same order and with the same flags, the jobs defined in
 # `.github/workflows/ci.yml` that can meaningfully run on a developer machine:
-# rustfmt, clippy (both configurations), rustdoc (incl. the doctest run and,
-# if a `nightly` toolchain is installed, the `docsrs`-cfg build), the MSRV
-# check (if the pinned toolchain is installed), per-feature isolation checks,
-# the test suite, `cargo deny check` (if `cargo-deny` is installed), and
-# `cargo package` for the crates that can be packaged pre-publish.
+# rustfmt, the Cargo.lock-in-sync check, the release-lib fixtures
+# (scripts/release/lib.test.sh), clippy (both configurations), rustdoc (incl.
+# the doctest run and, if a `nightly` toolchain is installed, the `docsrs`-cfg
+# build), the MSRV check (if the pinned toolchain is installed), per-feature
+# isolation checks, the test suite, `cargo deny check` (if `cargo-deny` is
+# installed), and `cargo package` for the crates that can be packaged
+# pre-publish.
 #
 # Two jobs are deliberately NOT reproduced here and are reported as skipped:
 #   - `integration`: needs several *specific* `jj` versions plus `glab`/`tea`
@@ -124,6 +126,13 @@ has_cargo_deny() {
   cargo deny --version >/dev/null 2>&1
 }
 
+# Assert the committed Cargo.lock is in sync with the manifests (mirrors the
+# `lockfile` CI job). `cargo metadata` emits the resolved graph as JSON on
+# stdout; discard it — we only care that `--locked` doesn't error.
+lockfile_check() {
+  cargo metadata --format-version 1 --locked >/dev/null
+}
+
 # Mirrors the `features` CI job's data-driven loop verbatim (see
 # .github/workflows/ci.yml). Runs in a subshell with its own `set -e` so a
 # failing pair stops the loop immediately, same as CI; the outer `step` call
@@ -160,6 +169,17 @@ features_isolation() {
 
 # --- fmt --------------------------------------------------------------
 step "fmt" cargo fmt --all --check
+
+# --- Cargo.lock in sync (mirrors the `lockfile` CI job) ---------------
+# Resolves against the committed lock and fails if a manifest edit left it
+# stale — the same `--locked` guarantee the release workflow packages with.
+step "Cargo.lock in sync" lockfile_check
+
+# --- release lib fixtures (mirrors the `release-lib` CI job) ----------
+# Unit-tests the pure release decisions (version math, dependency order, the
+# cargo-package verify set, and the SemVer bump comparison) in
+# scripts/release/lib.sh. Pure bash — fast, no toolchain needed.
+step "release lib fixtures" bash "$REPO_ROOT/scripts/release/lib.test.sh"
 
 # --- clippy (two configurations, same as the `clippy` CI job) ---------
 step "clippy (default features)" cargo clippy --all-targets -- -D warnings
@@ -220,7 +240,7 @@ fi
 if [ "$FAST" -eq 1 ]; then
   skip "cargo package" "--fast mode"
 else
-  step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit
+  step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit --locked
 fi
 
 echo

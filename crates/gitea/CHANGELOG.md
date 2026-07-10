@@ -10,10 +10,50 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`tea` version floor + capability gate.** New `GiteaCapabilities` (`version:
+  GiteaVersion`), probed via `GiteaApi::capabilities()` (`tea --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so any emoji/build trailer is ignored; an
+  unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **tea ≥ 0.9.0** — the
+  `tea` line whose `--output json`/`--fields` read surface, `pr create`/`merge`/
+  `close`/`checkout` lifecycle verbs, and `comment` this crate all drive. A too-old
+  `tea` is now rejected up front with a clear "needs tea ≥ 0.9.0, found 0.8.0"
+  message rather than failing deep inside an operation with a cryptic `unknown
+  command`/`unknown flag`. `GiteaVersion` (an alias of `vcs_diff::Version`) is
+  re-exported, and the bound `GiteaAt` view forwards `capabilities()`. Adds a
+  `vcs-diff` dependency (the shared version type/parser).
+- `GiteaApi::pr_checkout(dir, number)` — check a pull request's branch out into
+  the working copy (`tea pr checkout <n>`); the head branch is fetched and
+  switched to, so a build/test/edit runs against the PR locally. Mutates the
+  working copy. Mirrored on the `GiteaAt` bound view. **Defaulted** to
+  `Error::Unsupported` on the trait so external implementers keep compiling.
+- `PrMerge` — a `#[non_exhaustive]` merge spec (`strategy` + `auto` +
+  `delete_branch`), built through `PrMerge::merge()`/`squash()`/`rebase()` then
+  `.auto()`/`.delete_branch()`. Shares the shape of `vcs-github`'s `PrMerge` and
+  `vcs-gitlab`'s `MrMerge` so the `vcs-forge` facade drives one merge spec across
+  all three backends.
 
 ### Changed
--
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- **Breaking:** the raw escape hatches on the bound view (`GiteaAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `tea.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw call
+  could target a *different* repository than the one it was bound to. New dir-taking
+  client methods `Gitea::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `Gitea` itself (`tea.run(…)`) — migrate a caller that relied on
+  `tea.at(dir).run(…)` running in the process cwd to `tea.run(…)`. (T-035.)
+- **Breaking:** `GiteaApi::pr_merge` takes a `PrMerge` spec instead of a bare
+  `MergeStrategy` — `pr_merge(dir, n, MergeStrategy::Squash)` →
+  `pr_merge(dir, n, PrMerge::squash())`. The `GiteaAt` bound view moves to the
+  same spec. `tea pr merge` can express **neither** the gh-style `auto`
+  (merge-once-checks-pass) nor `delete_branch` option, so setting either on
+  `PrMerge` now returns a structured `Error::Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). The default (neither set) is unchanged: the plain `--style` merge.
 
 ### Fixed
 -

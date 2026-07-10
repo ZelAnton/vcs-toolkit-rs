@@ -34,7 +34,10 @@
 //!   failures. `ManagedClient` wraps a [`processkit`] `CliClient` and applies the
 //!   policy to every command, so the `vcs-git`/`vcs-jj` clients gain retry via
 //!   `with_retry(...)` without changing a call site. Lock-acquisition failures are
-//!   pre-execution, so retrying is safe even for mutating commands.
+//!   pre-execution, so retrying is safe even for mutating commands. A
+//!   [`default_cancel_on`](ManagedClient::default_cancel_on) token also cuts the
+//!   backoff short: cancelling mid-retry returns a structured [`Error::Cancelled`]
+//!   at once instead of sleeping out the remaining delay.
 //! - **[`CredentialProvider`] / [`Credential`] / [`Secret`]** — an opt-in seam for
 //!   supplying a secret *per operation* (a CI token, a vault lookup) instead of
 //!   relying on ambient CLI auth. `ManagedClient` injects the resolved token into
@@ -72,7 +75,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use processkit::{
-    CliClient, Command, Error, IntoCommand, JobRunner, ProcessResult, ProcessRunner, Result,
+    CancellationToken, CliClient, Command, Error, IntoCommand, JobRunner, OutputBufferPolicy,
+    OverflowMode, ProcessResult, ProcessRunner, Result,
 };
 
 pub mod credentials;
@@ -108,14 +112,154 @@ pub mod json {
     }
 }
 
+/// A configurable ceiling on how much output a potentially large **content**
+/// operation may buffer before it is refused — a diff (`diff_text`/`diff`), a
+/// file's bytes at a revision (`show_file`/`file_show`), a forge PR/MR diff
+/// (`pr_diff`), and the diagnostic (error/progress) output of `clone`/`fetch`.
+///
+/// This is the single, shared knob the CLI wrappers (`vcs-git`, `vcs-jj`, the
+/// forge crates) and the facades (`vcs-core`, `vcs-forge`, the MCP server) all
+/// use, so the limit is configured and reasoned about one way across the
+/// workspace instead of one ad-hoc cap per client. Set a per-client default with
+/// each client's `default_output_budget(...)` builder (inherited by any facade
+/// built over that client); raise or lower it for a single call with the
+/// `*_within` method variants (`diff_text_within`, `show_file_within`,
+/// `pr_diff_within`, …). There is **no un-overridable global constant** — the
+/// default is [`unlimited`](OutputBudget::unlimited) (retain everything, the
+/// pre-budget behaviour), and every cap is a caller choice.
+///
+/// It projects onto two [`processkit`] [`OutputBufferPolicy`] shapes, so one
+/// budget drives both kinds of bounded output:
+///
+/// - [`content_policy`](OutputBudget::content_policy) — a **fail-loud** ceiling
+///   ([`OverflowMode::Error`]): once the cap is reached the run errors with
+///   [`Error::OutputTooLarge`], carrying the actual (`total_lines`/`total_bytes`)
+///   and allowed (`max_lines`/`max_bytes`) sizes. The pipe is still drained (the
+///   child never blocks) and output past the ceiling is **counted but never
+///   retained**, so memory stays bounded and a truncated result is never handed
+///   back as if complete. This is what the content verbs use.
+/// - [`diagnostic_policy`](OutputBudget::diagnostic_policy) — a **drop-oldest**
+///   tail bound: caps the retained error/progress output of a discard verb
+///   (`clone`/`fetch`) *without* converting a real failure into
+///   `OutputTooLarge`, so transient-failure classification still reads the
+///   (tail-preserved) message. This is the same shape the `gh run watch` cap
+///   uses.
+///
+/// The byte ceiling ([`bytes`](OutputBudget::bytes)) is the load-bearing memory
+/// bound: the content verbs capture raw stdout (no line splitting), where the
+/// byte cap — not the line cap — is what [`processkit`] enforces. A line ceiling
+/// ([`with_max_lines`](OutputBudget::with_max_lines)) is an optional extra that
+/// also bounds line-pumped output (a diagnostic stream, a verb's stderr).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputBudget {
+    max_bytes: Option<usize>,
+    max_lines: Option<usize>,
+}
+
+impl OutputBudget {
+    /// No ceiling — retain everything (the default, and the pre-budget
+    /// behaviour). [`content_policy`](Self::content_policy) /
+    /// [`diagnostic_policy`](Self::diagnostic_policy) return `None`, leaving the
+    /// command's own (unbounded) buffer untouched.
+    pub const fn unlimited() -> Self {
+        Self {
+            max_bytes: None,
+            max_lines: None,
+        }
+    }
+
+    /// A byte ceiling of `max_bytes` (the retained-text size, the unit
+    /// [`OutputBufferPolicy::max_bytes`] caps). The primary, memory-bounding
+    /// knob: it applies to the raw-stdout content path where a line cap would
+    /// not. Add a line ceiling with [`with_max_lines`](Self::with_max_lines).
+    pub const fn bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes: Some(max_bytes),
+            max_lines: None,
+        }
+    }
+
+    /// Add a line ceiling of `max_lines` (an extra bound on line-pumped output —
+    /// diagnostics, a verb's stderr). Composes with any [`bytes`](Self::bytes)
+    /// cap; whichever ceiling is reached first fires.
+    #[must_use]
+    pub const fn with_max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = Some(max_lines);
+        self
+    }
+
+    /// Whether no ceiling is set (retain everything).
+    pub const fn is_unlimited(&self) -> bool {
+        self.max_bytes.is_none() && self.max_lines.is_none()
+    }
+
+    /// The configured byte ceiling, if any.
+    pub const fn max_bytes(&self) -> Option<usize> {
+        self.max_bytes
+    }
+
+    /// The configured line ceiling, if any.
+    pub const fn max_lines(&self) -> Option<usize> {
+        self.max_lines
+    }
+
+    /// The **fail-loud** [`OutputBufferPolicy`] for a content verb — errors with
+    /// [`Error::OutputTooLarge`] once the ceiling is reached, never retaining or
+    /// returning a truncated tail. `None` when [`unlimited`](Self::unlimited)
+    /// (leave the command's default buffer).
+    pub fn content_policy(&self) -> Option<OutputBufferPolicy> {
+        if self.is_unlimited() {
+            return None;
+        }
+        // A byte cap (Some) keeps the fail-loud ceiling honest even with no line
+        // cap: `OverflowMode::Error` is "zero-tolerance" only when *neither* cap
+        // is set, so setting `max_bytes` gives it a real ceiling to fire on.
+        let mut policy = match self.max_lines {
+            Some(lines) => OutputBufferPolicy::fail_loud(lines),
+            None => OutputBufferPolicy::unbounded().with_overflow(OverflowMode::Error),
+        };
+        if let Some(bytes) = self.max_bytes {
+            policy = policy.with_max_bytes(bytes);
+        }
+        Some(policy)
+    }
+
+    /// The **drop-oldest** [`OutputBufferPolicy`] for a discard verb's diagnostic
+    /// output (`clone`/`fetch`): keeps the last `max_bytes`/`max_lines` (the tail,
+    /// where a CLI's fatal line sits) and flags truncation, but does **not** raise
+    /// [`Error::OutputTooLarge`] — so a genuine failure still surfaces as
+    /// `Error::Exit` and stays classifiable ([`is_transient_fetch_error`],
+    /// [`is_lock_contention`]). `None` when [`unlimited`](Self::unlimited).
+    pub fn diagnostic_policy(&self) -> Option<OutputBufferPolicy> {
+        if self.is_unlimited() {
+            return None;
+        }
+        let mut policy = match self.max_lines {
+            Some(lines) => OutputBufferPolicy::bounded(lines),
+            None => OutputBufferPolicy::unbounded(),
+        };
+        if let Some(bytes) = self.max_bytes {
+            policy = policy.with_max_bytes(bytes);
+        }
+        Some(policy)
+    }
+}
+
+impl Default for OutputBudget {
+    /// [`unlimited`](OutputBudget::unlimited) — the budget is opt-in.
+    fn default() -> Self {
+        Self::unlimited()
+    }
+}
+
 /// Generate the cwd-bound forwarders for a CLI wrapper's `…At` view.
 ///
 /// Each CLI wrapper (`vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`)
 /// exposes a cwd-bound view — `GitAt`, `JjAt`, `GitHubAt`, `GitLabAt`, `GiteaAt` —
 /// that holds a reference to the client plus a pre-bound `dir`, and re-exposes the
 /// client's methods with `dir` already supplied. The forwarder bodies are
-/// byte-identical across the five backends but for three things, so they live here
-/// once instead of as a copied `macro_rules!` per crate:
+/// byte-identical across the five backends but for a handful of names, so they live
+/// here once instead of as a copied `macro_rules!` per crate:
 ///
 /// - `$view` — the bound view type (e.g. `GitAt`). It must be generic over
 ///   `<'a, R: ProcessRunner>` and have a field named `$field` holding the client
@@ -125,8 +269,20 @@ pub mod json {
 /// - `$client` — a **string literal** naming the client type, used in the
 ///   generated doc strings and rendered as an intra-doc link (e.g. `"Git"` →
 ///   ``[`Git`]``).
-/// - `bare { … }` — methods forwarded verbatim to `self.$field`.
+/// - `bare { … }` — methods forwarded verbatim to `self.$field`. Reserve this for
+///   the genuinely dir-*independent* calls (`version`, `capabilities`, a
+///   `clone`/`git_clone` that names its own destination): the view drops `dir`
+///   entirely, so a `bare` method never touches it.
 /// - `dir  { … }` — methods that take `self.dir` as their first argument.
+/// - `raw  { fn view(args…) -> Ret => target; … }` — the **raw escape hatches**
+///   (`run`/`run_raw`/`run_args`/`run_raw_args`). These used to sit in `bare`, so
+///   `git.at(dir).run(…)` silently ran in the *process* cwd, not the bound `dir` —
+///   a bound handle whose raw call could hit a different repository (M15/T-035).
+///   They are now **bound**: the view method `view` forwards to the client's
+///   dir-taking `target` (`self.$field.target(self.dir, args…)`), so a raw call
+///   *through the view* runs in `dir` like every other `…At` method. The
+///   **process-cwd** escape hatch is still there — call `run`/`run_raw`/… on the
+///   client itself (`git.run(…)`), not through `.at(dir)`.
 ///
 /// The argument and return types in the method lists resolve in the **calling**
 /// crate, so they are written exactly as that wrapper's own methods are. The
@@ -138,6 +294,7 @@ pub mod json {
 ///     GitAt, git, "Git",
 ///     bare { fn version() -> Result<String>; }
 ///     dir  { fn status() -> Result<Vec<StatusEntry>>; }
+///     raw  { fn run(args: &[String]) -> Result<String> => run_in; }
 /// }
 /// ```
 #[macro_export]
@@ -146,6 +303,7 @@ macro_rules! at_forwarders {
         $view:ident, $field:ident, $client:literal,
         bare { $( fn $bn:ident( $($ba:ident: $bt:ty),* $(,)? ) -> $br:ty; )* }
         dir  { $( fn $dn:ident( $($da:ident: $dt:ty),* $(,)? ) -> $dr:ty; )* }
+        $( raw  { $( fn $rn:ident( $($ra:ident: $rt:ty),* $(,)? ) -> $rr:ty => $rtgt:ident; )* } )?
     ) => {
         impl<'a, R: ::processkit::ProcessRunner> $view<'a, R> {
             $(
@@ -160,6 +318,18 @@ macro_rules! at_forwarders {
                     self.$field.$dn(self.dir, $($da),*).await
                 }
             )*
+            $($(
+                #[doc = concat!(
+                    "Bound form of [`", $client, "`]'s `", stringify!($rn),
+                    "` raw escape hatch — runs the given argv **in the bound `dir`** \
+                     (forwards to the client's `", stringify!($rtgt), "`). For the \
+                     process-cwd escape hatch, call `", stringify!($rn),
+                    "` on [`", $client, "`] directly."
+                )]
+                pub async fn $rn(&self, $($ra: $rt),*) -> $rr {
+                    self.$field.$rtgt(self.dir, $($ra),*).await
+                }
+            )*)?
         }
     };
 }
@@ -286,6 +456,18 @@ macro_rules! managed_client {
             /// Cancel every command this client builds when `token` fires.
             pub fn default_cancel_on(mut self, token: ::processkit::CancellationToken) -> Self {
                 self.core = self.core.default_cancel_on(token);
+                self
+            }
+
+            /// Apply a default [`OutputBudget`](vcs_cli_support::OutputBudget) to the
+            /// potentially large **content** operations this client builds — the
+            /// diff/show/pr-diff verbs and the `clone`/`fetch` diagnostic capture.
+            /// Inherited by any facade built over this client. The default is
+            /// [`OutputBudget::unlimited`](vcs_cli_support::OutputBudget::unlimited)
+            /// (retain everything); a single call can still override it via the
+            /// `*_within` method variants.
+            pub fn default_output_budget(mut self, budget: $crate::OutputBudget) -> Self {
+                self.core = self.core.default_output_budget(budget);
                 self
             }
         }
@@ -578,13 +760,41 @@ fn full_jitter(max: Duration) -> Duration {
     Duration::from_nanos((r % (nanos + 1)).min(u64::MAX as u128) as u64)
 }
 
+/// The structured [`Error::Cancelled`] to surface when a cancellation token aborts
+/// the retry backoff, named for the same program as the attempt that just failed —
+/// so it reads exactly like the `Cancelled` a [`processkit`] run raises when its own
+/// [`default_cancel_on`](ManagedClient::default_cancel_on) token kills an in-flight
+/// process. Falls back to an empty program name only if the last error carried none
+/// (every real attempt error names its program).
+fn cancelled_error(last_err: &Error) -> Error {
+    Error::Cancelled {
+        program: last_err.program().unwrap_or_default().to_owned(),
+    }
+}
+
 /// Run `op`, retrying its result while `should_retry` says so and `policy` has
 /// attempts left, sleeping the (jittered, exponential) backoff between tries. The
 /// op is re-invoked from scratch each attempt, so it must be idempotent for the
 /// errors `should_retry` selects (lock-contention failures are — the command never
 /// ran). Returns the first `Ok`, or the last `Err`.
+///
+/// When `cancel` is `Some`, the backoff between attempts is **cancellation-aware**:
+/// if the token fires before or during a wait, the wait stops immediately and the
+/// whole retry aborts with a structured [`Error::Cancelled`] (naming the
+/// just-failed attempt's program). It does **not** sit out the rest of the delay,
+/// and — crucially — it launches **no** further attempt, so a cancel can never race
+/// a fresh op into flight (the attempt count stays deterministic). Pass `None` to
+/// keep the plain, uninterruptible backoff (behaviour unchanged from before this
+/// parameter existed).
+///
+/// The **first** attempt always runs; cancellation is only observed around the
+/// backoff. An `op` bound to the same token (a [`ManagedClient`] built with
+/// [`default_cancel_on`](ManagedClient::default_cancel_on)) still surfaces its own
+/// `Cancelled` when the token was already fired as it ran — `should_retry` returns
+/// `false` for that terminal error, so the loop returns it without a backoff anyway.
 pub async fn retry_async<T, Fut>(
     policy: &RetryPolicy,
+    cancel: Option<&CancellationToken>,
     should_retry: impl Fn(&Error) -> bool,
     mut op: impl FnMut() -> Fut,
 ) -> Result<T>
@@ -600,8 +810,28 @@ where
                     return Err(err);
                 }
                 let delay = backoff_for(policy, attempt - 1);
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
+                match cancel {
+                    // Cancellation-aware backoff. `run_until_cancelled` drops the
+                    // pending sleep the instant the token fires (or returns at once
+                    // if it is already fired), so a cancelled retry never waits out
+                    // the full delay. We then abort with a structured `Cancelled`
+                    // instead of looping into another attempt — the same check also
+                    // covers a zero delay and a cancel that lands right as the wait
+                    // ends, so no attempt is ever launched after the token fired.
+                    Some(token) => {
+                        if !delay.is_zero() {
+                            let _ = token.run_until_cancelled(tokio::time::sleep(delay)).await;
+                        }
+                        if token.is_cancelled() {
+                            return Err(cancelled_error(&err));
+                        }
+                    }
+                    // No token: the original plain, uninterruptible backoff.
+                    None => {
+                        if !delay.is_zero() {
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
                 }
             }
         }
@@ -626,7 +856,12 @@ where
 ///    (e.g. `GH_TOKEN`). Backends that inject the secret differently (git's
 ///    `credential.helper`) instead call
 ///    [`resolve_credential`](ManagedClient::resolve_credential) at the command
-///    site. Resolution happens once per call, before the retry loop.
+///    site. Resolution happens once per call, before the retry loop. A
+///    [`with_expected_host`](ManagedClient::with_expected_host) binding travels as
+///    the request's host so a **host-keyed** provider selects the right instance's
+///    secret; the `Ok(None)` / `Err` fallback (defer to ambient vs. fail-closed
+///    abort) is defined on
+///    [`resolve_credential`](ManagedClient::resolve_credential).
 ///
 /// Both default to inert, so a client with neither configured behaves exactly
 /// like a bare `CliClient`.
@@ -637,6 +872,27 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// When set, the token is auto-injected into this env var on every command,
     /// resolved for this service. Used by the forge clients (`GH_TOKEN`, …).
     token_env: Option<(CredentialService, &'static str)>,
+    /// The remote host this client targets, set when a forge `with_host` builder
+    /// bound one. It becomes the [`CredentialRequest`]'s host on the auto-injected
+    /// token-env path (the forge case), so a **host-keyed** provider selects the
+    /// secret for *this* host and never a neighbouring instance's. `None` leaves the
+    /// request host unset — a host-keyed provider that can't place the request
+    /// returns `Ok(None)` and the command falls back to ambient auth, rather than
+    /// being handed the wrong host's secret.
+    expected_host: Option<String>,
+    /// A copy of the [`default_cancel_on`](Self::default_cancel_on) token, kept here
+    /// (as well as on `inner`, which bounds the spawned *process*) so the retry loop
+    /// can cut a lock-contention backoff short the instant cancellation fires,
+    /// instead of sleeping out the full delay before the next attempt.
+    cancel: Option<CancellationToken>,
+    /// The default output budget applied to the potentially large **content**
+    /// verbs this client builds (via [`run_untrimmed`](Self::run_untrimmed)) and,
+    /// on request, to a discard verb's diagnostic capture
+    /// ([`budget_diagnostics`](Self::budget_diagnostics)). Defaults to
+    /// [`OutputBudget::unlimited`] — no ceiling — so a client that never sets one
+    /// behaves exactly as before. A single call overrides it via
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    output_budget: OutputBudget,
 }
 
 impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
@@ -648,6 +904,14 @@ impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
             // whether one is configured, plus the token-env binding.
             .field("credentials", &self.credentials.is_some())
             .field("token_env", &self.token_env)
+            // A hostname, not a secret — safe to render; helps distinguish a
+            // host-bound client's `{:?}` from an unbound one.
+            .field("expected_host", &self.expected_host)
+            // The token itself is not meaningfully renderable; whether one is set
+            // matches `inner`'s own `has_default_cancel`, kept explicit here too.
+            .field("has_cancel", &self.cancel.is_some())
+            // A small plain cap (no secret) — safe to render.
+            .field("output_budget", &self.output_budget)
             .finish()
     }
 }
@@ -661,6 +925,9 @@ impl ManagedClient<JobRunner> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            expected_host: None,
+            cancel: None,
+            output_budget: OutputBudget::unlimited(),
         }
     }
 }
@@ -673,6 +940,9 @@ impl<R: ProcessRunner> ManagedClient<R> {
             retry: RetryPolicy::none(),
             credentials: None,
             token_env: None,
+            expected_host: None,
+            cancel: None,
+            output_budget: OutputBudget::unlimited(),
         }
     }
 
@@ -713,6 +983,19 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self
     }
 
+    /// Bind the remote host this client targets (set by a forge `with_host`): it
+    /// travels as the [`CredentialRequest`]'s host whenever the token-env path
+    /// resolves a credential, so a **host-keyed** [`CredentialProvider`] returns the
+    /// secret for *this* host and nothing else — one client can't inject a
+    /// neighbouring instance's token. Without it the request host is unset (the
+    /// pre-host-context behaviour). No effect without a provider and a
+    /// [`with_token_env`](Self::with_token_env) binding.
+    #[must_use]
+    pub fn with_expected_host(mut self, host: impl Into<String>) -> Self {
+        self.expected_host = Some(host.into());
+        self
+    }
+
     /// Whether a credential provider is configured.
     #[must_use]
     pub fn has_credentials(&self) -> bool {
@@ -723,6 +1006,22 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// `Ok(None)` if no provider is set or it defers to ambient auth. Backends
     /// that inject the secret at the command site (git's `credential.helper`) call
     /// this directly; the forge token-env path uses it internally.
+    ///
+    /// **Fallback policy (identical for read and write operations):**
+    /// - **No provider**, or the provider returns **`Ok(None)`** → `Ok(None)`:
+    ///   defer to the CLI's ambient auth, exactly as if no provider were configured.
+    /// - A credential whose secret is **empty / whitespace-only** → treated as
+    ///   `Ok(None)` (ambient): injecting an empty token would *override* the ambient
+    ///   login with nothing instead of deferring to it.
+    /// - The provider returns **`Err`** → the error propagates and **aborts** the
+    ///   operation (**fail-closed**). A provider that cannot resolve (a vault outage)
+    ///   is never silently downgraded to ambient auth.
+    ///
+    /// Passing the operation's `host` is what lets a **host-keyed** provider return
+    /// the secret for *that* host (or `Ok(None)` for one it does not handle) — so it
+    /// never hands back a neighbouring instance's token when the host is known, and
+    /// an unknown/absent host defers to ambient rather than substituting a default
+    /// secret.
     pub async fn resolve_credential(
         &self,
         service: CredentialService,
@@ -748,12 +1047,26 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// [`with_token_env`](ManagedClient::with_token_env) binding and a provider
     /// are both configured. The single place the auto-injection happens, shared by
     /// every retrying verb.
+    ///
+    /// The request carries this client's
+    /// [`expected_host`](ManagedClient::with_expected_host) (when a forge `with_host`
+    /// set one), so a host-keyed provider picks the secret for that host. The
+    /// resolution follows the [`resolve_credential`](ManagedClient::resolve_credential)
+    /// fallback policy: `Ok(None)` (nothing for this host, or an empty secret) leaves
+    /// the command on ambient auth — no env is set — while an `Err` **aborts** the
+    /// command (fail-closed, via `?`). A provider that can't resolve is never
+    /// silently downgraded to ambient, and a wrong host's secret is never
+    /// substituted. This holds identically for read and write verbs (both route
+    /// through here).
     async fn prepare(&self, call: impl IntoCommand<R>) -> Result<Command> {
         let cmd = call.into_command(&self.inner);
         let Some((service, var)) = self.token_env else {
             return Ok(cmd);
         };
-        match self.resolve_credential(service, None).await? {
+        match self
+            .resolve_credential(service, self.expected_host.as_deref())
+            .await?
+        {
             Some(cred) => Ok(cmd.env(var, cred.secret().expose())),
             None => Ok(cmd),
         }
@@ -777,10 +1090,43 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self
     }
 
-    /// Cancel every command this client builds when `token` fires.
-    pub fn default_cancel_on(mut self, token: processkit::CancellationToken) -> Self {
-        self.inner = self.inner.default_cancel_on(token);
+    /// Cancel every command this client builds when `token` fires — and cut a
+    /// lock-contention retry backoff short the moment it does, so a cancelled
+    /// operation returns promptly instead of sleeping out the remaining delay
+    /// before its next attempt. The token is applied to the spawned process (via
+    /// `inner`) *and* observed by the retry loop.
+    pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
+        self.inner = self.inner.default_cancel_on(token.clone());
+        self.cancel = Some(token);
         self
+    }
+
+    /// Set the default [`OutputBudget`] applied to the content verbs this client
+    /// builds through [`run_untrimmed`](Self::run_untrimmed) — off by default
+    /// ([`OutputBudget::unlimited`]). A single call can override it via
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    pub fn default_output_budget(mut self, budget: OutputBudget) -> Self {
+        self.output_budget = budget;
+        self
+    }
+
+    /// The active default output budget.
+    pub fn output_budget(&self) -> OutputBudget {
+        self.output_budget
+    }
+
+    /// Apply this client's default budget to `cmd` as a **diagnostic** (drop-oldest
+    /// tail) bound, for a discard verb that only surfaces its output on failure
+    /// (`clone`/`fetch`). Caps the retained error/progress buffer without turning a
+    /// real failure into [`Error::OutputTooLarge`] — the tail (where a CLI's fatal
+    /// line sits) is preserved, so [`is_transient_fetch_error`] /
+    /// [`is_lock_contention`] still classify it. A no-op when the budget is
+    /// [`unlimited`](OutputBudget::unlimited).
+    pub fn budget_diagnostics(&self, cmd: Command) -> Command {
+        match self.output_budget.diagnostic_policy() {
+            Some(policy) => cmd.output_buffer(policy),
+            None => cmd,
+        }
     }
 
     /// Build a [`Command`] for this client's program (passthrough).
@@ -809,18 +1155,24 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Like [`CliClient::run`], with credential injection and lock-retry.
     pub async fn run(&self, call: impl IntoCommand<R>) -> Result<String> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.run(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.run(cmd.clone()),
+        )
         .await
     }
 
     /// Like [`CliClient::run_unit`], with credential injection and lock-retry.
     pub async fn run_unit(&self, call: impl IntoCommand<R>) -> Result<()> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.run_unit(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.run_unit(cmd.clone()),
+        )
         .await
     }
 
@@ -859,9 +1211,40 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// `\n`. The raw bytes are then decoded losslessly with
     /// [`String::from_utf8_lossy`], the same raw-stdout-to-`String` convention used
     /// elsewhere in this workspace (e.g. `vcs-jj`).
+    ///
+    /// **Output budget:** this client's default [`OutputBudget`]
+    /// ([`default_output_budget`](Self::default_output_budget)) is applied as a
+    /// fail-loud byte ceiling — a content read past the cap errors with
+    /// [`Error::OutputTooLarge`] (carrying the actual and allowed sizes) instead of
+    /// buffering an unbounded blob, and a truncated read is never returned as if
+    /// complete. Unlimited by default (unchanged behaviour). Override the ceiling
+    /// for one call with [`run_untrimmed_within`](Self::run_untrimmed_within).
     pub async fn run_untrimmed(&self, call: impl IntoCommand<R>) -> Result<String> {
+        self.run_untrimmed_within(call, self.output_budget).await
+    }
+
+    /// Like [`run_untrimmed`](Self::run_untrimmed), but with an explicit per-call
+    /// [`OutputBudget`] instead of this client's default — the per-call override
+    /// used by the `*_within` content methods (`diff_text_within`,
+    /// `show_file_within`, `pr_diff_within`, …) to read a legitimately large
+    /// file/diff (a higher ceiling, or [`OutputBudget::unlimited`]) or to tighten
+    /// the cap for one call.
+    pub async fn run_untrimmed_within(
+        &self,
+        call: impl IntoCommand<R>,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        let cmd = self.prepare(call).await?;
+        // A fail-loud byte ceiling: `output_bytes` raises `Error::OutputTooLarge`
+        // the moment the raw stdout passes the cap (drained but not retained), so
+        // this never returns a truncated blob as if it were complete.
+        let cmd = match budget.content_policy() {
+            Some(policy) => cmd.output_buffer(policy),
+            None => cmd,
+        };
         let bytes = self
-            .output_bytes(call)
+            .inner
+            .output_bytes(cmd)
             .await?
             .ensure_success()?
             .into_stdout();
@@ -872,9 +1255,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// injection and lock-retry.
     pub async fn probe(&self, call: impl IntoCommand<R>) -> Result<bool> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.probe(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.probe(cmd.clone()),
+        )
         .await
     }
 
@@ -882,9 +1268,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// still errors), with credential injection and lock-retry.
     pub async fn exit_code(&self, call: impl IntoCommand<R>) -> Result<i32> {
         let cmd = self.prepare(call).await?;
-        retry_async(&self.retry, is_lock_contention, || {
-            self.inner.exit_code(cmd.clone())
-        })
+        retry_async(
+            &self.retry,
+            self.cancel.as_ref(),
+            is_lock_contention,
+            || self.inner.exit_code(cmd.clone()),
+        )
         .await
     }
 
@@ -901,6 +1290,34 @@ impl<R: ProcessRunner> ManagedClient<R> {
     {
         let cmd = self.prepare(call).await?;
         self.inner.parse(cmd, parser).await
+    }
+
+    /// Like [`parse`](Self::parse), but hands the parser **raw stdout bytes**
+    /// instead of a lossily-decoded `&str`. This is the byte-faithful path a parser
+    /// needs when a **path** (or any payload that need not be valid UTF-8) is part
+    /// of the output: on Unix a filename can be arbitrary bytes, so decoding it
+    /// through [`String::from_utf8_lossy`] first would substitute `U+FFFD` and make
+    /// the path unusable to round-trip back into `add`/`commit_paths`. Routed
+    /// through [`output_bytes`](Self::output_bytes) (byte-exact stdout) and
+    /// exit-checked like [`parse`](Self::parse) (`ensure_success`); no lock-retry (a
+    /// read). Text-only machine output (branch names, hashes, templated rows) should
+    /// keep using [`parse`](Self::parse) — lossy decoding is acceptable there.
+    pub async fn parse_bytes<T>(
+        &self,
+        call: impl IntoCommand<R>,
+        parser: impl FnOnce(&[u8]) -> T + Send,
+    ) -> Result<T>
+    where
+        T: Send,
+    {
+        let cmd = self.prepare(call).await?;
+        let bytes = self
+            .inner
+            .output_bytes(cmd)
+            .await?
+            .ensure_success()?
+            .into_stdout();
+        Ok(parser(&bytes))
     }
 
     /// Like [`CliClient::try_parse`] (credential injection applied; `FnOnce` parser,
@@ -1248,7 +1665,7 @@ mod tests {
 
         // Fails twice with a lock error, then succeeds — retried to success.
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             let lock = lock();
             async move { if n < 2 { Err(lock) } else { Ok(n) } }
@@ -1259,7 +1676,7 @@ mod tests {
 
         // A non-lock error is returned immediately (not retried).
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(exit("git", 1, "real, deterministic failure")) }
         })
@@ -1273,13 +1690,165 @@ mod tests {
 
         // Persistent lock contention exhausts the attempt budget.
         let calls = AtomicU32::new(0);
-        let out: Result<u32> = retry_async(&policy, is_lock_contention, || {
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(exit("git", 128, "index.lock': File exists")) }
         })
         .await;
         assert!(out.is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 4, "all attempts used");
+    }
+
+    // A persistent lock error always retryable, for the cancellation tests below.
+    fn lock_err() -> Error {
+        exit(
+            "git",
+            128,
+            "Unable to create '/r/.git/index.lock': File exists.",
+        )
+    }
+
+    // Cancellation scenario 1 — the token is **already fired** when the backoff is
+    // about to begin: `retry_async` must not sleep out the (long) delay, and must
+    // abort with a structured `Cancelled` after the single attempt that already ran,
+    // launching no second one. On a paused clock the virtual time must not advance —
+    // proving the full backoff was skipped, not merely fast.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_before_backoff_aborts_without_waiting_or_retrying() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        token.cancel(); // already cancelled before we even start
+        let policy = RetryPolicy::none()
+            .attempts(5)
+            .base_backoff(Duration::from_secs(3600)); // huge — must never be waited
+        let calls = AtomicU32::new(0);
+
+        let start = tokio::time::Instant::now();
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(lock_err()) }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a fired token aborts with a program-named Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "one attempt ran; the cancel launched no retry"
+        );
+        assert_eq!(
+            start.elapsed(),
+            Duration::ZERO,
+            "the backoff was cut short — no virtual time elapsed"
+        );
+    }
+
+    // Cancellation scenario 2 — the token fires **while the backoff sleep is
+    // parked**. With a paused clock the (long) sleep cannot elapse on its own, so a
+    // spawned task cancelling the token is what resolves the wait: the retry must
+    // wake early and return `Cancelled` without a second attempt.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_during_backoff_wakes_early_and_does_not_retry() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        let policy = RetryPolicy::none()
+            .attempts(5)
+            .base_backoff(Duration::from_secs(3600)); // never elapses under paused time
+        let calls = AtomicU32::new(0);
+
+        let start = tokio::time::Instant::now();
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let token = token.clone();
+            async move {
+                // On the first failure, schedule the cancel to land while we are
+                // parked in the backoff sleep (the sleep can't fire under paused time,
+                // so this is what unblocks the wait).
+                if n == 0 {
+                    tokio::spawn(async move { token.cancel() });
+                }
+                Err(lock_err())
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a cancel during the sleep aborts with Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cancel woke the sleep early — no second attempt"
+        );
+        assert_eq!(
+            start.elapsed(),
+            Duration::ZERO,
+            "woke on the cancel, not after the 1 h delay"
+        );
+    }
+
+    // Cancellation scenario 3 — the token fires such that it is observed **right
+    // before the next attempt** would launch. With a zero backoff there is no sleep
+    // to interrupt, so the op cancels the token as it fails; the guard between the
+    // (no-op) backoff and the next attempt must still abort with `Cancelled` rather
+    // than spinning up attempt #2.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_right_before_next_attempt_aborts() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let token = CancellationToken::new();
+        let policy = RetryPolicy::none().attempts(5); // zero backoff → no sleep
+        let calls = AtomicU32::new(0);
+
+        let out: Result<u32> = retry_async(&policy, Some(&token), is_lock_contention, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let token = token.clone();
+            async move {
+                // Cancel as the first attempt fails: the post-backoff guard must catch
+                // it before launching the next attempt.
+                if n == 0 {
+                    token.cancel();
+                }
+                Err(lock_err())
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            "a cancel observed before the next attempt aborts with Cancelled, got {out:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the guard stopped attempt #2 from launching"
+        );
+    }
+
+    // Without a token the backoff is unchanged: a persistent lock error still
+    // exhausts every attempt (no early exit, `None` path preserved).
+    #[tokio::test]
+    async fn no_token_backoff_is_unchanged() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let policy = RetryPolicy::none().attempts(3); // zero backoff, fast
+        let calls = AtomicU32::new(0);
+        let out: Result<u32> = retry_async(&policy, None, is_lock_contention, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err(lock_err()) }
+        })
+        .await;
+        assert!(
+            matches!(out, Err(Error::Exit { .. })),
+            "last error is the lock exit, not Cancelled"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "all attempts used with no token"
+        );
     }
 
     // `resolve_credential` returns `None` until a provider is attached, then the
@@ -1328,5 +1897,147 @@ mod tests {
                 );
             }
         }
+    }
+
+    // The resolved request carries the operation's host, so a HOST-KEYED provider
+    // returns the secret for exactly that host — and `Ok(None)` (deferring to
+    // ambient) for a host it does not place or an absent one, never a wrong-host
+    // secret. This is the seam `prepare` (forge token-env) and git's
+    // `remote_credentials` both feed the target host into. (T-045)
+    #[tokio::test]
+    async fn resolve_credential_routes_on_request_host() {
+        let provider = provider_fn(|r: &CredentialRequest<'_>| {
+            Ok(match r.host {
+                Some("github.com") => Some(Credential::token("saas")),
+                Some("ghe.example.com") => Some(Credential::token("ent")),
+                // An unknown or absent host defers to ambient rather than a default.
+                _ => None,
+            })
+        });
+        let client = ManagedClient::new("gh").with_credentials(Arc::new(provider));
+        let resolve =
+            |host: Option<&'static str>| client.resolve_credential(CredentialService::GitHub, host);
+
+        assert_eq!(
+            resolve(Some("github.com"))
+                .await
+                .unwrap()
+                .unwrap()
+                .secret()
+                .expose(),
+            "saas"
+        );
+        assert_eq!(
+            resolve(Some("ghe.example.com"))
+                .await
+                .unwrap()
+                .unwrap()
+                .secret()
+                .expose(),
+            "ent"
+        );
+        assert!(
+            resolve(Some("other.example")).await.unwrap().is_none(),
+            "a host the provider doesn't place → ambient (None), not a wrong secret"
+        );
+        assert!(
+            resolve(None).await.unwrap().is_none(),
+            "an absent host → ambient (None)"
+        );
+    }
+
+    // Fail-closed: a provider `Err` propagates out of `resolve_credential` (and so
+    // aborts the command in `prepare` / `remote_credentials`) for any host — it is
+    // never swallowed into a silent ambient fallback. (T-045 fallback policy)
+    #[tokio::test]
+    async fn resolve_credential_propagates_provider_error_fail_closed() {
+        let provider = provider_fn(|_r: &CredentialRequest<'_>| {
+            Err(Error::spawn(
+                "vault",
+                std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "vault unreachable"),
+            ))
+        });
+        let client = ManagedClient::new("gh").with_credentials(Arc::new(provider));
+        for host in [Some("github.com"), None] {
+            assert!(
+                client
+                    .resolve_credential(CredentialService::GitHub, host)
+                    .await
+                    .is_err(),
+                "provider error must propagate (fail-closed), host={host:?}"
+            );
+        }
+    }
+
+    // The default budget is unlimited — no ceiling, so a client that never sets
+    // one keeps its pre-budget (unbounded) capture behaviour, and both policy
+    // projections are `None` (leave the command's own buffer untouched).
+    #[test]
+    fn output_budget_default_is_unlimited() {
+        let b = OutputBudget::default();
+        assert!(b.is_unlimited());
+        assert_eq!(b, OutputBudget::unlimited());
+        assert_eq!(b.max_bytes(), None);
+        assert_eq!(b.max_lines(), None);
+        assert!(b.content_policy().is_none());
+        assert!(b.diagnostic_policy().is_none());
+    }
+
+    // A byte cap projects onto a FAIL-LOUD content policy (errors past the cap,
+    // never truncates) and a DROP-OLDEST diagnostic policy (bounded tail, never
+    // errors) — the two shapes one budget drives.
+    #[test]
+    fn output_budget_bytes_projects_to_both_policies() {
+        let b = OutputBudget::bytes(4096);
+        assert!(!b.is_unlimited());
+        assert_eq!(b.max_bytes(), Some(4096));
+
+        let content = b
+            .content_policy()
+            .expect("a byte budget yields a content policy");
+        assert_eq!(
+            content.overflow,
+            OverflowMode::Error,
+            "content is fail-loud"
+        );
+        assert_eq!(content.max_bytes, Some(4096));
+        // No line cap set, so the fail-loud ceiling rests entirely on the byte cap
+        // (which is exactly what the raw-stdout content path enforces).
+        assert_eq!(content.max_lines, None);
+
+        let diag = b
+            .diagnostic_policy()
+            .expect("a byte budget yields a diagnostic policy");
+        assert_eq!(
+            diag.overflow,
+            OverflowMode::DropOldest,
+            "diagnostics keep the tail, never OutputTooLarge"
+        );
+        assert_eq!(diag.max_bytes, Some(4096));
+    }
+
+    // A line ceiling composes with the byte cap on both projections.
+    #[test]
+    fn output_budget_with_max_lines_composes() {
+        let b = OutputBudget::bytes(4096).with_max_lines(200);
+        assert_eq!(b.max_lines(), Some(200));
+        let content = b.content_policy().unwrap();
+        assert_eq!(content.max_lines, Some(200));
+        assert_eq!(content.max_bytes, Some(4096));
+        assert_eq!(content.overflow, OverflowMode::Error);
+        let diag = b.diagnostic_policy().unwrap();
+        assert_eq!(diag.max_lines, Some(200));
+        assert_eq!(diag.max_bytes, Some(4096));
+        assert_eq!(diag.overflow, OverflowMode::DropOldest);
+    }
+
+    // The client-level default budget round-trips through the builder/getter, and
+    // `budget_diagnostics` applies (or, when unlimited, leaves) a command's buffer.
+    #[test]
+    fn managed_client_default_output_budget_round_trips() {
+        let client = ManagedClient::new("git");
+        assert!(client.output_budget().is_unlimited());
+        let client = client.default_output_budget(OutputBudget::bytes(1 << 20));
+        assert_eq!(client.output_budget(), OutputBudget::bytes(1 << 20));
     }
 }

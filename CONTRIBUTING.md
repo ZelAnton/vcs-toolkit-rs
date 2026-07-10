@@ -43,10 +43,24 @@ trait, so tests need no real binary, temp repo, or network.
 
 ## Conventions
 
+### Dependency management
+
+- This workspace fixes **no allow-list of crates**. Declare each shared
+  dependency once in `[workspace.dependencies]` and reference it from members
+  with `<crate>.workspace = true` when more than one crate needs it.
 - **Every dependency carries an inline "why" comment** in `Cargo.toml`, and
   `Cargo.lock` stays committed.
+- Pin major versions and enable only the features actually used.
+
+### Code & docs
+
 - **Each crate has its own `CHANGELOG.md`** ([Keep a Changelog](https://keepachangelog.com/));
   curate the `[Unreleased]` section as you work when a change is user-facing.
+- **Published crates carry the full MIT text.** Keep a byte-identical `LICENSE` in
+  every crate directory, set `license-file = "LICENSE"`, and do not add a
+  restrictive `include` list that omits it. CI runs `cargo package --list` for all
+  published crates and compares each local copy with the root `LICENSE`; add the same
+  file and explicit field before publishing a new crate.
 - **Multi-option commands take a builder/spec** rather than a long positional list —
   the trigger is **≥2 options, or any bare `bool`** (a bare boolean at a call site is
   ambiguous, so it becomes a presence-only setter or a spec field).
@@ -61,6 +75,20 @@ crate is **versioned and published independently**: the workflow bumps the manif
 promotes that crate's `CHANGELOG.md`, publishes to crates.io, tags
 `<crate>-v<version>`, and creates the GitHub Release. docs.rs builds the API reference
 from the published crate — there is no separate docs deploy.
+
+Publish order follows the intra-workspace dependency graph: foundational crates
+first (`vcs-diff`, `vcs-cli-support`), then the wrappers (`vcs-git`, `vcs-jj`,
+`vcs-github`, `vcs-gitlab`, `vcs-gitea`), then the facades (`vcs-forge`,
+`vcs-core`), and finally the crates that depend on a facade (`vcs-watch`,
+`vcs-mcp`); `vcs-testkit` has no workspace dependency and can publish any time.
+Each crate's `Cargo.toml` is the source of truth for its own version;
+`scripts/release/lib.sh` is the source of truth for the publish order — keep
+both in sync if the dependency graph changes. Intra-workspace dependencies use
+`^MAJOR.MINOR` requirements and must stay in range when a dependency crosses a
+minor or major version boundary; see
+[crates/core/docs/stability.md](crates/core/docs/stability.md) for the
+version/tier matrix and the external dependencies whose major bumps need
+coordinated releases.
 
 Before proposing something large, search the existing GitHub issues — it may
 already be planned, deferred, or settled against.

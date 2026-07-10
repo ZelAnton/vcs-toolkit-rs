@@ -29,7 +29,7 @@ if s.dirty {
     line.push_str(" *");                        // uncommitted changes
 }
 if s.conflicted || s.operation != OperationState::Clear {
-    line.push_str(" ⚠");                        // mid-merge/rebase or conflicted
+    line.push_str(" ⚠");                        // any paused op (merge/rebase/am/cherry-pick/revert/bisect) or conflicted
 }
 println!("{line}");                             // e.g. `main ↑1↓0 *`
 # Ok(()) }
@@ -216,7 +216,7 @@ file) to get the bytes.
 # use vcs_git::{Git, GitApi};
 # use vcs_git::conflict::{has_conflict_markers, parse_conflicts, resolve, ResolutionSide};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
-for path in git.conflicted_files(repo).await? {           // Vec<String>, `/`-separated
+for path in git.conflicted_files(repo).await? {           // Vec<PathBuf>, `/`-separated
     let content = std::fs::read_to_string(repo.join(&path))?;
     if !has_conflict_markers(&content) {
         continue;                                         // cheap pre-check
@@ -237,8 +237,8 @@ indices (jj conflicts can have more than two sides):
 # use vcs_jj::{Jj, JjApi};
 # use vcs_jj::conflict::{parse_conflicts, resolve, JjResolution};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
-for path in jj.resolve_list(repo, "@").await? {           // Vec<String> — conflicts on `@`
-    let content = jj.file_show(repo, "@", &path).await?;  // String (lossy)
+for path in jj.resolve_list(repo, "@").await? {           // Vec<PathBuf> — conflicts on `@`
+    let content = jj.file_show(repo, "@", &path.to_string_lossy()).await?; // String (lossy)
     let segments = parse_conflicts(&content)?;            // Vec<JjConflictSegment>
     let resolved = resolve(&segments, JjResolution::Side(0))?; // the first side
     std::fs::write(repo.join(&path), resolved)?;
@@ -270,7 +270,7 @@ println!("backend: {}", repo.kind().as_str());     // "git" / "jj"
 
 for change in repo.changed_files().await? { /* FileChange */ let _ = change; }
 let branch = repo.current_branch().await?;         // Option<String>
-let conflicts = repo.conflicted_files().await?;    // Vec<String>
+let conflicts = repo.conflicted_files().await?;    // Vec<PathBuf>
 let _ = (branch, conflicts);
 
 // Drop to the raw client for tool-specific ops off the common surface:

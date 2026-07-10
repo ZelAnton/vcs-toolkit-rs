@@ -10,13 +10,62 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`glab` version floor + capability gate.** New `GitLabCapabilities` (`version:
+  GitLabVersion`), probed via `GitLabApi::capabilities()` (`glab --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so any build/commit trailer is ignored; an
+  unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **glab ≥ 1.25.0** — the
+  modern `glab` line whose `--output json` read surface, `mr update`/`mr checkout`/
+  `mr merge` lifecycle verbs, and `api` this crate all drive. A too-old `glab` is
+  now rejected up front with a clear "needs glab ≥ 1.25.0, found 1.20.0" message
+  rather than failing deep inside an operation with a cryptic `unknown
+  command`/`unknown flag`. `GitLabVersion` (an alias of `vcs_diff::Version`) is
+  re-exported, and the bound `GitLabAt` view forwards `capabilities()`.
+- `MergeRequest`/`Issue` gained `labels: Vec<String>` (GitLab's REST API already
+  reports these as plain strings) and `assignees: Vec<String>` (flattened from
+  the REST `assignees` array of User objects' `username`).
+- `GitLabApi::mr_checkout(dir, number)` — check a merge request's source branch
+  out into the working copy (`glab mr checkout <id>`); the branch is fetched and
+  switched to, so a build/test/edit runs against the MR locally. Mutates the
+  working copy. Mirrored on the `GitLabAt` bound view. **Defaulted** to
+  `Error::Unsupported` on the trait so external implementers keep compiling.
+- `MrMerge` — a `#[non_exhaustive]` merge spec (`strategy` + `auto` +
+  `delete_branch`), built through `MrMerge::merge()`/`squash()`/`rebase()` then
+  `.auto()`/`.delete_branch()`. Shares the shape of `vcs-github`'s `PrMerge` and
+  `vcs-gitea`'s `PrMerge` so the `vcs-forge` facade drives one merge spec across
+  all three backends.
 
 ### Changed
--
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
+- **Breaking:** the raw escape hatches on the bound view (`GitLabAt::run`/`run_raw`/
+  `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
+  current directory. Previously they sat in the `bare` forwarder group, so
+  `glab.at(dir).run(…)` silently ran in the process cwd — a bound handle whose raw
+  call could target a *different* project (`glab` infers the project from the cwd's
+  remote) than the one it was bound to, now consistent with `api`. New dir-taking
+  client methods `GitLab::run_in`/`run_raw_in`/`run_args_in`/`run_raw_args_in` back the
+  bound forwarders (argv forwarded verbatim; only the cwd is bound). The
+  **process-cwd** escape hatch is unchanged and still reached by calling
+  `run`/`run_raw`/… on `GitLab` itself (`glab.run(…)`) — migrate a caller that relied
+  on `glab.at(dir).run(…)` running in the process cwd to `glab.run(…)`. (T-035.)
+- **Breaking:** `GitLabApi::mr_merge` takes an `MrMerge` spec instead of a bare
+  `MergeStrategy` — `mr_merge(dir, id, MergeStrategy::Squash)` →
+  `mr_merge(dir, id, MrMerge::squash())`. The `GitLabAt` bound view moves to the
+  same spec. `glab mr merge` can express **neither** the gh-style `auto`
+  (merge-once-requirements-met) nor `delete_branch` option — glab's own
+  `--auto-merge` is a different, merge-when-pipeline contract — so setting either
+  on `MrMerge` now returns a structured `Error::Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). The default (neither set) is unchanged: the plain immediate merge.
 
 ### Fixed
--
+- `mr_create`, `mr_edit`, `issue_create`, and `mr_comment` now refuse a
+  description/comment body that is *exactly* `"-"` before spawning glab,
+  surfacing an `Error::Spawn` with `io::ErrorKind::InvalidInput` — glab treats
+  a bare `-` as a request to open `$EDITOR`/read from stdin rather than the
+  literal string, which would otherwise hang a headless caller indefinitely
+  (glab has no timeout of its own on the prompt).
 
 ## [0.5.2] - 2026-07-06
 

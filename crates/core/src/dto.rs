@@ -153,11 +153,18 @@ pub use vcs_diff::ChangeKind;
 #[non_exhaustive]
 pub struct FileChange {
     /// The path (the *new* path for a rename).
-    pub path: String,
+    ///
+    /// A [`PathBuf`] (not a `String`) so a filename whose bytes are not valid UTF-8
+    /// — legal on Unix — is carried **losslessly** from `status`/`diff` and can be
+    /// fed straight back into [`Repo::commit_paths`](crate::Repo::commit_paths) /
+    /// the backend `add`. A `String` filled via `String::from_utf8_lossy` would
+    /// substitute `U+FFFD` and address a different file. See the crate's
+    /// serde-policy note for how a non-UTF-8 path is emitted as JSON.
+    pub path: PathBuf,
     /// The original path for a rename, populated by **both** backends (git's
     /// `R old -> new` status; jj's `{old => new}` diff-summary form); `None`
     /// for non-renames.
-    pub old_path: Option<String>,
+    pub old_path: Option<PathBuf>,
     /// How the file changed.
     pub kind: ChangeKind,
 }
@@ -166,7 +173,7 @@ impl FileChange {
     /// A change to `path` of the given `kind`, with no original path. Chain the
     /// `old_path` setter for a rename or copy. Lets an external `VcsRepo` impl or a
     /// test build one despite the `#[non_exhaustive]`.
-    pub fn new(path: impl Into<String>, kind: ChangeKind) -> Self {
+    pub fn new(path: impl Into<PathBuf>, kind: ChangeKind) -> Self {
         Self {
             path: path.into(),
             old_path: None,
@@ -176,7 +183,7 @@ impl FileChange {
 
     /// Record the original path — a rename's or copy's source (sets the `old_path`
     /// field, which both a rename and a copy populate).
-    pub fn old_path(mut self, old: impl Into<String>) -> Self {
+    pub fn old_path(mut self, old: impl Into<PathBuf>) -> Self {
         self.old_path = Some(old.into());
         self
     }
@@ -195,7 +202,11 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     /// The branch (git) or first bookmark (jj) on it; `None` when detached/none.
     pub branch: Option<String>,
-    /// The checked-out commit; `None` when unavailable (e.g. a bare git entry).
+    /// The checked-out commit's **full** object id (git `HEAD` oid / jj `@` commit
+    /// id) on both backends — the same identity a [`RepoSnapshot::head`] carries, so
+    /// the two can be compared directly to tell whether a worktree sits on the
+    /// snapshotted commit. Not a display-truncated prefix (which could collide);
+    /// truncate for display. `None` when unavailable (e.g. a bare git entry).
     pub commit: Option<String>,
     /// A bare git worktree entry (always `false` for jj).
     pub is_bare: bool,
@@ -232,9 +243,16 @@ impl WorktreeInfo {
 }
 
 /// Whether the working copy is mid-operation, unified across the backends'
-/// different models: git exposes an in-progress merge or rebase as on-disk state
-/// (`MERGE_HEAD` / a `rebase-*` dir), while jj has no multi-step operations — it
-/// records a conflict directly on the working-copy change.
+/// different models: git exposes an in-progress merge, rebase, `am`, cherry-pick,
+/// revert, or bisect as on-disk state (`MERGE_HEAD` / a `rebase-*` dir /
+/// `CHERRY_PICK_HEAD` / `REVERT_HEAD` / `BISECT_LOG`), while jj has no multi-step
+/// operations — it records a conflict directly on the working-copy change.
+///
+/// The sequencer states are kept **distinct** because each aborts (and, where it
+/// makes sense, continues) with its *own* git command — dispatching the wrong one
+/// on a user's real repository is exactly what this type exists to prevent. See
+/// [`Repo::abort_in_progress`](crate::Repo::abort_in_progress) /
+/// [`continue_in_progress`](crate::Repo::continue_in_progress).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -249,6 +267,20 @@ pub enum OperationState {
     /// A git `am` (mailbox patch apply) is in progress. Distinct from `Rebase`
     /// because it aborts with `am --abort`, not `rebase --abort` (M20).
     ApplyMailbox,
+    /// A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Distinct
+    /// from `Merge`: it aborts/continues with `cherry-pick --abort` /
+    /// `cherry-pick --continue` (a cherry-pick conflict writes `CHERRY_PICK_HEAD`,
+    /// **not** `MERGE_HEAD`). git only.
+    CherryPick,
+    /// A git revert is in progress (`REVERT_HEAD` present). Aborts/continues with
+    /// `revert --abort` / `revert --continue`. git only.
+    Revert,
+    /// A git bisect session is in progress (`BISECT_LOG` present). Aborts with
+    /// `bisect reset`; it has **no** `--continue` step (bisect advances by marking
+    /// commits good/bad), so
+    /// [`continue_in_progress`](crate::Repo::continue_in_progress) reports it as
+    /// unsupported rather than silently doing nothing. git only.
+    Bisect,
     /// The working copy has an unresolved conflict (chiefly jj, which records
     /// conflicts on the change rather than pausing an operation).
     Conflict,
@@ -313,7 +345,9 @@ impl UpstreamTracking {
 pub struct RepoSnapshot {
     /// The working-copy commit's **full** object id (git `HEAD` oid / jj `@`
     /// commit id) on both backends; `None` on an unborn git repo. Truncate for
-    /// display.
+    /// display. Carries the full id (not a short prefix) so it can be
+    /// cross-referenced against a [`WorktreeInfo::commit`] or a git oid without a
+    /// short-prefix collision.
     pub head: Option<String>,
     /// Current branch (git) / bookmark (jj). On jj this is the nearest bookmark
     /// reachable from `@` (`heads(::@ & bookmarks())`), so it stays set across a
@@ -418,14 +452,69 @@ pub enum MergeProbe {
     /// The merge would apply without conflicts.
     Clean,
     /// The merge would conflict in these paths (repo-relative, `/` separators —
-    /// the same contract as [`conflicted_files`](crate::Repo::conflicted_files)).
-    Conflicts(Vec<String>),
+    /// the same contract and [`PathBuf`] type as
+    /// [`conflicted_files`](crate::Repo::conflicted_files), so a non-UTF-8 path is
+    /// carried losslessly).
+    Conflicts(Vec<PathBuf>),
 }
 
 impl MergeProbe {
     /// Whether the probe found no conflicts.
     pub fn is_clean(&self) -> bool {
         matches!(self, MergeProbe::Clean)
+    }
+}
+
+/// One commit/change from the repository history — the honest least common
+/// denominator between git's typed `git log` (`vcs_git::parse::Commit`, which
+/// carries hash/short-hash/author/date/subject) and jj's typed `jj log`
+/// (`vcs_jj::parse::Change`, which carries change-id/commit-id/empty/description).
+/// See [`Repo::log`](crate::Repo::log).
+///
+/// `author`/`date` are `Some` only on git: jj's typed log doesn't currently
+/// surface authorship or a timestamp (its template renders only the id/empty/
+/// description columns), so this DTO leaves them `None` on jj rather than
+/// fabricating a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct Commit {
+    /// The commit's identifying hash: git's full object id (`%H`) / jj's
+    /// (already-short) commit id.
+    pub id: String,
+    /// Commit message: git's subject line (`%s`) / jj's first description line.
+    pub description: String,
+    /// Author name (git `%an`); `None` on jj (see the type docs).
+    pub author: Option<String>,
+    /// Author date, strict ISO-8601 on git (`%aI`); `None` on jj (see the type
+    /// docs).
+    pub date: Option<String>,
+}
+
+impl Commit {
+    /// A commit `id` with `description`, no author/date (jj's typed-log shape);
+    /// chain [`author`](Commit::author) / [`date`](Commit::date) to add them
+    /// (git's shape). Lets an external `VcsRepo` impl or a test build one despite
+    /// the `#[non_exhaustive]`.
+    pub fn new(id: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            description: description.into(),
+            author: None,
+            date: None,
+        }
+    }
+
+    /// Set the author name.
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Set the author date.
+    pub fn date(mut self, date: impl Into<String>) -> Self {
+        self.date = Some(date.into());
+        self
     }
 }
 
@@ -477,8 +566,27 @@ mod serde_tests {
             kind: ChangeKind::Added, // re-exported vcs_diff type, Serialize via vcs-diff/serde
         };
         let v = serde_json::to_value(fc).unwrap();
+        // A `PathBuf` field serialises as a plain JSON string for a UTF-8 path.
         assert_eq!(v["path"], "a.rs");
         assert_eq!(v["kind"], "Added");
+    }
+
+    // Every `OperationState` variant, including the sequencer additions, serialises
+    // to its bare variant name (the JSON a `snapshot`/MCP consumer branches on).
+    #[test]
+    fn operation_state_variants_serialize_to_their_names() {
+        for (state, name) in [
+            (OperationState::Clear, "Clear"),
+            (OperationState::Merge, "Merge"),
+            (OperationState::Rebase, "Rebase"),
+            (OperationState::ApplyMailbox, "ApplyMailbox"),
+            (OperationState::CherryPick, "CherryPick"),
+            (OperationState::Revert, "Revert"),
+            (OperationState::Bisect, "Bisect"),
+            (OperationState::Conflict, "Conflict"),
+        ] {
+            assert_eq!(serde_json::to_value(state).unwrap(), name);
+        }
     }
 
     // `MergeProbe` is adjacently tagged: BOTH outcomes are objects with an
@@ -497,6 +605,16 @@ mod serde_tests {
         assert_eq!(conflicts["files"][0], "a.rs");
         assert_eq!(conflicts["files"][1], "b.rs");
     }
+
+    #[test]
+    fn commit_serializes_with_null_author_date_on_the_jj_shape() {
+        let jj_shaped = Commit::new("abc123", "first line");
+        let v = serde_json::to_value(&jj_shaped).unwrap();
+        assert_eq!(v["id"], "abc123");
+        assert_eq!(v["description"], "first line");
+        assert!(v["author"].is_null());
+        assert!(v["date"].is_null());
+    }
 }
 
 #[cfg(test)]
@@ -507,9 +625,21 @@ mod ctor_tests {
     // build the `#[non_exhaustive]` return DTOs, and land the fields where expected.
     #[test]
     fn dto_constructors_populate_fields() {
+        let jj_shaped = Commit::new("abc123", "first line");
+        assert_eq!(jj_shaped.id, "abc123");
+        assert_eq!(jj_shaped.description, "first line");
+        assert_eq!(jj_shaped.author, None);
+        assert_eq!(jj_shaped.date, None);
+
+        let git_shaped = Commit::new("deadbeef", "subject")
+            .author("Jane")
+            .date("2026-05-31");
+        assert_eq!(git_shaped.author.as_deref(), Some("Jane"));
+        assert_eq!(git_shaped.date.as_deref(), Some("2026-05-31"));
+
         let fc = FileChange::new("new.rs", ChangeKind::Modified).old_path("old.rs");
-        assert_eq!(fc.path, "new.rs");
-        assert_eq!(fc.old_path.as_deref(), Some("old.rs"));
+        assert_eq!(fc.path, PathBuf::from("new.rs"));
+        assert_eq!(fc.old_path.as_deref(), Some(std::path::Path::new("old.rs")));
         assert_eq!(fc.kind, ChangeKind::Modified);
 
         let wt = WorktreeInfo::new("/wt")
