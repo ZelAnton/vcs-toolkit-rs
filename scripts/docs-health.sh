@@ -59,7 +59,7 @@ done < "$matrix"
 while IFS= read -r manifest; do
   name="$(grep -m1 -E '^name[[:space:]]*=' "$manifest" | sed -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
   [[ -n "$name" ]] || continue
-  if ! grep -qE "^\| \`${name}\` \|" "$matrix"; then
+  if ! grep -qE "^[[:space:]]*\|[[:space:]]*\`${name}\`[[:space:]]*\|" "$matrix"; then
     printf '%s: crate missing from the stability matrix: %s\n' \
       "crates/core/docs/stability.md" "$name" >&2
     status=1
