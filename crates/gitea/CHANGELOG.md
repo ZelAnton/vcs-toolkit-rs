@@ -35,6 +35,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
   all three backends.
 
 ### Changed
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
 - **Breaking:** the raw escape hatches on the bound view (`GiteaAt::run`/`run_raw`/
   `run_args`/`run_raw_args`) now run **in the bound `dir`** instead of the process's
   current directory. Previously they sat in the `bare` forwarder group, so

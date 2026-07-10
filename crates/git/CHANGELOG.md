@@ -44,6 +44,7 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
 - **Breaking:** the public empty-tree constant `EMPTY_TREE` is renamed
   `EMPTY_TREE_SHA1` and documented as **SHA-1 only**. It presented git's SHA-1
   empty tree as a universal id, but that value does not exist in a repo created

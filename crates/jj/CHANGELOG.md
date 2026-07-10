@@ -28,6 +28,7 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ### Changed
 
+- deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
 - **Breaking:** `blocking::workspace_name_for_path` now returns
   `io::Result<Option<String>>` instead of `Option<String>`, so a `Drop`-guard caller
   can tell a genuine "no such workspace" (`Ok(None)`) from a probe that could not
