@@ -10,16 +10,19 @@ name: Release
 # A crate's first release (no `<crate>-v*` tag yet) ships its current `Cargo.toml`
 # version as-is, ignoring the bump.
 #
-# Each crate is versioned and published independently (see AGENTS.md
+# Each crate is versioned and published independently (see CONTRIBUTING.md
 # "Releasing"). Two foundational crates publish FIRST — `vcs-diff` (std-only diff
 # model) and `vcs-cli-support` (the processkit-coupled plumbing) — since the
 # wrappers depend on them. The wrappers (vcs-git/vcs-jj/vcs-github/vcs-gitlab/
-# vcs-gitea) then publish, and the facades LAST — `vcs-forge` (depends on the
-# github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj). Each
-# such `^MAJOR.MINOR` dependency must stay in range when a dep crosses a
-# minor/major boundary. `all` releases every crate in one run — each bumped by the
-# same chosen type, from its own current version — in a single commit + atomic
-# push, then published and tagged one by one.
+# vcs-gitea) then publish, then the facades — `vcs-forge` (depends on the
+# github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj) —
+# and finally `vcs-watch`/`vcs-mcp` (depend on `vcs-core`/`vcs-core`+`vcs-forge`);
+# `vcs-testkit` has no workspace deps and can publish any time after `vcs-diff`.
+# `scripts/release/lib.sh` is the source of truth for this order. Each
+# `^MAJOR.MINOR` intra-workspace dependency must stay in range when a dep
+# crosses a minor/major boundary. `all` releases every crate in one run — each
+# bumped by the same chosen type, from its own current version — in a single
+# commit + atomic push, then published and tagged one by one.
 #
 # Per crate: bump → auto-fill an empty `[Unreleased]` from git history (git-cliff,
 # scoped to the crate's directory) → promote the changelog. Then, once for the

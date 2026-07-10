@@ -29,18 +29,26 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 
 | Crate | Version | Tier |
 |---|---|---|
-| `vcs-diff` | 0.3 | settling |
-| `vcs-cli-support` | 0.3 | settling |
-| `vcs-testkit` | 0.3 | stable-ish (dev-only) |
-| `vcs-git` | 0.7 | maturing |
-| `vcs-jj` | 0.7 | maturing |
-| `vcs-github` | 0.7 | maturing |
-| `vcs-core` | 0.5 | evolving |
-| `vcs-gitlab` | 0.3 | evolving |
-| `vcs-gitea` | 0.3 | evolving |
-| `vcs-forge` | 0.3 | evolving |
-| `vcs-watch` | 0.3 | evolving |
-| `vcs-mcp` | 0.3 | evolving |
+| `vcs-diff` | 0.5.2 | settling |
+| `vcs-cli-support` | 0.5.2 | settling |
+| `vcs-testkit` | 0.5.2 | stable-ish (dev-only) |
+| `vcs-git` | 0.9.2 | maturing |
+| `vcs-jj` | 0.9.2 | maturing |
+| `vcs-github` | 0.9.2 | maturing |
+| `vcs-core` | 0.7.2 | evolving |
+| `vcs-gitlab` | 0.5.2 | evolving |
+| `vcs-gitea` | 0.5.2 | evolving |
+| `vcs-forge` | 0.5.2 | evolving |
+| `vcs-watch` | 0.5.2 | evolving |
+| `vcs-mcp` | 0.5.2 | evolving |
+
+### Coordinated-release dependencies
+
+- **processkit** — the external job-backed process launcher; breaking changes
+  propagate through the wrappers.
+- **futures** — the streaming API ecosystem (`vcs-watch` uses Tokio plus
+  `futures-core`); a major bump requires coordination.
+- **notify** — the file-watch events API used by `vcs-watch`.
 
 **What the tiers mean — and the per-crate caveats:**
 

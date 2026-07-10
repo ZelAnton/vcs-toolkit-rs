@@ -579,7 +579,7 @@ crates; tag releases as `vcs-core-v<version>`.
 - `trunk()` now falls back to a local `main`, then `master`, when the backend has
   no native trunk (git `origin/HEAD` unset / jj `trunk()` unresolved).
 - Requires `vcs-git` / `vcs-jj` **0.4** (for the `blocking` helpers it dispatches
-  to). See AGENTS.md "Releasing" for the two-phase release coordination.
+  to). See CONTRIBUTING.md "Releasing" for the two-phase release coordination.
 - Bumped `processkit` to 0.6 (no code change).
 
 ### Fixed

@@ -312,13 +312,15 @@ jobs:
       - run: cargo test --workspace --all-features --tests -- --ignored
 
   # Documentation rot that no other job exercises: dead relative links between
-  # README/`docs/**`/per-crate guides/CHANGELOGs (the guides are also embedded
-  # into rustdoc via `include_str!` and published as-is to docs.rs, see the
-  # `doc` job above, so a link that only "works" when browsed on GitHub is
-  # still a real defect there) via `lychee`, and typos in that same prose via
-  # `typos`. Neither tool has an install-action entry, so both are grabbed
-  # from their GitHub release tarballs (same pattern as `jj`/`glab`/`tea` in
-  # the `integration` job).
+  # CLAUDE.md/README/`docs/**`/per-crate guides/CHANGELOGs (the guides are also
+  # embedded into rustdoc via `include_str!` and published as-is to docs.rs,
+  # see the `doc` job above, so a link that only "works" when browsed on
+  # GitHub is still a real defect there) via `lychee`, typos in that same prose
+  # via `typos`, and drift between `crates/core/docs/stability.md`'s version
+  # matrix and the crates' actual manifests via `scripts/docs-health`. Neither
+  # `typos` nor `lychee` has an install-action entry, so both are grabbed from
+  # their GitHub release tarballs (same pattern as `jj`/`glab`/`tea` in the
+  # `integration` job).
   docs-health:
     name: docs-health (links + spelling)
     runs-on: ubuntu-latest
@@ -338,18 +340,18 @@ jobs:
       # jj, revset(s), fileset(s), gitea, argv, and the underlying git/GitHub
       # crates — so real terms aren't flagged as typos).
       #
-      # Both steps below check the same documentation surface: README,
-      # CONTRIBUTING, `docs/**`, every per-crate guide (`crates/*/docs/*.md`)
-      # and CHANGELOG, plus `ideas/**`/`decisions/**` if present (neither
-      # exists in this repo yet, so they're included conditionally rather than
-      # failing the glob). Deliberately excludes source code and per-crate
-      # READMEs (crates.io landing pages, not part of the linked guide network
-      # `include_str!` embeds into rustdoc).
+      # Both steps below check the same documentation surface: CLAUDE.md,
+      # README, CONTRIBUTING, `docs/**`, every per-crate guide
+      # (`crates/*/docs/*.md`) and CHANGELOG, plus `ideas/**`/`decisions/**` if
+      # present (neither exists in this repo yet, so they're included
+      # conditionally rather than failing the glob). Deliberately excludes
+      # source code and per-crate READMEs (crates.io landing pages, not part
+      # of the linked guide network `include_str!` embeds into rustdoc).
       - name: typos (spelling)
         run: |
           set -euo pipefail
           shopt -s nullglob
-          targets=(README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
+          targets=(CLAUDE.md README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
           for extra in ideas decisions; do
             [ -d "$extra" ] && targets+=("$extra")
           done
@@ -364,11 +366,17 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          targets=(README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
+          targets=(CLAUDE.md README.md CONTRIBUTING.md docs crates/*/docs/*.md crates/*/CHANGELOG.md)
           for extra in ideas decisions; do
             [ -d "$extra" ] && targets+=("$extra")
           done
           lychee --config lychee.toml "${targets[@]}"
+      # Version-matrix drift: the stability tiers table in
+      # `crates/core/docs/stability.md` is hand-maintained and must track the
+      # real `version = "..."` in every crate's `Cargo.toml` (and vice versa).
+      # No new tool needed — pure bash, see `scripts/docs-health.sh`.
+      - name: docs-health (version matrix)
+        run: scripts/docs-health
 
   audit:
     name: cargo-deny

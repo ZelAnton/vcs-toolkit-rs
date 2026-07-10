@@ -37,9 +37,10 @@ authors = ["Anton Zhelezniakou"]
 # ---------------------------------------------------------------------------
 # Workspace dependencies
 #
-# Convention (see AGENTS.md "Dependency management"): this workspace fixes NO
-# allow-list of crates. Declare a dependency here once and reference it from a
-# member with `<crate>.workspace = true` when more than one crate needs it.
+# Convention (see CONTRIBUTING.md "Dependency management"): this workspace
+# fixes NO allow-list of crates. Declare a dependency here once and reference
+# it from a member with `<crate>.workspace = true` when more than one crate
+# needs it.
 # Give every entry an inline comment explaining *why* it's here. Pin major
 # versions, enable only the features used, and keep Cargo.lock committed.
 # ---------------------------------------------------------------------------
