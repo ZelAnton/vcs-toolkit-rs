@@ -823,10 +823,12 @@ pub trait GitApi: Send + Sync {
     /// [`RevSpec`], so it can never be parsed as a flag.
     async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
     /// Like [`log`](GitApi::log), but scoped to commits that touched `paths`
-    /// (`git log <revspec> -n <max> -- <paths>`) — e.g. "who changed this
-    /// module". The `--` separator keeps a path from being read as a flag
-    /// (same convention as [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths)).
-    /// An empty `paths` is refused *before spawning*: silently falling back to
+    /// (`git --literal-pathspecs log <revspec> -n <max> -- <paths>`) — e.g. "who
+    /// changed this module". `--literal-pathspecs` matches a path containing
+    /// `*`/`?`/`[]` literally rather than as pathspec glob magic (R-02); the `--`
+    /// separator keeps a path from being read as a flag (same convention as
+    /// [`add`](GitApi::add)/[`commit_paths`](GitApi::commit_paths)). An empty
+    /// `paths` is refused *before spawning*: silently falling back to
     /// [`log`](GitApi::log)'s unrestricted history would defeat the "scoped to
     /// these paths" contract. Mirrors
     /// [`JjApi::log_paths`](../vcs_jj/trait.JjApi.html#tymethod.log_paths), which
@@ -837,9 +839,13 @@ pub trait GitApi: Send + Sync {
     /// risk exceeding the OS argv limit is instead split into multiple `git log`
     /// calls, each within budget; the per-call results are merged (deduplicated
     /// by hash — a commit can touch paths spread across more than one chunk),
-    /// reordered by author instant descending, and capped at `max` (T-052). A
-    /// `paths` set that fits in one call is unaffected — same single
-    /// invocation, same order, as before.
+    /// reordered by committer instant descending, and capped at `max`
+    /// (T-052/R-03). Committer instant (not author instant) is used because a
+    /// rebase, cherry-pick, or amend updates the committer date while often
+    /// preserving the original author date, so sorting by author instant could
+    /// reorder such commits relative to git's real history order. A `paths` set
+    /// that fits in one call is unaffected — same single invocation, same order,
+    /// as before.
     async fn log_paths(
         &self,
         dir: &Path,
@@ -856,13 +862,14 @@ pub trait GitApi: Send + Sync {
     async fn rev_parse_short(&self, dir: &Path, rev: &RevSpec) -> Result<String>;
     /// Initialise a repository (`git init`).
     async fn init(&self, dir: &Path) -> Result<()>;
-    /// Stage `paths` (`git add -- <paths>`). A path set whose combined length
-    /// would risk exceeding the OS command-line limit (`ARGV_PATHSPEC_BUDGET`;
-    /// Windows' `CreateProcess` caps out around 32,767 characters) instead goes
-    /// over stdin via `--pathspec-from-file=- --pathspec-file-nul`, with
-    /// `--literal-pathspecs` so a path containing `*`/`?`/`[]` matches literally
-    /// rather than as pathspec glob magic — the paths never touch argv at all in
-    /// that case, so there is no upper bound left to exceed (T-052).
+    /// Stage `paths` (`git --literal-pathspecs add -- <paths>`) —
+    /// `--literal-pathspecs` applies regardless of path-set size, so a path
+    /// containing `*`/`?`/`[]` always matches literally rather than as pathspec
+    /// glob magic (R-01). A path set whose combined length would risk exceeding
+    /// the OS command-line limit (`ARGV_PATHSPEC_BUDGET`; Windows' `CreateProcess`
+    /// caps out around 32,767 characters) instead goes over stdin via
+    /// `--pathspec-from-file=- --pathspec-file-nul` — the paths never touch argv
+    /// at all in that case, so there is no upper bound left to exceed (T-052).
     async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()>;
     /// Commit staged changes (`git commit -m`).
     async fn commit(&self, dir: &Path, message: &str) -> Result<()>;
@@ -874,12 +881,15 @@ pub trait GitApi: Send + Sync {
     /// Check out a commit as a detached HEAD (`git checkout --detach <commit>`).
     async fn checkout_detach(&self, dir: &Path, commit: &RevSpec) -> Result<()>;
     /// Commit exactly the spec's paths' working-tree content, ignoring the index
-    /// (`git commit [--amend] -m <message> --only -- <paths>`); see [`CommitPaths`].
-    /// Like [`add`](GitApi::add), a path set that would risk exceeding the OS
-    /// argv limit is instead routed over stdin (`--pathspec-from-file=-
-    /// --pathspec-file-nul`, `--literal-pathspecs`) — always as a **single**
-    /// `git commit` invocation either way, so the one-atomic-commit contract is
-    /// unaffected by the path set's size (T-052).
+    /// (`git --literal-pathspecs commit [--amend] -m <message> --only -- <paths>`);
+    /// see [`CommitPaths`]. `--literal-pathspecs` applies regardless of path-set
+    /// size, so a glob-magic character (`*`/`?`/`[]`) in a path is matched
+    /// literally rather than expanded — otherwise `commit_paths`'s "exactly these
+    /// paths" contract could be violated (R-01). Like [`add`](GitApi::add), a
+    /// path set that would risk exceeding the OS argv limit is instead routed
+    /// over stdin (`--pathspec-from-file=- --pathspec-file-nul`) — always as a
+    /// **single** `git commit` invocation either way, so the one-atomic-commit
+    /// contract is unaffected by the path set's size (T-052).
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
     /// The last commit's full message (`git log -1 --format=%B`) — e.g. to
     /// pre-fill an amend.
@@ -1364,26 +1374,38 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // support (unlike `add`/`commit_paths`), so split the pathspecs across
         // multiple argv-budget-sized calls and merge the results: dedup by hash
         // (a commit can touch paths spread across more than one chunk), then
-        // reorder by author instant descending and cap at `max`. Requesting
-        // `-n max` per chunk is enough to guarantee the merged top-`max` is
-        // correct: any commit within the true (merged) top `max` has at most
-        // `max - 1` newer commits in the *entire* union of chunk results, so it
-        // has at most that many newer commits within its own chunk too — i.e.
-        // it always ranks within that chunk's own top `max`.
-        let mut merged: Vec<Commit> = Vec::new();
+        // reorder and cap at `max`. Requesting `-n max` per chunk is enough to
+        // guarantee the merged top-`max` is correct: any commit within the true
+        // (merged) top `max` has at most `max - 1` newer commits in the *entire*
+        // union of chunk results, so it has at most that many newer commits
+        // within its own chunk too — i.e. it always ranks within that chunk's
+        // own top `max`.
+        //
+        // Re-ordering by **committer** instant rather than author instant
+        // (R-03): git's own log order tracks commit/committer time, not author
+        // time — a rebase, cherry-pick, or amend updates the committer date
+        // (typically to "now") while often preserving the original author date,
+        // so sorting by author instant could reorder such commits relative to
+        // git's real history order. Each chunk call fetches an extra trailing
+        // `%cI` field (via [`Self::log_paths_chunk_command`]) purely for this
+        // merge step — it never appears in the returned [`Commit`]s.
+        let mut merged: Vec<(Commit, i64)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for chunk in &chunks {
-            let command = self.log_paths_command(dir, revspec, &n, chunk.iter().copied());
-            let commits = self.core.parse(command, parse::parse_log).await?;
-            for commit in commits {
+            let command = self.log_paths_chunk_command(dir, revspec, &n, chunk.iter().copied());
+            let commits = self
+                .core
+                .parse(command, parse_log_with_committer_instant)
+                .await?;
+            for (commit, committer_instant) in commits {
                 if seen.insert(commit.hash.clone()) {
-                    merged.push(commit);
+                    merged.push((commit, committer_instant));
                 }
             }
         }
-        merged.sort_by_cached_key(|c| std::cmp::Reverse(author_instant_key(&c.date)));
+        merged.sort_by_cached_key(|(_, committer_instant)| std::cmp::Reverse(*committer_instant));
         merged.truncate(max);
-        Ok(merged)
+        Ok(merged.into_iter().map(|(commit, _)| commit).collect())
     }
 
     async fn rev_parse(&self, dir: &Path, rev: &RevSpec) -> Result<String> {
@@ -1445,8 +1467,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .stdin(stdin);
             return self.core.run_unit(command).await;
         }
-        // `--` separates the pathspecs so a path can never be read as an option.
-        let mut command = self.core.command_in(dir, ["add", "--"]);
+        // `--literal-pathspecs`: same "exactly these paths, literally" contract
+        // as the stdin branch above — without it, a path containing `*`/`?`/`[]`
+        // would be read as pathspec glob magic instead of matched byte-for-byte
+        // (R-01). `--` separates the pathspecs so a path can never be read as an
+        // option.
+        let mut command = self
+            .core
+            .command_in(dir, ["--literal-pathspecs", "add", "--"]);
         for path in paths {
             command = command.arg(path);
         }
@@ -1521,7 +1549,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 .stdin(stdin);
             return self.core.run_unit(command).await;
         }
-        let mut command = c_locale(self.core.command_in(dir, ["commit"]));
+        // `--literal-pathspecs`: same "exactly these paths, literally" contract
+        // as the stdin branch above — without it, a glob-magic character
+        // (`*`/`?`/`[]`) in a path would be expanded as a pathspec pattern
+        // instead of matched byte-for-byte, which could commit the wrong files
+        // and violate `commit_paths`'s "exactly these paths" contract (R-01).
+        let mut command = c_locale(self.core.command_in(dir, ["--literal-pathspecs", "commit"]));
         if spec.amend {
             command = command.arg("--amend");
         }
@@ -2396,9 +2429,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 }
 
 impl<R: ProcessRunner> Git<R> {
-    /// Build one `git log <revspec> -n<max> -z --format=… -- <paths>` call — the
-    /// single-invocation shape both the direct [`GitApi::log_paths`] call and
-    /// each chunk of its large-path-set fallback (T-052) share.
+    /// Build one `git --literal-pathspecs log <revspec> -n<max> -z --format=…
+    /// -- <paths>` call for the common case: everything fits one invocation
+    /// (the direct [`GitApi::log_paths`] call). `--literal-pathspecs` matches a
+    /// path containing `*`/`?`/`[]` literally rather than as pathspec glob magic
+    /// (R-02) — see [`Self::log_paths_chunk_command`] for the large-path-set
+    /// (chunked) twin, which adds a trailing committer-date field for merge
+    /// ordering.
     fn log_paths_command<'a>(
         &self,
         dir: &Path,
@@ -2409,11 +2446,45 @@ impl<R: ProcessRunner> Git<R> {
         let mut command = self.core.command_in(
             dir,
             [
+                "--literal-pathspecs",
                 "log",
                 revspec.as_str(),
                 n,
                 "-z",
                 "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+            ],
+        );
+        for path in paths {
+            command = command.arg(path);
+        }
+        command
+    }
+
+    /// Like [`Self::log_paths_command`], for each chunk of `log_paths`'s
+    /// large-path-set fallback (T-052) — same `--literal-pathspecs` (R-02), plus
+    /// a trailing `%cI` (committer date, strict ISO-8601) format field so the
+    /// merge step in [`GitApi::log_paths`] can re-order the combined chunk
+    /// results by committer instant instead of relying on git's now-lost single-
+    /// call order (R-03). The extra field is parsed by
+    /// [`parse_log_with_committer_instant`] and never appears in the returned
+    /// [`Commit`]s.
+    fn log_paths_chunk_command<'a>(
+        &self,
+        dir: &Path,
+        revspec: &RevSpec,
+        n: &str,
+        paths: impl IntoIterator<Item = &'a str>,
+    ) -> Command {
+        let mut command = self.core.command_in(
+            dir,
+            [
+                "--literal-pathspecs",
+                "log",
+                revspec.as_str(),
+                n,
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
                 "--",
             ],
         );
@@ -2557,20 +2628,22 @@ fn chunk_pathspecs(paths: &[String]) -> Vec<Vec<&str>> {
     chunks
 }
 
-/// Approximate a commit's author instant (UTC seconds since the Unix epoch)
-/// from `%aI` — strict ISO-8601 with either a trailing `Z` or a numeric
-/// `±HH:MM` offset (verified against real `git log` output; there is no third
-/// form). Used only to reorder [`chunk_pathspecs`]'s merged, multi-call
-/// `log_paths` results back into one chronological list — a single call never
-/// needs this, since it already comes back in git's own order. Malformed input
-/// (should not happen — this always parses our own fixed `--format`) sorts
-/// last (`i64::MIN`) rather than panicking or silently landing near the top.
-fn author_instant_key(date: &str) -> i64 {
+/// Approximate a UTC instant (seconds since the Unix epoch) from a git
+/// strict-ISO-8601 date field (`%aI`/`%cI` — either has a trailing `Z` or a
+/// numeric `±HH:MM` offset, verified against real `git log` output; there is
+/// no third form). Used only to reorder [`chunk_pathspecs`]'s merged,
+/// multi-call `log_paths` results back into one list by committer instant
+/// (R-03; see [`parse_log_with_committer_instant`]) — a single call never
+/// needs this, since it already comes back in git's own order. Malformed
+/// input (should not happen — this always parses our own fixed `--format`)
+/// sorts last (`i64::MIN`) rather than panicking or silently landing near the
+/// top.
+fn iso8601_instant_key(date: &str) -> i64 {
     parse_iso8601_utc_seconds(date).unwrap_or(i64::MIN)
 }
 
-/// Parse `%aI`'s strict ISO-8601 form (`YYYY-MM-DDTHH:MM:SS` + `Z` or
-/// `±HH:MM`) into UTC seconds since the Unix epoch. See [`author_instant_key`].
+/// Parse a strict ISO-8601 date field (`%aI`/`%cI`: `YYYY-MM-DDTHH:MM:SS` + `Z`
+/// or `±HH:MM`) into UTC seconds since the Unix epoch. See [`iso8601_instant_key`].
 fn parse_iso8601_utc_seconds(date: &str) -> Option<i64> {
     let bytes = date.as_bytes();
     if bytes.len() < 20
@@ -2620,6 +2693,42 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let doy = (153 * mp + 2) / 5 + i64::from(d) - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
     era * 146_097 + doe - 719_468
+}
+
+/// Parse `git log -z --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI` output —
+/// [`parse::parse_log`]'s five fields plus a trailing committer-date (`%cI`)
+/// field, kept only as a UTC instant alongside each parsed [`Commit`] and
+/// dropped afterwards. This is the per-chunk parser for `log_paths`'s
+/// large-path-set fallback ([`Git::log_paths_chunk_command`]): merging
+/// multiple chunk calls back into one list loses git's own per-call order, so
+/// the merge step re-sorts by this committer instant instead (R-03). A single
+/// call never needs this — it already comes back in git's own order, so it
+/// uses the plain [`parse::parse_log`]/[`Git::log_paths_command`] pair with no
+/// extra field.
+fn parse_log_with_committer_instant(output: &str) -> Vec<(Commit, i64)> {
+    output
+        .split('\0')
+        .filter(|rec| !rec.is_empty())
+        .filter_map(|rec| {
+            let mut fields = rec.split('\u{1f}');
+            let hash = fields.next()?.to_string();
+            let short_hash = fields.next()?.to_string();
+            let author = fields.next()?.to_string();
+            let date = fields.next()?.to_string();
+            let subject = fields.next().unwrap_or("").to_string();
+            let committer_instant = fields.next().map(iso8601_instant_key).unwrap_or(i64::MIN);
+            Some((
+                Commit {
+                    hash,
+                    short_hash,
+                    author,
+                    date,
+                    subject,
+                },
+                committer_instant,
+            ))
+        })
+        .collect()
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -3392,13 +3501,17 @@ mod tests {
     }
 
     // `add` must insert `--` before the pathspecs so a path can never be parsed
-    // as an option. No fallback rule: the run only matches if `add --` was built.
+    // as an option, and `--literal-pathspecs` so a glob-magic character in a
+    // path matches literally (R-01). No fallback rule: the run only matches if
+    // `--literal-pathspecs add --` was built.
     #[tokio::test]
     async fn add_inserts_pathspec_separator() {
-        let git = Git::with_runner(ScriptedRunner::new().on(["git", "add", "--"], Reply::ok("")));
+        let git = Git::with_runner(
+            ScriptedRunner::new().on(["git", "--literal-pathspecs", "add", "--"], Reply::ok("")),
+        );
         git.add(Path::new("."), &[PathBuf::from("f.rs")])
             .await
-            .expect("add should build `add -- <paths>`");
+            .expect("add should build `--literal-pathspecs add -- <paths>`");
     }
 
     // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` must route
@@ -3547,7 +3660,9 @@ mod tests {
         assert!(not_repo.current_branch(Path::new(".")).await.is_err());
     }
 
-    // Partial amend commit must build `commit --amend -m <msg> --only -- <paths>`.
+    // Partial amend commit must build `--literal-pathspecs commit --amend -m
+    // <msg> --only -- <paths>` — `--literal-pathspecs` so a glob-magic
+    // character in a path matches literally (R-01).
     #[tokio::test]
     async fn commit_paths_builds_only_amend_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -3561,7 +3676,15 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             [
-                "commit", "--amend", "-m", "msg", "--only", "--", "a.rs", "b.rs"
+                "--literal-pathspecs",
+                "commit",
+                "--amend",
+                "-m",
+                "msg",
+                "--only",
+                "--",
+                "a.rs",
+                "b.rs"
             ]
         );
     }
@@ -3637,8 +3760,9 @@ mod tests {
         );
     }
 
-    // `log_paths` must insert `--` exactly once, right before the pathspecs,
-    // after the same revspec/count/format arguments `log` builds.
+    // `log_paths` must insert `--literal-pathspecs` (R-02) and `--` exactly
+    // once, right before the pathspecs, after the same revspec/count/format
+    // arguments `log` builds.
     #[tokio::test]
     async fn log_paths_builds_revspec_format_and_pathspec_separator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -3655,6 +3779,7 @@ mod tests {
         assert_eq!(
             args,
             [
+                "--literal-pathspecs",
                 "log",
                 "main..HEAD",
                 "-n5",
@@ -3685,22 +3810,31 @@ mod tests {
 
     // A path set whose combined length exceeds `ARGV_PATHSPEC_BUDGET` splits
     // `log` into per-chunk calls (`git log` has no `--pathspec-from-file`
-    // support, unlike `add`/`commit_paths`) and merges the results: dedup by
-    // hash (the "shared" commit appears in both chunks' canned output),
-    // reordered by author instant descending, capped at `max` (T-052).
+    // support, unlike `add`/`commit_paths`; each chunk call also carries
+    // `--literal-pathspecs`, R-02) and merges the results: dedup by hash (the
+    // "shared" commit appears in both chunks' canned output), reordered by
+    // **committer** instant descending, capped at `max` (T-052/R-03).
+    //
+    // The "shared" commit is deliberately given the OLDEST author date but the
+    // NEWEST committer date (as a rebase/cherry-pick/amend would produce, since
+    // those update the committer date while often preserving the original
+    // author date) — this is exactly the scenario R-03 flagged: sorting by
+    // author instant would rank it last; sorting by committer instant (the
+    // fix) ranks it first.
     #[tokio::test]
-    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_date() {
+    async fn log_paths_large_path_set_chunks_dedupes_and_reorders_by_committer_date() {
         // Two paths, each already over budget alone once paired — `chunk_pathspecs`
         // puts each in its own singleton chunk.
         let path_a = "a".repeat(4_000);
         let path_b = "b".repeat(4_000);
         let common = [
             "git",
+            "--literal-pathspecs",
             "log",
             "HEAD",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
@@ -3708,17 +3842,19 @@ mod tests {
         let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_b_args.push(path_b.clone());
 
-        // Chunk A: "newer-a" (2026-01-02) + "shared" (2026-01-01).
+        // Chunk A: "newer-a" (author+committer 2026-01-02) + "shared" (author
+        // 2026-01-01, but rebased — committer 2026-01-05, the true global
+        // newest by committer instant).
         let reply_a = Reply::ok(
-            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\0"
+            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\u{1f}2026-01-02T00:00:00Z\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\u{1f}2026-01-05T00:00:00Z\0"
                 .to_string(),
         );
-        // Chunk B: "newest-b" (2026-01-03, the true global newest) + the SAME
-        // "shared" commit again (touches a path in both chunks).
+        // Chunk B: "newest-b" (author+committer 2026-01-03) + the SAME "shared"
+        // commit again (touches a path in both chunks).
         let reply_b = Reply::ok(
-            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\0"
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\u{1f}2026-01-03T00:00:00Z\0\
+             shar\u{1f}sha\u{1f}S\u{1f}2026-01-01T00:00:00Z\u{1f}shared\u{1f}2026-01-05T00:00:00Z\0"
                 .to_string(),
         );
 
@@ -3735,8 +3871,102 @@ mod tests {
 
         assert_eq!(
             commits.iter().map(|c| c.hash.as_str()).collect::<Vec<_>>(),
-            ["bbb1", "aaa1", "shar"],
-            "expected newest-first across chunks, with the shared commit deduplicated"
+            ["shar", "bbb1", "aaa1"],
+            "expected newest-committer-first across chunks (not newest-author-first), \
+             with the shared commit deduplicated"
+        );
+        // The returned `Commit`s must still expose the *author* date (`%aI`),
+        // not the committer date used only internally for merge ordering.
+        assert_eq!(
+            commits.iter().map(|c| c.date.as_str()).collect::<Vec<_>>(),
+            [
+                "2026-01-01T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            ]
+        );
+    }
+
+    // The single-call path (small path sets) must return byte-identical order
+    // to what a chunked call over the same commits produces via committer
+    // instant — i.e. chunking never changes which order callers see for a
+    // path set that happens to be small (T-052/R-03 regression guard).
+    #[tokio::test]
+    async fn log_paths_single_call_and_chunked_call_agree_on_order() {
+        let single_reply = Reply::ok(
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0\
+             aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0",
+        );
+        let single_call_git = Git::with_runner(ScriptedRunner::new().on(
+            [
+                "git",
+                "--literal-pathspecs",
+                "log",
+                "HEAD",
+                "-n5",
+                "-z",
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--",
+                "src/a.rs",
+                "src/b.rs",
+            ],
+            single_reply,
+        ));
+        let single_commits = single_call_git
+            .log_paths(
+                Path::new("."),
+                &rv("HEAD"),
+                5,
+                &["src/a.rs".to_string(), "src/b.rs".to_string()],
+            )
+            .await
+            .expect("log_paths");
+
+        let path_a = "a".repeat(4_000);
+        let path_b = "b".repeat(4_000);
+        let common = [
+            "git",
+            "--literal-pathspecs",
+            "log",
+            "HEAD",
+            "-n5",
+            "-z",
+            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%cI",
+            "--",
+        ];
+        let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_a_args.push(path_a.clone());
+        let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
+        chunk_b_args.push(path_b.clone());
+        let reply_a = Reply::ok(
+            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\u{1f}2026-01-02T00:00:00Z\0"
+                .to_string(),
+        );
+        let reply_b = Reply::ok(
+            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\u{1f}2026-01-03T00:00:00Z\0"
+                .to_string(),
+        );
+        let chunked_git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(chunk_a_args, reply_a)
+                .on(chunk_b_args, reply_b),
+        );
+        let chunked_commits = chunked_git
+            .log_paths(Path::new("."), &rv("HEAD"), 5, &[path_a, path_b])
+            .await
+            .expect("log_paths");
+
+        assert_eq!(
+            single_commits
+                .iter()
+                .map(|c| c.hash.as_str())
+                .collect::<Vec<_>>(),
+            chunked_commits
+                .iter()
+                .map(|c| c.hash.as_str())
+                .collect::<Vec<_>>(),
+            "single-call and chunked-call order must agree when no rebase/amend \
+             skews author vs. committer instant"
         );
     }
 
@@ -3820,16 +4050,16 @@ mod tests {
             parse_iso8601_utc_seconds("2026-07-10T05:10:10-04:00"),
             utc_equivalent
         );
-        // Malformed input parses to `None` (and `author_instant_key` falls back
-        // to sort-last rather than panicking).
+        // Malformed input parses to `None` (and `iso8601_instant_key` falls
+        // back to sort-last rather than panicking).
         assert_eq!(parse_iso8601_utc_seconds("not a date"), None);
-        assert_eq!(author_instant_key("not a date"), i64::MIN);
+        assert_eq!(iso8601_instant_key("not a date"), i64::MIN);
     }
 
     #[test]
-    fn author_instant_key_orders_newer_after_older() {
-        let older = author_instant_key("2026-01-01T00:00:00Z");
-        let newer = author_instant_key("2026-01-02T00:00:00Z");
+    fn iso8601_instant_key_orders_newer_after_older() {
+        let older = iso8601_instant_key("2026-01-01T00:00:00Z");
+        let newer = iso8601_instant_key("2026-01-02T00:00:00Z");
         assert!(newer > older);
     }
 

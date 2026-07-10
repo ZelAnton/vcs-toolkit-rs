@@ -1032,3 +1032,86 @@ async fn add_and_commit_paths_survive_an_oversized_argv() {
     let log = git.log(dir, &rv("HEAD"), 1).await.expect("log");
     assert_eq!(log[0].subject, "huge commit");
 }
+
+// R-01/R-02: `add`, `commit_paths`, and `log_paths` must treat a pathspec
+// glob-magic character (`[]`) literally, not as glob magic — even for a small
+// path set that never goes anywhere near the T-052 chunking/stdin transport.
+// `[` and `]` (unlike `*`/`?`) are valid on a Windows filesystem, so
+// `file[1].txt` is a portable literal filename; as an *unquoted* git pathspec
+// it would otherwise glob-match the unrelated `file1.txt`.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn add_commit_paths_and_log_paths_treat_glob_characters_literally() {
+    let tmp = TempDir::new("literal-pathspec");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    let literal_name = "file[1].txt";
+    let glob_target_name = "file1.txt"; // what `file[1].txt` would glob-match
+    std::fs::write(dir.join(literal_name), "literal").expect("write literal file");
+    std::fs::write(dir.join(glob_target_name), "glob target").expect("write glob-target file");
+
+    git.add(dir, &[PathBuf::from(literal_name)])
+        .await
+        .expect("add");
+    let status = git.status(dir).await.expect("status");
+    let literal_entry = status
+        .iter()
+        .find(|e| e.path == literal_name)
+        .expect("literal file must be present in status");
+    assert_eq!(literal_entry.code, "A ", "the literal path must be staged");
+    let glob_entry = status
+        .iter()
+        .find(|e| e.path == glob_target_name)
+        .expect("glob-target file must be present in status");
+    assert_eq!(
+        glob_entry.code, "??",
+        "the glob-target path must remain untracked — `add` must not have \
+         matched it via glob expansion (R-01)"
+    );
+
+    git.commit_paths(
+        dir,
+        CommitPaths::new([PathBuf::from(literal_name)], "literal commit"),
+    )
+    .await
+    .expect("commit_paths");
+    let status_after_commit = git.status(dir).await.expect("status");
+    assert!(
+        status_after_commit.iter().all(|e| e.path != literal_name),
+        "the committed literal path must no longer show as changed"
+    );
+    let glob_entry_after = status_after_commit
+        .iter()
+        .find(|e| e.path == glob_target_name)
+        .expect("glob-target file must still be present in status");
+    assert_eq!(
+        glob_entry_after.code, "??",
+        "the glob-target path must remain untracked after commit_paths — must \
+         not have been matched via glob expansion (R-01)"
+    );
+
+    let log_literal = git
+        .log_paths(dir, &rv("HEAD"), 5, &[literal_name.to_string()])
+        .await
+        .expect("log_paths");
+    assert_eq!(
+        log_literal.len(),
+        1,
+        "log_paths must find the commit that touched the literal path"
+    );
+    assert_eq!(log_literal[0].subject, "literal commit");
+
+    let log_glob = git
+        .log_paths(dir, &rv("HEAD"), 5, &[glob_target_name.to_string()])
+        .await
+        .expect("log_paths");
+    assert!(
+        log_glob.is_empty(),
+        "log_paths must not match the glob-target path, which was never \
+         committed — a glob-expanding query would incorrectly find the \
+         literal commit here (R-02)"
+    );
+}
