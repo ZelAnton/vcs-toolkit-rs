@@ -1506,7 +1506,11 @@ mod tests {
             }))
             .await
             .expect("merge ok");
-        assert!(result_json(&out).contains("merged"), "{}", result_json(&out));
+        assert!(
+            result_json(&out).contains("merged"),
+            "{}",
+            result_json(&out)
+        );
     }
 
     // The GitHub-only `auto`/`delete_branch` merge options are rejected as
