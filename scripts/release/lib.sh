@@ -74,7 +74,7 @@ crate_deps() {
     vcs-diff|vcs-cli-support|vcs-testkit) echo "" ;;
     vcs-git|vcs-jj)      echo "vcs-diff vcs-cli-support" ;;
     vcs-github|vcs-gitlab) echo "vcs-cli-support vcs-diff" ;;
-    vcs-gitea)           echo "vcs-cli-support" ;;
+    vcs-gitea)           echo "vcs-cli-support vcs-diff" ;;
     vcs-forge)           echo "vcs-cli-support vcs-github vcs-gitlab vcs-gitea vcs-diff" ;;
     vcs-core)            echo "vcs-git vcs-jj vcs-diff vcs-cli-support" ;;
     vcs-watch)           echo "vcs-core" ;;
