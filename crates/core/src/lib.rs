@@ -1630,7 +1630,7 @@ mod tests {
                 // (`jj log -r heads(::@ & bookmarks())`): bookmarks \t commit
                 .on(
                     ["jj", "log", "-r", "heads(::@ & bookmarks())"],
-                    Reply::ok("main\tdeadbeef\n"),
+                    Reply::ok("\"main\"\tdeadbeef\n"),
                 )
                 .on(["jj", "root"], Reply::ok("/repo\n"))
                 .on(["jj", "diff"], Reply::ok("M a.rs\nA b.rs\n")), // status -r @ --summary → 2
@@ -1700,7 +1700,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\tmain\nws1\tdecaf0\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\"main\"\n\"ws1\"\tdecaf0\t\n"),
                 )
                 .on(
                     [
@@ -1741,7 +1741,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\tmain\ngone\tdecaf0\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\"main\"\n\"gone\"\tdecaf0\t\n"),
                 )
                 .on(
                     [
@@ -1778,7 +1778,10 @@ mod tests {
     async fn jj_remove_worktree_surfaces_forget_error() {
         let repo = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                )
                 .on(
                     [
                         "jj",
@@ -1817,7 +1820,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -1858,7 +1864,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("ws1\tc0ffee\t\ngone\tdecaf0\t\n"),
+                    Reply::ok("\"ws1\"\tc0ffee\t\n\"gone\"\tdecaf0\t\n"),
                 )
                 .on(
                     [
@@ -1905,7 +1911,10 @@ mod tests {
     async fn jj_remove_worktree_retry_after_dir_gone_forgets_cleanly() {
         let repo = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                )
                 .on(
                     [
                         "jj",
@@ -1936,7 +1945,7 @@ mod tests {
             ScriptedRunner::new()
                 .on(
                     ["jj", "workspace", "list"],
-                    Reply::ok("default\tc0ffee\t\n"),
+                    Reply::ok("\"default\"\tc0ffee\t\n"),
                 )
                 .on(
                     [
@@ -1971,7 +1980,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -1984,7 +1996,7 @@ mod tests {
                         Reply::ok(format!("{root}\n")),
                     )
                     // `current_change` → 3rd field `false` = not empty = dirty.
-                    .on(["jj", "log"], Reply::ok("aaa\tbbb\tfalse\twork\n")),
+                    .on(["jj", "log"], Reply::ok("aaa\tbbb\tfalse\t\"work\"\n")),
             ),
         );
         let err = repo
@@ -2015,7 +2027,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("ws1\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"ws1\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -2052,7 +2067,10 @@ mod tests {
             &root,
             Jj::with_runner(
                 ScriptedRunner::new()
-                    .on(["jj", "workspace", "list"], Reply::ok("mainws\tc0ffee\t\n"))
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"mainws\"\tc0ffee\t\n"),
+                    )
                     .on(
                         [
                             "jj",
@@ -2178,7 +2196,8 @@ mod tests {
         // current_branch derives from `reachable_bookmarks`, whose template is
         // `<bookmarks space-joined>\t<commit>` — distinct from the strict
         // `current_bookmark(@)` comma-joined template.
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("main\t53e4e879\n")));
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"main\"\t53e4e879\n")));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("main")
@@ -2193,7 +2212,8 @@ mod tests {
         // still on my branch". Under the old strict `current_bookmark(@)` rule
         // this returned `None`; feeding the reachable template (`feat\t…`,
         // unparseable as a comma-joined bookmark name) pins the new derivation.
-        let repo = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("feat\tc8d49332\n")));
+        let repo =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("\"feat\"\tc8d49332\n")));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
             Some("feat")
@@ -2209,7 +2229,7 @@ mod tests {
         // result is stable. Here: rows `zeta` then `alpha beta` ⇒ `alpha`.
         let repo = jj_repo(ScriptedRunner::new().on(
             ["jj", "log"],
-            Reply::ok("zeta\tabc1234\nalpha beta\tdef5678\n"),
+            Reply::ok("\"zeta\"\tabc1234\n\"alpha\" \"beta\"\tdef5678\n"),
         ));
         assert_eq!(
             repo.current_branch().await.unwrap().as_deref(),
@@ -2219,21 +2239,25 @@ mod tests {
 
     #[tokio::test]
     async fn jj_local_branches_maps_bookmark_list() {
-        // BOOKMARK_LIST_TEMPLATE rows: `name\t<commit>`.
+        // BOOKMARK_LIST_TEMPLATE rows: `<present>\t<remote>\t"<name>"\t<commit>`.
         let repo = jj_repo(ScriptedRunner::new().on(
             ["jj", "bookmark", "list"],
-            Reply::ok("main\tcmt\nfeat\tm2\n"),
+            Reply::ok("1\t\t\"main\"\tcmt\n1\t\t\"feat\"\tm2\n"),
         ));
         assert_eq!(repo.local_branches().await.unwrap(), ["main", "feat"]);
     }
 
     #[tokio::test]
     async fn jj_branch_exists_scans_bookmarks() {
-        let repo =
-            jj_repo(ScriptedRunner::new().on(["jj", "bookmark", "list"], Reply::ok("main\tcmt\n")));
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok("1\t\t\"main\"\tcmt\n"),
+        ));
         assert!(repo.branch_exists("main").await.unwrap());
-        let repo2 =
-            jj_repo(ScriptedRunner::new().on(["jj", "bookmark", "list"], Reply::ok("main\tcmt\n")));
+        let repo2 = jj_repo(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok("1\t\t\"main\"\tcmt\n"),
+        ));
         assert!(!repo2.branch_exists("missing").await.unwrap());
     }
 
@@ -2241,9 +2265,10 @@ mod tests {
     async fn jj_has_uncommitted_changes_reads_empty_flag() {
         // CHANGE_TEMPLATE row: change_id \t commit_id \t empty \t description
         let dirty =
-            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\twip\n")));
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")));
         assert!(dirty.has_uncommitted_changes().await.unwrap());
-        let clean = jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\ttrue\t\n")));
+        let clean =
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\ttrue\t\"\"\n")));
         assert!(!clean.has_uncommitted_changes().await.unwrap());
     }
 
@@ -2256,8 +2281,8 @@ mod tests {
         let repo = jj_repo(ScriptedRunner::new().on_sequence(
             ["jj", "log"],
             [
-                Reply::ok("kz\t38\ttrue\t\n"), // current_change: empty = true
-                Reply::ok("1\n"),              // is_conflicted: conflicted
+                Reply::ok("kz\t38\ttrue\t\"\"\n"), // current_change: empty = true
+                Reply::ok("1\n"),                  // is_conflicted: conflicted
             ],
         ));
         assert!(
@@ -2525,7 +2550,7 @@ mod tests {
     #[tokio::test]
     async fn jj_has_tracked_changes_follows_working_copy() {
         let dirty =
-            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\twip\n")));
+            jj_repo(ScriptedRunner::new().on(["jj", "log"], Reply::ok("kz\t38\tfalse\t\"wip\"\n")));
         assert!(dirty.has_tracked_changes().await.unwrap());
     }
 
@@ -3037,9 +3062,10 @@ mod tests {
     // jj's typed log doesn't surface them.
     #[tokio::test]
     async fn jj_log_maps_change_with_no_author_or_date() {
-        let repo = jj_repo(
-            ScriptedRunner::new().on(["jj", "log"], Reply::ok("kztuxlro\t38e00654\tfalse\twip\n")),
-        );
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "log"],
+            Reply::ok("kztuxlro\t38e00654\tfalse\t\"wip\"\n"),
+        ));
         let commits = repo.log("@", 10).await.unwrap();
         assert_eq!(commits.len(), 1);
         assert_eq!(commits[0].id, "38e00654");

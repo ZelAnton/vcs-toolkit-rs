@@ -515,6 +515,10 @@ pub(crate) async fn list_worktrees<R: ProcessRunner>(
         out.push(WorktreeInfo {
             path: root,
             branch: ws.bookmarks.into_iter().next(),
+            // `ws.commit` is the workspace commit's **full** id (WORKSPACE_TEMPLATE
+            // renders `commit_id`, not `.short()`), the same identity `snapshot`
+            // reports as `head` — so `WorktreeInfo.commit` can be compared against
+            // `RepoSnapshot.head` without a short-prefix collision (T-041).
             commit: (!ws.commit.is_empty()).then_some(ws.commit),
             is_bare: false,
         });
@@ -1108,6 +1112,107 @@ mod tests {
                 c.args_str()
             );
         }
+    }
+
+    // T-041 (tombstone, end-to-end): a locally-deleted bookmark still tracked on a
+    // remote must not appear in `local_branches` or `branch_exists`. The scripted
+    // `bookmark list` output is what jj renders for that state — a `present=0`
+    // local row plus a `present=1` remote-tracking row — so only the live local
+    // bookmark survives, and the deleted one never looks alive.
+    #[tokio::test]
+    async fn tombstone_bookmark_is_not_a_live_local_branch() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "bookmark", "list"],
+            Reply::ok(concat!(
+                "1\t\t\"main\"\tabc123\n",         // live local
+                "0\t\t\"gone\"\t\n",               // deleted local tombstone
+                "1\torigin\t\"gone\"\tdeadbeef\n", // its remote-tracking row
+            )),
+        ));
+
+        let names = local_branches(&jj, Path::new("/repo"))
+            .await
+            .expect("local_branches");
+        assert_eq!(
+            names,
+            vec!["main".to_string()],
+            "the tombstone must not appear as a local branch"
+        );
+        assert!(
+            branch_exists(&jj, Path::new("/repo"), "main")
+                .await
+                .expect("branch_exists main")
+        );
+        assert!(
+            !branch_exists(&jj, Path::new("/repo"), "gone")
+                .await
+                .expect("branch_exists gone"),
+            "a deleted bookmark must not report as an existing branch"
+        );
+    }
+
+    // T-041: `RepoSnapshot.head` and `WorktreeInfo.commit` must carry the SAME
+    // full commit id for the same commit, so a consumer can compare them to tell
+    // whether a worktree sits on the snapshotted commit. Driven hermetically: `@`
+    // and the `default` workspace both point at one 40-hex oid, and the two facade
+    // fields must come back equal and full-length — not one full, one truncated.
+    #[tokio::test]
+    async fn snapshot_head_and_worktree_commit_share_the_full_id() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        const FULL: &str = "abcdef0123456789abcdef0123456789abcdef01";
+
+        let jj = Jj::with_runner(
+            ScriptedRunner::new()
+                // snapshot spawn 1: `@` head/empty/conflict — empty=1 ⇒ clean, so
+                // no change-count spawn follows.
+                .on(
+                    ["jj", "log", "-r", "@"],
+                    Reply::ok(format!("{FULL}\t1\t0\n")),
+                )
+                // snapshot spawn 2: branch = nearest reachable bookmark.
+                .on(
+                    ["jj", "log", "-r", "heads(::@ & bookmarks())"],
+                    Reply::ok(format!("\"main\"\t{FULL}\n")),
+                )
+                // list_worktrees: the default workspace points at the same commit.
+                .on(
+                    ["jj", "workspace", "list"],
+                    Reply::ok(format!("\"default\"\t{FULL}\t\"main\"\n")),
+                )
+                .on(
+                    [
+                        "jj",
+                        "--ignore-working-copy",
+                        "workspace",
+                        "root",
+                        "--name",
+                        "default",
+                    ],
+                    Reply::ok("/repo\n"),
+                ),
+        );
+
+        let snap = snapshot(&jj, Path::new("/repo")).await.expect("snapshot");
+        let worktrees = list_worktrees(&jj, Path::new("/repo"))
+            .await
+            .expect("worktrees");
+
+        let head = snap.head.expect("snapshot head present");
+        assert_eq!(
+            head.len(),
+            40,
+            "head must be the full oid, not a short prefix"
+        );
+        let wt_commit = worktrees[0].commit.as_deref().expect("worktree commit");
+        assert_eq!(
+            head, wt_commit,
+            "snapshot head and worktree commit must be the same full id"
+        );
     }
 
     // `local_branches_readonly` lists bookmarks read-only (no operation recorded).
