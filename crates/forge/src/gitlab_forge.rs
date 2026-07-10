@@ -215,8 +215,9 @@ fn map_issue(i: Issue) -> ForgeIssue {
         state: issue_state_of(&i.state),
         body: i.body,
         url: i.url,
-        labels: i.labels,
-        assignees: i.assignees,
+        // GitLab's REST issue always carries labels/assignees — confirmed values.
+        labels: Some(i.labels),
+        assignees: Some(i.assignees),
     }
 }
 
@@ -234,13 +235,17 @@ fn map_release(r: Release) -> ForgeRelease {
     ForgeRelease {
         tag: r.tag_name,
         title: r.name,
-        url: r.url,
+        // GitLab carries the URL as `_links.self`; an empty (absent-links) value
+        // surfaces as None rather than an empty string.
+        url: Some(r.url).filter(|s| !s.is_empty()),
         // An empty `released_at` (unpublished/upcoming release) surfaces as None.
         published_at: Some(r.published_at).filter(|s| !s.is_empty()),
         body: Some(r.description).filter(|s| !s.is_empty()),
-        // GitLab has no draft/pre-release concept on a release.
-        draft: false,
-        prerelease: false,
+        // GitLab has no draft/pre-release concept on a release, so these are
+        // *unknown* (`None`) — never a false `Some(false)` that would read as a
+        // confirmed "not a draft / not a pre-release".
+        draft: None,
+        prerelease: None,
     }
 }
 
@@ -252,9 +257,10 @@ fn map_mr(mr: MergeRequest) -> ForgePr {
         source_branch: mr.source_branch,
         target_branch: mr.target_branch,
         url: mr.web_url,
-        draft: mr.draft,
-        labels: mr.labels,
-        assignees: mr.assignees,
+        // GitLab's REST MR always carries draft/labels/assignees — confirmed values.
+        draft: Some(mr.draft),
+        labels: Some(mr.labels),
+        assignees: Some(mr.assignees),
     }
 }
 
@@ -281,10 +287,11 @@ fn map_project(p: RepoView) -> ForgeRepo {
         owner,
         default_branch: p.default_branch,
         url: p.web_url,
-        // Conservative: only claim privacy when the visibility is *known* and not
-        // "public". An absent visibility (`None`) is unknown, so it maps to
-        // `false` (public) — we never assert a privacy we can't prove.
-        private: p.visibility.as_deref().is_some_and(|v| v != "public"),
+        // Only claim a *known* visibility: a present value maps to `Some(v !=
+        // "public")`, but an absent visibility (`glab` omitted the field) is
+        // genuinely unknown and maps to `None` — never a false `Some(false)` a
+        // consumer could read as a proven-public repo.
+        private: p.visibility.as_deref().map(|v| v != "public"),
     }
 }
 

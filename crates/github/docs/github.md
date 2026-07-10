@@ -325,11 +325,11 @@ async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
 async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 ```
 
-`release_list` returns releases newest first; it does **not** fetch
-`body`/`url` (both empty — use `release_view`), but it *is* the only endpoint
-that reports [`is_latest`](#release). `release_view` fills `body`/`url` for one
-tag but has no `isLatest` field, so `is_latest` defaults to `false` there. The
-`tag` is flag-injection guarded like `api`'s endpoint.
+`release_list` returns releases newest first; it does **not** request
+`body`/`url` (both `None` — use `release_view`), but it *is* the only endpoint
+that reports [`is_latest`](#release). `release_view` fills `body`/`url` (as `Some`)
+for one tag but has no `isLatest` field, so `is_latest` defaults to `false` there.
+The `tag` is flag-injection guarded like `api`'s endpoint.
 
 ## Raw escape hatches
 
@@ -394,11 +394,12 @@ From `pr_checks`. Fields: `name: String`, `state: String` (`"SUCCESS"`,
 ### `Release`
 
 From `release_list` / `release_view`. Fields: `tag_name: String`,
-`name: String` (may be empty), `body: String` — **empty from `release_list`**,
-`url: String` — **empty from `release_list`**, `published_at: String` (ISO 8601,
-empty for a draft), `is_draft: bool`, `is_prerelease: bool`, `is_latest: bool` —
-**only `release_list` reports this; from `release_view` it defaults to
-`false`**.
+`name: String` (may be empty), `body: Option<String>` — **`None` from
+`release_list`** (it doesn't request the field; `Some` from `release_view`),
+`url: Option<String>` — **`None` from `release_list`** (`Some` from
+`release_view`), `published_at: String` (ISO 8601, empty for a draft),
+`is_draft: bool`, `is_prerelease: bool`, `is_latest: bool` — **only `release_list`
+reports this; from `release_view` it defaults to `false`**.
 
 ### `Review`
 

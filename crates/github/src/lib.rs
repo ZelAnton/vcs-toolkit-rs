@@ -1910,7 +1910,8 @@ mod tests {
             .await
             .expect("release_view");
         assert_eq!(release.tag_name, "v1");
-        assert_eq!(release.body, "notes");
+        assert_eq!(release.body.as_deref(), Some("notes"));
+        assert_eq!(release.url.as_deref(), Some("u"));
         assert_eq!(
             rec.only_call().args_str(),
             ["release", "view", "v1", "--json", RELEASE_VIEW_FIELDS]

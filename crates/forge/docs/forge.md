@@ -101,8 +101,11 @@ each CLI takes — GitLab's `iid`), `title`, `state` ([`ForgePrState`]),
 | GitLab | `opened` | `closed` / `locked` | `merged` |
 | Gitea | `state="open"` | `state="closed"` | `merged=true` |
 
-[`ForgeRepo`] is `name` / `owner` / `default_branch` / `url` / `private` (GitLab's
-owner is the namespace path). [`CiStatus`] is `Passing` / `Failing` / `Pending` /
+[`ForgeRepo`] is `name` / `owner` / `default_branch` / `url` /
+`private: Option<bool>` (GitLab's owner is the namespace path). `private` follows
+the support contract: GitHub always reports `Some(..)`; GitLab reports `Some(..)`
+when `visibility` is present but `None` when `glab` omits it — an absent visibility
+is *unknown*, never a false `Some(false)` a consumer could read as proven-public. [`CiStatus`] is `Passing` / `Failing` / `Pending` /
 `None` — GitHub aggregates its per-check buckets into it, GitLab maps its pipeline
 status. [`PrMerge`] is the unified merge spec — a [`MergeStrategy`] (`Merge` /
 `Squash` / `Rebase`, mapped to each CLI's flag) plus the optional `auto` /
@@ -111,14 +114,19 @@ status. [`PrMerge`] is the unified merge spec — a [`MergeStrategy`] (`Merge` /
 `Error::Unsupported` rather than silently merging without it — for an irreversible
 merge, a quietly dropped option could produce the wrong side effects.
 
-`draft` is **best-effort**: GitHub (`gh --json isDraft`) and GitLab report it;
-Gitea reports `false` (`tea`'s PR list doesn't carry the flag).
+`draft: Option<bool>` follows a **per-field support contract**, not a sentinel:
+GitHub (`gh --json isDraft`) and GitLab report a definite `Some(true)`/`Some(false)`;
+Gitea is `None` — `tea`'s PR list/view carries no draft flag, so "not a draft" can't
+be told apart from "unknown", and the honest answer is `None` rather than a false
+`Some(false)`.
 
-`labels: Vec<String>` / `assignees: Vec<String>` are **best-effort**: GitHub
-(`gh --json labels,assignees`, flattened from `[{"name": …}]`/`[{"login": …}]`)
-and GitLab (`labels` already plain strings; `assignees` flattened from its User
-objects' `username`) both report them. Gitea is **always empty** on both —
-`tea`'s PR list/view has no labels/assignees column.
+`labels: Option<Vec<String>>` / `assignees: Option<Vec<String>>` follow the same
+contract: GitHub (`gh --json labels,assignees`, flattened from
+`[{"name": …}]`/`[{"login": …}]`) and GitLab (`labels` already plain strings;
+`assignees` flattened from its User objects' `username`) both report `Some(..)` — an
+empty `Some(vec![])` is a *confirmed* "no labels / unassigned". Gitea is `None` on
+both — `tea`'s PR list/view has no labels/assignees column, so an empty list there
+would be a false "none" rather than the truthful "unknown".
 
 `pr_diff` returns [`FileDiff`] (re-exported from [`vcs-diff`](https://docs.rs/vcs-diff/latest/vcs_diff/)) directly — no
 facade-specific DTO wraps it, since `gh pr diff`/`glab mr diff` already emit the
@@ -129,20 +137,21 @@ the same shared parser.
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",
 everything else reads as `Open`, so an unmodelled state is treated as live),
 `body`, `url` — both populated by `issue_list` and `issue_view` on every forge —
-plus `labels: Vec<String>` / `assignees: Vec<String>`, best-effort the same way
-as [`ForgePr`]'s: GitHub and GitLab report them, Gitea is always empty on both.
+plus `labels: Option<Vec<String>>` / `assignees: Option<Vec<String>>`, following
+the same support contract as [`ForgePr`]'s: GitHub and GitLab report `Some(..)`,
+Gitea is `None` on both.
 
-[`ForgeRelease`] is `tag` / `title` / `url` / `published_at: Option<String>`
-(`None` for an unpublished draft or when the backend doesn't report one) /
-`body: Option<String>` / `draft: bool` / `prerelease: bool`. The `url` is
-**best-effort**: empty from GitHub's lean `release_list` (filled by
-`release_view`), and **always empty on Gitea** — `tea releases list` exposes no
-release-page URL at all (only a tar/zip download URL, deliberately not surfaced),
-and `tea` has no `release_view`. `body` (release notes) is **best-effort**: `None`
-from GitHub's lean `release_list` (only `release_view` fills it) and always `None`
-on Gitea (`tea` has no body column); GitLab carries it on both. `draft` /
-`prerelease` are reported by GitHub and Gitea, but GitLab has no such concept so
-both are always `false` there.
+[`ForgeRelease`] is `tag` / `title` / `url: Option<String>` /
+`published_at: Option<String>` (`None` for an unpublished draft or when the backend
+doesn't report one) / `body: Option<String>` / `draft: Option<bool>` /
+`prerelease: Option<bool>`. `url` is `None` from GitHub's lean `release_list` (only
+`release_view` fills it as `Some`) and always `None` on Gitea — `tea releases list`
+exposes no release-page URL at all (only a tar/zip download URL, deliberately not
+surfaced), and `tea` has no `release_view`. `body` (release notes) is likewise
+`None` from GitHub's lean `release_list` (only `release_view` fills it) and always
+`None` on Gitea (`tea` has no body column); GitLab carries it on both. `draft` /
+`prerelease` are reported as `Some(..)` by GitHub and Gitea, but GitLab has no such
+concept, so both are `None` there — *unknown*, never a false `Some(false)`.
 
 ## Capability matrix
 
