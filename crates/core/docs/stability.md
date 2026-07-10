@@ -21,7 +21,9 @@ Because the crates depend on each other (`vcs-core` → `vcs-git`/`vcs-jj`; the
 wrappers → the foundational `vcs-diff`/`vcs-cli-support`), each intra-workspace
 dependency carries a `^MAJOR.MINOR` requirement that must stay in range when a
 dependency crosses a boundary — see the release process in
-[CONTRIBUTING.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/CONTRIBUTING.md) and the publish ordering in `release.yml`.
+[CONTRIBUTING.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/CONTRIBUTING.md);
+[`scripts/release/lib.sh`](../../../scripts/release/lib.sh) is the canonical
+source of truth for the publish order.
 
 ## Stability tiers
 
@@ -44,11 +46,14 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 
 ### Coordinated-release dependencies
 
-- **processkit** — the external job-backed process launcher; breaking changes
-  propagate through the wrappers.
+- **processkit** — the external job-backed process launcher; a major bump
+  requires coordinated releases of `vcs-cli-support`, `vcs-git`, `vcs-jj`,
+  `vcs-github`, `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch`,
+  and `vcs-mcp`.
 - **futures** — the streaming API ecosystem (`vcs-watch` uses Tokio plus
-  `futures-core`); a major bump requires coordination.
-- **notify** — the file-watch events API used by `vcs-watch`.
+  `futures-core`); a major bump requires a coordinated `vcs-watch` release.
+- **notify** — the file-watch events API used by `vcs-watch`; a major bump
+  requires a coordinated `vcs-watch` release.
 
 **What the tiers mean — and the per-crate caveats:**
 

@@ -17,7 +17,7 @@ name: Release
 # vcs-gitea) then publish, then the facades — `vcs-forge` (depends on the
 # github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj) —
 # and finally `vcs-watch`/`vcs-mcp` (depend on `vcs-core`/`vcs-core`+`vcs-forge`);
-# `vcs-testkit` has no workspace deps and can publish any time after `vcs-diff`.
+# `vcs-testkit` has no workspace deps and can publish at any point.
 # `scripts/release/lib.sh` is the source of truth for this order. Each
 # `^MAJOR.MINOR` intra-workspace dependency must stay in range when a dep
 # crosses a minor/major boundary. `all` releases every crate in one run — each

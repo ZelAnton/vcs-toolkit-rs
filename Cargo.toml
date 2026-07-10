@@ -21,7 +21,7 @@ exclude = ["fuzz"]
 
 # Metadata shared by every crate in the toolkit. Each crate inherits these via
 # `field.workspace = true` in its own Cargo.toml. NOTE: `version` is *not* here
-# on purpose — the three crates publish independently and carry their own
+# on purpose — the workspace crates publish independently and carry their own
 # version (see each crate's [package]).
 [workspace.package]
 edition = "2024"

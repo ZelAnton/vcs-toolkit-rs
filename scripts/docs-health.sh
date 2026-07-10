@@ -17,7 +17,20 @@ matrix="$repo_root/crates/core/docs/stability.md"
 
 # Matrix -> manifest: every `| `crate` | version | ... |` row must match the
 # crate's actual Cargo.toml version.
-while IFS='|' read -r crate expected; do
+matrix_row_re='^[[:space:]]*\|[[:space:]]*`([^`]+)`[[:space:]]*\|[[:space:]]*([^|[:space:]]+)[[:space:]]*\|[^|]*\|[[:space:]]*$'
+while IFS= read -r row; do
+  if [[ ! "$row" =~ ^[[:space:]]*\| ]] || [[ "$row" != *'`'* ]]; then
+    continue
+  fi
+  if [[ ! "$row" =~ $matrix_row_re ]]; then
+    printf '%s: malformed stability matrix crate row: %s\n' \
+      "crates/core/docs/stability.md" "$row" >&2
+    status=1
+    continue
+  fi
+  crate="${BASH_REMATCH[1]}"
+  expected="${BASH_REMATCH[2]}"
+
   manifest=""
   for candidate in "$repo_root"/crates/*/Cargo.toml; do
     if grep -qE "^name[[:space:]]*=[[:space:]]*\"${crate}\"[[:space:]]*$" "$candidate"; then
@@ -39,9 +52,7 @@ while IFS='|' read -r crate expected; do
       "crates/core/docs/stability.md" "$crate" "$expected" "$actual" >&2
     status=1
   fi
-done < <(
-  sed -nE 's/^\| `([^`]+)` \| ([^ ]+) \|.*$/\1|\2/p' "$matrix"
-)
+done < "$matrix"
 
 # Manifest -> matrix: every crate with a Cargo.toml should be listed, so a
 # newly-added crate can't silently skip the stability table.
