@@ -1632,6 +1632,7 @@ mod tests {
                     ["jj", "log", "-r", "heads(::@ & bookmarks())"],
                     Reply::ok("main\tdeadbeef\n"),
                 )
+                .on(["jj", "root"], Reply::ok("/repo\n"))
                 .on(["jj", "diff"], Reply::ok("M a.rs\nA b.rs\n")), // status -r @ --summary → 2
         );
         let s = repo.snapshot().await.unwrap();
@@ -1678,6 +1679,7 @@ mod tests {
                     ["jj", "log", "-r", "heads(::@ & bookmarks())"],
                     Reply::ok(""),
                 ) // no bookmark
+                .on(["jj", "root"], Reply::ok("/repo\n"))
                 .on(["jj", "diff"], Reply::ok("M conflicted.rs\n")), // status → 1
         );
         let s = repo.snapshot().await.unwrap();
@@ -2267,7 +2269,9 @@ mod tests {
     #[tokio::test]
     async fn jj_changed_files_maps_diff_summary() {
         let repo = jj_repo(
-            ScriptedRunner::new().on(["jj", "diff"], Reply::ok("M src/a.rs\nA b.rs\nD gone.rs\n")),
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(["jj", "diff"], Reply::ok("M src/a.rs\nA b.rs\nD gone.rs\n")),
         );
         let changes = repo.changed_files().await.unwrap();
         assert_eq!(changes.len(), 3);
@@ -2282,7 +2286,9 @@ mod tests {
     #[tokio::test]
     async fn jj_changed_files_populates_rename_old_path() {
         let repo = jj_repo(
-            ScriptedRunner::new().on(["jj", "diff"], Reply::ok("R src/{old.rs => new.rs}\n")),
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo\n"))
+                .on(["jj", "diff"], Reply::ok("R src/{old.rs => new.rs}\n")),
         );
         let changes = repo.changed_files().await.unwrap();
         assert_eq!(changes.len(), 1);
