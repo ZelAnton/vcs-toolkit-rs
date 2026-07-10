@@ -590,6 +590,23 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// A **read-only** [`local_branches`](Repo::local_branches): the same result,
+    /// but on **jj** it passes `--ignore-working-copy`, so listing the bookmarks
+    /// records no jj operation and never moves `@`. On **git** it is exactly
+    /// [`local_branches`](Repo::local_branches) — git's branch listing records no
+    /// operation and moves no ref, so there is nothing to make read-only.
+    ///
+    /// Use it (with [`snapshot_readonly`](Repo::snapshot_readonly)) from an
+    /// *observer* — a watcher or a prompt refresh — that must not perturb the
+    /// state it reads. See [`snapshot_readonly`](Repo::snapshot_readonly) for the
+    /// jj working-copy trade-off this shares.
+    pub async fn local_branches_readonly(&self) -> Result<Vec<String>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::local_branches(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::local_branches_readonly(j, &self.cwd).await,
+        }
+    }
+
     /// Whether a local branch/bookmark named `name` exists. See
     /// [`local_branches`](Repo::local_branches) for the jj deleted-but-tracked
     /// *tombstone* divergence (a just-deleted tracked bookmark can still read as
@@ -716,6 +733,31 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::snapshot(g, &self.cwd).await,
             Backend::Jj(j) => jj_backend::snapshot(j, &self.cwd).await,
+        }
+    }
+
+    /// A **read-only** [`snapshot`](Repo::snapshot): the same [`RepoSnapshot`],
+    /// but on **jj** it never snapshots the working copy — every underlying query
+    /// passes `--ignore-working-copy`, so the batched read records **no** jj
+    /// operation and never moves `@`. On **git** it is exactly
+    /// [`snapshot`](Repo::snapshot) (git's status query records no operation and
+    /// moves no ref).
+    ///
+    /// Use it for an *observer* — a repository watcher, a prompt/status-bar
+    /// refresh — that must not perturb the state it reports: an ordinary jj query
+    /// snapshots the working copy as a side effect (taking the lock, recording an
+    /// operation, possibly moving `@`), so the observer would otherwise *mutate*
+    /// the repo it merely means to read.
+    ///
+    /// **jj trade-off:** because the working copy isn't snapshotted, a bare
+    /// working-tree edit that no jj command has recorded yet is **not** reflected
+    /// — [`dirty`](RepoSnapshot::dirty)/[`head`](RepoSnapshot::head) are as of the
+    /// last recorded operation. To observe such unsnapshotted edits, accept the
+    /// mutation and call [`snapshot`](Repo::snapshot).
+    pub async fn snapshot_readonly(&self) -> Result<RepoSnapshot> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::snapshot(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::snapshot_readonly(j, &self.cwd).await,
         }
     }
 
@@ -1132,6 +1174,7 @@ facade_trait! {
         fn current_branch() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
         fn local_branches() -> Result<Vec<String>>;
+        fn local_branches_readonly() -> Result<Vec<String>>;
         fn branch_exists(name: &str) -> Result<bool>;
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
@@ -1143,6 +1186,7 @@ facade_trait! {
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn show_file(rev: &str, path: &str) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
+        fn snapshot_readonly() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[String], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;

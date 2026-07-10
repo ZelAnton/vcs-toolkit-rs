@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
-    AnnotatedTag, CheckoutTarget, Git, GitApi, MergeCheck, MergeCommit, RefName, RevSpec,
-    WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, CheckoutTarget, CommitPaths, Git, GitApi, MergeCheck, MergeCommit, RefName,
+    RevSpec, WorktreeAdd, WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
 
@@ -977,5 +977,222 @@ async fn conflict_model_resolves_a_real_conflict() {
             .expect("conflicted")
             .is_empty(),
         "conflict cleared after writing the resolution"
+    );
+}
+
+// T-052: `add` and `commit_paths` must accept a path set whose combined length
+// is definitely longer than Windows' `CreateProcess` argv ceiling (~32,767
+// UTF-16 code units — building it as one plain `add -- <paths>`/`commit --only
+// -- <paths>` argv used to fail there with `OS error 206`). Both route through
+// the NUL-safe `--pathspec-from-file=-` transport instead once the path set
+// crosses this crate's own (much smaller) internal budget, so neither ever
+// builds an oversized argv in the first place.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn add_and_commit_paths_survive_an_oversized_argv() {
+    let tmp = TempDir::new("huge-pathspec");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // ~5,000 files of ~15 characters each — comfortably past the 32,767-char
+    // Windows argv ceiling if ever built as one plain-argv pathspec list.
+    let count = 5_000usize;
+    let mut paths = Vec::with_capacity(count);
+    let mut total_pathspec_len = 0usize;
+    for i in 0..count {
+        let name = format!("f_{i:05}.txt");
+        std::fs::write(dir.join(&name), "x").expect("write file");
+        total_pathspec_len += name.len() + 1;
+        paths.push(PathBuf::from(name));
+    }
+    assert!(
+        total_pathspec_len > 32_767,
+        "test paths must exceed the Windows argv ceiling, got {total_pathspec_len}"
+    );
+
+    git.add(dir, &paths)
+        .await
+        .expect("add must not exceed the OS argv limit");
+    let status = git.status(dir).await.expect("status");
+    assert_eq!(status.len(), count, "every file must be staged");
+    assert!(
+        status.iter().all(|e| e.code == "A "),
+        "all staged as new files"
+    );
+
+    git.commit_paths(dir, CommitPaths::new(paths, "huge commit"))
+        .await
+        .expect("commit_paths must not exceed the OS argv limit");
+    assert!(
+        git.status(dir).await.expect("status").is_empty(),
+        "commit_paths must leave a clean tree"
+    );
+    let log = git.log(dir, &rv("HEAD"), 1).await.expect("log");
+    assert_eq!(log[0].subject, "huge commit");
+}
+
+// T-052/R-04: `log_paths`'s large-path-set fallback resolves the (here
+// symbolic) `revspec` via a real `git rev-parse` exactly once, before any of
+// the several chunk calls and the commit-order oracle call it then makes —
+// exercised end-to-end against the real binary (the hermetic tests in
+// `src/lib.rs` script this same sequence, but can't confirm the real
+// `git rev-parse HEAD` output is actually consumable by the subsequent real
+// `git log <resolved> ...` calls the way the scripted tests assume). Two real
+// commits, each touching a different half of a path set too large for one
+// `git log` call, must still come back newest-first — proving the chunk
+// merge + oracle reorder + one-time revspec resolution all agree with what a
+// single unchunked call would have produced.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn log_paths_large_path_set_resolves_head_and_reorders_across_real_commits() {
+    let tmp = TempDir::new("log-paths-chunked");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // Each half is already comfortably past `log_paths`'s internal
+    // (much-smaller-than-Windows'-32,767) argv budget on its own, so querying
+    // both together below forces `log_paths` down its chunked path.
+    let count = 500usize;
+    let make_chunk = |dir: &Path, prefix: &str| -> Vec<String> {
+        (0..count)
+            .map(|i| {
+                let name = format!("{prefix}_{i:05}.txt");
+                std::fs::write(dir.join(&name), prefix).expect("write file");
+                name
+            })
+            .collect()
+    };
+
+    let paths_a = make_chunk(dir, "chunk_a");
+    git.add(
+        dir,
+        &paths_a
+            .iter()
+            .map(|s| PathBuf::from(s.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("add chunk a");
+    git.commit(dir, "commit a").await.expect("commit a");
+
+    let paths_b = make_chunk(dir, "chunk_b");
+    git.add(
+        dir,
+        &paths_b
+            .iter()
+            .map(|s| PathBuf::from(s.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("add chunk b");
+    git.commit(dir, "commit b").await.expect("commit b");
+
+    let mut all_paths = paths_a;
+    all_paths.extend(paths_b);
+    let total_len: usize = all_paths.iter().map(|p| p.len() + 1).sum();
+    assert!(
+        total_len > 12_000,
+        "path set must be large enough to force multiple `log_paths` chunks, \
+         got {total_len} bytes"
+    );
+
+    let commits = git
+        .log_paths(dir, &rv("HEAD"), 10, &all_paths)
+        .await
+        .expect("log_paths");
+    let subjects: Vec<&str> = commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(
+        subjects,
+        ["commit b", "commit a"],
+        "log_paths must report both real commits, newest first, once the \
+         chunked calls (over the resolved `HEAD`) are merged and reordered \
+         by the commit-order oracle"
+    );
+}
+
+// R-01/R-02: `add`, `commit_paths`, and `log_paths` must treat a pathspec
+// glob-magic character (`[]`) literally, not as glob magic — even for a small
+// path set that never goes anywhere near the T-052 chunking/stdin transport.
+// `[` and `]` (unlike `*`/`?`) are valid on a Windows filesystem, so
+// `file[1].txt` is a portable literal filename; as an *unquoted* git pathspec
+// it would otherwise glob-match the unrelated `file1.txt`.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn add_commit_paths_and_log_paths_treat_glob_characters_literally() {
+    let tmp = TempDir::new("literal-pathspec");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    let literal_name = "file[1].txt";
+    let glob_target_name = "file1.txt"; // what `file[1].txt` would glob-match
+    std::fs::write(dir.join(literal_name), "literal").expect("write literal file");
+    std::fs::write(dir.join(glob_target_name), "glob target").expect("write glob-target file");
+
+    git.add(dir, &[PathBuf::from(literal_name)])
+        .await
+        .expect("add");
+    let status = git.status(dir).await.expect("status");
+    let literal_entry = status
+        .iter()
+        .find(|e| e.path == literal_name)
+        .expect("literal file must be present in status");
+    assert_eq!(literal_entry.code, "A ", "the literal path must be staged");
+    let glob_entry = status
+        .iter()
+        .find(|e| e.path == glob_target_name)
+        .expect("glob-target file must be present in status");
+    assert_eq!(
+        glob_entry.code, "??",
+        "the glob-target path must remain untracked — `add` must not have \
+         matched it via glob expansion (R-01)"
+    );
+
+    git.commit_paths(
+        dir,
+        CommitPaths::new([PathBuf::from(literal_name)], "literal commit"),
+    )
+    .await
+    .expect("commit_paths");
+    let status_after_commit = git.status(dir).await.expect("status");
+    assert!(
+        status_after_commit.iter().all(|e| e.path != literal_name),
+        "the committed literal path must no longer show as changed"
+    );
+    let glob_entry_after = status_after_commit
+        .iter()
+        .find(|e| e.path == glob_target_name)
+        .expect("glob-target file must still be present in status");
+    assert_eq!(
+        glob_entry_after.code, "??",
+        "the glob-target path must remain untracked after commit_paths — must \
+         not have been matched via glob expansion (R-01)"
+    );
+
+    let log_literal = git
+        .log_paths(dir, &rv("HEAD"), 5, &[literal_name.to_string()])
+        .await
+        .expect("log_paths");
+    assert_eq!(
+        log_literal.len(),
+        1,
+        "log_paths must find the commit that touched the literal path"
+    );
+    assert_eq!(log_literal[0].subject, "literal commit");
+
+    let log_glob = git
+        .log_paths(dir, &rv("HEAD"), 5, &[glob_target_name.to_string()])
+        .await
+        .expect("log_paths");
+    assert!(
+        log_glob.is_empty(),
+        "log_paths must not match the glob-target path, which was never \
+         committed — a glob-expanding query would incorrectly find the \
+         literal commit here (R-02)"
     );
 }

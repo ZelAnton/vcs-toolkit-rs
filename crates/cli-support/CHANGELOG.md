@@ -11,6 +11,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ### Added
 
+- **Host context for credential requests.** `ManagedClient::with_expected_host(host)`
+  records the remote host a client targets; the auto-injected forge token-env path
+  (`prepare`) now passes it as the `CredentialRequest`'s host, so a **host-keyed**
+  `CredentialProvider` resolves the secret for *that* host and never a neighbouring
+  instance's. `resolve_credential`'s **fallback policy** is now spelled out and
+  applies identically to read and write operations: no provider / `Ok(None)` / an
+  empty (whitespace-only) secret → defer to ambient auth; `Err` → **fail-closed**
+  abort (never a silent downgrade, and never a wrong host's secret). Clients without
+  a host binding are unchanged — the request carries no host, and a host-keyed
+  provider that can't place it defers to ambient. (T-045.)
+
 - **Cancellation-aware retry backoff.** `ManagedClient::default_cancel_on(token)` now
   cuts a lock-contention retry backoff **short** the instant the token fires: a
   cancelled operation returns a structured `Error::Cancelled` promptly instead of
