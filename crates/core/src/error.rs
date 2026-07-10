@@ -44,6 +44,16 @@ pub enum Error {
     /// [`vcs_jj::Rollback`] carries which case it was (and, for a failed restore, the
     /// underlying cause).
     Rollback(vcs_jj::Rollback),
+    /// The requested action has no meaningful mapping for the repository's current
+    /// in-progress state, so it is refused **explicitly** rather than performed as a
+    /// misleading success. Currently raised by
+    /// [`Repo::continue_in_progress`](crate::Repo::continue_in_progress) during a
+    /// `git bisect`: a bisect advances by marking commits good/bad, not by a
+    /// `--continue` step, so "continue" cannot be honoured. Carries a short message
+    /// naming the situation. Classified by
+    /// [`is_unsupported`](Error::is_unsupported); a language binding maps it to an
+    /// `unsupported`/`ValueError`-style error.
+    Unsupported(String),
 }
 
 impl Error {
@@ -126,6 +136,17 @@ impl Error {
     pub fn is_resource_not_found(&self) -> bool {
         matches!(self, Error::WorktreeNotFound(_))
     }
+
+    /// Whether this is an [`Unsupported`](Error::Unsupported) action — the caller
+    /// asked for something the repository's current in-progress state cannot
+    /// honour (e.g. `continue_in_progress` during a `git bisect`). Distinct from
+    /// [`is_invalid_input`](Error::is_invalid_input) (a *bad argument*): the
+    /// argument was fine, the *state* just has no such step. Mirrors
+    /// `vcs_forge::Error::is_unsupported`, so the two facades name the concept the
+    /// same way for a language binding.
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self, Error::Unsupported(_))
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -149,6 +170,7 @@ impl std::fmt::Display for Error {
             Error::Rollback(r) => {
                 write!(f, "operation rollback did not complete cleanly: {r}")
             }
+            Error::Unsupported(what) => write!(f, "unsupported operation: {what}"),
         }
     }
 }
@@ -241,6 +263,19 @@ mod tests {
         );
         assert!(!Error::NotARepository("/x".into()).is_invalid_input());
         assert!(!Error::Io(std::io::Error::other("disk full")).is_invalid_input());
+    }
+
+    #[test]
+    fn is_unsupported_only_for_the_unsupported_variant() {
+        let unsupported = Error::Unsupported("continue during a bisect".into());
+        assert!(unsupported.is_unsupported());
+        assert!(unsupported.to_string().contains("bisect"));
+        // Not conflated with a bad-argument rejection or any other variant.
+        assert!(!unsupported.is_invalid_input());
+        assert!(
+            !Error::Io(std::io::Error::from(std::io::ErrorKind::InvalidInput)).is_unsupported()
+        );
+        assert!(!Error::NotARepository("/x".into()).is_unsupported());
     }
 
     #[test]

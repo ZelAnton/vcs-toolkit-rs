@@ -2824,6 +2824,157 @@ mod tests {
         );
     }
 
+    // T-044: the sequencer states are read from their own git-dir markers and,
+    // crucially, a cherry-pick/revert marker is NOT mistaken for a merge (which
+    // would then dispatch `merge --abort`). `snapshot().operation` must agree with
+    // `in_progress_state`, since the watcher diffs the snapshot.
+    #[tokio::test]
+    async fn git_in_progress_state_maps_cherry_pick_revert_and_bisect() {
+        for (marker, expected) in [
+            ("CHERRY_PICK_HEAD", OperationState::CherryPick),
+            ("REVERT_HEAD", OperationState::Revert),
+            ("BISECT_LOG", OperationState::Bisect),
+        ] {
+            let gd = TempDir::new("inprog-seq");
+            std::fs::write(gd.path().join(marker), "deadbeef\n").unwrap();
+            let repo = Repo::from_git(
+                "/repo",
+                "/repo",
+                // `snapshot` also runs `status --porcelain=v2 --branch`; a clean reply
+                // lets it reach the operation probe. Both methods resolve the git dir
+                // via `rev-parse`.
+                Git::with_runner(
+                    ScriptedRunner::new()
+                        .on(["git", "status"], Reply::ok(""))
+                        .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap())),
+                ),
+            );
+            assert_eq!(
+                repo.in_progress_state().await.unwrap(),
+                expected,
+                "{marker} must read as {expected:?}"
+            );
+            assert_eq!(
+                repo.snapshot().await.unwrap().operation,
+                expected,
+                "snapshot().operation must agree for {marker}"
+            );
+        }
+    }
+
+    // T-044: abort dispatches the state's OWN git command — the whole point of
+    // keeping the states distinct. A cherry-pick must abort with `cherry-pick
+    // --abort`, never `merge --abort`.
+    #[tokio::test]
+    async fn git_abort_dispatches_each_sequencer_command() {
+        use processkit::testing::RecordingRunner;
+        for (marker, argv) in [
+            ("CHERRY_PICK_HEAD", vec!["cherry-pick", "--abort"]),
+            ("REVERT_HEAD", vec!["revert", "--abort"]),
+            ("BISECT_LOG", vec!["bisect", "reset"]),
+        ] {
+            let gd = TempDir::new("abort-seq");
+            let marker_path = gd.path().join(marker);
+            std::fs::write(&marker_path, "x\n").unwrap();
+            // The abort command's ScriptedRunner side-effect: remove the marker so the
+            // *post-call* `in_progress_state` re-probe reads `Clear`.
+            let mp = marker_path.clone();
+            let rec = RecordingRunner::new(
+                ScriptedRunner::new()
+                    .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                    .when(
+                        move |cmd| {
+                            let a0 = cmd.arguments().first().and_then(|a| a.to_str());
+                            let is_abort = matches!(a0, Some("cherry-pick" | "revert" | "bisect"));
+                            if is_abort {
+                                let _ = std::fs::remove_file(&mp);
+                            }
+                            is_abort
+                        },
+                        Reply::ok(""),
+                    ),
+            );
+            let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+            assert_eq!(
+                repo.abort_in_progress().await.unwrap(),
+                OperationState::Clear,
+                "{marker} abort must leave the repo Clear"
+            );
+            assert!(
+                rec.calls().iter().any(|c| c.args_str() == argv),
+                "{marker} must dispatch {argv:?}, got {:?}",
+                rec.calls()
+            );
+        }
+    }
+
+    // T-044: a bisect has no continue step — `continue_in_progress` must refuse it
+    // with `Error::Unsupported`, not silently report it still in progress. And no
+    // git mutation may run (only the conflict probe + git-dir resolution).
+    #[tokio::test]
+    async fn git_continue_on_bisect_is_unsupported_and_inert() {
+        use processkit::testing::RecordingRunner;
+        let gd = TempDir::new("continue-bisect");
+        std::fs::write(gd.path().join("BISECT_LOG"), "x\n").unwrap();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok("")) // no conflicted paths
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap())),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        let err = repo
+            .continue_in_progress()
+            .await
+            .expect_err("bisect continue must be refused");
+        assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        assert!(
+            rec.calls()
+                .iter()
+                .all(|c| matches!(c.args_str()[0].as_str(), "diff" | "rev-parse")),
+            "no git mutation may run for an unsupported continue: {:?}",
+            rec.calls()
+        );
+    }
+
+    // T-044: a cherry-pick that continues cleanly commits and reports the post-call
+    // state; the routing calls `cherry-pick --continue`, not a merge/rebase continue.
+    #[tokio::test]
+    async fn git_continue_dispatches_cherry_pick_continue() {
+        use processkit::testing::RecordingRunner;
+        let gd = TempDir::new("continue-cp");
+        let marker = gd.path().join("CHERRY_PICK_HEAD");
+        std::fs::write(&marker, "x\n").unwrap();
+        let mp = marker.clone();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok("")) // nothing conflicted → not blocked
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                .when(
+                    move |cmd| {
+                        let is_cont =
+                            cmd.arguments().first().and_then(|a| a.to_str()) == Some("cherry-pick");
+                        if is_cont {
+                            let _ = std::fs::remove_file(&mp); // completes the pick
+                        }
+                        is_cont
+                    },
+                    Reply::ok(""),
+                ),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Clear
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["cherry-pick", "--continue"]),
+            "must dispatch cherry-pick --continue: {:?}",
+            rec.calls()
+        );
+    }
+
     // On an unborn git repo (no commits) diff_stat probes is_unborn and stats
     // against the empty tree instead of the unresolvable HEAD, so a fresh working
     // tree reports its additions rather than erroring. The empty-tree id is

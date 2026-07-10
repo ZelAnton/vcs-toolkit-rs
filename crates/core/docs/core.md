@@ -331,31 +331,39 @@ match repo.try_merge("feature").await? {
 ```
 
 The remaining three deal with operation state, and this is the sharpest
-git-vs-jj asymmetry the facade has to paper over. git models an in-progress merge
-or rebase as *paused on-disk state* (`MERGE_HEAD`, a `rebase-*` dir); jj has no
+git-vs-jj asymmetry the facade has to paper over. git models an in-progress merge,
+rebase, `am`, cherry-pick, revert, or bisect as *paused on-disk state* (`MERGE_HEAD`,
+a `rebase-*` dir, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`); jj has no
 paused multi-step operations at all — it records a conflict directly on the
 working-copy change.
 
 `in_progress_state` reports whether the working copy is mid-operation. On git it
-returns `Merge`/`Rebase`/`ApplyMailbox` (a `git am`) and **never `Conflict`** — a git
-conflict *is* that paused state, and the conflict itself surfaces on the failed op
-(via `Error::is_merge_conflict`) or via `continue_in_progress`. On jj, which has no
-paused op, it reports `Conflict` directly.
+returns `Merge`/`Rebase`/`ApplyMailbox` (a `git am`)/`CherryPick`/`Revert`/`Bisect`
+and **never `Conflict`** — a git conflict *is* that paused state, and the conflict
+itself surfaces on the failed op (via `Error::is_merge_conflict`) or via
+`continue_in_progress`. The sequencer states are kept distinct because each is
+driven by its own git command: a cherry-pick/revert conflict writes
+`CHERRY_PICK_HEAD`/`REVERT_HEAD` (never `MERGE_HEAD`), so dispatching `merge --abort`
+on one would be wrong. On jj, which has no paused op, it reports `Conflict` directly.
 
-`continue_in_progress` continues after conflict resolution (git:
-`commit --no-edit` for a merge / `rebase --continue`; jj: a **no-op** —
-resolving the files *is* the continuation). It returns the fresh *post-call*
-state:
+`continue_in_progress` continues after conflict resolution (git: `commit --no-edit`
+for a merge / `rebase --continue` / `cherry-pick --continue` / `revert --continue`;
+jj: a **no-op** — resolving the files *is* the continuation). It returns the fresh
+*post-call* state:
 - `Conflict` when unresolved paths still block continuing (and **here git
   *does* report `Conflict`**, unlike `in_progress_state`), or when a continued
-  rebase stops on the next patch's conflict.
+  rebase/cherry-pick/revert stops on the next commit's conflict.
 - `Clear` when the operation finished.
+- A `Bisect` has no continue step, so it returns `Error::Unsupported`
+  (`is_unsupported()`) instead of a misleading success — end it with
+  `abort_in_progress`, or mark commits with `git bisect good`/`bad` directly.
 
-`abort_in_progress` aborts the in-progress operation, if any (git:
-`merge --abort` / `rebase --abort`; jj: a **no-op** — nothing is ever paused;
-roll back explicitly via the jj client's `transaction` / `op_restore`). It
-returns the fresh *post-call* state — `Clear` when nothing was, or remains, in
-progress.
+`abort_in_progress` aborts the in-progress operation, if any, dispatching the
+state's own git command (`merge --abort` / `rebase --abort` / `am --abort` /
+`cherry-pick --abort` / `revert --abort` / `bisect reset`; jj: a **no-op** —
+nothing is ever paused; roll back explicitly via the jj client's `transaction` /
+`op_restore`). It returns the fresh *post-call* state — `Clear` when nothing was,
+or remains, in progress.
 
 ## Worktrees / workspaces
 
@@ -490,6 +498,9 @@ Unifies the backends' different models of "mid-operation":
 | `Merge`    | A git merge is in progress (`MERGE_HEAD` present). git only. |
 | `Rebase`   | A git rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir *not* left by `git am`). git only. |
 | `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts with `am --abort`. git only. |
+| `CherryPick` | A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Aborts with `cherry-pick --abort`, continues with `cherry-pick --continue`. A cherry-pick conflict writes `CHERRY_PICK_HEAD`, *not* `MERGE_HEAD`, so it's never read as a `Merge`. git only. |
+| `Revert`   | A git revert is in progress (`REVERT_HEAD` present). Aborts with `revert --abort`, continues with `revert --continue`. git only. |
+| `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `Error::Unsupported`. git only. |
 | `Conflict` | The working copy has an unresolved conflict — chiefly jj, which records conflicts on the change rather than pausing an operation. On git this surfaces from `continue_in_progress`, not `in_progress_state`. |
 
 ### `RepoSnapshot`

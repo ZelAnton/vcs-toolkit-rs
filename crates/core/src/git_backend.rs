@@ -10,7 +10,7 @@ use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
     RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 pub(crate) async fn current_branch<R: ProcessRunner>(
     git: &Git<R>,
@@ -148,9 +148,12 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
     // 1 spawn: branch + upstream + ahead/behind + change counts (porcelain v2).
     let bs = git.branch_status(dir).await?;
     // 1 spawn: resolve the git dir, then a filesystem probe for an interrupted
-    // merge/rebase/am (porcelain v2 doesn't report it). A git conflict is part of
-    // that paused state, so `operation` is Merge/Rebase/ApplyMailbox/Clear here
-    // (matching `in_progress_state`); the unresolved-files signal is `conflicted`.
+    // merge/rebase/am/cherry-pick/revert/bisect (porcelain v2 doesn't report it). A
+    // git conflict is part of that paused state, so `operation` is one of the git
+    // sequencer states here (matching `in_progress_state`); the unresolved-files
+    // signal is `conflicted`. Resolving the git dir once and reading the markers
+    // inline keeps `snapshot` to a single extra spawn (it's the watcher's hot path),
+    // rather than the per-marker `rev-parse` that `in_progress_state` delegates to.
     // Mirrors the client's private `resolved_git_dir` (relative `--git-dir` → join `dir`).
     let raw = git.git_dir(dir).await?;
     let git_dir = if raw.is_absolute() {
@@ -158,9 +161,11 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
     } else {
         dir.join(raw)
     };
-    // `git am` and an apply-backend rebase share `rebase-apply/`, but am marks it
-    // `applying` — check that first so an am reads `ApplyMailbox`, not `Rebase` (M20;
-    // keeps this probe in step with `in_progress_state`).
+    // Same precedence as `in_progress_state`: `git am` and an apply-backend rebase
+    // share `rebase-apply/`, but am marks it `applying` — check that first so an am
+    // reads `ApplyMailbox`, not `Rebase` (M20). Cherry-pick/revert key off their own
+    // head file (a conflict there writes `CHERRY_PICK_HEAD`/`REVERT_HEAD`, never
+    // `MERGE_HEAD`); bisect keys off `BISECT_LOG`.
     let rebase_apply = git_dir.join("rebase-apply");
     let operation = if git_dir.join("MERGE_HEAD").exists() {
         OperationState::Merge
@@ -168,6 +173,12 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
         OperationState::ApplyMailbox
     } else if git_dir.join("rebase-merge").exists() || rebase_apply.exists() {
         OperationState::Rebase
+    } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        OperationState::CherryPick
+    } else if git_dir.join("REVERT_HEAD").exists() {
+        OperationState::Revert
+    } else if git_dir.join("BISECT_LOG").exists() {
+        OperationState::Bisect
     } else {
         OperationState::Clear
     };
@@ -324,11 +335,18 @@ pub(crate) async fn abort_in_progress<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
 ) -> Result<OperationState> {
+    // Each state aborts with its OWN git command — dispatching the wrong one on a
+    // real repository is exactly what the distinct states guard against. `Clear`
+    // and `Conflict` have nothing to abort (a git conflict IS the paused state, so
+    // it never reaches here from `in_progress_state`), so they no-op honestly.
     match in_progress_state(git, dir).await? {
         OperationState::Merge => git.merge_abort(dir).await?,
         OperationState::Rebase => git.rebase_abort(dir).await?,
         OperationState::ApplyMailbox => git.am_abort(dir).await?,
-        _ => {}
+        OperationState::CherryPick => git.cherry_pick_abort(dir).await?,
+        OperationState::Revert => git.revert_abort(dir).await?,
+        OperationState::Bisect => git.bisect_reset(dir).await?,
+        OperationState::Clear | OperationState::Conflict => {}
     }
     // Recompute rather than assume `Clear` — the return is the *post-call* state.
     in_progress_state(git, dir).await
@@ -343,19 +361,34 @@ pub(crate) async fn continue_in_progress<R: ProcessRunner>(
     if !git.conflicted_files(dir).await?.is_empty() {
         return Ok(OperationState::Conflict);
     }
+    // Merge finishes with a plain commit; the sequencer states (rebase, cherry-pick,
+    // revert) each have a `--continue` that can stop AGAIN on the next commit's
+    // conflict (exit non-zero) — that's the `Conflict` outcome, not an error. Bisect
+    // has no continue step, so it is refused **explicitly** rather than pretending to
+    // succeed while still mid-bisect. `am --continue` isn't wired here (unchanged).
     match in_progress_state(git, dir).await? {
         OperationState::Merge => git.merge_continue(dir).await?,
-        OperationState::Rebase => {
-            // `rebase --continue` exits non-zero when it stops on the NEXT
-            // patch's conflict — that's the `Conflict` outcome, not an error.
-            if let Err(err) = git.rebase_continue(dir).await {
+        state @ (OperationState::Rebase | OperationState::CherryPick | OperationState::Revert) => {
+            let continued = match state {
+                OperationState::CherryPick => git.cherry_pick_continue(dir).await,
+                OperationState::Revert => git.revert_continue(dir).await,
+                _ => git.rebase_continue(dir).await,
+            };
+            if let Err(err) = continued {
                 if !git.conflicted_files(dir).await?.is_empty() {
                     return Ok(OperationState::Conflict);
                 }
                 return Err(err.into());
             }
         }
-        _ => {}
+        OperationState::Bisect => {
+            return Err(Error::Unsupported(
+                "a git bisect has no continue step — mark commits with `git bisect \
+                 good`/`bad`, or end it with abort_in_progress (`bisect reset`)"
+                    .to_string(),
+            ));
+        }
+        OperationState::ApplyMailbox | OperationState::Clear | OperationState::Conflict => {}
     }
     // Belt and braces: report any unresolved paths the continue left behind.
     if !git.conflicted_files(dir).await?.is_empty() {
@@ -369,15 +402,26 @@ pub(crate) async fn in_progress_state<R: ProcessRunner>(
     dir: &Path,
 ) -> Result<OperationState> {
     // git surfaces an interrupted operation as on-disk state; at most one of these is
-    // live, so report whichever is present. `git am` is checked distinctly from rebase
-    // (both use `rebase-apply/`, but am marks it `applying`) so an am isn't mis-aborted
-    // with `rebase --abort` (M20).
+    // live, so report whichever is present. The precedence mirrors git's own
+    // `wt_status_get_state` (merge → am/rebase → cherry-pick → revert, bisect
+    // independent) and is safe because the markers are mutually exclusive in
+    // practice: a cherry-pick/revert conflict writes `CHERRY_PICK_HEAD`/`REVERT_HEAD`
+    // (never `MERGE_HEAD`), and a rebase that internally cherry-picks does NOT set
+    // `CHERRY_PICK_HEAD`. `git am` is checked distinctly from rebase (both use
+    // `rebase-apply/`, but am marks it `applying`) so an am isn't mis-aborted with
+    // `rebase --abort` (M20). Keep this in step with the `snapshot` probe below.
     if git.is_merge_in_progress(dir).await? {
         Ok(OperationState::Merge)
     } else if git.is_am_in_progress(dir).await? {
         Ok(OperationState::ApplyMailbox)
     } else if git.is_rebase_in_progress(dir).await? {
         Ok(OperationState::Rebase)
+    } else if git.is_cherry_pick_in_progress(dir).await? {
+        Ok(OperationState::CherryPick)
+    } else if git.is_revert_in_progress(dir).await? {
+        Ok(OperationState::Revert)
+    } else if git.is_bisect_in_progress(dir).await? {
+        Ok(OperationState::Bisect)
     } else {
         Ok(OperationState::Clear)
     }

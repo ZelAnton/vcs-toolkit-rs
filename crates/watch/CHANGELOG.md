@@ -17,6 +17,12 @@ crates; tag releases as `vcs-watch-v<version>`.
   terminal watch-backend failure.
 
 ### Changed
+- `RepoEvent::OperationChanged` now also fires for the git cherry-pick, revert,
+  and bisect states that `vcs-core`'s `OperationState` gained: starting, ending,
+  or moving between any sequencer state (`CherryPick`/`Revert`/`Bisect`, alongside
+  `Merge`/`Rebase`/`ApplyMailbox`) is reported, since the snapshot diff is generic
+  over `operation`. No API change — the event's `from`/`to` simply carry the new
+  variants. (T-044.)
 - A permanent filesystem-watch backend failure (e.g. the watched `.git`/`.jj`
   directory was removed and re-created) now closes the watcher's output
   channel: `RepoWatcher::recv`/the `stream` feature observe it as `None`/end

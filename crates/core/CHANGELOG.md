@@ -10,6 +10,21 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `OperationState` now models the remaining git sequencer states: `CherryPick`
+  (`CHERRY_PICK_HEAD`), `Revert` (`REVERT_HEAD`), and `Bisect` (`BISECT_LOG`),
+  alongside `Merge`/`Rebase`/`ApplyMailbox`/`Conflict`/`Clear`. `in_progress_state`
+  and `snapshot().operation` now report these instead of a misleading `Clear`, and
+  `abort_in_progress` dispatches the state's OWN git command (`cherry-pick --abort`
+  / `revert --abort` / `bisect reset`) rather than silently doing nothing.
+  `continue_in_progress` drives `cherry-pick --continue` / `revert --continue`
+  (reporting `Conflict` when they stop on the next commit, like a rebase). A
+  cherry-pick/revert conflict writes its own head file, **not** `MERGE_HEAD`, so
+  these are never confused with a merge. (T-044.)
+- `Error::Unsupported(String)` + `Error::is_unsupported()`: an action refused
+  because the repository's current in-progress state has no such step — currently
+  `continue_in_progress` during a `git bisect` (which advances by marking commits
+  good/bad, not `--continue`). Explicit refusal instead of a misleading success.
+  Mirrors `vcs_forge::Error::is_unsupported`. (T-044.)
 - `Repo::log(revspec_or_revset, max)` / `VcsRepo::log`: backend-agnostic recent
   history, dispatching to `GitApi::log` / `JjApi::log`. Returns the new
   `Commit` DTO (`id`, `description`, and `author`/`date` — the latter two
