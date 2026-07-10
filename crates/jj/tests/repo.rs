@@ -220,7 +220,10 @@ async fn description_round_trips_describe() {
     let jj = Jj::new();
 
     // An undescribed change reads as empty.
-    assert_eq!(jj.description(dir, &rv("@")).await.expect("description"), "");
+    assert_eq!(
+        jj.description(dir, &rv("@")).await.expect("description"),
+        ""
+    );
 
     let message = "feat: parser\n\nlonger body line";
     jj.describe(dir, message).await.expect("describe");

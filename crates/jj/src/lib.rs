@@ -679,7 +679,12 @@ pub trait JjApi: Send + Sync {
     /// Track a remote bookmark (`jj bookmark track <name>@<remote>`).
     async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
     /// Point a bookmark at `revision` (`jj bookmark set <name> -r <revision>`).
-    async fn bookmark_set(&self, dir: &Path, name: &BookmarkName, revision: &RevsetExpr) -> Result<()>;
+    async fn bookmark_set(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()>;
     /// Fetch from the git remote (`jj git fetch`); transient (network) failures
     /// are retried (3 attempts, 500 ms backoff).
     async fn git_fetch(&self, dir: &Path) -> Result<()>;
@@ -704,9 +709,19 @@ pub trait JjApi: Send + Sync {
     // --- Bookmarks -----------------------------------------------------------
 
     /// Create a bookmark at a revision (`bookmark create <name> -r <rev>`).
-    async fn bookmark_create(&self, dir: &Path, name: &BookmarkName, revision: &RevsetExpr) -> Result<()>;
+    async fn bookmark_create(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()>;
     /// Rename a bookmark (`bookmark rename <old> <new>`).
-    async fn bookmark_rename(&self, dir: &Path, old: &BookmarkName, new: &BookmarkName) -> Result<()>;
+    async fn bookmark_rename(
+        &self,
+        dir: &Path,
+        old: &BookmarkName,
+        new: &BookmarkName,
+    ) -> Result<()>;
     /// Delete a bookmark (`bookmark delete <name>`).
     async fn bookmark_delete(&self, dir: &Path, name: &BookmarkName) -> Result<()>;
     /// Move a bookmark to a revision (`bookmark move <name> --to <rev>
@@ -716,7 +731,12 @@ pub trait JjApi: Send + Sync {
     // --- Diff / query / state ------------------------------------------------
 
     /// Per-file change summary for a range (`diff -r <from>..<to> --summary`).
-    async fn diff_summary(&self, dir: &Path, from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<ChangedPath>>;
+    async fn diff_summary(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<ChangedPath>>;
     /// Aggregate change stats for a revset (`diff -r <revset> --stat`).
     async fn diff_stat(&self, dir: &Path, revset: &RevsetExpr) -> Result<DiffStat>;
     /// Raw git-format unified diff text for `spec` (`diff -r <spec> --git`) —
@@ -787,7 +807,8 @@ pub trait JjApi: Send + Sync {
     /// narrower control.
     async fn rebase(&self, dir: &Path, onto: &RevsetExpr) -> Result<()>;
     /// Rebase a whole branch onto a destination (`rebase -b <branch> -d <dest>`).
-    async fn rebase_branch(&self, dir: &Path, branch: &RevsetExpr, dest: &RevsetExpr) -> Result<()>;
+    async fn rebase_branch(&self, dir: &Path, branch: &RevsetExpr, dest: &RevsetExpr)
+    -> Result<()>;
     /// Move the working copy to a revision (`edit <rev>`).
     async fn edit(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
     /// Squash the working copy into a revision (`squash --into <rev>
@@ -823,7 +844,12 @@ pub trait JjApi: Send + Sync {
     /// Fold working-copy edits into the mutable ancestors that introduced the
     /// touched lines (`absorb [--from <revset>] [<filesets>…]`); empty
     /// `filesets` absorbs everything.
-    async fn absorb(&self, dir: &Path, from: Option<RevsetExpr>, filesets: &[JjFileset]) -> Result<()>;
+    async fn absorb(
+        &self,
+        dir: &Path,
+        from: Option<RevsetExpr>,
+        filesets: &[JjFileset],
+    ) -> Result<()>;
     /// Split exactly these filesets out of `@` into their own commit described
     /// by `message` (`split -m <message> <filesets>…`); the remainder stays
     /// behind. `filesets` must be non-empty — a fileset-less split opens jj's
@@ -1031,7 +1057,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn new_child(&self, dir: &Path, parent: &RevsetExpr) -> Result<()> {
-        self.core.run_unit(self.cmd_in(dir, ["new", parent.as_str()])).await
+        self.core
+            .run_unit(self.cmd_in(dir, ["new", parent.as_str()]))
+            .await
     }
 
     async fn bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
@@ -1192,13 +1220,26 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         Ok(first_bookmark(&out))
     }
 
-    async fn bookmark_create(&self, dir: &Path, name: &BookmarkName, revision: &RevsetExpr) -> Result<()> {
+    async fn bookmark_create(
+        &self,
+        dir: &Path,
+        name: &BookmarkName,
+        revision: &RevsetExpr,
+    ) -> Result<()> {
         self.core
-            .run_unit(self.cmd_in(dir, ["bookmark", "create", name.as_str(), "-r", revision.as_str()]))
+            .run_unit(self.cmd_in(
+                dir,
+                ["bookmark", "create", name.as_str(), "-r", revision.as_str()],
+            ))
             .await
     }
 
-    async fn bookmark_rename(&self, dir: &Path, old: &BookmarkName, new: &BookmarkName) -> Result<()> {
+    async fn bookmark_rename(
+        &self,
+        dir: &Path,
+        old: &BookmarkName,
+        new: &BookmarkName,
+    ) -> Result<()> {
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "rename", old.as_str(), new.as_str()]))
             .await
@@ -1228,7 +1269,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.run_unit(self.cmd_in(dir, args)).await
     }
 
-    async fn diff_summary(&self, dir: &Path, from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<ChangedPath>> {
+    async fn diff_summary(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<ChangedPath>> {
         // Parenthesise each endpoint so a compound revset (e.g. `x | y`) keeps its
         // meaning inside the `..` range instead of binding by operator precedence.
         let range = format!("({})..({})", from.as_str(), to.as_str());
@@ -1436,7 +1482,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // `run_untrimmed`: a file's trailing newline(s) are part of its content;
         // trimming corrupts a read-modify-write round-trip (H7).
         self.core
-            .run_untrimmed(self.cmd_in(dir, ["file", "show", "-r", revset.as_str(), fileset.as_str()]))
+            .run_untrimmed(self.cmd_in(
+                dir,
+                ["file", "show", "-r", revset.as_str(), fileset.as_str()],
+            ))
             .await
     }
 
@@ -1446,14 +1495,21 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
-    async fn rebase_branch(&self, dir: &Path, branch: &RevsetExpr, dest: &RevsetExpr) -> Result<()> {
+    async fn rebase_branch(
+        &self,
+        dir: &Path,
+        branch: &RevsetExpr,
+        dest: &RevsetExpr,
+    ) -> Result<()> {
         self.core
             .run_unit(self.cmd_in(dir, ["rebase", "-b", branch.as_str(), "-d", dest.as_str()]))
             .await
     }
 
     async fn edit(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
-        self.core.run_unit(self.cmd_in(dir, ["edit", revset.as_str()])).await
+        self.core
+            .run_unit(self.cmd_in(dir, ["edit", revset.as_str()]))
+            .await
     }
 
     async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()> {
@@ -1593,7 +1649,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         result
     }
 
-    async fn absorb(&self, dir: &Path, from: Option<RevsetExpr>, filesets: &[JjFileset]) -> Result<()> {
+    async fn absorb(
+        &self,
+        dir: &Path,
+        from: Option<RevsetExpr>,
+        filesets: &[JjFileset],
+    ) -> Result<()> {
         let mut args: Vec<String> = vec!["absorb".into()];
         if let Some(from) = from.as_ref() {
             args.push("--from".into());
@@ -2105,9 +2166,12 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
 
-        jj.bookmark_move(dir, BookmarkMove::new(bn("main"), rv("@")).allow_backwards())
-            .await
-            .unwrap();
+        jj.bookmark_move(
+            dir,
+            BookmarkMove::new(bn("main"), rv("@")).allow_backwards(),
+        )
+        .await
+        .unwrap();
         jj.at(dir)
             .bookmark_move(BookmarkMove::new(bn("main"), rv("@")).allow_backwards())
             .await
@@ -2211,9 +2275,12 @@ mod tests {
     async fn workspace_add_builds_name_base_path() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.workspace_add(Path::new("/repo"), WorkspaceAdd::new("ws1", rv("main"), "/wt"))
-            .await
-            .expect("workspace add");
+        jj.workspace_add(
+            Path::new("/repo"),
+            WorkspaceAdd::new("ws1", rv("main"), "/wt"),
+        )
+        .await
+        .expect("workspace add");
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -2645,7 +2712,10 @@ mod tests {
     #[tokio::test]
     async fn commit_count_counts_template_lines() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "log"], Reply::ok("a\nb\nc\n")));
-        assert_eq!(jj.commit_count(Path::new("."), &rv("::@")).await.unwrap(), 3);
+        assert_eq!(
+            jj.commit_count(Path::new("."), &rv("::@")).await.unwrap(),
+            3
+        );
     }
 
     #[tokio::test]
@@ -2680,7 +2750,11 @@ mod tests {
             ["jj", "resolve"],
             Reply::fail(1, "Error: Revision `bogus` doesn't exist"),
         ));
-        assert!(bad.resolve_list(Path::new("."), &rv("bogus")).await.is_err());
+        assert!(
+            bad.resolve_list(Path::new("."), &rv("bogus"))
+                .await
+                .is_err()
+        );
         // Success with conflicts → parsed paths.
         let some = Jj::with_runner(
             ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
@@ -2754,7 +2828,9 @@ mod tests {
     async fn bookmark_delete_and_fetch_branch_use_exact() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.bookmark_delete(Path::new("."), &bn("foo")).await.unwrap();
+        jj.bookmark_delete(Path::new("."), &bn("foo"))
+            .await
+            .unwrap();
         assert_eq!(
             &rec.only_call().args_str()[..3],
             &["bookmark", "delete", "exact:foo"]
@@ -2762,7 +2838,9 @@ mod tests {
 
         let rec2 = RecordingRunner::replying(Reply::ok(""));
         let jj2 = Jj::with_runner(&rec2);
-        jj2.git_fetch_branch(Path::new("."), &bn("foo")).await.unwrap();
+        jj2.git_fetch_branch(Path::new("."), &bn("foo"))
+            .await
+            .unwrap();
         assert_eq!(
             &rec2.only_call().args_str()[..6],
             &["git", "fetch", "--remote", "origin", "-b", "exact:foo"]
@@ -3110,7 +3188,9 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
         jj.absorb(Path::new("/r"), None, &[]).await.unwrap();
-        jj.absorb(Path::new("/r"), Some(rv("@-")),
+        jj.absorb(
+            Path::new("/r"),
+            Some(rv("@-")),
             &[JjFileset::path("src/a.rs")],
         )
         .await
@@ -3178,7 +3258,9 @@ mod tests {
     async fn log_paths_builds_revset_template_and_filesets() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let jj = Jj::with_runner(&rec);
-        jj.log_paths(Path::new("."), &rv("main..@"),
+        jj.log_paths(
+            Path::new("."),
+            &rv("main..@"),
             5,
             &[JjFileset::path("x|y.rs"), JjFileset::path("z.rs")],
         )
@@ -3240,7 +3322,10 @@ mod tests {
             ScriptedRunner::new().on(["jj", "evolog"], Reply::ok("kz\t38\tfalse\twip\n")),
         );
         let jj = Jj::with_runner(&rec);
-        let rows = jj.evolog(Path::new("."), &rv("@"), 10).await.expect("evolog");
+        let rows = jj
+            .evolog(Path::new("."), &rv("@"), 10)
+            .await
+            .expect("evolog");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].description, "wip");
         let args = rec.only_call().args_str();

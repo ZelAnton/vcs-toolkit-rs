@@ -197,12 +197,9 @@ async fn worktree_add_list_remove_cycle() {
         .expect("current_branch")
         .expect("on a branch");
     assert!(
-        git.is_merged(
-            dir,
-            MergeCheck::branch(rn(&cur)).into_base(rv(&cur))
-        )
-        .await
-        .expect("is_merged")
+        git.is_merged(dir, MergeCheck::branch(rn(&cur)).into_base(rv(&cur)))
+            .await
+            .expect("is_merged")
     );
     // No origin configured: `remote_head_branch` is `None`, not an error
     // (the `--quiet` path).
@@ -223,7 +220,11 @@ async fn worktree_add_list_remove_cycle() {
     )
     .await
     .expect("worktree add");
-    assert!(git.branch_exists(dir, &rn("feature")).await.expect("exists"));
+    assert!(
+        git.branch_exists(dir, &rn("feature"))
+            .await
+            .expect("exists")
+    );
 
     let list = git.worktree_list(dir).await.expect("list");
     assert!(
@@ -380,7 +381,9 @@ async fn merge_commit_no_ff_creates_a_merge_commit() {
 
     // A feature branch one commit ahead; main does not move, so a plain merge
     // would fast-forward.
-    git.create_branch(dir, &rn("feature")).await.expect("branch");
+    git.create_branch(dir, &rn("feature"))
+        .await
+        .expect("branch");
     git.checkout(dir, &ct("feature")).await.expect("checkout");
     std::fs::write(dir.join("b.txt"), "feature\n").expect("write");
     git.add(dir, &[PathBuf::from("b.txt")]).await.expect("add");
@@ -437,13 +440,17 @@ async fn is_merged_distinguishes_merged_and_unmerged() {
     git.checkout(dir, &ct(&main)).await.expect("checkout");
     git.merge_commit(
         dir,
-        MergeCommit::branch(rv("done")).no_ff().message("merge done"),
+        MergeCommit::branch(rv("done"))
+            .no_ff()
+            .message("merge done"),
     )
     .await
     .expect("merge_commit");
 
     // `pending` has a commit that was never merged into main.
-    git.create_branch(dir, &rn("pending")).await.expect("branch");
+    git.create_branch(dir, &rn("pending"))
+        .await
+        .expect("branch");
     git.checkout(dir, &ct("pending")).await.expect("checkout");
     std::fs::write(dir.join("c.txt"), "pending\n").expect("write");
     git.add(dir, &[PathBuf::from("c.txt")]).await.expect("add");
@@ -478,12 +485,16 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
     std::fs::write(dir.join("a.txt"), "base\n").expect("write");
     git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
     git.commit(dir, "base").await.expect("commit");
-    git.create_branch(dir, &rn("feature")).await.expect("branch");
+    git.create_branch(dir, &rn("feature"))
+        .await
+        .expect("branch");
 
     // Dirty tree: a tracked edit and an untracked file both travel.
     std::fs::write(dir.join("a.txt"), "edited\n").expect("write");
     std::fs::write(dir.join("new.txt"), "untracked\n").expect("write");
-    git.switch_with_stash(dir, &ct("feature")).await.expect("switch");
+    git.switch_with_stash(dir, &ct("feature"))
+        .await
+        .expect("switch");
     assert_eq!(
         git.current_branch(dir).await.expect("branch").as_deref(),
         Some("feature")
@@ -496,7 +507,9 @@ async fn switch_with_stash_carries_changes_and_restores_on_failure() {
 
     // A failing checkout restores the dirty state where it was.
     assert!(
-        git.switch_with_stash(dir, &ct("no-such-branch")).await.is_err(),
+        git.switch_with_stash(dir, &ct("no-such-branch"))
+            .await
+            .is_err(),
         "checkout of a missing branch must fail"
     );
     assert_eq!(
@@ -569,7 +582,9 @@ async fn tags_show_config_and_remotes_round_trip() {
     #[cfg(not(windows))]
     let sub_path = "sub/f.txt";
     assert_eq!(
-        git.show_file(dir, &rv("HEAD"), sub_path).await.expect("show"),
+        git.show_file(dir, &rv("HEAD"), sub_path)
+            .await
+            .expect("show"),
         "v1\n"
     );
 
@@ -628,7 +643,9 @@ async fn blame_cherry_pick_and_revert_cycle() {
     git.create_branch(dir, &rn("side")).await.expect("branch");
     git.checkout(dir, &ct("side")).await.expect("checkout");
     git.reset_hard(dir, &rv(&first)).await.expect("reset");
-    git.cherry_pick(dir, &rv(&second)).await.expect("cherry-pick");
+    git.cherry_pick(dir, &rv(&second))
+        .await
+        .expect("cherry-pick");
     assert_eq!(
         std::fs::read_to_string(dir.join("f.txt")).expect("read"),
         "one\ntwo\n"
@@ -675,7 +692,10 @@ async fn rebase_skip_finishes_an_emptied_patch() {
 
     // The rebase conflicts; resolving to EXACTLY the upstream content empties
     // the patch, so --continue refuses and --skip is the way out.
-    assert!(git.rebase(dir, &rv(&main)).await.is_err(), "conflict expected");
+    assert!(
+        git.rebase(dir, &rv(&main)).await.is_err(),
+        "conflict expected"
+    );
     std::fs::write(dir.join("f.txt"), "upstream version\n").expect("resolve");
     git.add(dir, &[PathBuf::from("f.txt")]).await.expect("add");
     assert!(

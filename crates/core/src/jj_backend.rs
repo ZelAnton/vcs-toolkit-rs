@@ -111,7 +111,8 @@ pub(crate) async fn rename_branch<R: ProcessRunner>(
     old: &str,
     new: &str,
 ) -> Result<()> {
-    jj.bookmark_rename(dir, &BookmarkName::new(old)?, &BookmarkName::new(new)?).await?;
+    jj.bookmark_rename(dir, &BookmarkName::new(old)?, &BookmarkName::new(new)?)
+        .await?;
     Ok(())
 }
 
@@ -256,7 +257,8 @@ pub(crate) async fn fetch_branch<R: ProcessRunner>(
     dir: &Path,
     branch: &str,
 ) -> Result<()> {
-    jj.git_fetch_branch(dir, &BookmarkName::new(branch)?).await?;
+    jj.git_fetch_branch(dir, &BookmarkName::new(branch)?)
+        .await?;
     Ok(())
 }
 

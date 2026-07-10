@@ -1935,10 +1935,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // C locale: a conflict's output feeds `is_merge_conflict` (same reason as
         // `merge_commit`/`merge_no_commit`). `--squash` never commits, so no editor.
         self.core
-            .run_unit(c_locale(self.core.command_in(
-                dir,
-                ["merge", "--squash", branch.as_str()],
-            )))
+            .run_unit(c_locale(
+                self.core
+                    .command_in(dir, ["merge", "--squash", branch.as_str()]),
+            ))
             .await
     }
 
@@ -2004,10 +2004,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn reset_hard(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
-            .run_unit(
-                self.core
-                    .command_in(dir, ["reset", "--hard", rev.as_str()]),
-            )
+            .run_unit(self.core.command_in(dir, ["reset", "--hard", rev.as_str()]))
             .await
     }
 
@@ -2288,7 +2285,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn revert(&self, dir: &Path, rev: &RevSpec) -> Result<()> {
         self.core
             .run_unit(no_editor(c_locale(
-                self.core.command_in(dir, ["revert", "--no-edit", rev.as_str()]),
+                self.core
+                    .command_in(dir, ["revert", "--no-edit", rev.as_str()]),
             )))
             .await
     }
@@ -2912,7 +2910,10 @@ mod tests {
     async fn rev_parse_short_builds_short_flag() {
         let rec = RecordingRunner::replying(Reply::ok("a1b2c3d\n"));
         let git = Git::with_runner(&rec);
-        let out = git.rev_parse_short(Path::new("/r"), &rv("HEAD")).await.unwrap();
+        let out = git
+            .rev_parse_short(Path::new("/r"), &rv("HEAD"))
+            .await
+            .unwrap();
         assert_eq!(out, "a1b2c3d");
         assert_eq!(
             rec.only_call().args_str(),
@@ -3179,7 +3180,9 @@ mod tests {
     async fn log_builds_revspec_and_format() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.log(Path::new("."), &rv("main..HEAD"), 5).await.expect("log");
+        git.log(Path::new("."), &rv("main..HEAD"), 5)
+            .await
+            .expect("log");
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -3198,7 +3201,9 @@ mod tests {
     async fn log_paths_builds_revspec_format_and_pathspec_separator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.log_paths(Path::new("."), &rv("main..HEAD"),
+        git.log_paths(
+            Path::new("."),
+            &rv("main..HEAD"),
             5,
             &["src/a.rs".to_string(), "src/b.rs".to_string()],
         )
@@ -3324,7 +3329,11 @@ mod tests {
     #[tokio::test]
     async fn branch_exists_maps_exit_codes() {
         let yes = Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::ok("")));
-        assert!(yes.branch_exists(Path::new("."), &rn("main")).await.unwrap());
+        assert!(
+            yes.branch_exists(Path::new("."), &rn("main"))
+                .await
+                .unwrap()
+        );
         let no =
             Git::with_runner(ScriptedRunner::new().on(["git", "show-ref"], Reply::fail(1, "")));
         assert!(!no.branch_exists(Path::new("."), &rn("nope")).await.unwrap());
@@ -3413,8 +3422,7 @@ mod tests {
             "two words",
             "bad\nname",
         ] {
-            let err =
-                RefName::new(name).expect_err("invalid remote branch name must be rejected");
+            let err = RefName::new(name).expect_err("invalid remote branch name must be rejected");
             assert!(vcs_cli_support::is_invalid_input(&err), "{name:?}");
         }
     }
@@ -3464,7 +3472,10 @@ mod tests {
             ["git", "diff", "--shortstat"],
             Reply::ok(" 2 files changed, 5 insertions(+), 1 deletion(-)\n"),
         ));
-        let stat = git.diff_stat(Path::new("."), &rv("main..HEAD")).await.unwrap();
+        let stat = git
+            .diff_stat(Path::new("."), &rv("main..HEAD"))
+            .await
+            .unwrap();
         assert_eq!(
             (stat.files_changed, stat.insertions, stat.deletions),
             (2, 5, 1)
@@ -3520,7 +3531,9 @@ mod tests {
         let git = Git::with_runner(&rec);
         git.merge_commit(
             Path::new("/r"),
-            MergeCommit::branch(rv("feature")).no_ff().message("merge it"),
+            MergeCommit::branch(rv("feature"))
+                .no_ff()
+                .message("merge it"),
         )
         .await
         .unwrap();
@@ -3950,9 +3963,12 @@ mod tests {
         ));
         for name in ["main", "feature", "wt-branch"] {
             assert!(
-                git.is_merged(Path::new("."), MergeCheck::branch(rn(name)).into_base(rv("main")))
-                    .await
-                    .unwrap(),
+                git.is_merged(
+                    Path::new("."),
+                    MergeCheck::branch(rn(name)).into_base(rv("main"))
+                )
+                .await
+                .unwrap(),
                 "{name} should be reported merged"
             );
         }
@@ -4514,7 +4530,9 @@ mod tests {
     async fn tag_methods_build_args() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
-        git.tag_create(Path::new("/r"), &rn("v1"), None).await.unwrap();
+        git.tag_create(Path::new("/r"), &rn("v1"), None)
+            .await
+            .unwrap();
         git.tag_create(Path::new("/r"), &rn("v1"), Some(rv("abc")))
             .await
             .unwrap();
@@ -4547,9 +4565,12 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let git = Git::with_runner(&rec);
         git.branches(Path::new(".")).await.unwrap();
-        git.is_merged(Path::new("."), MergeCheck::branch(rn("b")).into_base(rv("main")))
-            .await
-            .unwrap();
+        git.is_merged(
+            Path::new("."),
+            MergeCheck::branch(rn("b")).into_base(rv("main")),
+        )
+        .await
+        .unwrap();
         git.tag_list(Path::new(".")).await.unwrap();
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), ["branch", "--no-column", "--no-color"]);
@@ -4932,8 +4953,7 @@ mod tests {
             "two words",
             "bad\tname",
         ] {
-            let err =
-                RefName::new(branch).expect_err("invalid fetch branch name must be rejected");
+            let err = RefName::new(branch).expect_err("invalid fetch branch name must be rejected");
             assert!(vcs_cli_support::is_invalid_input(&err), "{branch:?}");
         }
     }

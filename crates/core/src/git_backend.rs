@@ -4,9 +4,7 @@
 use std::path::Path;
 
 use processkit::ProcessRunner;
-use vcs_git::{
-    CheckoutTarget, Git, GitApi, GitPush, RefName, RevSpec, StatusEntry, WorktreeAdd,
-};
+use vcs_git::{CheckoutTarget, Git, GitApi, GitPush, RefName, RevSpec, StatusEntry, WorktreeAdd};
 
 use crate::dto::{
     ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
@@ -281,7 +279,10 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
     // `--no-ff` so even a fast-forwardable merge stages a real (abortable) merge
     // instead of moving HEAD; `--no-commit` so nothing is committed either way.
     let merged = git
-        .merge_no_commit(dir, vcs_git::MergeNoCommit::branch(RevSpec::new(source)?).no_ff())
+        .merge_no_commit(
+            dir,
+            vcs_git::MergeNoCommit::branch(RevSpec::new(source)?).no_ff(),
+        )
         .await;
     match merged {
         Ok(()) => {

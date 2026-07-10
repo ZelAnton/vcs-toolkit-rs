@@ -261,7 +261,12 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch(vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()))
+            .merge_commit(
+                dir,
+                vcs_core::vcs_git::MergeCommit::branch(
+                    vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()
+                )
+            )
             .await
             .is_err()
     );
@@ -278,7 +283,12 @@ async fn git_try_merge_and_abort_continue_cycle() {
     assert!(
         repo.git()
             .expect("git backend")
-            .merge_commit(dir, vcs_core::vcs_git::MergeCommit::branch(vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()))
+            .merge_commit(
+                dir,
+                vcs_core::vcs_git::MergeCommit::branch(
+                    vcs_core::vcs_git::RevSpec::new("conflicting").unwrap()
+                )
+            )
             .await
             .is_err()
     );
