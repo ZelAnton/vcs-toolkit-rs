@@ -1125,7 +1125,10 @@ mod tests {
         let calls = rec.calls();
         assert_eq!(calls.len(), 1, "a single `bookmark list` spawn");
         assert!(
-            calls[0].args_str().iter().any(|a| a == "--ignore-working-copy"),
+            calls[0]
+                .args_str()
+                .iter()
+                .any(|a| a == "--ignore-working-copy"),
             "read-only branch listing must ignore the working copy: {:?}",
             calls[0].args_str()
         );

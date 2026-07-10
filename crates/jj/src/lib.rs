@@ -712,8 +712,7 @@ pub trait JjApi: Send + Sync {
     /// [`reachable_bookmarks`](JjApi::reachable_bookmarks) as a **read-only**
     /// query: adds `--ignore-working-copy`, so `@` resolves to the last recorded
     /// operation's working-copy commit and no new operation is recorded.
-    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path)
-    -> Result<Vec<Bookmark>>;
+    async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Track a remote bookmark (`jj bookmark track <name>@<remote>`).
     async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
     /// Point a bookmark at `revision` (`jj bookmark set <name> -r <revision>`).
@@ -1256,7 +1255,8 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn reachable_bookmarks(&self, dir: &Path) -> Result<Vec<Bookmark>> {
-        self.reachable_bookmarks_wc(dir, WorkingCopy::Snapshot).await
+        self.reachable_bookmarks_wc(dir, WorkingCopy::Snapshot)
+            .await
     }
 
     async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>> {

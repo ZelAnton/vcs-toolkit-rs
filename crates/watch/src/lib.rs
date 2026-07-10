@@ -362,8 +362,12 @@ impl Builder {
         // fsmonitor, a network filesystem, a held jj lock) on a `Repo` built without
         // its own `default_timeout` would hang `build()` at startup, the very failure
         // the loop-side deadline exists to prevent.
-        let (snapshot, branches) =
-            capture_baseline(&*self.repo, self.requery_timeout, self.snapshot_working_copy).await?;
+        let (snapshot, branches) = capture_baseline(
+            &*self.repo,
+            self.requery_timeout,
+            self.snapshot_working_copy,
+        )
+        .await?;
         let baseline = snapshot.clone();
         let prev = event::WatchState::from_snapshot(&snapshot, branches);
 
@@ -653,7 +657,11 @@ async fn capture_baseline(
     requery_timeout: Option<Duration>,
     snapshot_working_copy: bool,
 ) -> Result<(vcs_core::RepoSnapshot, Vec<String>)> {
-    let query = async { read_state(repo, snapshot_working_copy).await.map_err(Error::from) };
+    let query = async {
+        read_state(repo, snapshot_working_copy)
+            .await
+            .map_err(Error::from)
+    };
     match requery_timeout {
         Some(limit) => match tokio::time::timeout(limit, query).await {
             Ok(result) => result,
