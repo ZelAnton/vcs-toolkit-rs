@@ -20,6 +20,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
   forge_pr_checkout`.
 
 ### Changed
+- **`forge_info` result** now carries two extra `capabilities` fields tracking the
+  facade's version-aware capability map: `version` (the installed `gh`/`glab`/`tea`
+  version as `{major,minor,patch}`, or `null` when unknown/unrecognisable) and
+  `supported` (whether the CLI meets its declared version floor). The per-op flags
+  are now the intersection of "the CLI ships the command", `supported`, and
+  `authed` — so an old CLI below the floor reports its ops as unavailable rather
+  than advertising a command that would fail deep with a cryptic error. Purely
+  additive to the JSON object; existing fields are unchanged.
 - **Breaking (tool schema):** the `forge_pr_merge` tool gained two optional
   boolean params, `auto` and `delete_branch` (both default `false`), tracking the
   facade's new unified `PrMerge` merge spec. Both are **GitHub-only** (`gh pr merge

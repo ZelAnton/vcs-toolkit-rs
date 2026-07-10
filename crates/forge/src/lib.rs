@@ -158,6 +158,9 @@ pub use vcs_gitlab;
 // the parser expects, so no facade-specific DTO wraps it.
 pub use vcs_diff;
 pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
+// The parsed CLI version type behind [`ForgeCapabilities::version`] — re-exported so
+// a `vcs-forge`-only consumer can name it without a direct `vcs-diff` dependency.
+pub use vcs_diff::Version;
 // Re-export `Secret` so a consumer can name the token type the `*_with_token`
 // constructors accept (a plain `&str`/`String` also coerces via `Into<Secret>`, so
 // most callers never name it). It is `vcs_cli_support::Secret`, the very type the
@@ -483,33 +486,49 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// The forge's flat capability map — the intersection of "the CLI ships
-    /// this command" and "the CLI is authenticated". Spawns `auth status` /
-    /// `login list` exactly once; the per-forge static "ships the command" map
-    /// is a constant. The Unknown handle's map is the all-`false` shape.
+    /// The forge's flat capability map — the intersection of "the CLI ships this
+    /// command", "the installed CLI meets the wrapper's version floor", and "the CLI
+    /// is authenticated". Probes the CLI **version** (`gh`/`glab`/`tea --version`)
+    /// and **auth** (`auth status` / `login list`) once each; the per-forge static
+    /// "ships the command" map is a constant. A CLI below the version floor zeroes
+    /// the per-op flags exactly like an unauthed one — the honest answer for an old
+    /// binary that lacks the modern command surface. An unrecognisable `--version`
+    /// banner degrades to `supported: false` / `version: None` (conservatively
+    /// unavailable) rather than failing the whole probe; a genuine spawn/timeout
+    /// failure still propagates. The Unknown handle's map is the all-`false` shape
+    /// (no spawn).
     pub async fn capabilities(&self) -> Result<ForgeCapabilities> {
         match &self.backend {
             Backend::GitHub(c) => {
                 let mut caps = static_github_caps();
+                let (version, supported) = github_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = github_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
             Backend::GitLab(c) => {
                 let mut caps = static_gitlab_caps();
+                let (version, supported) = gitlab_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = gitlab_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
             Backend::Gitea(c) => {
                 let mut caps = static_gitea_caps();
+                let (version, supported) = gitea_forge::version_support(c).await?;
+                caps.version = version;
+                caps.supported = supported;
                 caps.authed = gitea_forge::auth_status(c).await?;
-                if !caps.authed {
-                    zero_unauthed(&mut caps);
+                if !caps.authed || !caps.supported {
+                    zero_ops(&mut caps);
                 }
                 Ok(caps)
             }
@@ -660,9 +679,9 @@ fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
     Error::unsupported(forge, operation)
 }
 
-/// The "what the CLI ships" map for GitHub. `authed` is left `false`; the
-/// caller (`Forge::capabilities`) overwrites it from a single `auth status`
-/// probe and zeroes the rest if unauthed.
+/// The "what the CLI ships" map for GitHub. `version`/`supported`/`authed` are
+/// left unset; the caller (`Forge::capabilities`) overwrites them from the
+/// version + auth probes and zeroes the op flags if unsupported or unauthed.
 fn static_github_caps() -> ForgeCapabilities {
     ForgeCapabilities {
         pr_create: true,
@@ -671,6 +690,8 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_checks: true,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
@@ -686,6 +707,8 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         pr_checks: true,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
@@ -705,16 +728,18 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_checks: false,
         pr_merge: true,
         issue_create: true,
+        version: None,
+        supported: false,
         authed: false,
     }
 }
 
-/// Zero every per-op flag in `caps` — the spec's intersection with
-/// `authed: false` (every op is reported as unavailable when the CLI isn't
-/// authenticated). Leaves `authed` alone; the caller sets that from the
-/// auth probe. Used by [`Forge::capabilities`] for the three known
-/// backends.
-fn zero_unauthed(caps: &mut ForgeCapabilities) {
+/// Zero every per-op flag in `caps` — the spec's intersection when the CLI is
+/// either **not authenticated** or **below the version floor** (an op can't be
+/// guaranteed in either case). Leaves `version`/`supported`/`authed` alone; the
+/// caller sets those from the version + auth probes. Used by
+/// [`Forge::capabilities`] for the three known backends.
+fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_create = false;
     caps.pr_comment = false;
     caps.pr_edit = false;
@@ -1133,10 +1158,19 @@ mod tests {
             .expect("pr_edit title-only");
     }
 
-    // The capability map for an authed GitHub is everything-true (post-fork).
+    // The capability map for an authed GitHub on a modern `gh` is everything-true
+    // (post-fork). `capabilities()` now probes `gh --version` too, so script a
+    // modern banner (above the 2.0 floor) alongside the auth probe.
     #[tokio::test]
     async fn github_capabilities_authed_lights_everything() {
-        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::ok("")));
+        let forge = github(
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
+                )
+                .on(["gh", "auth"], Reply::ok("")),
+        );
         let caps = forge.capabilities().await.unwrap();
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
@@ -1145,18 +1179,34 @@ mod tests {
         assert!(caps.pr_merge);
         assert!(caps.issue_create);
         assert!(caps.authed);
+        // The version probe fills a confirmed version and clears the floor.
+        assert!(caps.supported, "modern gh meets the 2.0 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 2,
+                minor: 40,
+                patch: 1
+            })
+        );
     }
 
     // An unauthed GitHub keeps the static map's "ships the op" shape but flips
     // every op-specific flag to false (the intersection with `authed: false`
     // from spec §3). The `auth status` call exits non-zero ⇒ `auth_status()`
     // returns `false` (per the wrapper's documented exit-code reflection) and
-    // the capability table zeros the ops.
+    // the capability table zeros the ops. The version is modern, so `supported`
+    // stays true — auth, not version, is what zeroed the ops here.
     #[tokio::test]
     async fn github_capabilities_unauthed_zeros_ops_but_keeps_authed_false() {
-        let forge = github(ScriptedRunner::new().on(["gh", "auth"], Reply::fail(1, "no")));
+        let forge = github(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version 2.40.1\n"))
+                .on(["gh", "auth"], Reply::fail(1, "no")),
+        );
         let caps = forge.capabilities().await.unwrap();
         assert!(!caps.authed, "unauthed");
+        assert!(caps.supported, "modern gh is still supported");
         assert!(!caps.pr_create);
         assert!(!caps.pr_comment);
         assert!(!caps.pr_edit);
@@ -1165,19 +1215,86 @@ mod tests {
         assert!(!caps.issue_create);
     }
 
+    // A `gh` **below the version floor** zeroes the op flags exactly like an
+    // unauthed CLI — even when authenticated — so the map never advertises a
+    // command an old binary can't run. `authed`/`version` still report the truth.
+    #[tokio::test]
+    async fn github_capabilities_old_version_zeros_ops_even_when_authed() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 1.14.0 (2021-11-02)\n"),
+                )
+                .on(["gh", "auth"], Reply::ok("")),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert!(
+            caps.authed,
+            "authed, but the old gh still can't run the ops"
+        );
+        assert!(!caps.supported, "gh 1.14 is below the 2.0 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 1,
+                minor: 14,
+                patch: 0
+            })
+        );
+        assert!(!caps.pr_create);
+        assert!(!caps.pr_comment);
+        assert!(!caps.pr_edit);
+        assert!(!caps.pr_checks);
+        assert!(!caps.pr_merge);
+        assert!(!caps.issue_create);
+    }
+
+    // An unrecognisable `gh --version` banner degrades to `version: None` /
+    // `supported: false` (conservatively unavailable) rather than failing the whole
+    // probe — the ops are zeroed, but `authed` is still reported.
+    #[tokio::test]
+    async fn github_capabilities_unrecognizable_version_degrades_to_unsupported() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version unknowable\n"))
+                .on(["gh", "auth"], Reply::ok("")),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert_eq!(
+            caps.version, None,
+            "unrecognisable banner → no known version"
+        );
+        assert!(!caps.supported, "can't confirm the floor → unsupported");
+        assert!(caps.authed, "auth is still probed and reported");
+        assert!(!caps.pr_create && !caps.issue_create, "ops zeroed");
+    }
+
     // Gitea's static map is the intersection of its CLI: `pr_checks` is the
-    // only false when authed (no `tea` checks command). Everything else is
-    // `true` post-fork.
+    // only false when authed on a modern `tea` (no `tea` checks command).
+    // Everything else is `true` post-fork. `capabilities()` probes `tea --version`
+    // too, so script a modern banner above the 0.9 floor.
     #[tokio::test]
     async fn gitea_capabilities_authed_has_only_pr_checks_false() {
         // Gitea's auth probe parses `tea login list --output json` on a zero
         // exit and reports authed = (the array is non-empty). Script a non-empty
         // array so the probe reports authed; `[]` would read as not-authed.
         let forge = gitea(
-            ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
+            ScriptedRunner::new()
+                .on(["tea", "--version"], Reply::ok("tea version 0.9.2\n"))
+                .on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
         );
         let caps = forge.capabilities().await.unwrap();
         assert!(caps.authed, "gitea authed");
+        assert!(caps.supported, "modern tea meets the 0.9 floor");
+        assert_eq!(
+            caps.version,
+            Some(Version {
+                major: 0,
+                minor: 9,
+                patch: 2
+            })
+        );
         assert!(!caps.pr_checks, "gitea has no checks command");
         assert!(caps.pr_create);
         assert!(caps.pr_comment);

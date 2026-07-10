@@ -29,7 +29,7 @@ if s.dirty {
     line.push_str(" *");                        // uncommitted changes
 }
 if s.conflicted || s.operation != OperationState::Clear {
-    line.push_str(" ⚠");                        // mid-merge/rebase or conflicted
+    line.push_str(" ⚠");                        // any paused op (merge/rebase/am/cherry-pick/revert/bisect) or conflicted
 }
 println!("{line}");                             // e.g. `main ↑1↓0 *`
 # Ok(()) }

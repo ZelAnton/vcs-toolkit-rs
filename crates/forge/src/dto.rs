@@ -800,6 +800,15 @@ impl Default for PrEdit {
 /// *static* set of capability-*varying* operations (the ones some backends lack,
 /// e.g. `repo_view`) without an auth probe. The two answer different questions and
 /// deliberately do not share a field set.
+///
+/// The map is the intersection of three facts, so it never advertises an operation
+/// the caller can't actually run: (1) the CLI ships the command, (2) the installed
+/// CLI meets the wrapper's declared version floor ([`supported`](Self::supported)),
+/// and (3) the CLI reports an authenticated session ([`authed`](Self::authed)). A
+/// CLI **below the version floor** zeroes the per-op flags exactly like an unauthed
+/// one — an old `gh`/`glab`/`tea` that lacks the modern command surface is honestly
+/// reported as unable to perform the ops, rather than advertising a command that
+/// would fail deep with a cryptic `unknown flag`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -817,12 +826,24 @@ pub struct ForgeCapabilities {
     pub pr_merge: bool,
     /// The CLI can open an issue.
     pub issue_create: bool,
-    /// The CLI reports an authenticated session. The other six flags are all
-    /// `false` when this is `false`; the spec's per-op table is the
-    /// intersection. **Best-effort for GitLab:** `glab auth status` can exit `0`
-    /// while unauthenticated ([gitlab-org/cli#911]), so a `true` here means
-    /// "probably authed" for the GitLab backend; a real API call is the only sure
-    /// test. GitHub/Gitea probes are faithful.
+    /// The installed CLI's parsed version (`gh`/`glab`/`tea --version`), or `None`
+    /// when the backend is [`Unknown`](ForgeKind::Unknown) (no CLI) or the
+    /// `--version` banner was unrecognisable. Read it to report the concrete
+    /// version behind [`supported`](Self::supported).
+    pub version: Option<vcs_diff::Version>,
+    /// Whether the installed CLI meets the wrapper's declared **version floor** (the
+    /// minimum `gh`/`glab`/`tea` whose command surface this toolkit models). `false`
+    /// for a too-old CLI, an [`Unknown`](ForgeKind::Unknown) backend, or an
+    /// unrecognisable version — in every such case the per-op flags above are all
+    /// `false`, since the ops can't be guaranteed. The version twin of
+    /// [`authed`](Self::authed): both must hold for an op flag to be `true`.
+    pub supported: bool,
+    /// The CLI reports an authenticated session. The six op flags are all
+    /// `false` when this is `false` (or when [`supported`](Self::supported) is);
+    /// the spec's per-op table is the intersection. **Best-effort for GitLab:**
+    /// `glab auth status` can exit `0` while unauthenticated ([gitlab-org/cli#911]),
+    /// so a `true` here means "probably authed" for the GitLab backend; a real API
+    /// call is the only sure test. GitHub/Gitea probes are faithful.
     ///
     /// [gitlab-org/cli#911]: https://gitlab.com/gitlab-org/cli/-/issues/911
     pub authed: bool,
@@ -830,7 +851,8 @@ pub struct ForgeCapabilities {
 
 impl ForgeCapabilities {
     /// The all-`false` shape, for the [`Unknown`](ForgeKind::Unknown) case and
-    /// as the trait's defaulted answer for any external implementer.
+    /// as the trait's defaulted answer for any external implementer: no op, no
+    /// known version, unsupported, unauthed.
     pub fn all_false() -> Self {
         Self {
             pr_create: false,
@@ -839,6 +861,8 @@ impl ForgeCapabilities {
             pr_checks: false,
             pr_merge: false,
             issue_create: false,
+            version: None,
+            supported: false,
             authed: false,
         }
     }
@@ -879,6 +903,18 @@ impl ForgeCapabilities {
     /// Mark `issue_create` available.
     pub fn issue_create(mut self) -> Self {
         self.issue_create = true;
+        self
+    }
+
+    /// Record the installed CLI version (`Some(version)`).
+    pub fn version(mut self, version: vcs_diff::Version) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// Mark the installed CLI as meeting the version floor.
+    pub fn supported(mut self) -> Self {
+        self.supported = true;
         self
     }
 
@@ -1005,6 +1041,9 @@ mod tests {
         assert!(!c.pr_checks);
         assert!(!c.pr_merge);
         assert!(!c.issue_create);
+        // No known version, unsupported, unauthed — the honest "no CLI" shape.
+        assert_eq!(c.version, None);
+        assert!(!c.supported);
         assert!(!c.authed);
     }
 
@@ -1093,8 +1132,23 @@ mod tests {
         let caps = ForgeCapabilities::all_false()
             .pr_create()
             .pr_merge()
+            .version(vcs_diff::Version {
+                major: 2,
+                minor: 40,
+                patch: 1,
+            })
+            .supported()
             .authed();
         assert!(caps.pr_create && caps.pr_merge && caps.authed);
+        assert!(caps.supported);
+        assert_eq!(
+            caps.version,
+            Some(vcs_diff::Version {
+                major: 2,
+                minor: 40,
+                patch: 1
+            })
+        );
         assert!(!caps.pr_comment && !caps.pr_edit && !caps.pr_checks && !caps.issue_create);
         // The remaining four setters land their own fields too.
         let rest = ForgeCapabilities::all_false()

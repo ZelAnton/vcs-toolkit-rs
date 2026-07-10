@@ -28,6 +28,15 @@ use serde::Deserialize;
 
 use crate::BINARY;
 
+/// Parse `tea --version` output (`tea version 0.9.2` / `🍵 tea version 0.9.2`) into
+/// the shared [`vcs_diff::Version`]: the first dotted-numeric token wins, so any
+/// build/emoji/commit trailer is ignored. `None` when the banner carries no version
+/// token. Reuses the same tolerant parser `vcs-git`/`vcs-jj` gate on, so the CLIs
+/// share one version-parsing contract.
+pub(crate) fn parse_tea_version(raw: &str) -> Option<vcs_diff::Version> {
+    vcs_diff::parse_dotted_version(raw)
+}
+
 /// A pull request (`tea pr list --output json`), flattened from tea's table
 /// columns (`index`/`title`/`state`/`head`/`base`/`url`).
 #[derive(Debug, Clone, PartialEq, Eq)]

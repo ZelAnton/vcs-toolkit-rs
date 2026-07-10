@@ -232,9 +232,16 @@ impl WorktreeInfo {
 }
 
 /// Whether the working copy is mid-operation, unified across the backends'
-/// different models: git exposes an in-progress merge or rebase as on-disk state
-/// (`MERGE_HEAD` / a `rebase-*` dir), while jj has no multi-step operations — it
-/// records a conflict directly on the working-copy change.
+/// different models: git exposes an in-progress merge, rebase, `am`, cherry-pick,
+/// revert, or bisect as on-disk state (`MERGE_HEAD` / a `rebase-*` dir /
+/// `CHERRY_PICK_HEAD` / `REVERT_HEAD` / `BISECT_LOG`), while jj has no multi-step
+/// operations — it records a conflict directly on the working-copy change.
+///
+/// The sequencer states are kept **distinct** because each aborts (and, where it
+/// makes sense, continues) with its *own* git command — dispatching the wrong one
+/// on a user's real repository is exactly what this type exists to prevent. See
+/// [`Repo::abort_in_progress`](crate::Repo::abort_in_progress) /
+/// [`continue_in_progress`](crate::Repo::continue_in_progress).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -249,6 +256,20 @@ pub enum OperationState {
     /// A git `am` (mailbox patch apply) is in progress. Distinct from `Rebase`
     /// because it aborts with `am --abort`, not `rebase --abort` (M20).
     ApplyMailbox,
+    /// A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Distinct
+    /// from `Merge`: it aborts/continues with `cherry-pick --abort` /
+    /// `cherry-pick --continue` (a cherry-pick conflict writes `CHERRY_PICK_HEAD`,
+    /// **not** `MERGE_HEAD`). git only.
+    CherryPick,
+    /// A git revert is in progress (`REVERT_HEAD` present). Aborts/continues with
+    /// `revert --abort` / `revert --continue`. git only.
+    Revert,
+    /// A git bisect session is in progress (`BISECT_LOG` present). Aborts with
+    /// `bisect reset`; it has **no** `--continue` step (bisect advances by marking
+    /// commits good/bad), so
+    /// [`continue_in_progress`](crate::Repo::continue_in_progress) reports it as
+    /// unsupported rather than silently doing nothing. git only.
+    Bisect,
     /// The working copy has an unresolved conflict (chiefly jj, which records
     /// conflicts on the change rather than pausing an operation).
     Conflict,
@@ -532,6 +553,24 @@ mod serde_tests {
         let v = serde_json::to_value(fc).unwrap();
         assert_eq!(v["path"], "a.rs");
         assert_eq!(v["kind"], "Added");
+    }
+
+    // Every `OperationState` variant, including the sequencer additions, serialises
+    // to its bare variant name (the JSON a `snapshot`/MCP consumer branches on).
+    #[test]
+    fn operation_state_variants_serialize_to_their_names() {
+        for (state, name) in [
+            (OperationState::Clear, "Clear"),
+            (OperationState::Merge, "Merge"),
+            (OperationState::Rebase, "Rebase"),
+            (OperationState::ApplyMailbox, "ApplyMailbox"),
+            (OperationState::CherryPick, "CherryPick"),
+            (OperationState::Revert, "Revert"),
+            (OperationState::Bisect, "Bisect"),
+            (OperationState::Conflict, "Conflict"),
+        ] {
+            assert_eq!(serde_json::to_value(state).unwrap(), name);
+        }
     }
 
     // `MergeProbe` is adjacently tagged: BOTH outcomes are objects with an

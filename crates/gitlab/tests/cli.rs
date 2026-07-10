@@ -43,6 +43,30 @@ async fn auth_status_does_not_error() {
         .expect("auth_status should not error");
 }
 
+// The real `glab --version` banner must parse into a version at/above the crate
+// floor. This is the "modern real binary" arm of the version-gate check the
+// scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
+// minimum and unrecognisable arms): if a future `glab` reshapes its `--version`
+// output so the shared parser can't read it, `capabilities()` returns
+// `Error::Parse` and this fails, flagging the drift.
+#[tokio::test]
+#[ignore = "requires the glab binary"]
+async fn capability_version_gate_real_binary() {
+    if !glab_present().await {
+        eprintln!("skipping: glab not installed");
+        return;
+    }
+    let caps = GitLab::new()
+        .capabilities()
+        .await
+        .expect("glab capabilities");
+    assert!(
+        caps.is_supported(),
+        "the installed glab ({}) is below vcs-gitlab's supported floor",
+        caps.version
+    );
+}
+
 // list→view round-trips against a configured GitLab remote. They skip gracefully
 // whenever `glab` is absent, unauthenticated, the repo has no GitLab remote, or the
 // list is empty — so they never fail in CI, where no GitLab is configured.

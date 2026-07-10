@@ -6,6 +6,11 @@
 
 use vcs_github::{GitHub, GitHubApi, GitHubHost};
 
+/// Whether `gh` is on PATH (a successful `--version` spawn).
+async fn gh_present() -> bool {
+    GitHub::new().version().await.is_ok()
+}
+
 #[tokio::test]
 #[ignore = "requires the gh binary"]
 async fn version_mentions_gh() {
@@ -14,6 +19,27 @@ async fn version_mentions_gh() {
         .await
         .expect("gh should be installed");
     assert!(v.to_lowercase().contains("gh"), "unexpected: {v}");
+}
+
+// The real `gh --version` banner must parse into a version at/above the crate
+// floor. This is the "modern real binary" arm of the version-gate check the
+// scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
+// minimum and unrecognisable arms): if a future `gh` reshapes its `--version`
+// output so the shared parser can't read it, `capabilities()` returns
+// `Error::Parse` and this fails, flagging the drift.
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn capability_version_gate_real_binary() {
+    if !gh_present().await {
+        eprintln!("skipping: gh not installed");
+        return;
+    }
+    let caps = GitHub::new().capabilities().await.expect("gh capabilities");
+    assert!(
+        caps.is_supported(),
+        "the installed gh ({}) is below vcs-github's supported floor",
+        caps.version
+    );
 }
 
 #[tokio::test]

@@ -10,6 +10,18 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Version-aware `capabilities()`.** `ForgeCapabilities` gains `version:
+  Option<vcs_diff::Version>` (the installed `gh`/`glab`/`tea` version, `None` for an
+  `Unknown` backend or an unrecognisable banner) and `supported: bool` (whether the
+  installed CLI meets the backend wrapper's declared version floor — gh ≥ 2.0,
+  glab ≥ 1.25, tea ≥ 0.9). `Forge::capabilities()` now probes the CLI version
+  alongside auth, and a CLI **below the floor** zeroes the per-op flags exactly
+  like an unauthed one — so the map never advertises a command an old CLI can't
+  run. An unrecognisable `--version` banner degrades to `supported: false` /
+  `version: None` (conservatively unavailable) rather than failing the probe; a
+  genuine spawn/timeout failure still propagates. `vcs_diff::Version` is re-exported
+  as `vcs_forge::Version`, and `ForgeCapabilities` gains `.version(v)` / `.supported()`
+  builders.
 - `ForgePr`/`ForgeIssue` gained `labels: Option<Vec<String>>` and
   `assignees: Option<Vec<String>>` (additive on the `#[non_exhaustive]` DTOs, plus
   chained `.labels(...)`/`.assignees(...)` setters) — GitHub and GitLab report

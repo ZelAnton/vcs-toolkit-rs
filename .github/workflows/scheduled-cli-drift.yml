@@ -111,6 +111,17 @@ jobs:
       - run: glab --version || echo "glab not installed (tests will skip)"
       - run: tea --version || echo "tea not installed (tests will skip)"
 
+      # Forge CLI version gate, all three arms in one run: the hermetic unit arms
+      # (minimum / modern / unrecognisable `--version` banner, scripted) plus the
+      # ignored real-binary arm against the actual latest gh/glab/tea installed
+      # above — `--include-ignored` runs the ignored and non-ignored tests together,
+      # and the filter selects both the `capability_version_gate_parses_and_gates`
+      # unit tests and the `capability_version_gate_real_binary` integration tests.
+      # This is the drift signal for a CLI whose `--version` shape moves out from
+      # under the shared parser, or whose latest release drops below our floor —
+      # caught here instead of deep in an operation on an old-distro CLI.
+      - run: cargo test --workspace --all-features --tests capability_version_gate -- --include-ignored
+
       # Same scope as the ci.yml `integration` job: the real-binary
       # `#[ignore]`d suites, `--tests` (unit + integration targets only, no
       # doctests — doctest health is owned by the ci.yml `doc` job).

@@ -10,6 +10,18 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **`glab` version floor + capability gate.** New `GitLabCapabilities` (`version:
+  GitLabVersion`), probed via `GitLabApi::capabilities()` (`glab --version`, parsed
+  with the shared `vcs-diff` version parser the way `vcs-git`/`vcs-jj` do — the
+  first dotted-numeric token wins, so any build/commit trailer is ignored; an
+  unrecognisable banner is an `Error::Parse`). `is_supported()` /
+  `ensure_supported()` gate on the crate's declared floor **glab ≥ 1.25.0** — the
+  modern `glab` line whose `--output json` read surface, `mr update`/`mr checkout`/
+  `mr merge` lifecycle verbs, and `api` this crate all drive. A too-old `glab` is
+  now rejected up front with a clear "needs glab ≥ 1.25.0, found 1.20.0" message
+  rather than failing deep inside an operation with a cryptic `unknown
+  command`/`unknown flag`. `GitLabVersion` (an alias of `vcs_diff::Version`) is
+  re-exported, and the bound `GitLabAt` view forwards `capabilities()`.
 - `MergeRequest`/`Issue` gained `labels: Vec<String>` (GitLab's REST API already
   reports these as plain strings) and `assignees: Vec<String>` (flattened from
   the REST `assignees` array of User objects' `username`).

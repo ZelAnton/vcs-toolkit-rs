@@ -68,12 +68,13 @@ pub enum RepoEvent {
         /// Commits behind the upstream now; `None` when uncountable (see `ahead`).
         behind: Option<usize>,
     },
-    /// The in-progress **operation** changed — a git merge, rebase, or `am` started
-    /// or finished. A transition to/from [`OperationState::Conflict`] (jj's conflict
-    /// marker) is **not** reported here: `vcs-core` derives jj's `operation` and
-    /// `conflicted` from the same bit, so [`ConflictChanged`](RepoEvent::ConflictChanged)
-    /// already signals it on both backends. So this event fires only on git, and
-    /// `from`/`to` are `Clear`/`Merge`/`Rebase`/`ApplyMailbox`.
+    /// The in-progress **operation** changed — a git merge, rebase, `am`,
+    /// cherry-pick, revert, or bisect started or finished. A transition to/from
+    /// [`OperationState::Conflict`] (jj's conflict marker) is **not** reported here:
+    /// `vcs-core` derives jj's `operation` and `conflicted` from the same bit, so
+    /// [`ConflictChanged`](RepoEvent::ConflictChanged) already signals it on both
+    /// backends. So this event fires only on git, and `from`/`to` are
+    /// `Clear`/`Merge`/`Rebase`/`ApplyMailbox`/`CherryPick`/`Revert`/`Bisect`.
     #[non_exhaustive]
     OperationChanged {
         /// The previous operation state.
@@ -369,6 +370,43 @@ mod tests {
         assert_eq!(
             diff(&base(), &conflicted),
             vec![RepoEvent::ConflictChanged { conflicted: true }]
+        );
+    }
+
+    // The sequencer states (cherry-pick/revert/bisect) flow through the same
+    // `OperationChanged` path as merge/rebase — starting one and moving between them
+    // both fire, since neither endpoint is `Conflict`.
+    #[test]
+    fn sequencer_operation_transitions_are_detected() {
+        let mut cherry = base();
+        cherry.operation = OperationState::CherryPick;
+        assert_eq!(
+            diff(&base(), &cherry),
+            vec![RepoEvent::OperationChanged {
+                from: OperationState::Clear,
+                to: OperationState::CherryPick,
+            }]
+        );
+
+        // A move directly between two sequencer states is a single OperationChanged.
+        let mut revert = base();
+        revert.operation = OperationState::Revert;
+        assert_eq!(
+            diff(&cherry, &revert),
+            vec![RepoEvent::OperationChanged {
+                from: OperationState::CherryPick,
+                to: OperationState::Revert,
+            }]
+        );
+
+        let mut bisect = base();
+        bisect.operation = OperationState::Bisect;
+        assert_eq!(
+            diff(&base(), &bisect),
+            vec![RepoEvent::OperationChanged {
+                from: OperationState::Clear,
+                to: OperationState::Bisect,
+            }]
         );
     }
 

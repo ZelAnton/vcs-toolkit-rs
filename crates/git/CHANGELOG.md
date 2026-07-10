@@ -11,6 +11,15 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: model the remaining paused-sequencer states on `GitApi`. New detection
+  probes `is_cherry_pick_in_progress` / `is_revert_in_progress` /
+  `is_bisect_in_progress` (keyed off `CHERRY_PICK_HEAD` / `REVERT_HEAD` /
+  `BISECT_LOG` under the git dir), and the matching drivers `cherry_pick_abort` /
+  `cherry_pick_continue` / `revert_abort` / `revert_continue` / `bisect_reset`.
+  The two `--continue` commits suppress the editor (`GIT_EDITOR=true`) so a
+  headless caller never hangs, and run under the C locale so a re-conflict still
+  feeds `is_merge_conflict`. A cherry-pick/revert conflict writes its own head
+  file, **not** `MERGE_HEAD`, so these stay distinct from a merge. (T-044.)
 - feat: host-keyed credential resolution for remote ops. When the operation's
   target host is known — `clone` derives it from the URL — it is now passed as the
   `CredentialRequest`'s host (alongside the existing `credential.helper` host gate),

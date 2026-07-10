@@ -19,6 +19,21 @@ pub(crate) async fn auth_status<R: ProcessRunner>(glab: &GitLab<R>) -> Result<bo
     Ok(glab.auth_status().await?)
 }
 
+/// Probe the `glab` version for the capability map: `(installed version, meets the
+/// crate floor)`. An unrecognisable `glab --version` banner degrades to `(None,
+/// false)` — we can't confirm the floor, so the map conservatively reports the ops
+/// unavailable rather than erroring the whole probe. A real spawn/timeout failure
+/// (a missing `glab`, a killed process) still propagates.
+pub(crate) async fn version_support<R: ProcessRunner>(
+    glab: &GitLab<R>,
+) -> Result<(Option<vcs_gitlab::GitLabVersion>, bool)> {
+    match glab.capabilities().await {
+        Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
+        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub(crate) async fn repo_view<R: ProcessRunner>(glab: &GitLab<R>, dir: &Path) -> Result<ForgeRepo> {
     Ok(map_project(glab.repo_view(dir).await?))
 }

@@ -960,7 +960,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, authed } }` for the configured forge. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
@@ -1744,12 +1744,19 @@ mod tests {
     }
 
     // `forge_info` returns the kind string + capability map for an authed
-    // GitHub handle. The auth probe is a single `auth status` call (mocked
-    // to exit 0); every static cap is `true` post-fork.
+    // GitHub handle on a modern `gh`. `capabilities()` probes the CLI version
+    // (`gh --version`, scripted to a modern banner above the 2.0 floor) and auth
+    // (`auth status`, exit 0); every static cap is `true` post-fork, and the map
+    // now also carries `version`/`supported`.
     #[tokio::test]
     async fn forge_info_with_authed_github_reports_all_true() {
         let gh = vcs_forge::vcs_github::GitHub::with_runner(
-            ScriptedRunner::new().on(["gh", "auth", "status"], Reply::ok("")),
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "--version"],
+                    Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
+                )
+                .on(["gh", "auth", "status"], Reply::ok("")),
         );
         let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
             "/repo",
@@ -1772,6 +1779,13 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(value["kind"], "github");
         assert_eq!(value["capabilities"]["authed"], true);
+        assert_eq!(value["capabilities"]["supported"], true);
+        // `version` serialises as the structured `{major,minor,patch}` shape of
+        // `vcs_diff::Version` (its derived `Serialize`).
+        assert_eq!(
+            value["capabilities"]["version"],
+            serde_json::json!({ "major": 2, "minor": 40, "patch": 1 })
+        );
         assert_eq!(value["capabilities"]["pr_create"], true);
         assert_eq!(value["capabilities"]["pr_comment"], true);
         assert_eq!(value["capabilities"]["pr_edit"], true);
