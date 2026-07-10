@@ -108,7 +108,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_create` | `{ title, body, source?, target? }` | Open a PR/MR (omit `source` for the current branch, `target` for the repo default); returns the CLI output (the URL on success). |
 | `forge_pr_comment` | `{ number, body }` | Post a markdown comment to an existing PR/MR; returns the CLI output (the comment URL on success). On **Gitea**, PRs and issues share one `index` space and `tea comment` targets either — so a `number` that is actually an issue comments on that issue. |
 | `forge_pr_edit` | `{ number, title?, body? }` | Edit a PR/MR's title and/or body. At least one of `title` or `body` must be set (both absent is rejected up front as `invalid_params`); an empty string is a real value (clears the field). |
-| `forge_pr_merge` | `{ number, strategy }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. |
+| `forge_pr_merge` | `{ number, strategy, auto?, delete_branch? }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. `auto` (merge once requirements are met) and `delete_branch` are **GitHub-only** and default to `false`; on GitLab/Gitea, requesting either returns `invalid_params` rather than merging without it. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
 | `forge_pr_mark_ready` | `{ number }` | Mark a draft PR/MR ready for review (`Unsupported` on Gitea). |
 | `forge_pr_checkout` | `{ number }` | Check out a PR/MR's branch into the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr checkout`). Mutates the working copy. |

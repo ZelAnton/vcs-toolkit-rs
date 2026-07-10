@@ -18,9 +18,22 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   switched to, so a build/test/edit runs against the MR locally. Mutates the
   working copy. Mirrored on the `GitLabAt` bound view. **Defaulted** to
   `Error::Unsupported` on the trait so external implementers keep compiling.
+- `MrMerge` — a `#[non_exhaustive]` merge spec (`strategy` + `auto` +
+  `delete_branch`), built through `MrMerge::merge()`/`squash()`/`rebase()` then
+  `.auto()`/`.delete_branch()`. Shares the shape of `vcs-github`'s `PrMerge` and
+  `vcs-gitea`'s `PrMerge` so the `vcs-forge` facade drives one merge spec across
+  all three backends.
 
 ### Changed
--
+- **Breaking:** `GitLabApi::mr_merge` takes an `MrMerge` spec instead of a bare
+  `MergeStrategy` — `mr_merge(dir, id, MergeStrategy::Squash)` →
+  `mr_merge(dir, id, MrMerge::squash())`. The `GitLabAt` bound view moves to the
+  same spec. `glab mr merge` can express **neither** the gh-style `auto`
+  (merge-once-requirements-met) nor `delete_branch` option — glab's own
+  `--auto-merge` is a different, merge-when-pipeline contract — so setting either
+  on `MrMerge` now returns a structured `Error::Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). The default (neither set) is unchanged: the plain immediate merge.
 
 ### Fixed
 -

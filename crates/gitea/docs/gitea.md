@@ -88,7 +88,7 @@ configured.
 | `pr_list(dir)` | `tea pr list --limit 100 --fields index,title,state,head,base,url --output json` | `Vec<PullRequest>` |
 | `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output json` (paged) + filter | [`PullRequest`] |
 | `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …]` | `String` |
-| `pr_merge(dir, number, strategy)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
+| `pr_merge(dir, number, merge)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
 | `pr_comment(dir, number, body)` | `tea comment <number> <body>` | `String` |
 | `pr_edit(dir, number, spec)` | `tea pr edit <number> [--title …] [--description …]` | `()` |
@@ -103,7 +103,7 @@ owner is not modelled).
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
+# use vcs_gitea::{Gitea, GiteaApi, PrCreate, PrMerge};
 # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
 for pr in tea.pr_list(repo).await? {
     println!("#{} [{}] {} — {}", pr.number, pr.state, pr.title, pr.url);
@@ -112,12 +112,16 @@ let out = tea
     .pr_create(repo, PrCreate::new("Add streaming", "Implements …")
         .head("feat/streaming").base("main"))
     .await?;
-tea.pr_merge(repo, 7, MergeStrategy::Squash).await?;
+tea.pr_merge(repo, 7, PrMerge::squash()).await?;
 # let _ = out; Ok(()) }
 ```
 
-[`MergeStrategy`] is `Merge` / `Squash` / `Rebase`, mapped to `tea pr merge
---style`.
+`pr_merge` takes a [`PrMerge`] spec — a [`MergeStrategy`] (`Merge` / `Squash` /
+`Rebase`, mapped to `tea pr merge --style`) built through
+`PrMerge::merge()`/`squash()`/`rebase()`. The gh-style `.auto()` /
+`.delete_branch()` options are **not expressible on `tea`** (it has no
+merge-when-checks flag), so setting either makes `pr_merge` return
+`Error::Unsupported` rather than silently dropping it.
 
 `pr_create` takes a [`PrCreate`] spec — build it through `PrCreate::new(title,
 body)` and chain the optional `.head(b)` (`--head`; `None` = the current branch) /

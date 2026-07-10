@@ -23,7 +23,7 @@ constructed explicitly — optionally guided by `ForgeKind::from_remote_url` on 
 remote URL you already hold:
 
 ```rust
-use vcs_forge::{Forge, ForgeApi, ForgeKind, MergeStrategy};
+use vcs_forge::{Forge, ForgeApi, ForgeKind, PrMerge};
 
 # async fn demo() -> vcs_forge::Result<()> {
     // Explicit, or sniffed from a remote URL:
@@ -36,7 +36,7 @@ use vcs_forge::{Forge, ForgeApi, ForgeKind, MergeStrategy};
     for pr in forge.pr_list().await? {
         println!("#{} [{:?}] {} — {}", pr.number, pr.state, pr.title, pr.url);
     }
-    forge.pr_merge(7, MergeStrategy::Squash).await?;
+    forge.pr_merge(7, PrMerge::squash()).await?; // .auto()/.delete_branch() are GitHub-only
 # Ok(()) }
 ```
 

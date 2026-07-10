@@ -11,13 +11,13 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, MergeStrategy as GtMs, PrCreate as GtPrCreate, PrEdit as GtPrEdit,
+    Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrEdit as GtPrEdit, PrMerge as GtPrMerge,
     PullRequest, Release,
 };
 
 use crate::dto::{
     ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
-    PrEdit,
+    PrEdit, PrMerge,
 };
 use crate::error::Result;
 
@@ -83,14 +83,25 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let ms = match strategy {
-        MergeStrategy::Merge => GtMs::Merge,
-        MergeStrategy::Squash => GtMs::Squash,
-        MergeStrategy::Rebase => GtMs::Rebase,
+    // Map the unified spec onto tea's `PrMerge`. The strategy maps to `--style`;
+    // `auto`/`delete_branch` pass through verbatim — tea's wrapper reports them
+    // `Unsupported` rather than silently dropping them (see `vcs_gitea::PrMerge`).
+    // The exhaustive `match` (no catch-all) makes a new `MergeStrategy` variant a
+    // compile error here.
+    let mut pr = match merge.strategy {
+        MergeStrategy::Merge => GtPrMerge::merge(),
+        MergeStrategy::Squash => GtPrMerge::squash(),
+        MergeStrategy::Rebase => GtPrMerge::rebase(),
     };
-    tea.pr_merge(dir, number, ms).await?;
+    if merge.auto {
+        pr = pr.auto();
+    }
+    if merge.delete_branch {
+        pr = pr.delete_branch();
+    }
+    tea.pr_merge(dir, number, pr).await?;
     Ok(())
 }
 

@@ -42,8 +42,10 @@
 //!   `tea.pr_list(dir)` — handy when one client drives one checkout.
 //! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
 //!   chained `.head` / `.base` setters named after the flags they emit),
-//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), and
-//!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`).
+//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), [`MergeStrategy`]
+//!   (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`), and [`PrMerge`]
+//!   (that strategy plus the gh-style `auto`/`delete_branch` options, which `tea`
+//!   reports `Unsupported` rather than silently drop).
 //!
 //! The exposed operations are the **lean lifecycle** `tea` actually supports:
 //! auth ([`auth_status`](GiteaApi::auth_status)), the PR lifecycle
@@ -90,16 +92,16 @@
 //! # let _ = authed; Ok(()) }
 //! ```
 //!
-//! Drive the PR lifecycle — `pr_create` takes the [`PrCreate`] spec; merge picks a
-//! [`MergeStrategy`]:
+//! Drive the PR lifecycle — `pr_create` takes the [`PrCreate`] spec; merge takes a
+//! [`PrMerge`] spec:
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_gitea::{Gitea, GiteaApi, MergeStrategy, PrCreate};
+//! use vcs_gitea::{Gitea, GiteaApi, PrCreate, PrMerge};
 //! # async fn demo(tea: &Gitea, repo: &Path) -> Result<(), processkit::Error> {
 //! tea.pr_create(repo, PrCreate::new("Add streaming", "Implements …")
 //!         .head("feat/streaming").base("main")).await?;
-//! tea.pr_merge(repo, 7, MergeStrategy::Squash).await?;
+//! tea.pr_merge(repo, 7, PrMerge::squash()).await?;
 //! # Ok(()) }
 //! ```
 //!
@@ -269,6 +271,80 @@ impl MergeStrategy {
     }
 }
 
+/// Options for [`GiteaApi::pr_merge`] (`tea pr merge`).
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](PrMerge::merge) / [`squash`](PrMerge::squash) /
+/// [`rebase`](PrMerge::rebase), then [`auto`](PrMerge::auto) /
+/// [`delete_branch`](PrMerge::delete_branch) — rather than a struct literal. The
+/// shape mirrors `vcs-github`'s `PrMerge` and `vcs-gitlab`'s `MrMerge` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one merge spec
+/// across all three backends.
+///
+/// **Backend capability.** `tea pr merge` merges with `--style`, but `tea` has
+/// **no** merge-when-checks-succeed (`auto`) flag, and this wrapper does not drive
+/// source-branch deletion, so when either the gh-style [`auto`](PrMerge::auto) or
+/// [`delete_branch`](PrMerge::delete_branch) option is set,
+/// [`pr_merge`](GiteaApi::pr_merge) returns a structured `Error::Unsupported`
+/// rather than *silently* ignoring it — for an irreversible merge, quietly
+/// dropping an option could produce the wrong side effects. The default (neither
+/// set) is the plain merge.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PrMerge {
+    /// The merge strategy → `tea pr merge --style merge|squash|rebase`.
+    pub strategy: MergeStrategy,
+    /// Request gh-style auto-merge (merge once checks pass). **Not expressible on
+    /// `tea`** — when set, [`pr_merge`](GiteaApi::pr_merge) returns
+    /// `Error::Unsupported` (see the type docs).
+    pub auto: bool,
+    /// Delete the source branch after merging. **Not expressible here** — when
+    /// set, [`pr_merge`](GiteaApi::pr_merge) returns `Error::Unsupported` instead
+    /// of silently leaving the branch in place.
+    pub delete_branch: bool,
+}
+
+impl PrMerge {
+    /// Merge with a merge commit (`--style merge`).
+    pub fn merge() -> Self {
+        Self::with(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge (`--style squash`).
+    pub fn squash() -> Self {
+        Self::with(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge (`--style rebase`).
+    pub fn rebase() -> Self {
+        Self::with(MergeStrategy::Rebase)
+    }
+
+    fn with(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Request auto-merge (merge once checks pass). **Unsupported on `tea`**:
+    /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
+    /// `Error::Unsupported` (see the type docs).
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Request deleting the source branch after merging. **Unsupported on `tea`**:
+    /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
+    /// `Error::Unsupported`.
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
 /// Injection guard for bare positional argv slots: a caller-supplied value
 /// with a leading `-` would be parsed by tea's CLI as a *flag* (verified:
 /// `tea … -evil` → "unknown switch"), and an empty value changes a command's
@@ -318,9 +394,13 @@ pub trait GiteaApi: Send + Sync {
     /// body, and the optional head (`None` = the current branch) and base
     /// (`None` = the repo default) branches.
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
-    /// Merge a pull request (`tea pr merge <number> --style merge|rebase|squash`)
-    /// — see [`MergeStrategy`].
-    async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
+    /// Merge a pull request (`tea pr merge <number> --style merge|rebase|squash`).
+    /// Takes a [`PrMerge`] spec (the [`MergeStrategy`] plus the gh-style
+    /// `auto`/`delete_branch` options). `tea` can express **neither** `auto` nor
+    /// `delete_branch` through this wrapper, so requesting either returns a
+    /// structured `Error::Unsupported` rather than silently dropping it (see
+    /// [`PrMerge`]).
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
     /// Close a pull request without merging (`tea pr close <number>`).
     async fn pr_close(&self, dir: &Path, number: u64) -> Result<()>;
     /// Check out a pull request's branch into the working copy at `dir`
@@ -554,12 +634,27 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn pr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()> {
+    async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()> {
+        // `tea` has no merge-when-checks-succeed (`auto`) flag, and we do not drive
+        // source-branch deletion here. Rather than silently ignore a requested
+        // option — which, for an irreversible merge, could produce the wrong side
+        // effects — report it as `Unsupported`. The default (neither set) is the
+        // plain `--style` merge.
+        if merge.auto {
+            return Err(Error::Unsupported {
+                operation: "pr_merge(auto)".into(),
+            });
+        }
+        if merge.delete_branch {
+            return Err(Error::Unsupported {
+                operation: "pr_merge(delete_branch)".into(),
+            });
+        }
         let n = number.to_string();
         self.core
             .run_unit(self.core.command_in(
                 dir,
-                ["pr", "merge", n.as_str(), "--style", strategy.style()],
+                ["pr", "merge", n.as_str(), "--style", merge.strategy.style()],
             ))
             .await
     }
@@ -731,7 +826,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_list() -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn pr_create(spec: PrCreate) -> Result<String>;
-        fn pr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_close(number: u64) -> Result<()>;
         fn pr_checkout(number: u64) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
@@ -985,12 +1080,13 @@ mod tests {
         );
     }
 
-    // pr_merge maps the strategy to `--style`; pr_close to `pr close <n>`.
+    // pr_merge maps the strategy to `--style`; pr_close to `pr close <n>`. The
+    // default `PrMerge` (no auto/delete_branch) is the plain `--style` merge.
     #[tokio::test]
     async fn pr_merge_and_close_build_expected_argv() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
-        tea.pr_merge(Path::new("/repo"), 5, MergeStrategy::Squash)
+        tea.pr_merge(Path::new("/repo"), 5, PrMerge::squash())
             .await
             .expect("merge");
         assert_eq!(
@@ -1002,6 +1098,24 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         tea.pr_close(Path::new("/repo"), 5).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+    }
+
+    // `tea` cannot express gh-style auto-merge or source-branch deletion, so
+    // requesting either is a structured `Unsupported` — never a silent drop that
+    // would merge with the wrong side effects. The check happens BEFORE any spawn.
+    #[tokio::test]
+    async fn pr_merge_rejects_unexpressible_options() {
+        for merge in [PrMerge::squash().auto(), PrMerge::merge().delete_branch()] {
+            let tea = Gitea::with_runner(ScriptedRunner::new());
+            let err = tea
+                .pr_merge(Path::new("/repo"), 5, merge)
+                .await
+                .expect_err("auto/delete_branch are Unsupported on tea");
+            assert!(
+                matches!(err, Error::Unsupported { .. }),
+                "expected Unsupported, got {err:?}"
+            );
+        }
     }
 
     // pr_checkout maps to `pr checkout <n>` and runs in the bound repo dir; the

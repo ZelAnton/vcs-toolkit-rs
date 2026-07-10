@@ -71,7 +71,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_list(dir)` | `glab mr list --output json` | `Vec<MergeRequest>` |
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
 | `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |
-| `mr_merge(dir, id, strategy)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
+| `mr_merge(dir, id, merge)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
 | `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
 | `mr_checks(dir, id)` | `glab mr view <id> --output json` (reads `head_pipeline.status`) | [`CiStatus`] |
@@ -83,7 +83,7 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
+# use vcs_gitlab::{GitLab, GitLabApi, MrCreate, MrMerge};
 # async fn demo(glab: &GitLab, repo: &Path) -> Result<(), processkit::Error> {
 for mr in glab.mr_list(repo).await? {
     println!("!{} [{}] {} — {}", mr.iid, mr.state, mr.title, mr.web_url);
@@ -92,14 +92,19 @@ let url = glab
     .mr_create(repo, MrCreate::new("Add streaming", "Implements …")
         .source("feat/streaming").target("main"))
     .await?;
-glab.mr_merge(repo, 12, MergeStrategy::Squash).await?;
+glab.mr_merge(repo, 12, MrMerge::squash()).await?;
 # let _ = url; Ok(()) }
 ```
 
-[`MergeStrategy`] is `Merge` (glab's default merge commit), `Squash`, or `Rebase`.
-`mr_merge` passes `--auto-merge=false` so it merges **immediately** rather than
-enabling glab's default merge-when-pipeline-succeeds. [`CiStatus`] buckets the
-pipeline into `Passing` / `Failing` / `Pending` / `None`.
+`mr_merge` takes an [`MrMerge`] spec — a [`MergeStrategy`] (`Merge` = glab's
+default merge commit, `Squash`, `Rebase`) built through
+`MrMerge::merge()`/`squash()`/`rebase()`. It passes `--auto-merge=false` so it
+merges **immediately** rather than enabling glab's default
+merge-when-pipeline-succeeds. The gh-style `.auto()` / `.delete_branch()` options
+are **not expressible on `glab`** through this wrapper (glab's own `--auto-merge`
+is a different, merge-when-pipeline contract), so setting either makes `mr_merge`
+return `Error::Unsupported` rather than silently dropping it. [`CiStatus`] buckets
+the pipeline into `Passing` / `Failing` / `Pending` / `None`.
 
 `mr_create` takes an [`MrCreate`] spec — build it through `MrCreate::new(title,
 body)` and chain the optional `.source(b)` (`--source-branch`; `None` = the

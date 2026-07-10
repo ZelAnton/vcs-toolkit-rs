@@ -61,7 +61,7 @@ pub async fn pr_view(&self, number: u64) -> Result<ForgePr>;
 pub async fn pr_create(&self, spec: PrCreate) -> Result<String>;
 pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String>;
 pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()>;
-pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
+pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>; // PrMerge::squash()[.auto()][.delete_branch()] — auto/delete_branch are GitHub-only
 pub async fn pr_mark_ready(&self, number: u64) -> Result<()>;
 pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.delete_branch()] — delete_branch is GitHub-only
 pub async fn pr_checkout(&self, number: u64) -> Result<()>; // gh/tea `pr checkout`, glab `mr checkout` — mutates the working copy
@@ -104,7 +104,12 @@ each CLI takes — GitLab's `iid`), `title`, `state` ([`ForgePrState`]),
 [`ForgeRepo`] is `name` / `owner` / `default_branch` / `url` / `private` (GitLab's
 owner is the namespace path). [`CiStatus`] is `Passing` / `Failing` / `Pending` /
 `None` — GitHub aggregates its per-check buckets into it, GitLab maps its pipeline
-status. [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`) maps to each CLI's flag.
+status. [`PrMerge`] is the unified merge spec — a [`MergeStrategy`] (`Merge` /
+`Squash` / `Rebase`, mapped to each CLI's flag) plus the optional `auto` /
+`delete_branch` flags. Those two are **GitHub-only** (`gh pr merge
+--auto --delete-branch`); on GitLab/Gitea, requesting either returns
+`Error::Unsupported` rather than silently merging without it — for an irreversible
+merge, a quietly dropped option could produce the wrong side effects.
 
 `draft` is **best-effort**: GitHub (`gh --json isDraft`) and GitLab report it;
 Gitea reports `false` (`tea`'s PR list doesn't carry the flag).

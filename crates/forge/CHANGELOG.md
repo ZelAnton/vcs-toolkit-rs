@@ -22,9 +22,23 @@ crates; tag releases as `vcs-forge-v<version>`.
   keep compiling. `ForgeOp` gained a `PrCheckout` variant (added to `ForgeOp::ALL`)
   so `Forge::supports(ForgeOp::PrCheckout)` reports it available — the one
   `ForgeOp` every real backend supports (only `Unknown` lacks it).
+- `PrMerge` — the unified merge spec (`strategy` + `auto` + `delete_branch`),
+  built through `PrMerge::merge()`/`squash()`/`rebase()` (or `PrMerge::new(strategy)`)
+  then `.auto()`/`.delete_branch()`. Generalises the per-CLI merge specs
+  (`vcs-github`'s `PrMerge`, `vcs-gitlab`'s `MrMerge`, `vcs-gitea`'s `PrMerge`) into
+  one shape the facade drives across all three backends.
 
 ### Changed
 
+- **Breaking:** `Forge::pr_merge` / `ForgeApi::pr_merge` take a `PrMerge` spec
+  instead of a bare `MergeStrategy` — `pr_merge(n, MergeStrategy::Squash)` →
+  `pr_merge(n, PrMerge::squash())`. `PrMerge`'s `auto`/`delete_branch` options are
+  **GitHub-only** (`gh pr merge --auto --delete-branch`); on GitLab/Gitea,
+  requesting either now returns a structured `Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). `Error::is_unsupported()` now also classifies a wrapper-level
+  `Unsupported` bubbling up through `Error::Forge` (the option-can't-be-expressed
+  case), not just the facade's own `Error::Unsupported` (whole-operation-missing).
 - Internal only (no public API change): the GitHub backend now drives
   `vcs-github`'s spec-typed `pr_close(dir, number, PrClose)` instead of the removed
   positional `delete_branch: bool`. `Forge::pr_close(PrClose)` keeps its existing

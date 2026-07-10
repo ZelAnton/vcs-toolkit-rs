@@ -55,9 +55,10 @@
 //!   `glab.mr_list(dir)` — handy when one client drives one checkout.
 //! - **Builder specs** for the multi-option commands — [`MrCreate`] (title, body,
 //!   optional source/target branch), [`MrEdit`] (optional `title` and/or `body` for
-//!   `mr update`), and the [`MergeStrategy`] enum (`Merge`/`Squash`/`Rebase`) —
-//!   `#[non_exhaustive]`, built with a constructor + chained setters, named after
-//!   the flags they emit.
+//!   `mr update`), and [`MrMerge`] (the [`MergeStrategy`] `Merge`/`Squash`/`Rebase`
+//!   plus the gh-style `auto`/`delete_branch` options, which `glab` reports
+//!   `Unsupported` rather than silently drop) — `#[non_exhaustive]`, built with a
+//!   constructor + chained setters, named after the flags they emit.
 //! - **[`auth_status`](GitLabApi::auth_status)** — a best-effort signal, *not* a
 //!   guarantee: a long-standing glab bug can make `glab auth status` exit `0` even
 //!   when unauthenticated, so a `true` means "probably"; a subsequent API call is
@@ -84,13 +85,13 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use vcs_gitlab::{GitLab, GitLabApi, MergeStrategy, MrCreate};
+//! use vcs_gitlab::{GitLab, GitLabApi, MrCreate, MrMerge};
 //! # async fn demo(glab: &GitLab) -> Result<(), processkit::Error> {
 //! let dir = Path::new(".");
 //! let url = glab
 //!     .mr_create(dir, MrCreate::new("Add streaming", "Implements …").target("main"))
 //!     .await?;                                          // the new MR's URL
-//! glab.mr_merge(dir, 12, MergeStrategy::Squash).await?;
+//! glab.mr_merge(dir, 12, MrMerge::squash()).await?;
 //! # let _ = url; Ok(()) }
 //! ```
 //!
@@ -271,6 +272,83 @@ impl MergeStrategy {
     }
 }
 
+/// Options for [`GitLabApi::mr_merge`] (`glab mr merge`).
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](MrMerge::merge) / [`squash`](MrMerge::squash) /
+/// [`rebase`](MrMerge::rebase), then [`auto`](MrMerge::auto) /
+/// [`delete_branch`](MrMerge::delete_branch) — rather than a struct literal. The
+/// shape mirrors `vcs-github`'s `PrMerge` and `vcs-gitea`'s `PrMerge` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one merge spec
+/// across all three backends.
+///
+/// **Backend capability.** `glab mr merge` merges **immediately**
+/// (`--auto-merge=false`), and this wrapper deliberately does **not** map the
+/// gh-style [`auto`](MrMerge::auto) (merge once requirements are met) or
+/// [`delete_branch`](MrMerge::delete_branch) options: glab's own `--auto-merge` is
+/// *merge-when-pipeline-succeeds*, a different contract from gh's `--auto`. So when
+/// either option is set, [`mr_merge`](GitLabApi::mr_merge) returns a structured
+/// `Error::Unsupported` rather than *silently* ignoring the request — for an
+/// irreversible merge, quietly dropping an option could produce the wrong side
+/// effects. The default (neither set) is the plain immediate merge.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MrMerge {
+    /// The merge strategy (`Merge` = glab's default merge commit; `Squash`;
+    /// `Rebase`).
+    pub strategy: MergeStrategy,
+    /// Request gh-style auto-merge (merge once requirements are met). **Not
+    /// expressible on `glab`** — when set, [`mr_merge`](GitLabApi::mr_merge)
+    /// returns `Error::Unsupported` instead of merging immediately anyway (see the
+    /// type docs).
+    pub auto: bool,
+    /// Delete the source branch after merging. **Not expressible here** — when
+    /// set, [`mr_merge`](GitLabApi::mr_merge) returns `Error::Unsupported` instead
+    /// of silently leaving the branch in place.
+    pub delete_branch: bool,
+}
+
+impl MrMerge {
+    /// Merge with a merge commit (glab's default — no strategy flag).
+    pub fn merge() -> Self {
+        Self::with(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge (`--squash`).
+    pub fn squash() -> Self {
+        Self::with(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge (`--rebase`).
+    pub fn rebase() -> Self {
+        Self::with(MergeStrategy::Rebase)
+    }
+
+    fn with(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Request auto-merge (merge once requirements are met). **Unsupported on
+    /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
+    /// `Error::Unsupported` (see the type docs).
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Request deleting the source branch after merging. **Unsupported on
+    /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
+    /// `Error::Unsupported`.
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
 /// The GitLab operations this crate exposes — the interface consumers code
 /// against and mock in tests. The **lean MR lifecycle**; reach unmodelled `glab`
 /// commands through [`run`](GitLabApi::run).
@@ -326,9 +404,12 @@ pub trait GitLabApi: Send + Sync {
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String>;
     /// Merge a merge request **immediately** (`glab mr merge <id> --yes
     /// --auto-merge=false [--squash|--rebase]`) — `--auto-merge=false` overrides
-    /// glab's default of enabling merge-when-pipeline-succeeds. See
-    /// [`MergeStrategy`].
-    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()>;
+    /// glab's default of enabling merge-when-pipeline-succeeds. Takes a [`MrMerge`]
+    /// spec (the [`MergeStrategy`] plus the gh-style `auto`/`delete_branch`
+    /// options). `glab` can express **neither** `auto` nor `delete_branch` through
+    /// this wrapper, so requesting either returns a structured `Error::Unsupported`
+    /// rather than silently dropping it (see [`MrMerge`]).
+    async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()>;
     /// Mark a draft merge request as ready (`glab mr update <id> --ready`).
     async fn mr_mark_ready(&self, dir: &Path, number: u64) -> Result<()>;
     /// Close a merge request without merging (`glab mr close <id>`).
@@ -523,7 +604,24 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run(self.core.command_in(dir, args)).await
     }
 
-    async fn mr_merge(&self, dir: &Path, number: u64, strategy: MergeStrategy) -> Result<()> {
+    async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()> {
+        // `glab mr merge` can express neither gh-style auto-merge nor
+        // source-branch deletion through this wrapper: glab's own `--auto-merge`
+        // is *merge-when-pipeline-succeeds* (a different contract from gh's
+        // `--auto`), and we drive an *immediate* merge. Rather than silently
+        // ignore a requested option — which, for an irreversible merge, could
+        // produce the wrong side effects — report it as `Unsupported`. The default
+        // (neither set) is the plain immediate merge.
+        if merge.auto {
+            return Err(Error::Unsupported {
+                operation: "mr_merge(auto)".into(),
+            });
+        }
+        if merge.delete_branch {
+            return Err(Error::Unsupported {
+                operation: "mr_merge(delete_branch)".into(),
+            });
+        }
         let id = number.to_string();
         // `--yes` skips the confirmation prompt. `--auto-merge=false` forces an
         // *immediate* merge: glab's `--auto-merge` defaults to `true`, which —
@@ -532,7 +630,7 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // merge. The strategy flag is added only for squash/rebase (a plain merge
         // commit is glab's default).
         let mut args = vec!["mr", "merge", id.as_str(), "--yes", "--auto-merge=false"];
-        if let Some(flag) = strategy.flag() {
+        if let Some(flag) = merge.strategy.flag() {
             args.push(flag);
         }
         self.core.run_unit(self.core.command_in(dir, args)).await
@@ -753,7 +851,7 @@ vcs_cli_support::at_forwarders! {
         fn mr_list() -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
-        fn mr_merge(number: u64, strategy: MergeStrategy) -> Result<()>;
+        fn mr_merge(number: u64, merge: MrMerge) -> Result<()>;
         fn mr_mark_ready(number: u64) -> Result<()>;
         fn mr_close(number: u64) -> Result<()>;
         fn mr_checkout(number: u64) -> Result<()>;
@@ -988,16 +1086,18 @@ mod tests {
         );
     }
 
-    // mr_merge adds `--yes`, and the strategy flag only for squash/rebase.
+    // mr_merge adds `--yes --auto-merge=false`, and the strategy flag only for
+    // squash/rebase. The default `MrMerge` (no auto/delete_branch) is the plain
+    // immediate merge.
     #[tokio::test]
     async fn mr_merge_builds_strategy_argv() {
-        for (strategy, expected) in [
+        for (merge, expected) in [
             (
-                MergeStrategy::Merge,
+                MrMerge::merge(),
                 vec!["mr", "merge", "5", "--yes", "--auto-merge=false"],
             ),
             (
-                MergeStrategy::Squash,
+                MrMerge::squash(),
                 vec![
                     "mr",
                     "merge",
@@ -1008,7 +1108,7 @@ mod tests {
                 ],
             ),
             (
-                MergeStrategy::Rebase,
+                MrMerge::rebase(),
                 vec![
                     "mr",
                     "merge",
@@ -1021,10 +1121,29 @@ mod tests {
         ] {
             let rec = RecordingRunner::replying(Reply::ok(""));
             let glab = GitLab::with_runner(&rec);
-            glab.mr_merge(Path::new("/repo"), 5, strategy)
+            glab.mr_merge(Path::new("/repo"), 5, merge)
                 .await
                 .expect("mr_merge");
             assert_eq!(rec.only_call().args_str(), expected);
+        }
+    }
+
+    // `glab` cannot express gh-style auto-merge or source-branch deletion, so
+    // requesting either is a structured `Unsupported` — never a silent drop that
+    // would merge with the wrong side effects. The check happens BEFORE any spawn
+    // (the runner has no rule; a leak-through would fail differently).
+    #[tokio::test]
+    async fn mr_merge_rejects_unexpressible_options() {
+        for merge in [MrMerge::squash().auto(), MrMerge::merge().delete_branch()] {
+            let glab = GitLab::with_runner(ScriptedRunner::new());
+            let err = glab
+                .mr_merge(Path::new("/repo"), 5, merge)
+                .await
+                .expect_err("auto/delete_branch are Unsupported on glab");
+            assert!(
+                matches!(err, Error::Unsupported { .. }),
+                "expected Unsupported, got {err:?}"
+            );
         }
     }
 

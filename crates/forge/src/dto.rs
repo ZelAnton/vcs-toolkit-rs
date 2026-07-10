@@ -625,6 +625,86 @@ pub enum MergeStrategy {
     Rebase,
 }
 
+/// Options for [`pr_merge`](crate::ForgeApi::pr_merge) — the unified merge spec
+/// carrying a [`MergeStrategy`] plus the optional `auto` (merge once requirements
+/// are met) and `delete_branch` (remove the source branch after merge) flags. It
+/// generalises the per-CLI merge specs (`vcs-github`'s `PrMerge`, `vcs-gitlab`'s
+/// `MrMerge`, `vcs-gitea`'s `PrMerge`) into one shape the facade drives across all
+/// three backends.
+///
+/// `#[non_exhaustive]`, so build it through the strategy constructors —
+/// [`merge`](PrMerge::merge) / [`squash`](PrMerge::squash) /
+/// [`rebase`](PrMerge::rebase) (or [`new`](PrMerge::new) from a runtime
+/// [`MergeStrategy`]) — then [`auto`](PrMerge::auto) /
+/// [`delete_branch`](PrMerge::delete_branch), rather than a struct literal.
+///
+/// **Backend capability.** Only **GitHub** (`gh pr merge --auto --delete-branch`)
+/// can express `auto`/`delete_branch`. On **GitLab** and **Gitea** these options
+/// are not expressible, so requesting either returns
+/// [`Unsupported`](crate::Error::Unsupported) rather than silently merging without
+/// them — a deliberate contract, since for an irreversible merge a quietly dropped
+/// option could produce the wrong side effects. The default (neither set) merges
+/// on every backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PrMerge {
+    /// The merge strategy.
+    pub strategy: MergeStrategy,
+    /// Enable auto-merge — merge once requirements/checks are met. **GitHub only**
+    /// (`--auto`); GitLab/Gitea return [`Unsupported`](crate::Error::Unsupported)
+    /// when it is set.
+    pub auto: bool,
+    /// Delete the source branch after the merge. **GitHub only**
+    /// (`--delete-branch`); GitLab/Gitea return
+    /// [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub delete_branch: bool,
+}
+
+impl PrMerge {
+    /// A merge with the given strategy, `auto`/`delete_branch` off — the runtime
+    /// entry point (e.g. mapping an MCP argument) alongside the named
+    /// [`merge`](PrMerge::merge)/[`squash`](PrMerge::squash)/[`rebase`](PrMerge::rebase)
+    /// constructors.
+    pub fn new(strategy: MergeStrategy) -> Self {
+        Self {
+            strategy,
+            auto: false,
+            delete_branch: false,
+        }
+    }
+
+    /// Merge with a merge commit.
+    pub fn merge() -> Self {
+        Self::new(MergeStrategy::Merge)
+    }
+
+    /// Squash-merge.
+    pub fn squash() -> Self {
+        Self::new(MergeStrategy::Squash)
+    }
+
+    /// Rebase-merge.
+    pub fn rebase() -> Self {
+        Self::new(MergeStrategy::Rebase)
+    }
+
+    /// Enable auto-merge (merge once requirements are met). **GitHub only** —
+    /// GitLab/Gitea report [`Unsupported`](crate::Error::Unsupported) when it is
+    /// set.
+    pub fn auto(mut self) -> Self {
+        self.auto = true;
+        self
+    }
+
+    /// Delete the source branch after merging. **GitHub only** — GitLab/Gitea
+    /// report [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub fn delete_branch(mut self) -> Self {
+        self.delete_branch = true;
+        self
+    }
+}
+
 /// Options for [`pr_edit`](crate::ForgeApi::pr_edit) — the unified
 /// edit-a-PR/MR spec, mapped to each CLI's own flags
 /// (gh `--title`/`--body`, glab `--title`/`--description`, tea

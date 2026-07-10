@@ -6,12 +6,12 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_github::{
     CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
-    PrEdit as GhPrEdit, PrMerge, PullRequest, Release, RepoView,
+    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit,
+    MergeStrategy, PrCreate, PrEdit, PrMerge,
 };
 use crate::error::Result;
 
@@ -83,14 +83,23 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let merge = match strategy {
-        MergeStrategy::Merge => PrMerge::merge(),
-        MergeStrategy::Squash => PrMerge::squash(),
-        MergeStrategy::Rebase => PrMerge::rebase(),
+    // Map the unified spec onto gh's rich `PrMerge` — the strategy plus the two
+    // GitHub-native options (`--auto`, `--delete-branch`). The exhaustive `match`
+    // (no catch-all) makes a new `MergeStrategy` variant a compile error here.
+    let mut gh_merge = match merge.strategy {
+        MergeStrategy::Merge => GhPrMerge::merge(),
+        MergeStrategy::Squash => GhPrMerge::squash(),
+        MergeStrategy::Rebase => GhPrMerge::rebase(),
     };
-    gh.pr_merge(dir, number, merge).await?;
+    if merge.auto {
+        gh_merge = gh_merge.auto();
+    }
+    if merge.delete_branch {
+        gh_merge = gh_merge.delete_branch();
+    }
+    gh.pr_merge(dir, number, gh_merge).await?;
     Ok(())
 }
 

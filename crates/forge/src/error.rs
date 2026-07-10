@@ -152,9 +152,18 @@ impl Error {
     }
 
     /// Whether this is an [`Unsupported`](Error::Unsupported) operation (rather
-    /// than a forge/network failure).
+    /// than a forge/network failure). Covers **both** the facade's own variant
+    /// (an operation a backend's CLI lacks entirely, e.g. `pr_checks` on Gitea)
+    /// **and** a wrapper-level [`processkit::Error::Unsupported`] bubbling up
+    /// through [`Forge`](crate::Error::Forge) — the case where the operation
+    /// exists but a requested *option* can't be expressed on that backend (e.g.
+    /// `auto`/`delete_branch` for `pr_merge` on GitLab/Gitea). Both are the same
+    /// "this backend can't do that" signal a caller acts on.
     pub fn is_unsupported(&self) -> bool {
-        matches!(self, Error::Unsupported { .. })
+        matches!(
+            self,
+            Error::Unsupported { .. } | Error::Forge(processkit::Error::Unsupported { .. })
+        )
     }
 
     /// Whether this is an **input rejection** — a bad argument the facade refused

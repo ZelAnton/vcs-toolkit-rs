@@ -15,9 +15,21 @@ crates; tag releases as `vcs-gitea-v<version>`.
   switched to, so a build/test/edit runs against the PR locally. Mutates the
   working copy. Mirrored on the `GiteaAt` bound view. **Defaulted** to
   `Error::Unsupported` on the trait so external implementers keep compiling.
+- `PrMerge` — a `#[non_exhaustive]` merge spec (`strategy` + `auto` +
+  `delete_branch`), built through `PrMerge::merge()`/`squash()`/`rebase()` then
+  `.auto()`/`.delete_branch()`. Shares the shape of `vcs-github`'s `PrMerge` and
+  `vcs-gitlab`'s `MrMerge` so the `vcs-forge` facade drives one merge spec across
+  all three backends.
 
 ### Changed
--
+- **Breaking:** `GiteaApi::pr_merge` takes a `PrMerge` spec instead of a bare
+  `MergeStrategy` — `pr_merge(dir, n, MergeStrategy::Squash)` →
+  `pr_merge(dir, n, PrMerge::squash())`. The `GiteaAt` bound view moves to the
+  same spec. `tea pr merge` can express **neither** the gh-style `auto`
+  (merge-once-checks-pass) nor `delete_branch` option, so setting either on
+  `PrMerge` now returns a structured `Error::Unsupported` rather than silently
+  merging without it (which, for an irreversible merge, could produce the wrong
+  side effects). The default (neither set) is unchanged: the plain `--style` merge.
 
 ### Fixed
 -

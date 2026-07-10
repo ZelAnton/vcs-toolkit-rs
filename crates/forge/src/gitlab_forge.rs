@@ -5,13 +5,13 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitlab::{
-    CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MergeStrategy as GlMs, MrCreate,
-    MrEdit as GlMrEdit, Release, RepoView,
+    CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MrCreate, MrEdit as GlMrEdit,
+    MrMerge, Release, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit,
+    MergeStrategy, PrCreate, PrEdit, PrMerge,
 };
 use crate::error::Result;
 
@@ -84,14 +84,25 @@ pub(crate) async fn pr_merge<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
     number: u64,
-    strategy: MergeStrategy,
+    merge: PrMerge,
 ) -> Result<()> {
-    let ms = match strategy {
-        MergeStrategy::Merge => GlMs::Merge,
-        MergeStrategy::Squash => GlMs::Squash,
-        MergeStrategy::Rebase => GlMs::Rebase,
+    // Map the unified spec onto glab's `MrMerge`. The strategy maps to a flag;
+    // `auto`/`delete_branch` pass through verbatim — glab's wrapper reports them
+    // `Unsupported` rather than silently dropping them (see `vcs_gitlab::MrMerge`).
+    // The exhaustive `match` (no catch-all) makes a new `MergeStrategy` variant a
+    // compile error here.
+    let mut mr = match merge.strategy {
+        MergeStrategy::Merge => MrMerge::merge(),
+        MergeStrategy::Squash => MrMerge::squash(),
+        MergeStrategy::Rebase => MrMerge::rebase(),
     };
-    glab.mr_merge(dir, number, ms).await?;
+    if merge.auto {
+        mr = mr.auto();
+    }
+    if merge.delete_branch {
+        mr = mr.delete_branch();
+    }
+    glab.mr_merge(dir, number, mr).await?;
     Ok(())
 }
 

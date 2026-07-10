@@ -140,6 +140,7 @@ mod gitlab_forge;
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
     ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeStrategy, PrClose, PrCreate, PrEdit,
+    PrMerge,
 };
 pub use error::{Error, Result};
 
@@ -513,12 +514,15 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Merge a PR/MR with the given [`MergeStrategy`].
-    pub async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
+    /// Merge a PR/MR with the given [`PrMerge`] spec (strategy plus the optional
+    /// `auto`/`delete_branch` flags). Those two options are **GitHub-only**: on
+    /// GitLab/Gitea, requesting either returns [`Unsupported`](Error::Unsupported)
+    /// rather than silently merging without it (see [`PrMerge`]).
+    pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, strategy).await,
-            Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, strategy).await,
-            Backend::Gitea(c) => gitea_forge::pr_merge(c, &self.cwd, number, strategy).await,
+            Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, merge).await,
+            Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, merge).await,
+            Backend::Gitea(c) => gitea_forge::pr_merge(c, &self.cwd, number, merge).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_merge")),
         }
     }
@@ -774,7 +778,7 @@ pub trait ForgeApi: Send + Sync {
         Ok(ForgeCapabilities::all_false())
     }
     /// See [`Forge::pr_merge`](crate::Forge::pr_merge).
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()>;
+    async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>;
     /// See [`Forge::pr_mark_ready`](crate::Forge::pr_mark_ready).
     async fn pr_mark_ready(&self, number: u64) -> Result<()>;
     /// See [`Forge::pr_close`](crate::Forge::pr_close).
@@ -840,8 +844,8 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn capabilities(&self) -> Result<ForgeCapabilities> {
         self.capabilities().await
     }
-    async fn pr_merge(&self, number: u64, strategy: MergeStrategy) -> Result<()> {
-        self.pr_merge(number, strategy).await
+    async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
+        self.pr_merge(number, merge).await
     }
     async fn pr_mark_ready(&self, number: u64) -> Result<()> {
         self.pr_mark_ready(number).await
@@ -1058,7 +1062,7 @@ mod tests {
             forge.pr_list().await.unwrap_err(),
             forge.pr_view(1).await.unwrap_err(),
             forge.pr_create(PrCreate::new("T", "B")).await.unwrap_err(),
-            forge.pr_merge(1, MergeStrategy::Merge).await.unwrap_err(),
+            forge.pr_merge(1, PrMerge::merge()).await.unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_close(PrClose::new(1)).await.unwrap_err(),
             forge.pr_checkout(1).await.unwrap_err(),
@@ -1276,19 +1280,19 @@ mod tests {
         assert!(rels[0].prerelease, "tea status 'prerelease' → prerelease");
     }
 
-    // The unified MergeStrategy maps to each CLI's own flag.
+    // The unified PrMerge spec maps its strategy to each CLI's own flag.
     #[tokio::test]
     async fn pr_merge_maps_strategy_per_backend() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_github("/repo", GitHub::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Squash)
+            .pr_merge(5, PrMerge::squash())
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["pr", "merge", "5", "--squash"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Rebase)
+            .pr_merge(5, PrMerge::rebase())
             .await
             .unwrap();
         assert_eq!(
@@ -1305,13 +1309,48 @@ mod tests {
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
-            .pr_merge(5, MergeStrategy::Merge)
+            .pr_merge(5, PrMerge::merge())
             .await
             .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
             ["pr", "merge", "5", "--style", "merge"]
         );
+    }
+
+    // `auto`/`delete_branch` are GitHub-only. On GitHub they map to gh's own
+    // `--auto`/`--delete-branch`; on GitLab/Gitea the facade surfaces a structured
+    // `Unsupported` (bubbled from the wrapper) rather than silently merging without
+    // them — so `is_unsupported()` is true and no wrong merge argv is emitted.
+    #[tokio::test]
+    async fn pr_merge_options_map_on_github_and_are_unsupported_elsewhere() {
+        // GitHub expresses both options as real flags.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_merge(5, PrMerge::squash().auto().delete_branch())
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "merge", "5", "--squash", "--auto", "--delete-branch"]
+        );
+
+        // GitLab / Gitea: an `auto` or `delete_branch` request is Unsupported and
+        // spawns nothing (the runner has no rule, so a leak-through would error
+        // differently than the classified `Unsupported`).
+        for (make, merge) in [
+            (
+                Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
+                PrMerge::merge().auto(),
+            ),
+            (
+                Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new())),
+                PrMerge::squash().delete_branch(),
+            ),
+        ] {
+            let err = make.pr_merge(5, merge).await.unwrap_err();
+            assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        }
     }
 
     // `pr_checkout` dispatches to each CLI's own checkout verb (gh/tea `pr

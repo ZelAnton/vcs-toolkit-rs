@@ -26,6 +26,13 @@ crates; tag releases as `vcs-github-v<version>`.
   `pr_close(dir, number, true)` → `pr_close(dir, number,
   PrClose::new().delete_branch())` — so the flag reads at the call site (mirroring
   `PrMerge`). The `GitHubAt` bound view moves to the same spec.
+- **No API change here**, noted for the ecosystem: this crate's `PrMerge`
+  (`strategy` + `auto` + `delete_branch`) is now the reference shape the sibling
+  wrappers adopt for a **unified merge spec** — `vcs-gitlab` gained `MrMerge`,
+  `vcs-gitea` gained `PrMerge`, and the `vcs-forge` facade a `PrMerge` DTO, each
+  with the same fields. `gh pr merge` is the only backend that can express `auto`
+  (`--auto`) and `delete_branch` (`--delete-branch`); GitLab/Gitea report those two
+  options `Unsupported`. `GitHubApi::pr_merge` is unchanged.
 
 ### Fixed
 -

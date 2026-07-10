@@ -196,6 +196,16 @@ pub struct PrMergeParams {
     pub number: u64,
     /// Merge strategy.
     pub strategy: MergeStrategyArg,
+    /// Enable auto-merge — merge once requirements/checks are met. **GitHub only**;
+    /// GitLab/Gitea reject it as unsupported (`invalid_params`) rather than merging
+    /// immediately anyway. Defaults to `false`.
+    #[serde(default)]
+    pub auto: bool,
+    /// Delete the source branch after merging. **GitHub only**; GitLab/Gitea reject
+    /// it as unsupported (`invalid_params`) rather than silently leaving the branch.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub delete_branch: bool,
 }
 
 /// Close a pull/merge request.
@@ -821,7 +831,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Merge a pull/merge request with a strategy (merge|squash|rebase). Requires write access (--allow-write, or --allow-tools naming this tool).",
+        description = "Merge a pull/merge request with a strategy (merge|squash|rebase). Optional `auto` (merge once requirements are met) and `delete_branch` are GitHub-only — GitLab/Gitea reject them as unsupported rather than merging without them. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
     pub async fn forge_pr_merge(
@@ -829,8 +839,15 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrMergeParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_merge")?;
+        let mut merge = vcs_forge::PrMerge::new(p.strategy.into());
+        if p.auto {
+            merge = merge.auto();
+        }
+        if p.delete_branch {
+            merge = merge.delete_branch();
+        }
         self.forge()?
-            .pr_merge(p.number, p.strategy.into())
+            .pr_merge(p.number, merge)
             .await
             .map_err(forge_err)?;
         ok_json(&serde_json::json!({ "merged": p.number }))
@@ -1461,6 +1478,62 @@ mod tests {
             "{}",
             result_json(&out)
         );
+    }
+
+    // `forge_pr_merge` is write-gated; when allowed it maps the strategy plus the
+    // GitHub-only `auto`/`delete_branch` params onto gh's own flags. The runner
+    // rule matches only `["gh", "pr", "merge"]`, so reaching the reply proves the
+    // whole spec was routed to the wrapper.
+    #[tokio::test]
+    async fn forge_pr_merge_routes_strategy_and_github_options() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "merge"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let out = server
+            .forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Squash,
+                auto: true,
+                delete_branch: true,
+            }))
+            .await
+            .expect("merge ok");
+        assert!(result_json(&out).contains("merged"), "{}", result_json(&out));
+    }
+
+    // The GitHub-only `auto`/`delete_branch` merge options are rejected as
+    // `invalid_params` on GitLab/Gitea — the facade's `Unsupported` (bubbled from
+    // the wrapper) is a client-fixable request, not an internal error — and nothing
+    // spawns (the runner has no rule).
+    #[tokio::test]
+    async fn forge_pr_merge_unsupported_options_map_to_invalid_params() {
+        let tea = vcs_forge::vcs_gitea::Gitea::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitea("/repo", tea));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        let err = server
+            .forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Merge,
+                auto: true,
+                delete_branch: false,
+            }))
+            .await
+            .expect_err("auto is unsupported on gitea");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
     // T-013: on GitHub a `body` that begins with `-` is a legitimate Markdown

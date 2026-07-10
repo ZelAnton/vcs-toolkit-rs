@@ -20,6 +20,12 @@ crates; tag releases as `vcs-mcp-v<version>`.
   forge_pr_checkout`.
 
 ### Changed
+- **Breaking (tool schema):** the `forge_pr_merge` tool gained two optional
+  boolean params, `auto` and `delete_branch` (both default `false`), tracking the
+  facade's new unified `PrMerge` merge spec. Both are **GitHub-only** (`gh pr merge
+  --auto --delete-branch`); on GitLab/Gitea, requesting either is rejected as
+  `invalid_params` (the facade's `Unsupported`, a client-fixable request) rather
+  than merging without it. `{ number, strategy }` calls keep working unchanged.
 - Tool parameters that carry a git revspec / jj revset or a branch/bookmark name
   (e.g. `repo_log`, `repo_show_file`, `repo_checkout`) now surface a classifiable
   input-validation error when given a flag-like or malformed value: the `Repo`
