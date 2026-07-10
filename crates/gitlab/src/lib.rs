@@ -825,12 +825,10 @@ impl<R: ProcessRunner> GitLab<R> {
     /// Like [`run_in`](GitLab::run_in) but never errors on a non-zero exit — the
     /// dir-bound twin of [`run_raw`](GitLabApi::run_raw). What [`GitLabAt::run_raw`]
     /// forwards to.
-    pub async fn run_raw_in(
-        &self,
-        dir: &Path,
-        args: &[String],
-    ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Like [`run_args`](GitLab::run_args) but **bound to `dir`** — the `&[&str]`
@@ -847,7 +845,9 @@ impl<R: ProcessRunner> GitLab<R> {
         dir: &Path,
         args: &[&str],
     ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind a working directory, so the project-scoped methods omit that argument:
@@ -962,13 +962,25 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
 
         // Through the bound view: every raw form carries the bound dir as its cwd.
-        glab.at(dir).run(&["mr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = glab.at(dir).run_raw(&["mr".to_string(), "list".to_string()]).await.unwrap();
+        glab.at(dir)
+            .run(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = glab
+            .at(dir)
+            .run_raw(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         glab.at(dir).run_args(&["mr", "list"]).await.unwrap();
         let _ = glab.at(dir).run_raw_args(&["mr", "list"]).await.unwrap();
         // On the client directly: the process-cwd escape hatch (no bound dir).
-        glab.run(&["mr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = glab.run_raw(&["mr".to_string(), "list".to_string()]).await.unwrap();
+        glab.run(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = glab
+            .run_raw(&["mr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         glab.run_args(&["mr", "list"]).await.unwrap();
         let _ = glab.run_raw_args(&["mr", "list"]).await.unwrap();
 

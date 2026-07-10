@@ -1038,12 +1038,10 @@ impl<R: ProcessRunner> GitHub<R> {
     /// Like [`run_in`](GitHub::run_in) but never errors on a non-zero exit — the
     /// dir-bound twin of [`run_raw`](GitHubApi::run_raw). What [`GitHubAt::run_raw`]
     /// forwards to.
-    pub async fn run_raw_in(
-        &self,
-        dir: &Path,
-        args: &[String],
-    ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Like [`run_args`](GitHub::run_args) but **bound to `dir`** — the `&[&str]`
@@ -1060,7 +1058,9 @@ impl<R: ProcessRunner> GitHub<R> {
         dir: &Path,
         args: &[&str],
     ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking
@@ -1182,13 +1182,25 @@ mod tests {
         let gh = GitHub::with_runner(&rec);
 
         // Through the bound view: every raw form carries the bound dir as its cwd.
-        gh.at(dir).run(&["pr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = gh.at(dir).run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        gh.at(dir)
+            .run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = gh
+            .at(dir)
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         gh.at(dir).run_args(&["pr", "list"]).await.unwrap();
         let _ = gh.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
         // On the client directly: the process-cwd escape hatch (no bound dir).
-        gh.run(&["pr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = gh.run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        gh.run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = gh
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         gh.run_args(&["pr", "list"]).await.unwrap();
         let _ = gh.run_raw_args(&["pr", "list"]).await.unwrap();
 

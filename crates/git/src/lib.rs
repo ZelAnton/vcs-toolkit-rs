@@ -2381,12 +2381,10 @@ impl<R: ProcessRunner> Git<R> {
     /// Like [`run_in`](Git::run_in) but never errors on a non-zero exit — the
     /// dir-bound twin of [`run_raw`](GitApi::run_raw). What [`GitAt::run_raw`]
     /// forwards to.
-    pub async fn run_raw_in(
-        &self,
-        dir: &Path,
-        args: &[String],
-    ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Like [`run_args`](Git::run_args) but **bound to `dir`** — the `&[&str]` twin
@@ -2403,7 +2401,9 @@ impl<R: ProcessRunner> Git<R> {
         dir: &Path,
         args: &[&str],
     ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind this client to `dir`, returning a [`GitAt`] handle whose methods omit

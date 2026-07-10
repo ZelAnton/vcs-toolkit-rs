@@ -802,12 +802,10 @@ impl<R: ProcessRunner> Gitea<R> {
     /// Like [`run_in`](Gitea::run_in) but never errors on a non-zero exit — the
     /// dir-bound twin of [`run_raw`](GiteaApi::run_raw). What [`GiteaAt::run_raw`]
     /// forwards to.
-    pub async fn run_raw_in(
-        &self,
-        dir: &Path,
-        args: &[String],
-    ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Like [`run_args`](Gitea::run_args) but **bound to `dir`** — the `&[&str]`
@@ -824,7 +822,9 @@ impl<R: ProcessRunner> Gitea<R> {
         dir: &Path,
         args: &[&str],
     ) -> Result<ProcessResult<String>> {
-        self.core.output_string(self.core.command_in(dir, args)).await
+        self.core
+            .output_string(self.core.command_in(dir, args))
+            .await
     }
 
     /// Bind a working directory, so the repo-scoped methods omit that argument:
@@ -932,13 +932,25 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
 
         // Through the bound view: every raw form carries the bound dir as its cwd.
-        tea.at(dir).run(&["pr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = tea.at(dir).run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        tea.at(dir)
+            .run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = tea
+            .at(dir)
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         tea.at(dir).run_args(&["pr", "list"]).await.unwrap();
         let _ = tea.at(dir).run_raw_args(&["pr", "list"]).await.unwrap();
         // On the client directly: the process-cwd escape hatch (no bound dir).
-        tea.run(&["pr".to_string(), "list".to_string()]).await.unwrap();
-        let _ = tea.run_raw(&["pr".to_string(), "list".to_string()]).await.unwrap();
+        tea.run(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
+        let _ = tea
+            .run_raw(&["pr".to_string(), "list".to_string()])
+            .await
+            .unwrap();
         tea.run_args(&["pr", "list"]).await.unwrap();
         let _ = tea.run_raw_args(&["pr", "list"]).await.unwrap();
 
