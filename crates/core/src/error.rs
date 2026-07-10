@@ -316,7 +316,13 @@ mod tests {
         assert!(
             !Error::Io(std::io::Error::from(std::io::ErrorKind::InvalidInput)).is_unsupported()
         );
-        assert!(!Error::NotARepository("/x".into()).is_unsupported());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_unsupported()
+        );
     }
 
     #[test]
