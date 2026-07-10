@@ -1291,7 +1291,8 @@ mod tests {
         );
 
         // A value that merely *contains* a dash (not exactly "-") is a real,
-        // literal body — it must pass through untouched, byte-exact.
+        // literal body — it must pass through untouched, byte-exact, for every
+        // entry point that carries a guarded body (not just mr_create).
         let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/9\n"));
         let glab = GitLab::with_runner(&rec);
         glab.mr_create(Path::new("/repo"), MrCreate::new("T", "- not a sentinel"))
@@ -1303,6 +1304,49 @@ mod tests {
                 .iter()
                 .any(|a| a == "- not a sentinel"),
             "the literal body must reach argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_edit(
+            Path::new("/repo"),
+            1,
+            MrEdit::new().body("- not a sentinel"),
+        )
+        .await
+        .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach mr_edit's argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/i/9\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.issue_create(Path::new("/repo"), "T", "- not a sentinel")
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach issue_create's argv byte-exact"
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/mr/1#note_1\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_comment(Path::new("/repo"), 1, "- not a sentinel")
+            .await
+            .expect("a body that isn't exactly \"-\" must be accepted");
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|a| a == "- not a sentinel"),
+            "the literal body must reach mr_comment's argv byte-exact"
         );
     }
 
