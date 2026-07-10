@@ -10,6 +10,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Documented **non-UTF-8 path policy (fail-closed)** for path-bearing results
+  (`repo_status`'s `FileChange.path`, `repo_conflicts`'s list, `repo_diff`'s
+  `FileDiff.path`): the facade carries each path losslessly as a `PathBuf`, and since
+  JSON strings are UTF-8, a path that is not valid UTF-8 (possible on Unix) is now
+  **refused with an explicit serialization error** rather than emitted with `U+FFFD`
+  replacement — an agent is never handed a silently-corrupted path it would feed back
+  into `repo_commit`. The ordinary UTF-8 case is unchanged (a plain JSON string).
+  (T-050.)
 - `repo_log` read tool: recent history (up to `max` commits reachable from a
   git revspec / jj revset), backed by the new `Repo::log` facade method. Always
   available (read-only, no `WriteGate`).

@@ -792,8 +792,9 @@ pub trait JjApi: Send + Sync {
     /// Whether the working copy has unresolved conflicts (`jj status`).
     async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
     /// Paths with unresolved conflicts in `revset` (`jj resolve --list -r <revset>`).
-    /// Empty when there are none.
-    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<String>>;
+    /// Empty when there are none. Returns [`PathBuf`]s built from the raw bytes, so
+    /// a non-UTF-8 conflicted path survives losslessly.
+    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>>;
     /// Run an arbitrary templated `jj log` query and return raw stdout
     /// (`log -r <revset> --no-graph [--limit n] -T <template>`). Snapshots the
     /// working copy first (records an operation); for a read-only query use
@@ -970,20 +971,30 @@ fn normalize_changed_paths(entries: Vec<ChangedPath>) -> Result<Vec<ChangedPath>
         .collect()
 }
 
-fn normalize_workspace_path(path: &str) -> Result<String> {
-    let path = path.replace('\\', "/");
-    let bytes = path.as_bytes();
-    if path.starts_with('/') || (bytes.len() >= 2 && bytes[1] == b':') {
+/// Validate that `path` is workspace-root-relative and normalise its separators,
+/// operating on the **raw path bytes** so a non-UTF-8 (Unix) filename is never
+/// corrupted by a `String` round-trip. The structural checks (`/`, `\`, `:`, `.`,
+/// `..`) are all single-byte ASCII, so byte-wise slicing is exact.
+fn normalize_workspace_path(path: &Path) -> Result<PathBuf> {
+    // `as_encoded_bytes` is the raw OS bytes on Unix (lossless) and WTF-8
+    // elsewhere; only ASCII structure is inspected, so both are safe to scan.
+    let raw = path.as_os_str().as_encoded_bytes();
+    let normalized: Vec<u8> = raw
+        .iter()
+        .map(|&b| if b == b'\\' { b'/' } else { b })
+        .collect();
+    // Absolute if it leads with `/` or carries a `X:` drive letter.
+    if normalized.first() == Some(&b'/') || (normalized.len() >= 2 && normalized[1] == b':') {
         return Err(Error::parse(
             BINARY,
             format!("summary path is not workspace-relative: {path:?}"),
         ));
     }
-    let mut parts = Vec::new();
-    for part in path.split('/') {
+    let mut parts: Vec<&[u8]> = Vec::new();
+    for part in normalized.split(|&b| b == b'/') {
         match part {
-            "" | "." => {}
-            ".." => {
+            b"" | b"." => {}
+            b".." => {
                 return Err(Error::parse(
                     BINARY,
                     format!("summary path escapes the workspace root: {path:?}"),
@@ -998,7 +1009,14 @@ fn normalize_workspace_path(path: &str) -> Result<String> {
             format!("summary path is empty after normalisation: {path:?}"),
         ));
     }
-    Ok(parts.join("/"))
+    let mut joined = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            joined.push(b'/');
+        }
+        joined.extend_from_slice(part);
+    }
+    Ok(vcs_diff::path_from_bytes(&joined))
 }
 
 impl<R: ProcessRunner> Jj<R> {
@@ -1092,9 +1110,11 @@ impl<R: ProcessRunner> Jj<R> {
         // whole point by recording an operation as a side effect of resolving
         // the path prefix.
         let root = self.root_wc(dir, wc).await?;
+        // `parse_bytes`: `--summary` paths are raw bytes that may not be valid
+        // UTF-8 on Unix, so parse from the byte stream rather than a lossy `String`.
         let entries = self
             .core
-            .parse(
+            .parse_bytes(
                 self.cmd_in_wc(&root, ["diff", "-r", "@", "--summary"], wc),
                 parse::parse_diff_summary,
             )
@@ -1600,7 +1620,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         let root = self.root(dir).await?;
         let entries = self
             .core
-            .parse(
+            .parse_bytes(
                 self.cmd_in(&root, ["diff", "-r", range.as_str(), "--summary"]),
                 parse::parse_diff_summary,
             )
@@ -1672,10 +1692,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.is_conflicted(dir, &at_revset()).await
     }
 
-    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<String>> {
+    async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>> {
+        // `output_bytes`: a conflicted path may not be valid UTF-8 on Unix, so read
+        // raw stdout (stderr stays text for the "no conflicts" probe below).
         let res = self
             .core
-            .output_string(self.cmd_in(dir, ["resolve", "--list", "-r", revset.as_str()]))
+            .output_bytes(self.cmd_in(dir, ["resolve", "--list", "-r", revset.as_str()]))
             .await?;
         match res.code() {
             Some(0) => Ok(parse::parse_resolve_list(res.stdout())),
@@ -2583,7 +2605,7 @@ vcs_cli_support::at_forwarders! {
         fn commit_count(revset: &RevsetExpr) -> Result<usize>;
         fn is_conflicted(revset: &RevsetExpr) -> Result<bool>;
         fn has_workingcopy_conflict() -> Result<bool>;
-        fn resolve_list(revset: &RevsetExpr) -> Result<Vec<String>>;
+        fn resolve_list(revset: &RevsetExpr) -> Result<Vec<PathBuf>>;
         fn template_query(revset: &RevsetExpr, template: &str, limit: Option<usize>) -> Result<String>;
         fn description(revset: &RevsetExpr) -> Result<String>;
         fn evolog(revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
@@ -3341,7 +3363,7 @@ mod tests {
         let entries = jj.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].status, 'M');
-        assert_eq!(entries[1].path, "b.rs");
+        assert_eq!(entries[1].path, Path::new("b.rs"));
     }
 
     #[test]
@@ -3352,8 +3374,8 @@ mod tests {
             old_path: Some("src\\old.rs".into()),
         }])
         .expect("normalise");
-        assert_eq!(paths[0].path, "src/new.rs");
-        assert_eq!(paths[0].old_path.as_deref(), Some("src/old.rs"));
+        assert_eq!(paths[0].path, Path::new("src/new.rs"));
+        assert_eq!(paths[0].old_path.as_deref(), Some(Path::new("src/old.rs")));
         let err = normalize_changed_paths(vec![ChangedPath {
             status: 'M',
             path: "../outside.rs".into(),
@@ -3539,7 +3561,7 @@ mod tests {
         );
         assert_eq!(
             some.resolve_list(Path::new("."), &rv("@")).await.unwrap(),
-            ["a.rs"]
+            [PathBuf::from("a.rs")]
         );
     }
 
@@ -4493,7 +4515,7 @@ mod tests {
             .await
             .expect("diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
     }
 
@@ -4536,7 +4558,7 @@ mod tests {
             .await
             .expect("under-budget diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, Path::new("m"));
     }
 
     // A blob read (`file_show`) honours the same budget, and its per-call override

@@ -103,20 +103,24 @@ async fn open_detects_git_and_reports_changes() {
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "seed.txt" && c.kind == ChangeKind::Modified)
+            .any(|c| c.path == std::path::Path::new("seed.txt") && c.kind == ChangeKind::Modified)
     );
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "new.txt" && c.kind == ChangeKind::Added)
+            .any(|c| c.path == std::path::Path::new("new.txt") && c.kind == ChangeKind::Added)
     );
 
     // Partial commit of just the tracked edit.
-    repo.commit_paths(&["seed.txt".to_string()], "edit seed")
+    repo.commit_paths(&[std::path::PathBuf::from("seed.txt")], "edit seed")
         .await
         .expect("commit_paths");
     let after = repo.changed_files().await.expect("status");
-    assert!(after.iter().all(|c| c.path != "seed.txt"));
+    assert!(
+        after
+            .iter()
+            .all(|c| c.path != std::path::Path::new("seed.txt"))
+    );
 }
 
 #[tokio::test]
@@ -136,7 +140,7 @@ async fn open_detects_jj_and_reports_changes() {
     assert!(
         changes
             .iter()
-            .any(|c| c.path == "new.txt" && c.kind == ChangeKind::Added),
+            .any(|c| c.path == std::path::Path::new("new.txt") && c.kind == ChangeKind::Added),
         "expected new.txt added, got {changes:?}"
     );
 }
@@ -231,7 +235,7 @@ async fn git_try_merge_and_abort_continue_cycle() {
     // Conflict probe: reports the path, leaves no merge state, moves nothing.
     assert_eq!(
         repo.try_merge("conflicting").await.expect("try_merge"),
-        MergeProbe::Conflicts(vec!["seed.txt".to_string()])
+        MergeProbe::Conflicts(vec![std::path::PathBuf::from("seed.txt")])
     );
     assert_eq!(
         repo.in_progress_state().await.expect("state"),
@@ -331,7 +335,7 @@ async fn jj_try_merge_reports_conflicts_and_rolls_back() {
 
     assert_eq!(
         repo.try_merge("side-a").await.expect("try_merge"),
-        MergeProbe::Conflicts(vec!["c.txt".to_string()])
+        MergeProbe::Conflicts(vec![std::path::PathBuf::from("c.txt")])
     );
 
     // Rolled back: same working-copy change, no conflict, no merge child left.

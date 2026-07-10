@@ -37,6 +37,19 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Changed
 
+- **Breaking:** the path-carrying facade surface is now lossless for non-UTF-8 names.
+  `FileChange.path` / `FileChange.old_path` are `PathBuf` / `Option<PathBuf>` (were
+  `String` / `Option<String>`); `Repo::conflicted_files` returns `Vec<PathBuf>` (was
+  `Vec<String>`); `MergeProbe::Conflicts` carries `Vec<PathBuf>` (was `Vec<String>`);
+  and `Repo::commit_paths` / `VcsRepo::commit_paths` take `&[PathBuf]` (was `&[String]`).
+  A path obtained from `changed_files` / `conflicted_files` now round-trips **losslessly**
+  into `commit_paths` — on git a filename whose bytes are not valid UTF-8 (legal on Unix)
+  reaches the commit unchanged and addresses the SAME file, where a `String::from_utf8_lossy`
+  decode would have substituted `U+FFFD` and retargeted it. (`FileChange`/`MergeProbe`
+  still `Serialize`: a `PathBuf` renders as a JSON string for a UTF-8 path and, per the
+  fail-closed policy, a non-UTF-8 path is a serialization **error**, never a silent
+  `U+FFFD`.) The `FileChange` builder (`FileChange::new` / `.old_path`) now takes
+  `impl Into<PathBuf>`. (T-050.)
 - `WorktreeInfo.commit` is now the checked-out commit's **full** object id on
   both backends (the jj side previously reported a short prefix), the same
   identity `RepoSnapshot.head` carries — so the two can be compared directly to

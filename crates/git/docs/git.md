@@ -137,7 +137,7 @@ async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
 async fn branch_status(&self, dir: &Path) -> Result<BranchStatus>;
 async fn add(&self, dir: &Path, paths: &[PathBuf]) -> Result<()>;
 async fn staged_is_empty(&self, dir: &Path) -> Result<bool>;
-async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
+async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>>;
 ```
 
 - **`status`** — `git status --porcelain=v1 -z`, parsed. Renames carry both paths.
@@ -163,16 +163,16 @@ git.add(repo, &[PathBuf::from("src/lib.rs")]).await?;       // `git add -- src/l
 
 for entry in git.status(repo).await? {                       // Vec<StatusEntry>
     match entry.old_path {
-        Some(from) => println!("rename {from} -> {}", entry.path),
-        None => println!("{} {}", entry.code, entry.path),
+        Some(from) => println!("rename {} -> {}", from.display(), entry.path.display()),
+        None => println!("{} {}", entry.code, entry.path.display()),
     }
 }
 
 if !git.staged_is_empty(repo).await? {                       // bool
     println!("index has staged changes");
 }
-for path in git.conflicted_files(repo).await? {             // Vec<String>
-    println!("conflict: {path}");
+for path in git.conflicted_files(repo).await? {             // Vec<PathBuf>
+    println!("conflict: {}", path.display());
 }
 # Ok(()) }
 ```
@@ -377,7 +377,7 @@ if !git.diff_is_empty(repo).await? {
     println!("working tree has unstaged tracked changes");
 }
 for file in git.diff(repo, DiffSpec::WorkingTree).await? {  // Vec<FileDiff>
-    println!("{:?} {}", file.change, file.path);
+    println!("{:?} {}", file.change, file.path.display());
 }
 let raw = git.diff_text(repo, DiffSpec::Rev("main..HEAD".into())).await?; // String
 let stat = git.diff_stat(repo, "main..HEAD").await?;        // DiffStat
@@ -739,8 +739,8 @@ One entry from `git status --porcelain=v1 -z`.
 | field | type | meaning |
 |-------|------|---------|
 | `code` | `String` | two-character status code, e.g. `" M"`, `"??"`, `"A "`, `"R "` |
-| `path` | `String` | the path (the *new* path for a rename/copy); raw, unquoted |
-| `old_path` | `Option<String>` | the original path for a rename/copy; `None` otherwise |
+| `path` | `PathBuf` | the path (the *new* path for a rename/copy); raw `-z` bytes, lossless (non-UTF-8-safe on Unix) |
+| `old_path` | `Option<PathBuf>` | the original path for a rename/copy; `None` otherwise |
 
 ### `BranchStatus`
 
@@ -805,8 +805,8 @@ One file's entry in a parsed git-format unified diff.
 | field | type | meaning |
 |-------|------|---------|
 | `change` | `ChangeKind` | how the file changed |
-| `path` | `String` | the file's path (the *new* path for a rename), `/`-normalised |
-| `old_path` | `Option<String>` | the original path for a rename, `/`-normalised; `None` otherwise |
+| `path` | `PathBuf` | the file's path (the *new* path for a rename), `/`-normalised; lossless |
+| `old_path` | `Option<PathBuf>` | the original path for a rename, `/`-normalised; `None` otherwise |
 | `hunks` | `Vec<Hunk>` | the `@@` hunks; empty for a binary file or a pure rename |
 | `raw` | `String` | the verbatim `diff --git …` block, for callers that display raw text |
 

@@ -45,7 +45,7 @@ async fn init_status_add_commit_log_cycle() {
     let status = git.status(dir).await.expect("status");
     assert_eq!(status.len(), 1);
     assert_eq!(status[0].code, "??");
-    assert_eq!(status[0].path, "file.txt");
+    assert_eq!(status[0].path, std::path::Path::new("file.txt"));
 
     // Stage + commit, then status is clean.
     git.add(dir, &[PathBuf::from("file.txt")])
@@ -163,11 +163,62 @@ async fn status_reports_rename_with_old_path() {
         .iter()
         .find(|e| e.code.starts_with('R'))
         .expect("a rename entry");
-    assert_eq!(renamed.path, "new.txt", "new path");
+    assert_eq!(renamed.path, std::path::Path::new("new.txt"), "new path");
     assert_eq!(
         renamed.old_path.as_deref(),
-        Some("old.txt"),
+        Some(std::path::Path::new("old.txt")),
         "original path"
+    );
+}
+
+// T-050: a filename whose bytes are NOT valid UTF-8 (legal on Unix) survives a
+// full `status → add / commit_paths` round trip. The path from `status` is a
+// `PathBuf` carrying the exact bytes; fed straight back into the mutating API it
+// addresses the SAME file — not a `U+FFFD`-mangled neighbour, as the old
+// `String::from_utf8_lossy` decode would have produced.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn non_utf8_path_round_trips_status_to_commit() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let tmp = TempDir::new("nonutf8");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    let name = vcs_testkit::non_utf8_filename();
+    std::fs::write(dir.join(&name), "hi\n").expect("write non-utf8 file");
+
+    // `status` carries the exact bytes (no U+FFFD substitution).
+    let status = git.status(dir).await.expect("status");
+    let entry = status
+        .iter()
+        .find(|e| e.code == "??")
+        .expect("the untracked non-UTF-8 file must appear in status");
+    assert_eq!(
+        entry.path.as_os_str().as_bytes(),
+        name.as_bytes(),
+        "the status path must carry the exact non-UTF-8 bytes, not U+FFFD"
+    );
+
+    // Feed the status path straight back into BOTH mutating APIs.
+    let staged = entry.path.clone();
+    git.add(dir, &[staged.clone()])
+        .await
+        .expect("add must accept the non-UTF-8 path");
+    git.commit_paths(dir, CommitPaths::new([staged.clone()], "add non-utf8 file"))
+        .await
+        .expect("commit_paths must accept the non-UTF-8 path");
+
+    // Committed → the working tree is clean, so the SAME file was addressed (a
+    // mangled path would have left the real file untracked and committed nothing,
+    // or errored on a non-existent pathspec).
+    let after = git.status(dir).await.expect("status after commit");
+    assert!(
+        after.is_empty(),
+        "the non-UTF-8 path must be committed (same file); still dirty: {after:?}"
     );
 }
 
@@ -401,7 +452,7 @@ async fn conflicted_files_and_status_tracked() {
     );
     assert_eq!(
         git.conflicted_files(dir).await.expect("conflicted_files"),
-        ["a.txt"]
+        [std::path::PathBuf::from("a.txt")]
     );
     git.merge_abort(dir).await.expect("merge_abort");
 
@@ -1140,12 +1191,12 @@ async fn add_commit_paths_and_log_paths_treat_glob_characters_literally() {
     let status = git.status(dir).await.expect("status");
     let literal_entry = status
         .iter()
-        .find(|e| e.path == literal_name)
+        .find(|e| e.path == std::path::Path::new(literal_name))
         .expect("literal file must be present in status");
     assert_eq!(literal_entry.code, "A ", "the literal path must be staged");
     let glob_entry = status
         .iter()
-        .find(|e| e.path == glob_target_name)
+        .find(|e| e.path == std::path::Path::new(glob_target_name))
         .expect("glob-target file must be present in status");
     assert_eq!(
         glob_entry.code, "??",
@@ -1161,12 +1212,14 @@ async fn add_commit_paths_and_log_paths_treat_glob_characters_literally() {
     .expect("commit_paths");
     let status_after_commit = git.status(dir).await.expect("status");
     assert!(
-        status_after_commit.iter().all(|e| e.path != literal_name),
+        status_after_commit
+            .iter()
+            .all(|e| e.path != std::path::Path::new(literal_name)),
         "the committed literal path must no longer show as changed"
     );
     let glob_entry_after = status_after_commit
         .iter()
-        .find(|e| e.path == glob_target_name)
+        .find(|e| e.path == std::path::Path::new(glob_target_name))
         .expect("glob-target file must still be present in status");
     assert_eq!(
         glob_entry_after.code, "??",

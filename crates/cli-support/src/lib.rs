@@ -1292,6 +1292,34 @@ impl<R: ProcessRunner> ManagedClient<R> {
         self.inner.parse(cmd, parser).await
     }
 
+    /// Like [`parse`](Self::parse), but hands the parser **raw stdout bytes**
+    /// instead of a lossily-decoded `&str`. This is the byte-faithful path a parser
+    /// needs when a **path** (or any payload that need not be valid UTF-8) is part
+    /// of the output: on Unix a filename can be arbitrary bytes, so decoding it
+    /// through [`String::from_utf8_lossy`] first would substitute `U+FFFD` and make
+    /// the path unusable to round-trip back into `add`/`commit_paths`. Routed
+    /// through [`output_bytes`](Self::output_bytes) (byte-exact stdout) and
+    /// exit-checked like [`parse`](Self::parse) (`ensure_success`); no lock-retry (a
+    /// read). Text-only machine output (branch names, hashes, templated rows) should
+    /// keep using [`parse`](Self::parse) — lossy decoding is acceptable there.
+    pub async fn parse_bytes<T>(
+        &self,
+        call: impl IntoCommand<R>,
+        parser: impl FnOnce(&[u8]) -> T + Send,
+    ) -> Result<T>
+    where
+        T: Send,
+    {
+        let cmd = self.prepare(call).await?;
+        let bytes = self
+            .inner
+            .output_bytes(cmd)
+            .await?
+            .ensure_success()?
+            .into_stdout();
+        Ok(parser(&bytes))
+    }
+
     /// Like [`CliClient::try_parse`] (credential injection applied; `FnOnce` parser,
     /// and a read, so no lock-retry).
     pub async fn try_parse<T>(

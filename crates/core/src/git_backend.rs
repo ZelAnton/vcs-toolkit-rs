@@ -1,7 +1,7 @@
 //! Git-backed implementations of the facade operations: thin calls to the
 //! `vcs-git` client plus pure mappers from its types into the facade DTOs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
 use vcs_git::{
@@ -64,7 +64,7 @@ pub(crate) async fn has_tracked_changes<R: ProcessRunner>(
 pub(crate) async fn conflicted_files<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
-) -> Result<Vec<String>> {
+) -> Result<Vec<PathBuf>> {
     Ok(git.conflicted_files(dir).await?)
 }
 
@@ -224,12 +224,15 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
 pub(crate) async fn commit_paths<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
-    paths: &[String],
+    paths: &[PathBuf],
     message: &str,
 ) -> Result<()> {
+    // `CommitPaths` carries `PathBuf`s and routes them through git's NUL-safe
+    // `--pathspec-from-file` transport, so a non-UTF-8 path from `status` /
+    // `changed_files` round-trips into the commit unchanged.
     git.commit_paths(
         dir,
-        vcs_git::CommitPaths::new(paths.iter().map(String::as_str), message),
+        vcs_git::CommitPaths::new(paths.iter().cloned(), message),
     )
     .await?;
     Ok(())

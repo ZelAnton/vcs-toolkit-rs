@@ -1998,7 +1998,7 @@ mod tests {
         let gh = GitHub::with_runner(&rec);
         let files = gh.pr_diff(Path::new("/r"), 7).await.expect("pr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert_eq!(
             rec.only_call().args_str(),
@@ -2047,7 +2047,7 @@ mod tests {
             .await
             .expect("override reads the diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
     }
 
     // T-049: `gh run watch`'s fixed cap is reconciled onto the shared OutputBudget

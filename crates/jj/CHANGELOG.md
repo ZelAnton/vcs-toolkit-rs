@@ -26,6 +26,20 @@ crates; tag releases as `vcs-jj-v<version>`.
 - feat: add the `Rollback` enum and `TransactionError` struct describing a
   transaction's rollback outcome and preserving the closure's cause.
 
+### Changed
+
+- **Breaking:** path-carrying results are now lossless for non-UTF-8 names.
+  `ChangedPath.path` / `ChangedPath.old_path` are `PathBuf` / `Option<PathBuf>` (were
+  `String` / `Option<String>`), and `JjApi::resolve_list` returns `Vec<PathBuf>` (was
+  `Vec<String>`). `status` / `diff_summary` / `resolve_list` now parse `jj diff
+  --summary` / `resolve --list` output from **raw bytes** (`parse_diff_summary` /
+  `parse_resolve_list` consume `&[u8]`) via `ManagedClient::parse_bytes`, so a
+  non-UTF-8 filename (legal on Unix) survives byte-for-byte instead of being flattened
+  by `String::from_utf8_lossy`. Text-only templated output (change/commit ids,
+  bookmark/workspace names, descriptions) still decodes as `String`. (Note: jj's
+  fileset language is text, so committing a non-UTF-8 path via `commit_paths` remains
+  bounded by jj itself; the byte-faithful round trip is exercised on git.) (T-050.)
+
 ### Fixed
 
 - A locally-deleted bookmark that a remote still tracks (a **tombstone**) no

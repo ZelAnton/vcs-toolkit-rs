@@ -7,7 +7,9 @@
 //! parser decodes); this module keeps only the jj-specific parsers (changes,
 //! bookmarks, op log, …).
 
-use vcs_diff::DiffStat;
+use std::path::PathBuf;
+
+use vcs_diff::{DiffStat, path_from_bytes};
 
 /// A jj change, parsed from a `\t`-delimited template row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,10 +76,13 @@ pub struct ChangedPath {
     /// Status letter (`M` modified, `A` added, `D` deleted, `R` renamed,
     /// `C` copied).
     pub status: char,
-    /// The path the status applies to — the *new* path for a rename/copy.
-    pub path: String,
+    /// The path the status applies to — the *new* path for a rename/copy. A
+    /// [`PathBuf`] built from the raw `jj diff --summary` bytes, so a non-UTF-8
+    /// filename (legal on Unix) survives losslessly instead of being flattened to
+    /// `U+FFFD` — the same platform-correct type `vcs_git::StatusEntry::path` uses.
+    pub path: PathBuf,
     /// For a rename (`R`) or copy (`C`), the original path; `None` otherwise.
-    pub old_path: Option<String>,
+    pub old_path: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -485,14 +490,40 @@ pub(crate) fn parse_reachable_bookmarks(output: &str) -> Vec<Bookmark> {
 /// in a column, then a run of spaces, then a human conflict description. Take the
 /// path (the text before the first 2-space gap), forward-slash normalised (jj
 /// emits the OS-native separator here, like `--summary`).
-pub(crate) fn parse_resolve_list(output: &str) -> Vec<String> {
+///
+/// Consumes **raw bytes** and yields [`PathBuf`]s (via [`path_from_bytes`]) so a
+/// non-UTF-8 conflicted path survives losslessly, mirroring the git backend's
+/// `conflicted_files`.
+pub(crate) fn parse_resolve_list(output: &[u8]) -> Vec<PathBuf> {
     output
-        .lines()
+        .split(|&b| b == b'\n')
         .filter_map(|line| {
-            let path = line.split("  ").next().unwrap_or(line).trim();
-            (!path.is_empty()).then(|| path.replace('\\', "/"))
+            // The path is the bytes before the first 2-space column gap.
+            let cut = find_subslice(line, b"  ").unwrap_or(line.len());
+            let path = line[..cut].trim_ascii();
+            if path.is_empty() {
+                return None;
+            }
+            Some(path_from_bytes(&normalize_slashes(path)))
         })
         .collect()
+}
+
+/// Normalise `\` path separators to `/` on raw bytes — jj's `--summary` /
+/// `resolve --list` emit the OS-native separator (backslashes on Windows), which
+/// the unified DTO reports forward-slash across backends/platforms.
+fn normalize_slashes(path: &[u8]) -> Vec<u8> {
+    path.iter()
+        .map(|&b| if b == b'\\' { b'/' } else { b })
+        .collect()
+}
+
+/// Byte-slice `find`: the index of the first occurrence of `needle` in `hay`.
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Parse rows produced by [`WORKSPACE_TEMPLATE`]:
@@ -524,29 +555,38 @@ pub(crate) fn parse_workspaces(output: &str) -> Vec<Workspace> {
 /// captured on [`ChangedPath::old_path`]). Paths are forward-slash normalised —
 /// jj's `--summary` uses the OS-native separator, unlike its `--git` diff (and git
 /// itself), so this keeps the unified DTO consistent across backends/platforms.
-pub(crate) fn parse_diff_summary(output: &str) -> Vec<ChangedPath> {
-    let normalize = |p: String| p.replace('\\', "/");
+/// Consumes **raw bytes** (not a lossily-decoded `&str`): the path is part of the
+/// payload and, on Unix, need not be valid UTF-8 — the status letter and the
+/// `{old => new}` rename framing are ASCII, so they parse byte-wise while the path
+/// bytes are carried losslessly (via [`path_from_bytes`]).
+pub(crate) fn parse_diff_summary(output: &[u8]) -> Vec<ChangedPath> {
     output
-        .lines()
+        .split(|&b| b == b'\n')
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let mut chars = line.chars();
-            let status = chars.next()?;
-            // Require the single separating space; the remainder is the raw path.
-            let raw = chars.as_str().strip_prefix(' ')?;
+            // The status letter is a single ASCII byte, followed by the separating
+            // space; the remainder is the raw path bytes.
+            let status = *line.first()? as char;
+            if line.get(1) != Some(&b' ') {
+                return None;
+            }
+            let raw = &line[2..];
             if raw.is_empty() {
                 return None;
             }
             let (old_path, path) = if matches!(status, 'R' | 'C') {
                 let (old, new) = expand_rename(raw);
-                let (old, new) = (normalize(old), normalize(new));
+                let (old, new) = (normalize_slashes(&old), normalize_slashes(&new));
                 // A non-brace `R`/`C` path (malformed — jj always renders renames
                 // with the `{old => new}` form) expands to `old == new`; don't
                 // report that as a self-rename, so `old_path != path` stays a
                 // reliable "is this a real rename?" test for consumers.
-                ((old != new).then_some(old), new)
+                (
+                    (old != new).then(|| path_from_bytes(&old)),
+                    path_from_bytes(&new),
+                )
             } else {
-                (None, normalize(raw.to_string()))
+                (None, path_from_bytes(&normalize_slashes(raw)))
             };
             Some(ChangedPath {
                 status,
@@ -558,19 +598,21 @@ pub(crate) fn parse_diff_summary(output: &str) -> Vec<ChangedPath> {
 }
 
 /// Expand jj's rename/copy path form `prefix{left => right}suffix` into
-/// `(old, new)` full paths. Falls back to `(raw, raw)` when the brace/arrow form
-/// isn't present, so a plain path is returned unchanged.
-fn expand_rename(raw: &str) -> (String, String) {
-    let plain = || (raw.to_string(), raw.to_string());
-    // `{`, `}`, and ` => ` are ASCII, so these byte offsets land on char
-    // boundaries even when the surrounding path is non-ASCII.
-    let (Some(open), Some(close)) = (raw.find('{'), raw.find('}')) else {
+/// `(old, new)` full byte paths. Falls back to `(raw, raw)` when the brace/arrow
+/// form isn't present, so a plain path is returned unchanged. `{`, `}`, and ` => `
+/// are ASCII, so the byte offsets are exact even for a non-UTF-8 surrounding path.
+fn expand_rename(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let plain = || (raw.to_vec(), raw.to_vec());
+    let (Some(open), Some(close)) = (
+        raw.iter().position(|&b| b == b'{'),
+        raw.iter().position(|&b| b == b'}'),
+    ) else {
         return plain();
     };
     if open >= close {
         return plain();
     }
-    let Some(rel) = raw[open..close].find(" => ") else {
+    let Some(rel) = find_subslice(&raw[open..close], b" => ") else {
         return plain();
     };
     let arrow = open + rel;
@@ -579,8 +621,8 @@ fn expand_rename(raw: &str) -> (String, String) {
     let right = &raw[arrow + 4..close];
     let suffix = &raw[close + 1..];
     (
-        format!("{prefix}{left}{suffix}"),
-        format!("{prefix}{right}{suffix}"),
+        [prefix, left, suffix].concat(),
+        [prefix, right, suffix].concat(),
     )
 }
 
@@ -825,15 +867,25 @@ mod tests {
     #[test]
     fn resolve_list_extracts_paths_before_description() {
         let got = parse_resolve_list(
-            "src/a.rs    2-sided conflict\nb.txt    2-sided conflict including 1 deletion\n",
+            b"src/a.rs    2-sided conflict\nb.txt    2-sided conflict including 1 deletion\n",
         );
-        assert_eq!(got, vec!["src/a.rs".to_string(), "b.txt".to_string()]);
-        assert!(parse_resolve_list("").is_empty());
+        assert_eq!(got, vec![PathBuf::from("src/a.rs"), PathBuf::from("b.txt")]);
+        assert!(parse_resolve_list(b"").is_empty());
         // OS-native backslash separators (Windows) are normalised to `/`.
         assert_eq!(
-            parse_resolve_list("sub\\c.txt    2-sided conflict\n"),
-            vec!["sub/c.txt".to_string()]
+            parse_resolve_list(b"sub\\c.txt    2-sided conflict\n"),
+            vec![PathBuf::from("sub/c.txt")]
         );
+    }
+
+    // A non-UTF-8 conflicted path (legal on Unix) survives byte-for-byte.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_list_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = parse_resolve_list(b"caf\xff.txt    2-sided conflict\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].as_os_str().as_bytes(), b"caf\xff.txt");
     }
 
     #[test]
@@ -945,12 +997,22 @@ mod tests {
 
     #[test]
     fn diff_summary_splits_status_and_path() {
-        let got = parse_diff_summary("M src/lib.rs\nA new file.txt\nD gone.rs\n");
+        let got = parse_diff_summary(b"M src/lib.rs\nA new file.txt\nD gone.rs\n");
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].status, 'M');
-        assert_eq!(got[1].path, "new file.txt");
+        assert_eq!(got[1].path, PathBuf::from("new file.txt"));
         assert!(got[1].old_path.is_none());
         assert_eq!(got[2].status, 'D');
+    }
+
+    // A non-UTF-8 summary path (legal on Unix) survives byte-for-byte.
+    #[cfg(unix)]
+    #[test]
+    fn diff_summary_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = parse_diff_summary(b"M caf\xff.txt\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"caf\xff.txt");
     }
 
     // jj renders a rename/copy path as `prefix{old => new}suffix` (verified against
@@ -959,14 +1021,20 @@ mod tests {
     #[test]
     fn diff_summary_expands_rename_and_copy() {
         let got =
-            parse_diff_summary("R {old.rs => new.rs}\nC sub/{a.rs => b.rs}\nM lit{eral}.rs\n");
+            parse_diff_summary(b"R {old.rs => new.rs}\nC sub/{a.rs => b.rs}\nM lit{eral}.rs\n");
         assert_eq!(got[0].status, 'R');
-        assert_eq!(got[0].path, "new.rs");
-        assert_eq!(got[0].old_path.as_deref(), Some("old.rs"));
-        assert_eq!(got[1].path, "sub/b.rs");
-        assert_eq!(got[1].old_path.as_deref(), Some("sub/a.rs"));
+        assert_eq!(got[0].path, PathBuf::from("new.rs"));
+        assert_eq!(
+            got[0].old_path.as_deref(),
+            Some(PathBuf::from("old.rs").as_path())
+        );
+        assert_eq!(got[1].path, PathBuf::from("sub/b.rs"));
+        assert_eq!(
+            got[1].old_path.as_deref(),
+            Some(PathBuf::from("sub/a.rs").as_path())
+        );
         // A literal `{...}` in a non-rename path (no ` => `) is not mis-expanded.
-        assert_eq!(got[2].path, "lit{eral}.rs");
+        assert_eq!(got[2].path, PathBuf::from("lit{eral}.rs"));
         assert!(got[2].old_path.is_none());
     }
 
@@ -974,10 +1042,13 @@ mod tests {
     // normalised to forward slashes to match the `--git` diff and the git backend.
     #[test]
     fn diff_summary_normalises_backslash_separators() {
-        let got = parse_diff_summary("M deep\\nested\\f.rs\nR win\\{a.rs => b.rs}\n");
-        assert_eq!(got[0].path, "deep/nested/f.rs");
-        assert_eq!(got[1].path, "win/b.rs");
-        assert_eq!(got[1].old_path.as_deref(), Some("win/a.rs"));
+        let got = parse_diff_summary(b"M deep\\nested\\f.rs\nR win\\{a.rs => b.rs}\n");
+        assert_eq!(got[0].path, PathBuf::from("deep/nested/f.rs"));
+        assert_eq!(got[1].path, PathBuf::from("win/b.rs"));
+        assert_eq!(
+            got[1].old_path.as_deref(),
+            Some(PathBuf::from("win/a.rs").as_path())
+        );
     }
 
     #[test]
@@ -1083,17 +1154,26 @@ mod proptests {
             let _ = parse_bookmarks(&s);
             let _ = parse_bookmarks_all(&s);
             let _ = parse_reachable_bookmarks(&s);
-            let _ = parse_resolve_list(&s);
+            let _ = parse_resolve_list(s.as_bytes());
             let _ = parse_workspaces(&s);
-            let _ = parse_diff_summary(&s);
+            let _ = parse_diff_summary(s.as_bytes());
             let _ = parse_diff_stat(&s);
             let _ = parse_jj_version(&s);
-            let _ = expand_rename(&s);
+            let _ = expand_rename(s.as_bytes());
+        }
+
+        // The byte parsers must also never panic on *arbitrary bytes* — the actual
+        // shape of jj machine output carrying a non-UTF-8 path.
+        #[test]
+        fn byte_parsers_never_panic_on_arbitrary_bytes(b in any::<Vec<u8>>()) {
+            let _ = parse_resolve_list(&b);
+            let _ = parse_diff_summary(&b);
+            let _ = expand_rename(&b);
         }
 
         #[test]
         fn parsers_never_panic_on_structured_text(s in structured_doc()) {
-            let _ = parse_diff_summary(&s);
+            let _ = parse_diff_summary(s.as_bytes());
             let _ = parse_changes(&s);
             let _ = parse_bookmarks_all(&s);
         }
@@ -1103,7 +1183,8 @@ mod proptests {
         #[test]
         fn expand_rename_is_identity_without_braces(s in "[a-zé/ ]{0,20}") {
             prop_assume!(!s.contains('{') && !s.contains('}'));
-            prop_assert_eq!(expand_rename(&s), (s.clone(), s));
+            let bytes = s.into_bytes();
+            prop_assert_eq!(expand_rename(&bytes), (bytes.clone(), bytes));
         }
     }
 }

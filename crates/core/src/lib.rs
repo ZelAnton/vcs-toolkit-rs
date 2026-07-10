@@ -648,8 +648,10 @@ impl<R: ProcessRunner> Repo<R> {
 
     /// Paths with unresolved merge conflicts in the working copy, repo-relative
     /// with `/` separators (git `diff --diff-filter=U` / jj `resolve --list -r @`).
-    /// Empty when there are none.
-    pub async fn conflicted_files(&self) -> Result<Vec<String>> {
+    /// Empty when there are none. Each path is a [`PathBuf`] carried losslessly from
+    /// the backend, so a non-UTF-8 conflicted filename (legal on Unix) is not
+    /// corrupted to `U+FFFD`.
+    pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>> {
         match &self.backend {
             Backend::Git(g) => git_backend::conflicted_files(g, &self.cwd).await,
             Backend::Jj(j) => jj_backend::conflicted_files(j, &self.cwd).await,
@@ -794,7 +796,13 @@ impl<R: ProcessRunner> Repo<R> {
     /// an empty set is refused up front, because the backends would diverge
     /// dangerously — git errors out, while jj's `commit` with no filesets would
     /// silently commit the **entire** working copy.
-    pub async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()> {
+    ///
+    /// Takes [`PathBuf`]s so a path obtained from [`changed_files`](Self::changed_files)
+    /// / [`conflicted_files`](Self::conflicted_files) round-trips **losslessly** — on
+    /// git a non-UTF-8 path (legal on Unix) reaches the commit unchanged via the
+    /// NUL-safe pathspec transport; on jj the fileset language is text, so jj's own
+    /// (non-UTF-8-incapable) fileset handling applies.
+    pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()> {
         if paths.is_empty() {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -1206,7 +1214,7 @@ facade_trait! {
         fn branch_exists(name: &str) -> Result<bool>;
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
-        fn conflicted_files() -> Result<Vec<String>>;
+        fn conflicted_files() -> Result<Vec<PathBuf>>;
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
@@ -1216,7 +1224,7 @@ facade_trait! {
         fn show_file_within(rev: &str, path: &str, budget: OutputBudget) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
         fn snapshot_readonly() -> Result<RepoSnapshot>;
-        fn commit_paths(paths: &[String], message: &str) -> Result<()>;
+        fn commit_paths(paths: &[PathBuf], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_branch(branch: &str) -> Result<()>;
@@ -2176,7 +2184,7 @@ mod tests {
         assert_eq!(changes[0].kind, ChangeKind::Modified);
         assert_eq!(changes[1].kind, ChangeKind::Added);
         assert_eq!(changes[2].kind, ChangeKind::Renamed);
-        assert_eq!(changes[2].old_path.as_deref(), Some("old.rs"));
+        assert_eq!(changes[2].old_path.as_deref(), Some(Path::new("old.rs")));
     }
 
     #[tokio::test]
@@ -2347,8 +2355,11 @@ mod tests {
         let changes = repo.changed_files().await.unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].kind, ChangeKind::Renamed);
-        assert_eq!(changes[0].path, "src/new.rs");
-        assert_eq!(changes[0].old_path.as_deref(), Some("src/old.rs"));
+        assert_eq!(changes[0].path, Path::new("src/new.rs"));
+        assert_eq!(
+            changes[0].old_path.as_deref(),
+            Some(Path::new("src/old.rs"))
+        );
     }
 
     // `commit_paths(&[])` is refused up front on BOTH backends: the runners have
@@ -2589,13 +2600,16 @@ mod tests {
             git_repo(ScriptedRunner::new().on(["git", "diff"], Reply::ok("a.rs\0b dir/c.rs\0")));
         assert_eq!(
             git.conflicted_files().await.unwrap(),
-            ["a.rs", "b dir/c.rs"]
+            [PathBuf::from("a.rs"), PathBuf::from("b dir/c.rs")]
         );
 
         let jj = jj_repo(
             ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
         );
-        assert_eq!(jj.conflicted_files().await.unwrap(), ["a.rs"]);
+        assert_eq!(
+            jj.conflicted_files().await.unwrap(),
+            [PathBuf::from("a.rs")]
+        );
         // The benign "no conflicts" non-zero exit still reads as an empty list.
         let clean = jj_repo(ScriptedRunner::new().on(
             ["jj", "resolve"],
@@ -2648,7 +2662,7 @@ mod tests {
         let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
         assert_eq!(
             repo.try_merge("other").await.unwrap(),
-            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+            MergeProbe::Conflicts(vec![PathBuf::from("a.rs")])
         );
         let calls = rec.calls();
         let diff_pos = calls.iter().position(|c| c.args_str()[0] == "diff");
@@ -2694,7 +2708,7 @@ mod tests {
         let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
         assert_eq!(
             repo.try_merge("feature").await.unwrap(),
-            MergeProbe::Conflicts(vec!["a.rs".to_string()])
+            MergeProbe::Conflicts(vec![PathBuf::from("a.rs")])
         );
         let calls = rec.calls();
         assert_eq!(calls[0].args_str()[..2], ["op", "log"]);

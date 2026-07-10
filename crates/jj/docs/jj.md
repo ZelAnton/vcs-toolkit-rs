@@ -142,7 +142,7 @@ async fn current_change(&self, dir: &Path) -> Result<Change>;
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 for c in jj.status(repo).await? {                  // Vec<ChangedPath>
-    println!("{} {}", c.status, c.path);           // e.g. 'M' src/lib.rs
+    println!("{} {}", c.status, c.path.display());  // e.g. 'M' src/lib.rs
 }
 let head = jj.current_change(repo).await?;         // Change { change_id, commit_id, empty, description }
 # Ok(()) }
@@ -315,7 +315,7 @@ for line in jj.file_annotate(repo, "src/lib.rs", None).await? {   // Vec<Annotat
 ```rust,ignore
 async fn is_conflicted(&self, dir: &Path, revset: &str) -> Result<bool>;
 async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
-async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<String>>;
+async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<PathBuf>>;
 ```
 
 `is_conflicted` asks the template engine whether the commit a revset resolves to
@@ -330,8 +330,8 @@ file is a separate, pure module: see [Conflict resolution](https://docs.rs/vcs-g
 # use vcs_jj::{Jj, JjApi};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 if jj.has_workingcopy_conflict(repo).await? {
-    for p in jj.resolve_list(repo, "@").await? {     // Vec<String>
-        eprintln!("conflict: {p}");
+    for p in jj.resolve_list(repo, "@").await? {     // Vec<PathBuf>
+        eprintln!("conflict: {}", p.display());
     }
 }
 # Ok(()) }
@@ -656,8 +656,8 @@ One `jj diff --summary` entry.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `status` | `char` | `M` modified, `A` added, `D` deleted, `R` renamed, `C` copied. |
-| `path` | `String` | The path the status applies to — the *new* path for a rename/copy (forward-slash normalised). |
-| `old_path` | `Option<String>` | For `R`/`C`, the original path; `None` otherwise. |
+| `path` | `PathBuf` | The path the status applies to — the *new* path for a rename/copy (forward-slash normalised); lossless (non-UTF-8-safe on Unix). |
+| `old_path` | `Option<PathBuf>` | For `R`/`C`, the original path; `None` otherwise. |
 
 ### `DiffStat`
 Aggregate counts from the `diff --stat` footer (`Copy`, `Default`).

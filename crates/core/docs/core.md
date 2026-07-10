@@ -156,7 +156,7 @@ pub async fn current_branch(&self) -> Result<Option<String>>;
 pub async fn trunk(&self)          -> Result<Option<String>>;
 pub async fn local_branches(&self) -> Result<Vec<String>>;
 pub async fn branch_exists(&self, name: &str) -> Result<bool>;
-pub async fn conflicted_files(&self) -> Result<Vec<String>>;
+pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>>;
 pub async fn changed_files(&self)    -> Result<Vec<FileChange>>;
 pub async fn diff_stat(&self)        -> Result<DiffStat>;
 pub async fn snapshot(&self)         -> Result<RepoSnapshot>;
@@ -182,6 +182,13 @@ copy — **repo-relative, `/` separators** (git `diff --diff-filter=U` / jj
 `diff -r @ --summary`), as `Vec<FileChange>`. `diff_stat` is the aggregate
 insertion/deletion counts.
 
+> **Lossless paths.** `changed_files`/`conflicted_files` carry each path as a
+> `PathBuf` (not a `String`): a filename whose bytes are not valid UTF-8 — legal on
+> Unix — is preserved byte-for-byte, so it can be fed straight back into
+> `commit_paths` (which also takes `PathBuf`) and address the *same* file. A
+> `String::from_utf8_lossy` would substitute `U+FFFD` and silently retarget the
+> path. Use `.display()` for human output; keep the `PathBuf` for a round-trip.
+
 `snapshot` is the **batched** state query for a prompt/status-bar/TUI refresh —
 branch, upstream, ahead/behind, HEAD, dirtiness, change count, and operation
 state in a **small fixed** number of spawns rather than a call per field
@@ -201,9 +208,11 @@ git-style upstream tracking).
 ```rust,no_run
 # async fn f(repo: vcs_core::Repo) -> vcs_core::Result<()> {
 for c in repo.changed_files().await? {
+    // `path`/`old_path` are `PathBuf` (lossless for a non-UTF-8 name on Unix);
+    // use `.display()` for lossy display, or the bytes for an exact round-trip.
     match c.old_path {
-        Some(from) => println!("rename {from} -> {}", c.path),
-        None       => println!("{:?} {}", c.kind, c.path),
+        Some(from) => println!("rename {} -> {}", from.display(), c.path.display()),
+        None       => println!("{:?} {}", c.kind, c.path.display()),
     }
 }
 let stat = repo.diff_stat().await?;
@@ -241,7 +250,7 @@ to git only** (`branch -D` vs `-d`); jj has no force and ignores the flag.
 ## Commits & paths
 
 ```rust,ignore
-pub async fn commit_paths(&self, paths: &[String], message: &str) -> Result<()>;
+pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()>;
 ```
 
 Commit exactly `paths` with `message` (git `commit --only`, jj
@@ -457,8 +466,8 @@ to return despite the `#[non_exhaustive]`.
 ```rust,ignore
 #[non_exhaustive]
 pub struct FileChange {
-    pub path: String,             // the path (the *new* path for a rename)
-    pub old_path: Option<String>, // original path for a rename (both backends); None for non-renames
+    pub path: PathBuf,             // the path (the *new* path for a rename); lossless, non-UTF-8-safe
+    pub old_path: Option<PathBuf>, // original path for a rename (both backends); None for non-renames
     pub kind: ChangeKind,
 }
 ```

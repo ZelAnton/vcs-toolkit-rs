@@ -142,7 +142,7 @@ pub(crate) async fn has_uncommitted_changes<R: ProcessRunner>(
 pub(crate) async fn conflicted_files<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
-) -> Result<Vec<String>> {
+) -> Result<Vec<PathBuf>> {
     Ok(jj.resolve_list(dir, &rev("@")?).await?)
 }
 
@@ -332,10 +332,17 @@ async fn snapshot_with<R: ProcessRunner>(
 pub(crate) async fn commit_paths<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
-    paths: &[String],
+    paths: &[PathBuf],
     message: &str,
 ) -> Result<()> {
-    let filesets: Vec<JjFileset> = paths.iter().map(JjFileset::path).collect();
+    // jj's fileset language is text (`root-file:"<path>"`), so a path is rendered
+    // through `to_string_lossy` here — jj itself does not accept a non-UTF-8 fileset
+    // token, so this is jj's own limit, not a lossy step we introduce. The
+    // byte-faithful cross-backend round-trip (status→commit) is exercised on git.
+    let filesets: Vec<JjFileset> = paths
+        .iter()
+        .map(|p| JjFileset::path(p.to_string_lossy()))
+        .collect();
     jj.commit_paths(dir, &filesets, message).await?;
     Ok(())
 }

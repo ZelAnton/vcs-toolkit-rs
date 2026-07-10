@@ -15,13 +15,17 @@ use vcs_diff::DiffStat;
 pub struct StatusEntry {
     /// Two-character status code, e.g. `" M"`, `"??"`, `"A "`, `"R "`.
     pub code: String,
-    /// Path the status applies to (the *new* path for a rename/copy). Raw bytes
-    /// from `-z` — no C-quoting/escaping to undo, even for paths with spaces.
-    pub path: String,
+    /// Path the status applies to (the *new* path for a rename/copy). A
+    /// [`PathBuf`] built from the raw `-z` bytes (no C-quoting to undo, even for
+    /// paths with spaces), so a filename whose bytes are not valid UTF-8 (legal on
+    /// Unix) is carried losslessly and can be fed straight back into `add` /
+    /// `commit_paths` — decoding it through `String::from_utf8_lossy` would
+    /// substitute `U+FFFD` and address a different file.
+    pub path: PathBuf,
     /// For a rename/copy, the original path; `None` otherwise. Named to match
     /// `vcs_jj::ChangedPath::old_path` so cross-backend code reads the rename
     /// source the same way on both wrappers.
-    pub old_path: Option<String>,
+    pub old_path: Option<PathBuf>,
 }
 
 /// A combined branch + working-tree snapshot from `git status --porcelain=v2
@@ -105,29 +109,39 @@ pub struct Worktree {
 /// Parse `git status --porcelain=v1 -z` output: NUL-delimited records, raw
 /// (unquoted) paths. A rename/copy entry is followed by its source path as the
 /// next NUL record (e.g. `R  new\0old\0`).
-pub(crate) fn parse_porcelain(output: &str) -> Vec<StatusEntry> {
+///
+/// Consumes **raw bytes** (not a lossily-decoded `&str`): the path is part of the
+/// payload and, on Unix, need not be valid UTF-8 — decoding through
+/// `String::from_utf8_lossy` first would corrupt it to `U+FFFD` and break the
+/// round-trip back into `add`/`commit_paths`. The two-byte status code is ASCII;
+/// only the path bytes are carried losslessly (via [`vcs_diff::path_from_bytes`]).
+pub(crate) fn parse_porcelain(output: &[u8]) -> Vec<StatusEntry> {
     let mut entries = Vec::new();
-    let mut records = output.split('\0').filter(|rec| !rec.is_empty());
+    let mut records = output.split(|&b| b == 0).filter(|rec| !rec.is_empty());
     while let Some(rec) = records.next() {
-        // "XY path": two status-code chars, a space, then the path. Real git
-        // codes are ASCII, but slice via `get` so a malformed record (a
-        // multibyte char where the code/space belong) is skipped, not a panic.
-        let (Some(code), Some(path)) = (rec.get(..2), rec.get(3..)) else {
+        // "XY path": two status-code bytes, then a space at index 2, then the raw
+        // path bytes. Require the separating space (git's porcelain always emits
+        // it) so a malformed/short record — e.g. one whose leading bytes are a
+        // multibyte char, where index 2 is not the space — is skipped, not turned
+        // into a garbage entry.
+        let (Some(code), Some(&b' ')) = (rec.get(..2), rec.get(2)) else {
             continue;
         };
+        let path = &rec[3..];
         // A rename/copy carries its source path as the immediately following NUL
         // record; consume it. The `R`/`C` can sit in EITHER status column — the index
         // column (`R ` staged rename) or the worktree column (` R` worktree rename) —
         // so check both. Missing the ` R`/` C` case left the source record as a
         // phantom entry with a garbage `code`/`path` (M11).
-        let old_path = if matches!(code.as_bytes(), [b'R' | b'C', _] | [_, b'R' | b'C']) {
-            records.next().map(str::to_string)
+        let old_path = if matches!(code, [b'R' | b'C', _] | [_, b'R' | b'C']) {
+            records.next().map(vcs_diff::path_from_bytes)
         } else {
             None
         };
         entries.push(StatusEntry {
-            code: code.to_string(),
-            path: path.to_string(),
+            // The status code is always 2 ASCII bytes, so this decode is exact.
+            code: String::from_utf8_lossy(code).into_owned(),
+            path: vcs_diff::path_from_bytes(path),
             old_path,
         });
     }
@@ -190,11 +204,15 @@ pub(crate) fn parse_git_version(raw: &str) -> Option<vcs_diff::Version> {
 
 /// Parse a NUL-delimited path list (e.g. `git diff --name-only -z`): one
 /// repo-relative path per record, `/` separators, no quoting.
-pub(crate) fn parse_nul_paths(output: &str) -> Vec<String> {
+///
+/// Consumes **raw bytes** and yields [`PathBuf`]s (via
+/// [`vcs_diff::path_from_bytes`]) so a non-UTF-8 conflicted/diff path survives
+/// losslessly rather than being flattened to `U+FFFD` by a `&str` decode.
+pub(crate) fn parse_nul_paths(output: &[u8]) -> Vec<PathBuf> {
     output
-        .split('\0')
+        .split(|&b| b == 0)
         .filter(|path| !path.is_empty())
-        .map(str::to_string)
+        .map(vcs_diff::path_from_bytes)
         .collect()
 }
 
@@ -428,7 +446,7 @@ mod tests {
     #[test]
     fn porcelain_parses_codes_and_paths() {
         // NUL-delimited records; the path with a space stays raw (no quoting).
-        let got = parse_porcelain(" M src/lib.rs\0?? new file.txt\0A  added.rs\0");
+        let got = parse_porcelain(b" M src/lib.rs\0?? new file.txt\0A  added.rs\0");
         assert_eq!(
             got,
             vec![
@@ -451,10 +469,23 @@ mod tests {
         );
     }
 
+    // A path whose bytes are not valid UTF-8 (legal on Unix) survives byte-for-byte
+    // through `parse_porcelain` — the load-bearing property for the status→add
+    // round-trip. `0xFF` is never valid UTF-8; the old `from_utf8_lossy` path would
+    // have replaced it with U+FFFD and named a different file.
+    #[cfg(unix)]
+    #[test]
+    fn porcelain_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let got = parse_porcelain(b" M caf\xff.txt\0");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"caf\xff.txt");
+    }
+
     #[test]
     fn porcelain_parses_rename_with_old_path() {
         // `R  new\0old\0` — the source path is the next NUL record.
-        let got = parse_porcelain("R  new.rs\0old.rs\0 M other.rs\0");
+        let got = parse_porcelain(b"R  new.rs\0old.rs\0 M other.rs\0");
         assert_eq!(
             got,
             vec![
@@ -478,7 +509,7 @@ mod tests {
     #[test]
     fn porcelain_parses_worktree_rename_in_the_y_column() {
         // ` R new\0old\0` — space in X, R in Y (a worktree rename).
-        let got = parse_porcelain(" R new.rs\0old.rs\0 M other.rs\0");
+        let got = parse_porcelain(b" R new.rs\0old.rs\0 M other.rs\0");
         assert_eq!(
             got,
             vec![
@@ -499,19 +530,19 @@ mod tests {
 
     #[test]
     fn porcelain_ignores_blank_and_short_records() {
-        assert!(parse_porcelain("\0  \0X\0").is_empty());
+        assert!(parse_porcelain(b"\0  \0X\0").is_empty());
     }
 
-    // Regression (found by proptest): a record whose leading char is multibyte
-    // must be skipped, not panic on a non-char-boundary slice. `𝓁` is 4 bytes,
-    // so byte index 2 lands inside it.
+    // A record whose leading char is multibyte has no space at index 2, so it is
+    // skipped (git's porcelain always emits `XY<space>path`). `𝓁` is 4 bytes, so
+    // the byte at index 2 is a continuation byte, not the separating space.
     #[test]
     fn porcelain_skips_non_ascii_status_records() {
-        assert!(parse_porcelain("𝓁abc\0").is_empty());
+        assert!(parse_porcelain("𝓁abc\0".as_bytes()).is_empty());
         // A well-formed record alongside the garbage still parses.
-        let entries = parse_porcelain("𝓁abc\0 M a.rs\0");
+        let entries = parse_porcelain("𝓁abc\0 M a.rs\0".as_bytes());
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].path, "a.rs");
+        assert_eq!(entries[0].path, std::path::Path::new("a.rs"));
     }
 
     #[test]
@@ -641,10 +672,10 @@ mod tests {
     #[test]
     fn nul_paths_split_and_keep_special_characters() {
         assert_eq!(
-            parse_nul_paths("a.rs\0sub/with space.rs\0"),
-            ["a.rs", "sub/with space.rs"]
+            parse_nul_paths(b"a.rs\0sub/with space.rs\0"),
+            [PathBuf::from("a.rs"), PathBuf::from("sub/with space.rs")]
         );
-        assert!(parse_nul_paths("").is_empty());
+        assert!(parse_nul_paths(b"").is_empty());
     }
 
     #[test]
@@ -764,7 +795,7 @@ mod proptests {
         // Panic-freedom on completely arbitrary input.
         #[test]
         fn parsers_never_panic_on_arbitrary_text(s in any::<String>()) {
-            let _ = parse_porcelain(&s);
+            let _ = parse_porcelain(s.as_bytes());
             let _ = parse_porcelain_v2(&s);
             let _ = parse_log(&s);
             let _ = parse_branches(&s);
@@ -772,14 +803,23 @@ mod proptests {
             let _ = parse_blame_porcelain(&s);
             let _ = parse_shortstat(&s);
             let _ = parse_ls_remote_heads(&s);
-            let _ = parse_nul_paths(&s);
+            let _ = parse_nul_paths(s.as_bytes());
             let _ = parse_git_version(&s);
+        }
+
+        // The byte parsers must also never panic on *arbitrary bytes* — the actual
+        // shape of a `-z` stream carrying a non-UTF-8 path, which the `String`
+        // generator above can never produce.
+        #[test]
+        fn byte_parsers_never_panic_on_arbitrary_bytes(b in any::<Vec<u8>>()) {
+            let _ = parse_porcelain(&b);
+            let _ = parse_nul_paths(&b);
         }
 
         // …and on structure-biased input that reaches the parsing branches.
         #[test]
         fn parsers_never_panic_on_structured_text(s in structured_doc()) {
-            let _ = parse_porcelain(&s);
+            let _ = parse_porcelain(s.as_bytes());
             let _ = parse_porcelain_v2(&s);
             let _ = parse_log(&s);
             let _ = parse_blame_porcelain(&s);

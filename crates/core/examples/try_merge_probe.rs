@@ -18,7 +18,10 @@ async fn main() -> vcs_core::Result<()> {
 
     match repo.try_merge("feature").await? {
         MergeProbe::Clean => println!("feature merges cleanly"),
-        MergeProbe::Conflicts(paths) => println!("conflicts: {}", paths.join(", ")),
+        MergeProbe::Conflicts(paths) => {
+            let joined: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            println!("conflicts: {}", joined.join(", "));
+        }
         _ => println!("merge result is not recognized by this version"),
     }
 

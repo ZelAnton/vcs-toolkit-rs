@@ -184,7 +184,11 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
 
     let conflicts = jj.resolve_list(dir, &rv("@")).await.expect("resolve_list");
-    assert_eq!(conflicts, ["c.txt"], "got {conflicts:?}");
+    assert_eq!(
+        conflicts,
+        [std::path::PathBuf::from("c.txt")],
+        "got {conflicts:?}"
+    );
 }
 
 // A renamed tracked file: jj `diff --summary` renders `R {old => new}`; status()
@@ -206,8 +210,11 @@ async fn status_exposes_rename_paths() {
         .iter()
         .find(|c| c.status == 'R')
         .unwrap_or_else(|| panic!("no rename entry in {changed:?}"));
-    assert_eq!(renamed.path, "new.rs");
-    assert_eq!(renamed.old_path.as_deref(), Some("old.rs"));
+    assert_eq!(renamed.path, std::path::Path::new("new.rs"));
+    assert_eq!(
+        renamed.old_path.as_deref(),
+        Some(std::path::Path::new("old.rs"))
+    );
 }
 
 // `description` reads back exactly what `describe` wrote (single revision,
@@ -446,7 +453,7 @@ async fn conflict_model_resolves_a_real_conflict() {
     jj_raw(dir, &["new", &a, &b, "-m", "merge"]);
     assert_eq!(
         jj.resolve_list(dir, &rv("@")).await.expect("resolve_list"),
-        ["c.txt"]
+        [std::path::PathBuf::from("c.txt")]
     );
 
     let content = std::fs::read_to_string(dir.join("c.txt")).expect("read");
@@ -490,7 +497,7 @@ async fn status_paths_are_root_relative_from_a_nested_directory() {
         from_root, from_nested,
         "status must be identical regardless of the bound working directory"
     );
-    let paths: Vec<&str> = from_root.iter().map(|c| c.path.as_str()).collect();
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.to_str().unwrap()).collect();
     assert!(paths.contains(&"top.rs"), "got {paths:?}");
     assert!(paths.contains(&"sub/deep/bottom.rs"), "got {paths:?}");
     assert!(
@@ -525,7 +532,7 @@ async fn diff_summary_paths_are_root_relative_from_a_nested_directory() {
         from_root, from_nested,
         "diff_summary must be identical regardless of the bound working directory"
     );
-    let paths: Vec<&str> = from_root.iter().map(|c| c.path.as_str()).collect();
+    let paths: Vec<&str> = from_root.iter().map(|c| c.path.to_str().unwrap()).collect();
     assert!(paths.contains(&"root.rs"), "got {paths:?}");
     assert!(paths.contains(&"pkg/mod.rs"), "got {paths:?}");
     assert!(

@@ -1629,7 +1629,7 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
         let files = glab.mr_diff(Path::new("/r"), 4).await.expect("mr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert_eq!(
             rec.only_call().args_str(),
@@ -1665,7 +1665,7 @@ mod tests {
             .mr_diff_within(Path::new("/r"), 4, OutputBudget::unlimited())
             .await
             .expect("override reads the large MR diff");
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
     }
 
     // issue_list builds the `--per-page 100 --output json` argv (per-page max

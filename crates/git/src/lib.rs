@@ -804,7 +804,9 @@ pub trait GitApi: Send + Sync {
     async fn branch_status(&self, dir: &Path) -> Result<BranchStatus>;
     /// Paths with unresolved merge conflicts, repo-relative with `/` separators
     /// (`git diff --name-only --diff-filter=U -z`). Empty when there are none.
-    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>>;
+    /// Returns [`PathBuf`]s built from the raw `-z` bytes, so a non-UTF-8
+    /// conflicted path survives losslessly.
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>>;
     /// Current branch name, or `None` on a **detached HEAD**
     /// (`git symbolic-ref --quiet --short HEAD`). Returns the branch name for a
     /// normal branch **and for an unborn branch** (a fresh `init`/`clone` before the
@@ -1408,8 +1410,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
+        // `parse_bytes`: `-z` paths are raw bytes that may not be valid UTF-8 on
+        // Unix, so parse from the byte stream — a lossy `String` decode would
+        // corrupt a non-ASCII/non-UTF-8 filename before it reaches the caller.
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["status", "--porcelain=v1", "-z"]),
                 parse::parse_porcelain,
@@ -1441,7 +1446,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn status_tracked(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
         self.core
-            .parse(
+            .parse_bytes(
                 self.core.command_in(
                     dir,
                     ["status", "--porcelain=v1", "-z", "--untracked-files=no"],
@@ -1451,10 +1456,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
-    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<String>> {
-        // `-z` keeps special-character paths literal (no C-style quoting).
+    async fn conflicted_files(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+        // `-z` keeps special-character paths literal (no C-style quoting); parse
+        // from raw bytes so a non-UTF-8 conflicted path survives losslessly.
         self.core
-            .parse(
+            .parse_bytes(
                 self.core
                     .command_in(dir, ["diff", "--name-only", "--diff-filter=U", "-z"]),
                 parse::parse_nul_paths,
@@ -3252,7 +3258,7 @@ vcs_cli_support::at_forwarders! {
         fn status_text() -> Result<String>;
         fn status_tracked() -> Result<Vec<StatusEntry>>;
         fn branch_status() -> Result<BranchStatus>;
-        fn conflicted_files() -> Result<Vec<String>>;
+        fn conflicted_files() -> Result<Vec<PathBuf>>;
         fn current_branch() -> Result<Option<String>>;
         fn branches() -> Result<Vec<Branch>>;
         fn log(revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
@@ -3503,7 +3509,7 @@ mod tests {
         let entries = git.status(Path::new(".")).await.expect("status");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].code, " M");
-        assert_eq!(entries[1].path, "b.rs");
+        assert_eq!(entries[1].path, Path::new("b.rs"));
     }
 
     // `status_tracked` is `status` minus untracked files — same parser, extra flag.
@@ -3565,7 +3571,10 @@ mod tests {
             .conflicted_files(Path::new("."))
             .await
             .expect("conflicted_files");
-        assert_eq!(paths, ["a.rs", "sub/spaced name.rs"]);
+        assert_eq!(
+            paths,
+            [PathBuf::from("a.rs"), PathBuf::from("sub/spaced name.rs")]
+        );
         assert_eq!(
             rec.only_call().args_str(),
             ["diff", "--name-only", "--diff-filter=U", "-z"]
@@ -4457,7 +4466,7 @@ mod tests {
             .await
             .expect("diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
     }
 

@@ -61,7 +61,7 @@
 //! let files = parse_diff(text);
 //! assert_eq!(files.len(), 1);
 //! assert_eq!(files[0].change, ChangeKind::Modified);
-//! assert_eq!(files[0].path, "f");
+//! assert_eq!(files[0].path, std::path::Path::new("f"));
 //!
 //! let hunk = &files[0].hunks[0];
 //! assert_eq!((hunk.old_start, hunk.new_start), (1, 1));
@@ -80,7 +80,9 @@
 //!   [`Version`]) so a caller can emit the parsed diff as JSON.
 
 mod diff;
+mod pathbytes;
 mod version;
 
 pub use diff::{ChangeKind, DiffLine, DiffSpec, DiffStat, FileDiff, Hunk, parse_diff};
+pub use pathbytes::{os_from_bytes, path_from_bytes};
 pub use version::{Version, parse_dotted_version};

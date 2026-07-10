@@ -44,6 +44,17 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Changed
 
+- **Breaking:** path-carrying results are now lossless for non-UTF-8 names.
+  `StatusEntry.path` / `StatusEntry.old_path` are `PathBuf` / `Option<PathBuf>`
+  (were `String` / `Option<String>`), and `GitApi::conflicted_files` returns
+  `Vec<PathBuf>` (was `Vec<String>`). `status` / `status_tracked` / `conflicted_files`
+  now parse the `-z` output from **raw bytes** (`parse_porcelain` / `parse_nul_paths`
+  consume `&[u8]`) via the new `ManagedClient::parse_bytes`, so a filename whose bytes
+  are not valid UTF-8 (legal on Unix) survives byte-for-byte and can be fed straight
+  back into `add` / `commit_paths` (which already take `PathBuf` through the NUL-safe
+  pathspec transport) to address the SAME file. Text-only machine output (branch
+  names, commit metadata, hashes) still decodes as `String`, where lossy decoding is
+  acceptable. `FileDiff.path` / `old_path` are `PathBuf` too (via `vcs-diff`). (T-050.)
 - deps: bump `mockall` to 0.15 (unified workspace dependency, was 0.13 per-crate).
 - **Breaking:** the public empty-tree constant `EMPTY_TREE` is renamed
   `EMPTY_TREE_SHA1` and documented as **SHA-1 only**. It presented git's SHA-1

@@ -222,6 +222,25 @@ pub fn jj(dir: &Path, args: &[&str]) {
     run("jj", dir, args);
 }
 
+/// A file-name whose bytes are **not** valid UTF-8 — for exercising lossless path
+/// handling on Unix, where a filename may be an arbitrary byte sequence (only `/`
+/// and NUL are forbidden). The returned [`OsString`](std::ffi::OsString) can be
+/// joined onto a directory ([`Path::join`]) and written with [`std::fs::write`];
+/// the toolkit's `status`/`diff`/`conflict` paths must carry these exact bytes
+/// back (not a `U+FFFD`-substituted `String`) for a `status → add/commit_paths`
+/// round trip.
+///
+/// **Unix only.** A Windows filename is UTF-16 (an *unpaired surrogate*, not a raw
+/// invalid-UTF-8 byte, is its analogue), so `git`/`jj` never emit raw invalid-UTF-8
+/// path bytes there; gate any test that uses this on `#[cfg(unix)]`.
+#[cfg(unix)]
+pub fn non_utf8_filename() -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    // `0xFF` is never a valid UTF-8 byte; the ASCII tail keeps the name a plausible,
+    // eyeball-able file in failure output.
+    std::ffi::OsString::from_vec(b"caf\xff\xfe.txt".to_vec())
+}
+
 /// Give the git repository at `dir` a deterministic identity and byte-stable
 /// behaviour: `user.name`/`user.email`, `commit.gpgsign=false` (no keychain
 /// prompts), and `core.autocrlf=false` (no CRLF rewriting under content

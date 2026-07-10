@@ -153,11 +153,18 @@ pub use vcs_diff::ChangeKind;
 #[non_exhaustive]
 pub struct FileChange {
     /// The path (the *new* path for a rename).
-    pub path: String,
+    ///
+    /// A [`PathBuf`] (not a `String`) so a filename whose bytes are not valid UTF-8
+    /// — legal on Unix — is carried **losslessly** from `status`/`diff` and can be
+    /// fed straight back into [`Repo::commit_paths`](crate::Repo::commit_paths) /
+    /// the backend `add`. A `String` filled via `String::from_utf8_lossy` would
+    /// substitute `U+FFFD` and address a different file. See the crate's
+    /// serde-policy note for how a non-UTF-8 path is emitted as JSON.
+    pub path: PathBuf,
     /// The original path for a rename, populated by **both** backends (git's
     /// `R old -> new` status; jj's `{old => new}` diff-summary form); `None`
     /// for non-renames.
-    pub old_path: Option<String>,
+    pub old_path: Option<PathBuf>,
     /// How the file changed.
     pub kind: ChangeKind,
 }
@@ -166,7 +173,7 @@ impl FileChange {
     /// A change to `path` of the given `kind`, with no original path. Chain the
     /// `old_path` setter for a rename or copy. Lets an external `VcsRepo` impl or a
     /// test build one despite the `#[non_exhaustive]`.
-    pub fn new(path: impl Into<String>, kind: ChangeKind) -> Self {
+    pub fn new(path: impl Into<PathBuf>, kind: ChangeKind) -> Self {
         Self {
             path: path.into(),
             old_path: None,
@@ -176,7 +183,7 @@ impl FileChange {
 
     /// Record the original path — a rename's or copy's source (sets the `old_path`
     /// field, which both a rename and a copy populate).
-    pub fn old_path(mut self, old: impl Into<String>) -> Self {
+    pub fn old_path(mut self, old: impl Into<PathBuf>) -> Self {
         self.old_path = Some(old.into());
         self
     }
@@ -445,8 +452,10 @@ pub enum MergeProbe {
     /// The merge would apply without conflicts.
     Clean,
     /// The merge would conflict in these paths (repo-relative, `/` separators —
-    /// the same contract as [`conflicted_files`](crate::Repo::conflicted_files)).
-    Conflicts(Vec<String>),
+    /// the same contract and [`PathBuf`] type as
+    /// [`conflicted_files`](crate::Repo::conflicted_files), so a non-UTF-8 path is
+    /// carried losslessly).
+    Conflicts(Vec<PathBuf>),
 }
 
 impl MergeProbe {
@@ -557,6 +566,7 @@ mod serde_tests {
             kind: ChangeKind::Added, // re-exported vcs_diff type, Serialize via vcs-diff/serde
         };
         let v = serde_json::to_value(fc).unwrap();
+        // A `PathBuf` field serialises as a plain JSON string for a UTF-8 path.
         assert_eq!(v["path"], "a.rs");
         assert_eq!(v["kind"], "Added");
     }
@@ -628,8 +638,8 @@ mod ctor_tests {
         assert_eq!(git_shaped.date.as_deref(), Some("2026-05-31"));
 
         let fc = FileChange::new("new.rs", ChangeKind::Modified).old_path("old.rs");
-        assert_eq!(fc.path, "new.rs");
-        assert_eq!(fc.old_path.as_deref(), Some("old.rs"));
+        assert_eq!(fc.path, PathBuf::from("new.rs"));
+        assert_eq!(fc.old_path.as_deref(), Some(std::path::Path::new("old.rs")));
         assert_eq!(fc.kind, ChangeKind::Modified);
 
         let wt = WorktreeInfo::new("/wt")

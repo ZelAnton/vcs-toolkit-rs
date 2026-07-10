@@ -1130,7 +1130,7 @@ mod tests {
             .pr_diff_within(7, OutputBudget::unlimited())
             .await
             .expect("facade override reads the large diff");
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
 
         // GitLab, same inheritance through `glab mr diff`.
         let glab =
@@ -1693,13 +1693,13 @@ mod tests {
         let forge = github(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)));
         let files = forge.pr_diff(1).await.expect("github pr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
 
         let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(out)));
         let files = forge.pr_diff(1).await.expect("gitlab pr_diff");
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "m");
+        assert_eq!(files[0].path, std::path::Path::new("m"));
     }
 
     // `at` re-binds the cwd while sharing the backend.

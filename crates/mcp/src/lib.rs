@@ -72,6 +72,21 @@
 //! a pure-jj repo with no recognised remote resolves to no forge (the `repo_*`
 //! tools still work, the `forge_*` tools return a clear error).
 //!
+//! # Non-UTF-8 paths (fail-closed policy)
+//!
+//! Path-bearing results — [`repo_status`](VcsMcpServer::repo_status)'s
+//! `FileChange.path`, [`repo_conflicts`](VcsMcpServer::repo_conflicts)'s list — carry
+//! the facade's [`PathBuf`](std::path::PathBuf), which the toolkit reads
+//! **losslessly** from the backend (a filename need not be valid UTF-8 on Unix).
+//! JSON strings, however, are UTF-8. A path that is not valid UTF-8 is therefore
+//! **refused with an explicit serialization error** rather than emitted with
+//! `U+FFFD` replacement characters: an agent must never be handed a
+//! silently-corrupted path it would feed back into a mutating tool
+//! ([`repo_commit`](VcsMcpServer::repo_commit)) and so address the wrong file. The
+//! ordinary UTF-8 case is unchanged — a plain JSON string. (Tool *inputs* are JSON
+//! strings too, so a non-UTF-8 path cannot be named over MCP in the first place;
+//! the lossless round-trip is a property of the Rust [`vcs_core::Repo`] API.)
+//!
 //! # In-depth guide
 //!
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
@@ -433,9 +448,26 @@ impl VcsMcpServer {
 }
 
 /// Encode a serializable value as a JSON text result.
+///
+/// **Non-UTF-8 path policy (fail-closed).** Path-bearing DTOs carry a
+/// [`PathBuf`](std::path::PathBuf), which serialises to a JSON string only when it
+/// is valid UTF-8. A path whose bytes are not valid UTF-8 (possible on Unix) makes
+/// serialisation fail, and this returns an **explicit error** rather than emitting
+/// the path with `U+FFFD` substitution — so an agent never receives a
+/// silently-corrupted path it would feed back into a mutating tool. The ordinary
+/// UTF-8 case is unaffected (a plain JSON string). See the crate-level
+/// *Non-UTF-8 paths* section.
 fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> {
-    let json = serde_json::to_string_pretty(value)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    let json = serde_json::to_string_pretty(value).map_err(|e| {
+        ErrorData::internal_error(
+            format!(
+                "failed to serialise the result to JSON: {e} (a filesystem path that is \
+                 not valid UTF-8 cannot be represented as a JSON string; it is refused \
+                 rather than emitted with U+FFFD substitution)"
+            ),
+            None,
+        )
+    })?;
     Ok(CallToolResult::success(vec![Content::text(json)]))
 }
 
@@ -601,11 +633,14 @@ impl VcsMcpServer {
         Parameters(p): Parameters<CommitParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_commit").await?;
+        // The facade takes `PathBuf`s (lossless for a non-UTF-8 path on Unix); a tool
+        // input arrives as JSON `String`s (always UTF-8), so the conversion is exact.
+        let paths: Vec<std::path::PathBuf> = p.paths.iter().map(std::path::PathBuf::from).collect();
         self.repo
-            .commit_paths(&p.paths, &p.message)
+            .commit_paths(&paths, &p.message)
             .await
             .map_err(core_err)?;
-        ok_json(&serde_json::json!({ "committed_paths": p.paths.len() }))
+        ok_json(&serde_json::json!({ "committed_paths": paths.len() }))
     }
 
     #[tool(
