@@ -2351,6 +2351,7 @@ impl<'a, R: ProcessRunner> JjAt<'a, R> {
 /// a `Drop` guard. They shell out through `std::process` directly (no async, no
 /// job-containment), so reserve them for short-lived cleanup.
 pub mod blocking {
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
@@ -2373,9 +2374,21 @@ pub mod blocking {
     /// for `Drop`, which can't `.await` the typed `workspace_list`/`workspace_root`.
     /// Lists workspaces (`workspace list -T name`), then matches each
     /// `workspace root --name <n>` against `path` (canonicalised, Windows
-    /// verbatim-prefix stripped). `None` when jj is missing or nothing matches —
-    /// the caller then skips the forget rather than guessing.
-    pub fn workspace_name_for_path(dir: &Path, path: &Path) -> Option<String> {
+    /// verbatim-prefix stripped).
+    ///
+    /// The three outcomes are kept **distinct** so a `Drop` caller no longer has to
+    /// treat "the probe failed" as "no such workspace" — the old `Option` return
+    /// folded both into `None`, silently skipping cleanup that a real failure should
+    /// have surfaced (and hiding a workspace that *is* registered but couldn't be
+    /// placed):
+    /// - `Ok(Some(name))` — a registered workspace's root matched `path`.
+    /// - `Ok(None)` — jj listed the workspaces cleanly and none matched `path`: a
+    ///   genuine miss, so the caller safely skips the forget (nothing to clean up).
+    /// - `Err(_)` — the probe itself could not answer: `jj` was missing / failed to
+    ///   spawn, `workspace list` exited non-zero, or one or more *registered*
+    ///   workspaces did not resolve via `workspace root --name` (so `path`'s absence
+    ///   can't be proven). The caller can report it instead of silently doing nothing.
+    pub fn workspace_name_for_path(dir: &Path, path: &Path) -> io::Result<Option<String>> {
         let target = normalize(path);
         let out = Command::new(super::BINARY)
             .current_dir(dir)
@@ -2396,11 +2409,18 @@ pub mod blocking {
                 "--color",
                 "never",
             ])
-            .output()
-            .ok()?;
+            .output()?;
         if !out.status.success() {
-            return None;
+            return Err(io::Error::other(format!(
+                "`jj workspace list` exited with {} while resolving the workspace at {}",
+                out.status,
+                path.display(),
+            )));
         }
+        // Registered workspaces whose root did not resolve via `workspace root
+        // --name` — remembered so a no-match doesn't silently hide a workspace we
+        // merely failed to place (it may be the very one at `path`).
+        let mut unresolved: Vec<String> = Vec::new();
         for name in String::from_utf8_lossy(&out.stdout).lines() {
             let name = name.trim();
             if name.is_empty() {
@@ -2418,16 +2438,28 @@ pub mod blocking {
                     "never",
                 ])
                 .output();
-            if let Ok(r) = root
-                && r.status.success()
-            {
-                let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
-                if normalize(&p) == target || p == target || p == path {
-                    return Some(name.to_string());
+            match root {
+                Ok(r) if r.status.success() => {
+                    let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
+                    if normalize(&p) == target || p == target || p == path {
+                        return Ok(Some(name.to_string()));
+                    }
                 }
+                _ => unresolved.push(name.to_string()),
             }
         }
-        None
+        if unresolved.is_empty() {
+            Ok(None)
+        } else {
+            Err(io::Error::other(format!(
+                "could not resolve the workspace at {}: {} registered workspace(s) did not \
+                 resolve via `jj workspace root --name` ({}); resolve or `jj workspace forget` \
+                 them manually",
+                path.display(),
+                unresolved.len(),
+                unresolved.join(", "),
+            )))
+        }
     }
 
     /// Canonicalise + strip the Windows verbatim prefix (`\\?\…`, which

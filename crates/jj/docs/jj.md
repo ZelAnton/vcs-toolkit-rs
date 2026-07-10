@@ -516,7 +516,12 @@ jj.workspace_forget(repo, "feature").await?;
 > A synchronous, best-effort `vcs_jj::blocking` module mirrors `workspace_forget`
 > (and `workspace_name_for_path`) for `Drop` guards that cannot `.await`. It
 > shells out via `std::process` directly — no async, no job containment — so
-> reserve it for short-lived cleanup.
+> reserve it for short-lived cleanup. `workspace_name_for_path` returns
+> `io::Result<Option<String>>`: `Ok(Some(name))` on a match, `Ok(None)` for a
+> clean "no such workspace" (skip the cleanup), and `Err` when the probe itself
+> could not answer (`jj` missing, `workspace list` failed, or a registered
+> workspace did not resolve) — so a real failure is no longer folded into a silent
+> `None`.
 
 ## Operation log
 
