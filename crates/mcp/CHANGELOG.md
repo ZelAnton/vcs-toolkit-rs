@@ -16,6 +16,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Fixed
+- `repo_info`'s `root`/`cwd` no longer bypass the crate's non-UTF-8 path
+  fail-closed policy (T-050): they used to serialize through
+  `to_string_lossy`, silently substituting `U+FFFD` for a non-UTF-8
+  root/working-directory (possible on Unix), unlike every other path-bearing
+  DTO in this crate. They now serialize the borrowed `Path`s directly, so a
+  non-UTF-8 root/cwd refuses the call with an explicit serialization error
+  instead of returning corrupted JSON. The ordinary UTF-8 case is unchanged.
+  (T-062.)
 - `forge_pr_checkout` and `forge_pr_merge` (with `delete_branch`) now hold the
   same per-repo `write_lock` as `repo_*` mutations (via `begin_repo_write`)
   instead of only checking the write gate. Both locally mutate the working

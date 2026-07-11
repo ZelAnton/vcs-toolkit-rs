@@ -75,8 +75,9 @@
 //! # Non-UTF-8 paths (fail-closed policy)
 //!
 //! Path-bearing results — [`repo_status`](VcsMcpServer::repo_status)'s
-//! `FileChange.path`, [`repo_conflicts`](VcsMcpServer::repo_conflicts)'s list — carry
-//! the facade's [`PathBuf`](std::path::PathBuf), which the toolkit reads
+//! `FileChange.path`, [`repo_conflicts`](VcsMcpServer::repo_conflicts)'s list,
+//! [`repo_info`](VcsMcpServer::repo_info)'s `root`/`cwd` — carry
+//! the facade's [`PathBuf`](std::path::PathBuf) or [`Path`], which the toolkit reads
 //! **losslessly** from the backend (a filename need not be valid UTF-8 on Unix).
 //! JSON strings, however, are UTF-8. A path that is not valid UTF-8 is therefore
 //! **refused with an explicit serialization error** rather than emitted with
@@ -477,6 +478,26 @@ fn ok_json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, ErrorData> 
     Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
 }
 
+/// [`repo_info`](VcsMcpServer::repo_info)'s JSON shape. `root`/`cwd` are
+/// borrowed [`Path`]s — not `to_string_lossy` strings — so that a non-UTF-8
+/// root/cwd (legal on Unix) fails serialization in [`ok_json`] the same way
+/// every other path-bearing DTO in this crate does, instead of silently
+/// substituting `U+FFFD`. See the crate-level *Non-UTF-8 paths* section.
+///
+/// Deliberately **not** built with `serde_json::json!{}`: that macro resolves
+/// a non-literal field to `serde_json::to_value(&expr).unwrap()`, which would
+/// **panic** rather than surface a graceful error on a serialization failure
+/// (i.e. exactly the non-UTF-8 case this type exists to handle). Passing a
+/// concrete `Serialize` struct straight to [`ok_json`] instead runs
+/// `serde_json::to_string_pretty`, whose `Err` is already handled there.
+#[derive(serde::Serialize)]
+struct RepoInfo<'a> {
+    backend: &'static str,
+    root: &'a Path,
+    cwd: &'a Path,
+    forge: Option<&'static str>,
+}
+
 /// Map a `vcs-core` error into an MCP error. The facade reports a refused
 /// *input* (e.g. `commit_paths` with an empty path set) as an
 /// `InvalidInput` io error — that's the client's call to fix, so surface it as
@@ -522,12 +543,12 @@ impl VcsMcpServer {
         annotations(read_only_hint = true)
     )]
     pub async fn repo_info(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&serde_json::json!({
-            "backend": self.repo.kind().as_str(),
-            "root": self.repo.root().to_string_lossy(),
-            "cwd": self.repo.cwd().to_string_lossy(),
-            "forge": self.forge.as_ref().map(|f| f.kind().as_str()),
-        }))
+        ok_json(&RepoInfo {
+            backend: self.repo.kind().as_str(),
+            root: self.repo.root(),
+            cwd: self.repo.cwd(),
+            forge: self.forge.as_ref().map(|f| f.kind().as_str()),
+        })
     }
 
     #[tool(
@@ -1200,6 +1221,51 @@ mod tests {
             .await
             .expect("under-budget show_file ok");
         assert!(result_json(&out).contains("fn main"));
+    }
+
+    // `repo_info` is a plain UTF-8 round trip in the ordinary case: `backend`,
+    // `root`, `cwd`, `forge` all surface as JSON strings (the regression below
+    // covers the non-UTF-8 fail-closed case).
+    #[tokio::test]
+    async fn repo_info_returns_utf8_paths() {
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo/sub",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let out = server.repo_info().await.expect("repo_info ok");
+        let json = result_json(&out);
+        assert!(json.contains("backend"), "{json}");
+        assert!(json.contains("git"), "{json}");
+        assert!(json.contains("/repo"), "{json}");
+        assert!(json.contains("/repo/sub"), "{json}");
+        assert!(json.contains("forge"), "{json}");
+    }
+
+    // T-062: `repo_info`'s `root`/`cwd` used to serialise through
+    // `to_string_lossy`, silently emitting `U+FFFD` for a non-UTF-8 root/cwd
+    // (legal on Unix). They now go through the same fail-closed path as every
+    // other path-bearing DTO in this crate (see `ok_json`'s doc comment): a
+    // non-UTF-8 root/cwd must fail the call instead of returning corrupted JSON.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn repo_info_rejects_non_utf8_root_instead_of_lossy_substituting() {
+        let bad = std::path::PathBuf::from(vcs_testkit::non_utf8_filename());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            bad.clone(),
+            bad,
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let err = server
+            .repo_info()
+            .await
+            .expect_err("a non-UTF-8 root/cwd must be refused, not lossy-substituted");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("utf-8"),
+            "error should name the UTF-8 refusal: {err:?}"
+        );
     }
 
     // A mutation tool is gated when writes are disabled — it errors WITHOUT
