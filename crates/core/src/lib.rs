@@ -189,7 +189,7 @@ pub use dto::{
     OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial,
     WorktreeInfo, WorktreeRemove,
 };
-pub use error::{Error, Result};
+pub use error::{Error, OpenKind, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
 // per-client default ([`Repo::from_git`]/[`from_jj`] over a client built with
 // `default_output_budget`) or a per-call override
@@ -403,7 +403,10 @@ impl Repo<JobRunner> {
                 // way", so the caller gets the more precise error.
                 return Err(match find_bare_git_repo(&dir) {
                     Some(bare_root) => Error::BareRepository(bare_root),
-                    None => Error::NotARepository(dir),
+                    None => Error::NotARepository {
+                        path: dir,
+                        open_kind: OpenKind::Discover,
+                    },
                 });
             }
         };
@@ -423,7 +426,7 @@ impl Repo<JobRunner> {
     /// hold the `.jj`/`.git` marker (a `.jj` directory with a `repo` entry, or a
     /// `.git` directory / gitlink file — the same validated markers [`discover`]
     /// uses), or this errors with
-    /// [`Error::NotARepository(dir)`](Error::NotARepository)
+    /// [`Error::NotARepository`] (with [`OpenKind::Open`])
     /// even if a repository exists somewhere above `dir`. Mirrors the
     /// discover-vs-open split in gitoxide (`gix::discover` vs `gix::open`) and
     /// libgit2 (`git_repository_discover` vs `git_repository_open`) — see
@@ -437,7 +440,10 @@ impl Repo<JobRunner> {
         } else if is_git_marker(&dir.join(".git")) {
             BackendKind::Git
         } else {
-            return Err(Error::NotARepository(dir));
+            return Err(Error::NotARepository {
+                path: dir,
+                open_kind: OpenKind::Open,
+            });
         };
         let backend = match kind {
             BackendKind::Git => Backend::Git(Arc::new(Git::new())),
@@ -1386,7 +1392,10 @@ mod tests {
         // `NotARepository` there (only `discover`'s walk-then-classify path
         // distinguishes it).
         match Repo::open(root) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, root),
+            Err(Error::NotARepository { path, open_kind }) => {
+                assert_eq!(path, root);
+                assert!(matches!(open_kind, OpenKind::Open));
+            }
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
@@ -1412,7 +1421,10 @@ mod tests {
         // The strict `open` never walks up, so it reports `NotARepository` on
         // the nested dir regardless of what sits above it.
         match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
+            Err(Error::NotARepository { path, open_kind }) => {
+                assert_eq!(path, nested);
+                assert!(matches!(open_kind, OpenKind::Open));
+            }
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
@@ -1429,7 +1441,10 @@ mod tests {
         std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
 
         match Repo::discover(root) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, root),
+            Err(Error::NotARepository { path, open_kind }) => {
+                assert_eq!(path, root);
+                assert!(matches!(open_kind, OpenKind::Discover));
+            }
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
@@ -1465,7 +1480,10 @@ mod tests {
     fn open_reports_not_a_repository_when_nothing_found() {
         let tmp = TempDir::new("norepo-open");
         match Repo::open(tmp.path()) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, tmp.path()),
+            Err(Error::NotARepository { path, open_kind }) => {
+                assert_eq!(path, tmp.path());
+                assert!(matches!(open_kind, OpenKind::Open));
+            }
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
     }
@@ -1482,7 +1500,10 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
 
         match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
+            Err(Error::NotARepository { path, open_kind }) => {
+                assert_eq!(path, nested);
+                assert!(matches!(open_kind, OpenKind::Open));
+            }
             other => panic!("expected Error::NotARepository, got {other:?}"),
         }
         // `discover` from the same nested dir finds the repo at `root`.
@@ -3351,7 +3372,13 @@ mod tests {
         assert!(conflict.is_merge_conflict());
         assert!(!conflict.is_nothing_to_commit());
         // A non-Vcs error classifies as none of them.
-        assert!(!Error::NotARepository("/x".into()).is_merge_conflict());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_merge_conflict()
+        );
     }
 }
 

@@ -79,17 +79,20 @@ impl Repo<JobRunner> {
 
 `Repo::discover` detects the repository at or above `dir` and opens a handle
 **bound to `dir`**, using the real job-backed process runner. It errors with
-`Error::NotARepository(dir)` when no `.git`/`.jj` is found from the start dir up
-to the filesystem root, or with `Error::BareRepository(path)` when the walk
-instead reaches a bare git repository (`git init --bare`) before finding a
-`.jj`/`.git` marker.
+`Error::NotARepository { path: dir, open_kind: OpenKind::Discover }` when no
+`.git`/`.jj` is found from the start dir up to the filesystem root, or with
+`Error::BareRepository(path)` when the walk instead reaches a bare git
+repository (`git init --bare`) before finding a `.jj`/`.git` marker.
 
 `Repo::open` is the strict counterpart — mirroring the discover-vs-open split in
 gitoxide (`gix::discover`/`gix::open`) and libgit2
 (`git_repository_discover`/`git_repository_open`). It checks **only** `dir`
 itself, with no ancestor walk: `dir` must directly hold the `.jj`/`.git` marker,
-or it errors with `Error::NotARepository(dir)` even if a repository exists
-somewhere above `dir`.
+or it errors with `Error::NotARepository { path: dir, open_kind: OpenKind::Open }`
+even if a repository exists somewhere above `dir`. The `open_kind` field
+disambiguates the two callers in `Error`'s message: `discover`'s message says
+"found at or above `<path>`" (it genuinely walked up), while `open`'s says
+"found at `<path>`" (it never walks up, so "at or above" would be misleading).
 
 For tests or a pre-configured client, build a handle from an explicit client —
 these are generic over the `ProcessRunner` so you can inject a fake:
@@ -553,7 +556,9 @@ copy-on-write strategy on top can reuse this type rather than inventing its own.
 ### `Error`
 
 The facade error wraps `processkit::Error` and adds detection failures:
-`NotARepository(PathBuf)`, `BareRepository(PathBuf)` (a bare `git init --bare`
+`NotARepository { path: PathBuf, open_kind: OpenKind }` (`open_kind` says
+whether `Repo::discover` or `Repo::open` was used, so the message can say "at"
+vs "at or above" correctly), `BareRepository(PathBuf)` (a bare `git init --bare`
 repository — valid git, but no working tree for this facade to drive),
 `WorktreeNotFound(PathBuf)`, `Io(io::Error)`, `Vcs(processkit::Error)`. Classifiers let a caller branch without matching on
 internals: `is_merge_conflict()`, `is_nothing_to_commit()`,

@@ -11,6 +11,19 @@
 
 use std::path::PathBuf;
 
+/// Indicates whether [`Repo::discover`](crate::Repo::discover)
+/// or [`Repo::open`](crate::Repo::open) has been used.
+///
+/// Used to give better error messages for [`Error::NotARepository`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum OpenKind {
+    /// [`Repo::discover`](crate::Repo::discover) has been used to open the repository.
+    Discover,
+    /// [`Repo::open`](crate::Repo::open) has been used to open the repository.
+    Open,
+}
+
 /// An error from a [`Repo`](crate::Repo) operation.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -18,7 +31,13 @@ pub enum Error {
     /// [`Repo::discover`](crate::Repo::discover) found no `.git`/`.jj` from the
     /// start dir up to the filesystem root, or [`Repo::open`](crate::Repo::open)
     /// found no `.git`/`.jj` marker in the exact directory it was given.
-    NotARepository(PathBuf),
+    #[non_exhaustive] // we can add more fields later
+    NotARepository {
+        path: PathBuf,
+        /// Disambiguates between the [`Repo::open`](crate::Repo::open)
+        /// and [`crate::Repo::discover`] cases.
+        open_kind: OpenKind,
+    },
     /// [`Repo::discover`](crate::Repo::discover) walked up to a **bare** git
     /// repository (created with `git init --bare`, or an equivalent bare clone)
     /// — a directory holding `HEAD`/`config`/`objects`/`refs` directly, with no
@@ -152,11 +171,15 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::NotARepository(p) => {
+            Error::NotARepository { path, open_kind } => {
+                let find_msg = match open_kind {
+                    OpenKind::Discover => "at or above",
+                    OpenKind::Open => "at",
+                };
                 write!(
                     f,
-                    "no git or jj repository found at or above {}",
-                    p.display()
+                    "no git or jj repository found {find_msg} {}",
+                    path.display()
                 )
             }
             Error::BareRepository(p) => {
@@ -223,7 +246,13 @@ mod tests {
         assert!(!missing.is_transient());
         // The facade's own io/detection variants are never transient.
         assert!(!Error::Io(std::io::Error::from(std::io::ErrorKind::Interrupted)).is_transient());
-        assert!(!Error::NotARepository("/x".into()).is_transient());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_transient()
+        );
     }
 
     #[test]
@@ -238,7 +267,13 @@ mod tests {
             "fatal: not a git repository",
         ));
         assert!(!exit.is_not_found());
-        assert!(!Error::NotARepository("/x".into()).is_not_found());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_not_found()
+        );
     }
 
     #[test]
@@ -261,7 +296,13 @@ mod tests {
             ))
             .is_invalid_input()
         );
-        assert!(!Error::NotARepository("/x".into()).is_invalid_input());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_invalid_input()
+        );
         assert!(!Error::Io(std::io::Error::other("disk full")).is_invalid_input());
     }
 
@@ -275,7 +316,13 @@ mod tests {
         assert!(
             !Error::Io(std::io::Error::from(std::io::ErrorKind::InvalidInput)).is_unsupported()
         );
-        assert!(!Error::NotARepository("/x".into()).is_unsupported());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_unsupported()
+        );
     }
 
     #[test]
@@ -285,6 +332,12 @@ mod tests {
         // repo path is neither.
         let missing_bin = Error::Vcs(processkit::Error::not_found("jj", None));
         assert!(missing_bin.is_not_found() && !missing_bin.is_resource_not_found());
-        assert!(!Error::NotARepository("/x".into()).is_resource_not_found());
+        assert!(
+            !Error::NotARepository {
+                path: "/x".into(),
+                open_kind: OpenKind::Discover,
+            }
+            .is_resource_not_found()
+        );
     }
 }
