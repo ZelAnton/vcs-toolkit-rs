@@ -153,11 +153,11 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::NotARepository(p) => {
-                write!(
-                    f,
-                    "no git or jj repository found at or above {}",
-                    p.display()
-                )
+                // Deliberately doesn't say "at or above": `Repo::open` returns this
+                // for a strict check of exactly `p` (no walking up), while
+                // `Repo::discover` returns it after walking up from `p` and finding
+                // nothing — a single wording that's accurate for both callers.
+                write!(f, "no git or jj repository found at {}", p.display())
             }
             Error::BareRepository(p) => {
                 write!(f, "bare git repositories are unsupported ({})", p.display())

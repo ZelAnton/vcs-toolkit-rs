@@ -16,6 +16,16 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
+- `Repo::open`, called directly on a directory that is itself a **bare** git
+  repository (`git init --bare`: `HEAD`/`config`/`objects`/`refs` with no `.git`
+  subdirectory), now returns `Error::BareRepository` instead of the generic
+  `Error::NotARepository` — matching what `Repo::discover` already reported for
+  the same directory (issue #6, T-004; the `BareRepository` variant itself isn't
+  new, only `open`'s use of it). `Error::NotARepository`'s `Display` message no
+  longer claims the repository was searched for "at or above" the given path;
+  that phrasing was only ever accurate for `discover`'s upward walk and was
+  misleading for `open`'s strict, non-walking check of exactly the given
+  directory. (T-060.)
 - `Repo::try_merge`'s git-side rollback is now **cancellation-safe**, matching the
   jj path: the *whole* cleanup path — both the "is a trial merge still staged?"
   decision (via the new `Git::is_merge_in_progress_detached`) and the `merge --abort`

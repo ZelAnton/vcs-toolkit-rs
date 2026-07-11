@@ -428,6 +428,14 @@ impl Repo<JobRunner> {
     /// discover-vs-open split in gitoxide (`gix::discover` vs `gix::open`) and
     /// libgit2 (`git_repository_discover` vs `git_repository_open`) — see
     /// issue #8.
+    ///
+    /// If `dir` itself is a **bare** git repository (`git init --bare`: no
+    /// `.git` subdirectory, just `HEAD`/`config`/`objects`/`refs` directly in
+    /// `dir` — see [`is_bare_git_repo_marker`]), this errors with
+    /// [`Error::BareRepository(dir)`](Error::BareRepository) instead of the
+    /// generic `NotARepository`, matching what [`Repo::discover`] reports for
+    /// the same directory (issue #6) — `open` still never walks up, so this
+    /// only applies to `dir` itself, not an ancestor.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
         // Absolutise so the bound `cwd`/`root` are consistent with `discover`'s
         // and so a relative "." names the actual directory, not an empty path.
@@ -436,6 +444,8 @@ impl Repo<JobRunner> {
             BackendKind::Jj
         } else if is_git_marker(&dir.join(".git")) {
             BackendKind::Git
+        } else if is_bare_git_repo_marker(&dir) {
+            return Err(Error::BareRepository(dir));
         } else {
             return Err(Error::NotARepository(dir));
         };
@@ -1381,13 +1391,13 @@ mod tests {
             other => panic!("expected Error::BareRepository, got {other:?}"),
         }
 
-        // The strict, non-walking `open` doesn't special-case bare repos — a
-        // bare repo has no `.git`/`.jj` marker in itself, so it's just
-        // `NotARepository` there (only `discover`'s walk-then-classify path
-        // distinguishes it).
+        // The strict, non-walking `open`, called directly on the bare repo's own
+        // root, also special-cases it via `is_bare_git_repo_marker` — mirroring
+        // `discover`'s classification for this same directory (issue #6/#8
+        // symmetry), even though `open` itself never walks up.
         match Repo::open(root) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+            Err(Error::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::BareRepository, got {other:?}"),
         }
     }
 
