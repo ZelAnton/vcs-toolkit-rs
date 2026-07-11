@@ -431,7 +431,7 @@ impl Repo<JobRunner> {
     ///
     /// If `dir` itself is a **bare** git repository (`git init --bare`: no
     /// `.git` subdirectory, just `HEAD`/`config`/`objects`/`refs` directly in
-    /// `dir` — see [`is_bare_git_repo_marker`]), this errors with
+    /// `dir` — see `is_bare_git_repo_marker`), this errors with
     /// [`Error::BareRepository(dir)`](Error::BareRepository) instead of the
     /// generic `NotARepository`, matching what [`Repo::discover`] reports for
     /// the same directory (issue #6) — `open` still never walks up, so this
