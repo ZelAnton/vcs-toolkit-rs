@@ -13,7 +13,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Changed
--
+- Serving a **bare** git repository (`git init --bare`, or a path at or under one
+  with no working tree) now fails with the same classification `vcs-core` reports —
+  `BareRepository: <path>` — instead of the generic
+  `no git or jj repository found at or above <path>`. The server opens the repo
+  through the new `Repo::discover_with`, so the bare-repo diagnostic (and any future
+  discovery refinement) is shared with the facade rather than reimplemented in the
+  binary; a non-repository path still reports "not a repository". No flags or tool
+  shapes change. (T-061.)
 
 ### Fixed
 - `repo_info`'s `root`/`cwd` no longer bypass the crate's non-UTF-8 path

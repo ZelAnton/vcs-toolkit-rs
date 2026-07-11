@@ -10,7 +10,18 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Repo::discover_with(dir, git, jj)`: the injected-client counterpart of
+  `Repo::discover`. It runs the **same** discovery walk and error classification
+  (`Error::NotARepository` / `Error::BareRepository`, via the same
+  `find_bare_git_repo` diagnostic), but builds the handle from a caller-provided
+  client for the **detected** backend — only the matching factory closure runs, so
+  no client is constructed speculatively. Lets a consumer open a repository with a
+  pre-configured client (a hardened `Git`, a per-command timeout, a custom
+  `ProcessRunner`) without re-implementing the `discover` walk, matching
+  `BackendKind` by hand, and calling `from_git`/`from_jj` itself — and, because the
+  `BackendKind` match lives inside this crate (where the enum is
+  `#[non_exhaustive]`), without a wildcard arm to keep in sync when a future backend
+  is added. (T-061.)
 
 ### Changed
 -

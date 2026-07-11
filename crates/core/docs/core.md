@@ -99,6 +99,39 @@ pub fn from_git(root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Git<R
 pub fn from_jj (root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Jj<R>)  -> Self;
 ```
 
+`Repo::discover_with` combines the two: it runs the **same** discovery walk and
+error classification as `Repo::discover`, but builds the handle from a
+caller-injected client for whichever backend it detects. Only the factory for the
+detected backend runs — the other is never called — so no client is built
+speculatively.
+
+```rust,ignore
+pub fn discover_with<G, J>(dir: impl AsRef<Path>, git: G, jj: J) -> Result<Self>
+where
+    G: FnOnce() -> Git<R>,
+    J: FnOnce() -> Jj<R>;
+```
+
+Reach for it when the handle needs a pre-configured client — a hardened `Git`, a
+per-command timeout, a custom runner — but you still want `discover`'s ancestor
+walk and its `Error::NotARepository` / `Error::BareRepository` classification
+rather than rebuilding that logic. Because the `BackendKind` match lives inside
+`vcs-core` (where the enum is `#[non_exhaustive]`), the caller needs no
+wildcard/catch-all arm to maintain as backends are added.
+
+```rust,no_run
+# use std::time::Duration;
+# use vcs_core::{Repo, vcs_git::Git, vcs_jj::Jj};
+# fn f() -> vcs_core::Result<()> {
+let repo = Repo::discover_with(
+    ".",
+    || Git::hardened().default_timeout(Duration::from_secs(120)),
+    || Jj::new().default_timeout(Duration::from_secs(120)),
+)?;
+# let _ = repo;
+# Ok(()) }
+```
+
 ### Properties and re-anchoring
 
 ```rust,ignore

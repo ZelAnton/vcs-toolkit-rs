@@ -481,6 +481,82 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Discover the repository at or above `dir` — exactly as [`Repo::discover`] —
+    /// but build the handle from a **caller-injected** client instead of the plain
+    /// default one. `dir` is absolutised and walked toward the filesystem root (see
+    /// [`discover`]), then the factory for the **detected** backend is invoked:
+    /// `git` for a `.git` repository, `jj` for a `.jj` one. Only the matching
+    /// closure runs — the other is never called, so neither client is built
+    /// speculatively.
+    ///
+    /// This is the injected-client counterpart of [`Repo::discover`]: reach for it
+    /// when the handle needs a pre-configured client — a hardened [`Git`], a
+    /// per-command timeout, a custom [`ProcessRunner`] test seam — rather than the
+    /// default `Git::new` / `Jj::new` that [`Repo::discover`] uses. It shares
+    /// [`Repo::discover`]'s exact detection and error classification, so a consumer
+    /// no longer has to re-implement the [`discover`] walk, match [`BackendKind`],
+    /// and assemble [`from_git`](Repo::from_git) / [`from_jj`](Repo::from_jj) by
+    /// hand just to inject clients.
+    ///
+    /// Because the match on [`BackendKind`] lives **here**, inside the crate that
+    /// declares the enum `#[non_exhaustive]`, adding a future backend variant is a
+    /// change to this one method — callers need no wildcard/catch-all arm of their
+    /// own to keep in sync.
+    ///
+    /// # Errors
+    /// The same as [`Repo::discover`]: [`Error::NotARepository`] when no `.git`/`.jj`
+    /// marker is found from `dir` up to the filesystem root, or
+    /// [`Error::BareRepository`] when the walk instead reaches a **bare** git
+    /// repository (`git init --bare`) first. It reuses the very same private
+    /// `find_bare_git_repo` diagnostic path as [`Repo::discover`], so the bare-repo
+    /// distinction is reported identically no matter which entry point opened the
+    /// repository.
+    ///
+    /// ```no_run
+    /// # use std::time::Duration;
+    /// # use vcs_core::{Repo, vcs_git::Git, vcs_jj::Jj};
+    /// # fn f() -> vcs_core::Result<()> {
+    /// // A hardened git client / timeout-bound jj client, injected lazily — only
+    /// // the one matching the detected backend is ever built.
+    /// let repo = Repo::discover_with(
+    ///     ".",
+    ///     || Git::hardened().default_timeout(Duration::from_secs(120)),
+    ///     || Jj::new().default_timeout(Duration::from_secs(120)),
+    /// )?;
+    /// # let _ = repo;
+    /// # Ok(()) }
+    /// ```
+    pub fn discover_with<G, J>(dir: impl AsRef<Path>, git: G, jj: J) -> Result<Self>
+    where
+        G: FnOnce() -> Git<R>,
+        J: FnOnce() -> Jj<R>,
+    {
+        // Absolutise first, for the same reason `Repo::discover` does: `discover`
+        // walks parents, and a relative path like "." has no real ancestor chain.
+        let dir = std::path::absolute(dir.as_ref())?;
+        let located = match discover(&dir) {
+            Some(located) => located,
+            None => {
+                // Identical bare-vs-nothing diagnostic to `Repo::discover`: the
+                // second, cheap walk distinguishes "no repository at all" from "a
+                // bare git repository sits in the way", so the injected-client path
+                // reports the precise error rather than a stringly-typed blob.
+                return Err(match find_bare_git_repo(&dir) {
+                    Some(bare_root) => Error::BareRepository(bare_root),
+                    None => Error::NotARepository(dir),
+                });
+            }
+        };
+        // The match on `BackendKind` lives inside `vcs-core`, where the enum is
+        // declared, so a new `#[non_exhaustive]` variant is handled here (a
+        // compile error to add without a client) rather than by a caller's
+        // catch-all arm.
+        Ok(match located.kind {
+            BackendKind::Git => Repo::from_git(located.root, dir, git()),
+            BackendKind::Jj => Repo::from_jj(located.root, dir, jj()),
+        })
+    }
+
     /// Which backend drives this handle.
     pub fn kind(&self) -> BackendKind {
         match &self.backend {
@@ -1500,6 +1576,144 @@ mod tests {
             Repo::discover(&nested).expect("discover walks up").root(),
             root
         );
+    }
+
+    // --- discover_with (injected clients) -----------------------------------
+
+    // `discover_with` runs the SAME detection as `Repo::discover`, then builds the
+    // handle from the caller's client for the DETECTED backend only — the other
+    // factory is never invoked (so no client is built speculatively). Both the git
+    // and jj happy paths are covered here, over a hermetic `ScriptedRunner` client.
+    #[test]
+    fn discover_with_builds_only_the_detected_backends_client() {
+        use std::cell::Cell;
+
+        // git: a `.git` dir → the git factory runs, the jj factory does not; the
+        // handle is git-backed and bound to the absolutised discovery dir.
+        let tmp = TempDir::new("discover-with-git");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let git_built = Cell::new(false);
+        let jj_built = Cell::new(false);
+        let repo = Repo::discover_with(
+            root,
+            || {
+                git_built.set(true);
+                Git::with_runner(ScriptedRunner::new())
+            },
+            || {
+                jj_built.set(true);
+                Jj::with_runner(ScriptedRunner::new())
+            },
+        )
+        .expect("git repo discovered");
+        assert_eq!(repo.kind(), BackendKind::Git);
+        assert_eq!(repo.root(), root);
+        assert_eq!(repo.cwd(), root);
+        assert!(git_built.get(), "the git factory must run for a .git repo");
+        assert!(!jj_built.get(), "the jj factory must NOT run for a .git repo");
+
+        // jj: a valid `.jj` (with its `repo` store) → symmetric, only the jj factory
+        // runs. `.jj` wins over `.git` exactly as in `discover`.
+        let tmp = TempDir::new("discover-with-jj");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".jj").join("repo")).unwrap();
+        let git_built = Cell::new(false);
+        let jj_built = Cell::new(false);
+        let repo = Repo::discover_with(
+            root,
+            || {
+                git_built.set(true);
+                Git::with_runner(ScriptedRunner::new())
+            },
+            || {
+                jj_built.set(true);
+                Jj::with_runner(ScriptedRunner::new())
+            },
+        )
+        .expect("jj repo discovered");
+        assert_eq!(repo.kind(), BackendKind::Jj);
+        assert_eq!(repo.root(), root);
+        assert!(jj_built.get(), "the jj factory must run for a .jj repo");
+        assert!(!git_built.get(), "the git factory must NOT run for a .jj repo");
+    }
+
+    // The injected client actually DRIVES the handle's operations (not merely
+    // stored): a `Repo` opened via `discover_with` over a scripted git client
+    // answers `current_branch` from that runner's scripted reply — proving the
+    // caller-provided client, not a default one, is what backs the facade. The jj
+    // factory panics if touched, pinning the "detected backend only" contract.
+    #[tokio::test]
+    async fn discover_with_injects_the_client_that_backs_operations() {
+        let tmp = TempDir::new("discover-with-drives");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let repo = Repo::discover_with(
+            root,
+            || {
+                Git::with_runner(ScriptedRunner::new().on(
+                    ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+                    Reply::ok("feature/x"),
+                ))
+            },
+            || -> Jj<ScriptedRunner> { panic!("jj factory must not run for a .git repo") },
+        )
+        .expect("git repo discovered");
+        assert_eq!(
+            repo.current_branch().await.unwrap().as_deref(),
+            Some("feature/x"),
+            "the scripted, injected client must answer the facade call"
+        );
+    }
+
+    // The bare-repository diagnostic is shared with `Repo::discover`: opening a
+    // `git init --bare` directory (no working tree) via the injected-client path
+    // still yields `Error::BareRepository`, matched by variant — not the generic
+    // `NotARepository`, and not a stringly-typed message. Neither client factory
+    // runs, since discovery finds no working tree to back.
+    #[test]
+    fn discover_with_reports_bare_repository_on_injected_client() {
+        use std::cell::Cell;
+        let tmp = TempDir::new("discover-with-bare");
+        let root = tmp.path();
+        std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
+        std::fs::create_dir_all(root.join("objects")).unwrap();
+        std::fs::create_dir_all(root.join("refs")).unwrap();
+
+        let git_built = Cell::new(false);
+        let jj_built = Cell::new(false);
+        let outcome = Repo::discover_with(
+            root,
+            || {
+                git_built.set(true);
+                Git::with_runner(ScriptedRunner::new())
+            },
+            || {
+                jj_built.set(true);
+                Jj::with_runner(ScriptedRunner::new())
+            },
+        );
+        match outcome {
+            Err(Error::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected Error::BareRepository, got {other:?}"),
+        }
+        assert!(
+            !git_built.get() && !jj_built.get(),
+            "no client is built when discovery finds no working tree"
+        );
+
+        // A directory that is neither a repo nor a bare repo still reports the
+        // generic `NotARepository` through the same path.
+        let empty = TempDir::new("discover-with-norepo");
+        match Repo::discover_with(
+            empty.path(),
+            || Git::with_runner(ScriptedRunner::new()),
+            || Jj::with_runner(ScriptedRunner::new()),
+        ) {
+            Err(Error::NotARepository(p)) => assert_eq!(p, empty.path()),
+            other => panic!("expected Error::NotARepository, got {other:?}"),
+        }
     }
 
     // --- dispatch (hermetic, ScriptedRunner-backed) ------------------------

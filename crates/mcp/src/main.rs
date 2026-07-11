@@ -21,7 +21,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use vcs_core::vcs_git::{Git, GitApi};
 use vcs_core::vcs_jj::Jj;
-use vcs_core::{BackendKind, Repo, discover};
+use vcs_core::Repo;
 use vcs_forge::vcs_gitea::Gitea;
 use vcs_forge::vcs_github::GitHub;
 use vcs_forge::vcs_gitlab::GitLab;
@@ -97,29 +97,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// variables, and skips system config, so serving a repository the operator
 /// didn't create can't execute its hooks (or honour a `core.fsmonitor` program)
 /// on a tool call. jj has no repo-local hooks, so its client needs no equivalent.
-/// Both carry the per-command `timeout`. This mirrors [`Repo::discover`]'s
-/// detection but injects the hardened/timeout-bound client instead of the
-/// plain default.
+/// Both carry the per-command `timeout`.
+///
+/// Delegates the whole discovery walk to `Repo::discover_with`, injecting the
+/// hardened/timeout-bound client for whichever backend it detects — the facade
+/// owns the `.git`/`.jj` detection and the bare-repository diagnostic, so this
+/// binary no longer re-implements the walk, matches `BackendKind` by hand, or
+/// carries a wildcard arm for a future backend. A bare repository now surfaces as
+/// `vcs_core::Error::BareRepository`, exactly as `Repo::discover` reports it,
+/// rather than the old generic "no git or jj repository found …" string.
 fn open_repo(dir: &Path, timeout: Option<Duration>) -> Result<Repo, Box<dyn std::error::Error>> {
-    let dir = std::path::absolute(dir)?;
-    let located = discover(&dir).ok_or_else(|| {
-        format!(
-            "no git or jj repository found at or above {}",
-            dir.display()
-        )
-    })?;
-    let repo = match located.kind {
-        BackendKind::Git => Repo::from_git(located.root, dir, hardened_git(timeout)),
-        BackendKind::Jj => {
-            let jj = match timeout {
-                Some(t) => Jj::new().default_timeout(t),
-                None => Jj::new(),
-            };
-            Repo::from_jj(located.root, dir, jj)
-        }
-        // `BackendKind` is `#[non_exhaustive]`; a future backend has no client here.
-        _ => return Err("unsupported repository backend".into()),
-    };
+    let repo = Repo::discover_with(
+        dir,
+        || hardened_git(timeout),
+        || jj_client(timeout),
+    )?;
     Ok(repo)
 }
 
@@ -128,6 +120,15 @@ fn hardened_git(timeout: Option<Duration>) -> Git {
     match timeout {
         Some(t) => Git::hardened().default_timeout(t),
         None => Git::hardened(),
+    }
+}
+
+/// A jj client carrying the optional per-command `timeout`. jj has no repo-local
+/// hooks, so (unlike git) it needs no hardening profile.
+fn jj_client(timeout: Option<Duration>) -> Jj {
+    match timeout {
+        Some(t) => Jj::new().default_timeout(t),
+        None => Jj::new(),
     }
 }
 
