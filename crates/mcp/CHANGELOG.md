@@ -16,7 +16,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Fixed
--
+- `forge_pr_checkout` and `forge_pr_merge` (with `delete_branch`) now hold the
+  same per-repo `write_lock` as `repo_*` mutations (via `begin_repo_write`)
+  instead of only checking the write gate. Both locally mutate the working
+  copy (checkout/switch and, for `forge_pr_merge`, deleting the local branch),
+  so without the shared lock they could race a concurrent `repo_commit`/
+  `repo_try_merge` and interleave with it. Purely remote forge mutations
+  (`forge_pr_create`, `forge_issue_create`, `forge_pr_close`,
+  `forge_pr_mark_ready`, `forge_pr_comment`, `forge_pr_edit`) are unaffected.
+  (T-058.)
 
 ## [0.6.0] - 2026-07-10
 

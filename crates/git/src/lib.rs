@@ -2345,9 +2345,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_abort(&self, dir: &Path) -> Result<()> {
-        self.core
-            .run_unit(c_locale(self.core.command_in(dir, ["merge", "--abort"])))
-            .await
+        self.core.run_unit(self.merge_abort_command(dir)).await
     }
 
     async fn merge_continue(&self, dir: &Path) -> Result<()> {
@@ -2761,6 +2759,77 @@ impl<R: ProcessRunner> Git<R> {
         }
         command.arg("-z").arg("--format=%H")
     }
+
+    /// Build the `merge --abort` command with the C locale forced (a failed
+    /// abort's output feeds the same classifiers as the merge it undoes). Shared
+    /// by the token-inheriting [`merge_abort`](GitApi::merge_abort) and the
+    /// detached [`merge_abort_detached`](Self::merge_abort_detached) so the two
+    /// argv/locale forms cannot drift.
+    fn merge_abort_command(&self, dir: &Path) -> Command {
+        c_locale(self.core.command_in(dir, ["merge", "--abort"]))
+    }
+
+    /// Turn a repo-scoped `command` into a rollback **cleanup** step: it drops
+    /// this client's [`default_cancel_on`](Git::default_cancel_on) token for a
+    /// fresh, never-fired one and applies the bounded
+    /// [`MERGE_ABORT_CLEANUP_TIMEOUT`] deadline — the git analogue of jj's
+    /// `rollback_cmd_in`. A command built this way runs even after the client
+    /// token that governed the probe has already fired, so `Repo::try_merge`'s
+    /// Ok/Err cleanup can both **decide** to roll back (the
+    /// [`is_merge_in_progress_detached`](Self::is_merge_in_progress_detached)
+    /// probe) and **perform** it
+    /// ([`merge_abort_detached`](Self::merge_abort_detached)) despite a cancelled
+    /// or timed-out probe merge — the *whole* decision-plus-command rollback path
+    /// is detached, matching jj rather than only the final abort command.
+    fn detached_cleanup(&self, command: Command) -> Command {
+        command
+            .cancel_on(CancellationToken::new())
+            .timeout(MERGE_ABORT_CLEANUP_TIMEOUT)
+    }
+
+    /// Abort an in-progress merge (`merge --abort`) as a **rollback cleanup** that
+    /// deliberately does **not** inherit this client's
+    /// [`default_cancel_on`](Git::default_cancel_on) token and runs under its own
+    /// bounded `MERGE_ABORT_CLEANUP_TIMEOUT` deadline — mirroring jj's
+    /// `Jj::rollback_to`.
+    ///
+    /// The trait [`merge_abort`](GitApi::merge_abort) inherits the client's cancel
+    /// token, so once that token has already fired — a cancelled or timed-out probe
+    /// merge — the abort that should undo the half-staged trial merge would itself
+    /// be cancelled, leaving the merge in the working tree. Building it through the
+    /// internal `detached_cleanup` (a fresh, never-fired [`CancellationToken`] and a
+    /// full fresh timeout budget) lets it complete regardless, so a probe's own
+    /// cancellation no longer disables its rollback. Same `merge --abort` argv as
+    /// [`merge_abort`](GitApi::merge_abort); used by the facade `Repo::try_merge`'s
+    /// error-branch cleanup — paired with
+    /// [`is_merge_in_progress_detached`](Self::is_merge_in_progress_detached) so the
+    /// *decision* to abort is detached too, not just this command.
+    pub async fn merge_abort_detached(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(self.detached_cleanup(self.merge_abort_command(dir)))
+            .await
+    }
+
+    /// [`is_merge_in_progress`](GitApi::is_merge_in_progress) on the detached
+    /// rollback-cleanup context (the internal `detached_cleanup`), so the
+    /// **decision** of whether a trial merge is still staged survives an
+    /// already-fired client [`default_cancel_on`](Git::default_cancel_on) token.
+    ///
+    /// The trait probe's underlying `rev-parse --git-dir` inherits the client
+    /// token; once a probe merge's cancellation has fired, that probe's `?` would
+    /// propagate `Error::Cancelled` **before** the abort that undoes the trial
+    /// merge is ever reached, leaving it staged in the working tree. Resolving the
+    /// git dir on a fresh token instead lets the decision complete, so it pairs
+    /// with [`merge_abort_detached`](Self::merge_abort_detached) to make **both**
+    /// halves of `Repo::try_merge`'s Ok/Err cleanup cancellation-safe — matching
+    /// jj, whose op-log rollback probe also runs on the detached context.
+    pub async fn is_merge_in_progress_detached(&self, dir: &Path) -> Result<bool> {
+        Ok(self
+            .resolved_git_dir_detached(dir)
+            .await?
+            .join("MERGE_HEAD")
+            .exists())
+    }
 }
 
 // --- Internal helpers --------------------------------------------------------
@@ -2784,6 +2853,13 @@ pub const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
 const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
+
+/// Bounded deadline for the detached rollback abort
+/// ([`Git::merge_abort_detached`]) — the git analogue of jj's `ROLLBACK_TIMEOUT`.
+/// Because that cleanup deliberately runs on a FRESH cancel token (so a cancelled
+/// or timed-out probe merge cannot also cancel it), it needs its own explicit
+/// deadline to stay bounded rather than inheriting one from the main operation.
+const MERGE_ABORT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Point git's editor at a no-op so any command that would open `$EDITOR`
 /// (a rebase reword, the message-confirm on `rebase --continue`) succeeds
@@ -3208,11 +3284,30 @@ impl<R: ProcessRunner> Git<R> {
     /// `git_dir` resolved to an absolute path — `rev-parse --git-dir` may report
     /// it relative to `dir` (e.g. `.git`), which the filesystem probes need joined.
     async fn resolved_git_dir(&self, dir: &Path) -> Result<PathBuf> {
-        let git_dir = PathBuf::from(
-            self.core
-                .run(self.core.command_in(dir, ["rev-parse", "--git-dir"]))
-                .await?,
-        );
+        self.resolve_git_dir(dir, self.core.command_in(dir, ["rev-parse", "--git-dir"]))
+            .await
+    }
+
+    /// [`resolved_git_dir`](Self::resolved_git_dir) on the detached
+    /// rollback-cleanup context (see [`detached_cleanup`](Self::detached_cleanup)):
+    /// the `rev-parse --git-dir` behind the MERGE_HEAD probe runs on a fresh,
+    /// never-fired cancel token, so a client cancellation that already fired during
+    /// the probe merge cannot short-circuit the *decision* half of `try_merge`'s
+    /// Ok/Err cleanup. Backs [`is_merge_in_progress_detached`](Self::is_merge_in_progress_detached).
+    async fn resolved_git_dir_detached(&self, dir: &Path) -> Result<PathBuf> {
+        self.resolve_git_dir(
+            dir,
+            self.detached_cleanup(self.core.command_in(dir, ["rev-parse", "--git-dir"])),
+        )
+        .await
+    }
+
+    /// Run a `rev-parse --git-dir` `command` and absolutise a relative git dir
+    /// against `dir`. Shared by [`resolved_git_dir`](Self::resolved_git_dir) and
+    /// its detached variant so the token-inheriting and detached probes cannot
+    /// drift in how they resolve the path.
+    async fn resolve_git_dir(&self, dir: &Path, command: Command) -> Result<PathBuf> {
+        let git_dir = PathBuf::from(self.core.run(command).await?);
         Ok(if git_dir.is_absolute() {
             git_dir
         } else {
@@ -5897,6 +5992,77 @@ mod tests {
                 call.args_str()
             );
         }
+    }
+
+    // `merge_abort_detached` is the rollback-cleanup abort the facade's `try_merge`
+    // uses: it emits the same `merge --abort` as `merge_abort`, but on a FRESH
+    // cancel token, so an already-fired client `default_cancel_on` (a cancelled or
+    // timed-out probe merge) cannot also cancel the cleanup. The bare `merge_abort`
+    // on the same client IS cancelled — proving the fired token is genuinely live
+    // and the detached path deliberately steps around it, not that the token is
+    // inert. The git mirror of jj's `rollback_to_survives_fired_cancellation`.
+    #[tokio::test]
+    async fn merge_abort_detached_survives_fired_cancellation() {
+        use processkit::CancellationToken;
+        let token = CancellationToken::new();
+        token.cancel(); // as a cancelled/deadline-hit probe merge would leave it
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).default_cancel_on(token);
+        let dir = Path::new("/r");
+
+        git.merge_abort_detached(dir)
+            .await
+            .expect("the detached cleanup must run despite the fired client token");
+        assert_eq!(rec.only_call().args_str(), ["merge", "--abort"]);
+
+        // Sanity: the token-inheriting `merge_abort` on the same (fired) client IS
+        // cancelled, so the detached path really did side-step a live token.
+        let bare = git.merge_abort(dir).await;
+        assert!(
+            matches!(bare, Err(Error::Cancelled { .. })),
+            "a bare merge_abort must inherit the fired token: {bare:?}"
+        );
+    }
+
+    // `is_merge_in_progress_detached` is the rollback-cleanup DECISION probe the
+    // facade's `try_merge` gates its abort on: it answers "is a trial merge still
+    // staged?" via `rev-parse --git-dir` on a FRESH cancel token, so an
+    // already-fired client `default_cancel_on` (a cancelled/timed-out probe merge)
+    // cannot short-circuit the decision and thereby skip the abort. The bare
+    // token-inheriting `is_merge_in_progress` on the same client IS cancelled —
+    // proving the fired token is live and the detached probe deliberately steps
+    // around it. Pairs with `merge_abort_detached_survives_fired_cancellation`: both
+    // halves of the git cleanup survive, matching jj's op-log-probe-plus-restore.
+    #[tokio::test]
+    async fn is_merge_in_progress_detached_survives_fired_cancellation() {
+        use processkit::CancellationToken;
+        use vcs_testkit::TempDir;
+        let gd = TempDir::new("merge-in-progress-detached");
+        std::fs::write(gd.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let token = CancellationToken::new();
+        token.cancel(); // as a cancelled/deadline-hit probe merge would leave it
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "rev-parse", "--git-dir"],
+            Reply::ok(gd.path().to_str().unwrap()),
+        ))
+        .default_cancel_on(token);
+        let dir = Path::new("/r");
+
+        assert!(
+            git.is_merge_in_progress_detached(dir)
+                .await
+                .expect("the detached probe must resolve the git dir despite the fired token"),
+            "MERGE_HEAD exists, so the detached probe must report a merge in progress"
+        );
+
+        // Sanity: the token-inheriting `is_merge_in_progress` on the same (fired)
+        // client IS cancelled, so the detached probe really did side-step a live
+        // token rather than the token being inert.
+        let bare = git.is_merge_in_progress(dir).await;
+        assert!(
+            matches!(bare, Err(Error::Cancelled { .. })),
+            "a bare is_merge_in_progress must inherit the fired token: {bare:?}"
+        );
     }
 
     // The `<rev>:<path>` spec requires forward slashes — Windows callers may
