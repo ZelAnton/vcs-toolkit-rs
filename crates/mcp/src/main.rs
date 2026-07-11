@@ -19,9 +19,9 @@ use std::time::Duration;
 
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use vcs_core::Repo;
 use vcs_core::vcs_git::{Git, GitApi};
 use vcs_core::vcs_jj::Jj;
-use vcs_core::Repo;
 use vcs_forge::vcs_gitea::Gitea;
 use vcs_forge::vcs_github::GitHub;
 use vcs_forge::vcs_gitlab::GitLab;
@@ -107,11 +107,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// `vcs_core::Error::BareRepository`, exactly as `Repo::discover` reports it,
 /// rather than the old generic "no git or jj repository found …" string.
 fn open_repo(dir: &Path, timeout: Option<Duration>) -> Result<Repo, Box<dyn std::error::Error>> {
-    let repo = Repo::discover_with(
-        dir,
-        || hardened_git(timeout),
-        || jj_client(timeout),
-    )?;
+    let repo = Repo::discover_with(dir, || hardened_git(timeout), || jj_client(timeout))?;
     Ok(repo)
 }
 

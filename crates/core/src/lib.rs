@@ -1611,7 +1611,10 @@ mod tests {
         assert_eq!(repo.root(), root);
         assert_eq!(repo.cwd(), root);
         assert!(git_built.get(), "the git factory must run for a .git repo");
-        assert!(!jj_built.get(), "the jj factory must NOT run for a .git repo");
+        assert!(
+            !jj_built.get(),
+            "the jj factory must NOT run for a .git repo"
+        );
 
         // jj: a valid `.jj` (with its `repo` store) → symmetric, only the jj factory
         // runs. `.jj` wins over `.git` exactly as in `discover`.
@@ -1635,7 +1638,10 @@ mod tests {
         assert_eq!(repo.kind(), BackendKind::Jj);
         assert_eq!(repo.root(), root);
         assert!(jj_built.get(), "the jj factory must run for a .jj repo");
-        assert!(!git_built.get(), "the git factory must NOT run for a .jj repo");
+        assert!(
+            !git_built.get(),
+            "the git factory must NOT run for a .jj repo"
+        );
     }
 
     // The injected client actually DRIVES the handle's operations (not merely
