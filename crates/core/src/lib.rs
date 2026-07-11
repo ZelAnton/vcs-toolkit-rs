@@ -923,14 +923,18 @@ impl<R: ProcessRunner> Repo<R> {
     ///   propagates as a plain error, not as [`MergeProbe::Conflicts`].
     /// - A failing rollback **propagates as an error** rather than returning a
     ///   result that misdescribes the on-disk state.
-    /// - **Cancellation-safe rollback:** on **both** backends the rollback command
-    ///   itself runs on a fresh cancellation context with its own bounded deadline
-    ///   (git: `merge --abort` via `Git::merge_abort_detached`; jj: `op restore` via
+    /// - **Cancellation-safe rollback:** on **both** backends the *whole* rollback
+    ///   path — the decision of whether to roll back **and** the command that
+    ///   performs it — runs on a fresh cancellation context with its own bounded
+    ///   deadline (git: `Git::is_merge_in_progress_detached` + `merge --abort` via
+    ///   `Git::merge_abort_detached`; jj: the op-log probe + `op restore` via
     ///   `Jj::rollback_to`), so a `default_cancel_on` token (the `cancellation`
     ///   feature) that fires during the probe no longer cancels the rollback too —
-    ///   the trial merge is still undone rather than left staged, closing the gap
-    ///   where a cancelled probe abandoned it on git. (A rollback that fails for
-    ///   another reason still propagates per the bullet above.)
+    ///   not even by cancelling the "is a trial merge still staged?" check before
+    ///   the abort is reached. The trial merge is still undone rather than left
+    ///   staged, closing the gap where a cancelled probe abandoned it on git. (A
+    ///   rollback that fails for another reason still propagates per the bullet
+    ///   above.)
     pub async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
         match &self.backend {
             Backend::Git(g) => git_backend::try_merge(g, &self.cwd, source).await,
@@ -2697,33 +2701,41 @@ mod tests {
     }
 
     // A thin shim over the standard `RecordingRunner`/`ScriptedRunner` that fires a
-    // cancellation token the instant the cleanup `merge --abort` is dispatched —
-    // modelling the client's `default_cancel_on` firing exactly as `try_merge`
-    // reaches its rollback. Needed because a plain scripted reply cannot express
-    // this: an already-fired token short-circuits the *first* probe command (so
-    // cleanup is never reached), and the harness has no mid-sequence hook.
-    struct CancelAtAbort<R: ProcessRunner> {
+    // cancellation token the instant a command whose argv satisfies `trip` is
+    // dispatched — modelling the client's `default_cancel_on` firing at a *precise*
+    // point during `try_merge`. Needed because a plain scripted reply cannot express
+    // this: an already-fired token short-circuits the *first* command (so the later
+    // stages are never reached), and the harness has no mid-sequence hook. Choosing
+    // `trip` pins the exact moment — at the rollback abort, or earlier, at the
+    // in-progress probe.
+    struct CancelWhen<R: ProcessRunner> {
         inner: R,
         token: CancellationToken,
+        trip: fn(&processkit::Command) -> bool,
     }
 
     #[async_trait::async_trait]
-    impl<R: ProcessRunner> ProcessRunner for CancelAtAbort<R> {
+    impl<R: ProcessRunner> ProcessRunner for CancelWhen<R> {
         async fn output_string(
             &self,
             command: &processkit::Command,
         ) -> processkit::Result<processkit::ProcessResult<String>> {
-            // Fire the client token exactly as the rollback abort is issued: the
-            // detached cleanup must survive it; a token-inheriting one would not.
-            if command
-                .arguments()
-                .iter()
-                .any(|a| a.to_str() == Some("--abort"))
-            {
+            // Fire the client token as `trip` selects. A detached cleanup command
+            // (fresh token) survives it; a token-inheriting one is cancelled. Firing
+            // during command N's dispatch leaves the token fired for command N+1,
+            // which `ScriptedRunner` short-circuits when the token is inherited.
+            if (self.trip)(command) {
                 self.token.cancel();
             }
             self.inner.output_string(command).await
         }
+    }
+
+    fn arg_present(command: &processkit::Command, needle: &str) -> bool {
+        command
+            .arguments()
+            .iter()
+            .any(|a| a.to_str() == Some(needle))
     }
 
     // The facade `try_merge`'s rollback must survive the client's cancellation
@@ -2738,14 +2750,19 @@ mod tests {
         let tmp = TempDir::new("probe-cancel");
         std::fs::write(tmp.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
         let token = CancellationToken::new();
-        let runner = CancelAtAbort {
+        let runner = CancelWhen {
             inner: RecordingRunner::new(
                 ScriptedRunner::new()
                     .on(["git", "merge", "--abort"], Reply::ok(""))
                     .on(["git", "merge"], Reply::ok(""))
-                    .on(["git", "rev-parse"], Reply::ok(tmp.path().to_str().unwrap())),
+                    .on(
+                        ["git", "rev-parse"],
+                        Reply::ok(tmp.path().to_str().unwrap()),
+                    ),
             ),
             token: token.clone(),
+            // Fire exactly as the rollback abort is issued.
+            trip: |c| arg_present(c, "--abort"),
         };
         let repo = Repo::from_git(
             "/repo",
@@ -2764,6 +2781,56 @@ mod tests {
                 .iter()
                 .any(|c| c.args_str().contains(&"--abort".to_string())),
             "the cleanup abort must have run: {:?}",
+            runner.inner.calls()
+        );
+    }
+
+    // The gap R-01 caught: the cleanup DECISION — `is_merge_in_progress`, whose
+    // `rev-parse --git-dir` used to inherit the client token — must also survive a
+    // cancellation that fires DURING the probe, before the abort is ever reached.
+    // Here the token fires as that `rev-parse --git-dir` is dispatched (the Ok
+    // branch: the `--no-ff` probe merge staged a real merge, then the deadline
+    // hit). With the fix the probe runs detached (fresh token) → sees MERGE_HEAD →
+    // the detached abort runs → `Clean`. On the pre-fix code the probe's `?`
+    // propagated `Cancelled` and the abort was skipped, abandoning the staged trial
+    // merge — so this test fails there. Firing at the probe, not at `--abort`, is
+    // exactly what the older `..._fired_at_rollback` test could not cover.
+    #[tokio::test]
+    async fn git_try_merge_cleanup_survives_cancellation_fired_at_probe() {
+        use processkit::testing::RecordingRunner;
+        let tmp = TempDir::new("probe-cancel-at-probe");
+        std::fs::write(tmp.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let token = CancellationToken::new();
+        let runner = CancelWhen {
+            inner: RecordingRunner::new(
+                ScriptedRunner::new()
+                    .on(["git", "merge", "--abort"], Reply::ok(""))
+                    .on(["git", "merge"], Reply::ok(""))
+                    .on(
+                        ["git", "rev-parse"],
+                        Reply::ok(tmp.path().to_str().unwrap()),
+                    ),
+            ),
+            token: token.clone(),
+            // Fire as the in-progress probe's `rev-parse --git-dir` is dispatched —
+            // strictly BEFORE the abort, unlike `..._fired_at_rollback`.
+            trip: |c| arg_present(c, "--git-dir"),
+        };
+        let repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(&runner).default_cancel_on(token),
+        );
+        // Decision + abort both run on fresh tokens, so the probe still reports the
+        // staged merge and the abort still undoes it despite the fired client token.
+        assert_eq!(repo.try_merge("other").await.unwrap(), MergeProbe::Clean);
+        assert!(
+            runner
+                .inner
+                .calls()
+                .iter()
+                .any(|c| c.args_str().contains(&"--abort".to_string())),
+            "cleanup abort must run even when cancellation fires at the probe: {:?}",
             runner.inner.calls()
         );
     }

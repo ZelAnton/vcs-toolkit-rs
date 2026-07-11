@@ -17,15 +17,19 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ### Fixed
 - `Repo::try_merge`'s git-side rollback is now **cancellation-safe**, matching the
-  jj path: the cleanup `merge --abort` runs on a fresh cancellation context with its
-  own bounded deadline (via the new `Git::merge_abort_detached`), so a
-  `default_cancel_on` token that fires during the probe merge no longer cancels the
-  rollback too and leaves the trial merge staged in the working tree. Previously the
-  git rollback inherited the (possibly already-fired) client token, so a cancelled
-  probe abandoned its half-staged merge — the defect the jj path had already closed
-  (T-036/T-051). The `try_merge` doc's cancellation caveat is rewritten accordingly:
-  the rollback now survives a cancelled probe on **both** backends, not just jj.
-  (T-059.)
+  jj path: the *whole* cleanup path — both the "is a trial merge still staged?"
+  decision (via the new `Git::is_merge_in_progress_detached`) and the `merge --abort`
+  that undoes it (via `Git::merge_abort_detached`) — runs on a fresh cancellation
+  context with its own bounded deadline, so a `default_cancel_on` token that fires
+  during the probe merge no longer cancels the rollback and leaves the trial merge
+  staged in the working tree. Previously only the abort command was detached while
+  the gating `is_merge_in_progress` probe still inherited the (possibly
+  already-fired) client token, so a cancellation that landed on the probe skipped
+  the abort and abandoned the half-staged merge — the defect the jj path had already
+  closed (T-036/T-051), and which the earlier fix left open on the `try_merge`
+  Ok/Err branches. The `try_merge` doc's cancellation caveat is rewritten
+  accordingly: the entire rollback (decision plus command) now survives a cancelled
+  probe on **both** backends, not just jj. (T-059.)
 
 ## [0.8.0] - 2026-07-10
 

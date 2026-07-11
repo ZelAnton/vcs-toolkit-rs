@@ -316,17 +316,22 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
             vcs_git::MergeNoCommit::branch(RevSpec::new(source)?).no_ff(),
         )
         .await;
-    // Every cleanup abort below goes through `merge_abort_detached`, NOT the
-    // token-inheriting `merge_abort`: it runs the rollback on a fresh cancellation
-    // context with its own bounded deadline, so a cancelled or timed-out probe
-    // merge cannot also cancel the abort that undoes it and leave the trial merge
-    // staged. This matches the jj path's shared cancellation-safe rollback
-    // (`Jj::rollback_to`) — one rollback protocol across both backends.
+    // The ENTIRE cleanup path below is detached from the client's cancellation
+    // token — both the "is a trial merge still staged?" decision
+    // (`is_merge_in_progress_detached`) and the `merge --abort` that undoes it
+    // (`merge_abort_detached`) run on a fresh cancellation context with their own
+    // bounded deadline, NOT the token-inheriting `is_merge_in_progress` /
+    // `merge_abort`. So a cancelled or timed-out probe merge can neither
+    // short-circuit the decision — whose `?` would otherwise propagate `Cancelled`
+    // *before* the abort is reached — nor the abort itself, and can never leave the
+    // trial merge staged. This matches the jj path, whose op-log probe AND
+    // `op restore` both run on the detached rollback context (`Jj::rollback_to`) —
+    // one rollback protocol across both backends.
     match merged {
         Ok(()) => {
             // "Already up to date." exits 0 *without* MERGE_HEAD — `merge
             // --abort` would then fail, so only abort an actually-started merge.
-            if git.is_merge_in_progress(dir).await? {
+            if git.is_merge_in_progress_detached(dir).await? {
                 git.merge_abort_detached(dir).await?;
             }
             Ok(MergeProbe::Clean)
@@ -345,8 +350,10 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
         }
         Err(err) => {
             // E.g. a dirty-tree refusal or an unknown ref — the merge usually
-            // never started, but clean up if it did.
-            if git.is_merge_in_progress(dir).await? {
+            // never started, but clean up if it did. The probe is detached too, so
+            // a merge cancelled/timed-out mid-flight (which staged a partial tree)
+            // is still cleaned up rather than skipped by a cancelled probe.
+            if git.is_merge_in_progress_detached(dir).await? {
                 git.merge_abort_detached(dir).await?;
             }
             Err(err.into())
