@@ -41,7 +41,8 @@ path = "src/main.rs"
 # Drive the server with an in-process MCP client for hermetic wiring tests
 # (`client` + an in-memory duplex transport for the round-trip).
 rmcp = { version = "2", features = ["server", "client", "macros", "transport-io"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
+# `time` backs the write-lock regression tests' `tokio::time::timeout`.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time"] }
 # The `ScriptedRunner` test seam to back a `Repo` with canned output (hermetic
 # tool tests — no real git needed).
 processkit.workspace = true

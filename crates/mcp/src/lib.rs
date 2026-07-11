@@ -372,8 +372,14 @@ pub struct VcsMcpServer {
     /// then-rollback racing a `repo_commit`) could interleave and lose one's work,
     /// or collide on the repo lock. Forge tools are *predominantly* remote calls to
     /// a server that serializes on its side (and MCP clients typically issue tool
-    /// calls sequentially), so they aren't gated by this — this closes the local
-    /// repo-state race, the one R1 targets.
+    /// calls sequentially), so most of them aren't gated by this (`forge_pr_create`,
+    /// `forge_issue_create`, `forge_pr_close`, `forge_pr_mark_ready`,
+    /// `forge_pr_comment`, `forge_pr_edit`). The exceptions are `forge_pr_checkout`
+    /// (fetches and switches the local checkout) and `forge_pr_merge` (which can
+    /// delete the local branch and switch the checkout via `delete_branch`) —
+    /// these *locally* mutate the working copy just like `repo_*` tools do, so
+    /// they take this same lock too, closing the local repo-state race, the one
+    /// R1 targets.
     write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -873,7 +879,13 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrMergeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("forge_pr_merge")?;
+        // With `delete_branch`, `gh pr merge --delete-branch` deletes the local
+        // branch and switches the checkout to the default branch — a local
+        // working-copy mutation that races `repo_*` mutations the same way they
+        // race each other. Take the lock unconditionally (rather than only when
+        // `delete_branch` is set) to keep this simple and avoid any race in a
+        // conditional-lock branch (see the `write_lock` field comment).
+        let _write = self.begin_repo_write("forge_pr_merge").await?;
         let mut merge = vcs_forge::PrMerge::new(p.strategy.into());
         if p.auto {
             merge = merge.auto();
@@ -986,7 +998,11 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrNumberParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("forge_pr_checkout")?;
+        // Unlike most forge tools, this one locally mutates the working copy (the
+        // head/source branch is fetched and switched to), so it races `repo_*`
+        // mutations the same way they race each other — gate it through the same
+        // per-repo write lock (see the `write_lock` field comment).
+        let _write = self.begin_repo_write("forge_pr_checkout").await?;
         self.forge()?
             .pr_checkout(p.number)
             .await
@@ -1645,6 +1661,93 @@ mod tests {
             .await
             .expect_err("auto is unsupported on gitea");
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
+    // T-058: `forge_pr_checkout` and `forge_pr_merge` locally mutate the working
+    // copy (checkout/switch), so — unlike the other forge tools — they must go
+    // through `begin_repo_write` and actually hold the same per-repo `write_lock`
+    // as `repo_*` mutations, not just call the gate-only `require_write`. Prove it
+    // by holding the lock ourselves first: the tool call must then block (time out)
+    // rather than run past the lock acquisition, and must succeed once the lock is
+    // released.
+    #[tokio::test]
+    async fn forge_pr_checkout_and_forge_pr_merge_hold_the_repo_write_lock() {
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new()
+                .on(["gh", "pr", "checkout"], Reply::ok(""))
+                .on(["gh", "pr", "merge"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+        // Hold the write lock ourselves (simulating a concurrent repo_* mutation
+        // in flight), then attempt both forge tools — both must block on the same
+        // lock rather than run through immediately.
+        let outer_guard = server
+            .write_lock
+            .clone()
+            .try_lock_owned()
+            .expect("uncontended at test start");
+
+        let checkout_timed_out = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            server.forge_pr_checkout(Parameters(PrNumberParams { number: 7 })),
+        )
+        .await
+        .is_err();
+        assert!(
+            checkout_timed_out,
+            "forge_pr_checkout must block while the repo write lock is held elsewhere"
+        );
+
+        let merge_timed_out = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            server.forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Merge,
+                auto: false,
+                delete_branch: false,
+            })),
+        )
+        .await
+        .is_err();
+        assert!(
+            merge_timed_out,
+            "forge_pr_merge must block while the repo write lock is held elsewhere"
+        );
+
+        // Release the lock: both calls now go through and route to the wrapper.
+        drop(outer_guard);
+
+        let out = server
+            .forge_pr_checkout(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect("checkout ok once the lock is free");
+        assert!(
+            result_json(&out).contains("checked_out"),
+            "{}",
+            result_json(&out)
+        );
+
+        let out = server
+            .forge_pr_merge(Parameters(PrMergeParams {
+                number: 7,
+                strategy: MergeStrategyArg::Merge,
+                auto: false,
+                delete_branch: false,
+            }))
+            .await
+            .expect("merge ok once the lock is free");
+        assert!(
+            result_json(&out).contains("merged"),
+            "{}",
+            result_json(&out)
+        );
     }
 
     // T-013: on GitHub a `body` that begins with `-` is a legitimate Markdown
