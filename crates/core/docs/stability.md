@@ -31,18 +31,18 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 
 | Crate | Version | Tier |
 |---|---|---|
-| `vcs-diff` | 0.5.2 | settling |
-| `vcs-cli-support` | 0.5.2 | settling |
-| `vcs-testkit` | 0.5.2 | stable-ish (dev-only) |
-| `vcs-git` | 0.9.2 | maturing |
-| `vcs-jj` | 0.9.2 | maturing |
-| `vcs-github` | 0.9.2 | maturing |
-| `vcs-core` | 0.7.2 | evolving |
-| `vcs-gitlab` | 0.5.2 | evolving |
-| `vcs-gitea` | 0.5.2 | evolving |
-| `vcs-forge` | 0.5.2 | evolving |
-| `vcs-watch` | 0.5.2 | evolving |
-| `vcs-mcp` | 0.5.2 | evolving |
+| `vcs-diff` | 0.6.0 | settling |
+| `vcs-cli-support` | 0.6.0 | settling |
+| `vcs-testkit` | 0.6.0 | stable-ish (dev-only) |
+| `vcs-git` | 0.10.0 | maturing |
+| `vcs-jj` | 0.10.0 | maturing |
+| `vcs-github` | 0.10.0 | maturing |
+| `vcs-core` | 0.8.0 | evolving |
+| `vcs-gitlab` | 0.6.0 | evolving |
+| `vcs-gitea` | 0.6.0 | evolving |
+| `vcs-forge` | 0.6.0 | evolving |
+| `vcs-watch` | 0.6.0 | evolving |
+| `vcs-mcp` | 0.6.0 | evolving |
 
 ### Coordinated-release dependencies
 
