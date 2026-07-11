@@ -1208,9 +1208,9 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Routed through [`output_bytes`](Self::output_bytes) (raw stdout), not
     /// `output_string`, so the exact bytes — trailing newline included — survive:
     /// `output_string` rebuilds stdout from decoded lines and would drop that final
-    /// `\n`. The raw bytes are then decoded losslessly with
-    /// [`String::from_utf8_lossy`], the same raw-stdout-to-`String` convention used
-    /// elsewhere in this workspace (e.g. `vcs-jj`).
+    /// `\n`. The raw bytes are then decoded with
+    /// [`String::from_utf8_lossy`], the same lossy raw-stdout-to-`String` convention
+    /// used elsewhere in this workspace (e.g. `vcs-jj`).
     ///
     /// **Output budget:** this client's default [`OutputBudget`]
     /// ([`default_output_budget`](Self::default_output_budget)) is applied as a
