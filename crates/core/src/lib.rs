@@ -923,11 +923,14 @@ impl<R: ProcessRunner> Repo<R> {
     ///   propagates as a plain error, not as [`MergeProbe::Conflicts`].
     /// - A failing rollback **propagates as an error** rather than returning a
     ///   result that misdescribes the on-disk state.
-    /// - **Cancellation caveat:** the rollback runs on the same client, so if the
-    ///   client carries a `default_cancel_on` token (the `cancellation` feature)
-    ///   that fires during the probe, the rollback command is cancelled too and the
-    ///   probe change may be left behind (`Error::Cancelled` surfaces). Re-probe and
-    ///   reset with an un-cancelled client if you need a clean tree.
+    /// - **Cancellation-safe rollback:** on **both** backends the rollback command
+    ///   itself runs on a fresh cancellation context with its own bounded deadline
+    ///   (git: `merge --abort` via `Git::merge_abort_detached`; jj: `op restore` via
+    ///   `Jj::rollback_to`), so a `default_cancel_on` token (the `cancellation`
+    ///   feature) that fires during the probe no longer cancels the rollback too —
+    ///   the trial merge is still undone rather than left staged, closing the gap
+    ///   where a cancelled probe abandoned it on git. (A rollback that fails for
+    ///   another reason still propagates per the bullet above.)
     pub async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
         match &self.backend {
             Backend::Git(g) => git_backend::try_merge(g, &self.cwd, source).await,
@@ -2691,6 +2694,78 @@ mod tests {
                 ),
         );
         assert!(repo.try_merge("other").await.is_err());
+    }
+
+    // A thin shim over the standard `RecordingRunner`/`ScriptedRunner` that fires a
+    // cancellation token the instant the cleanup `merge --abort` is dispatched —
+    // modelling the client's `default_cancel_on` firing exactly as `try_merge`
+    // reaches its rollback. Needed because a plain scripted reply cannot express
+    // this: an already-fired token short-circuits the *first* probe command (so
+    // cleanup is never reached), and the harness has no mid-sequence hook.
+    struct CancelAtAbort<R: ProcessRunner> {
+        inner: R,
+        token: CancellationToken,
+    }
+
+    #[async_trait::async_trait]
+    impl<R: ProcessRunner> ProcessRunner for CancelAtAbort<R> {
+        async fn output_string(
+            &self,
+            command: &processkit::Command,
+        ) -> processkit::Result<processkit::ProcessResult<String>> {
+            // Fire the client token exactly as the rollback abort is issued: the
+            // detached cleanup must survive it; a token-inheriting one would not.
+            if command
+                .arguments()
+                .iter()
+                .any(|a| a.to_str() == Some("--abort"))
+            {
+                self.token.cancel();
+            }
+            self.inner.output_string(command).await
+        }
+    }
+
+    // The facade `try_merge`'s rollback must survive the client's cancellation
+    // firing as it reaches cleanup — the git analogue of jj's unit test
+    // `rollback_to_survives_fired_cancellation`. With the fix, the cleanup
+    // `merge --abort` runs on a FRESH cancel token and completes (→ `Clean`); the
+    // old token-inheriting abort would be cancelled and surface `Error::Cancelled`,
+    // abandoning the staged trial merge — so this test fails on the pre-fix code.
+    #[tokio::test]
+    async fn git_try_merge_cleanup_survives_cancellation_fired_at_rollback() {
+        use processkit::testing::RecordingRunner;
+        let tmp = TempDir::new("probe-cancel");
+        std::fs::write(tmp.path().join("MERGE_HEAD"), "deadbeef\n").unwrap();
+        let token = CancellationToken::new();
+        let runner = CancelAtAbort {
+            inner: RecordingRunner::new(
+                ScriptedRunner::new()
+                    .on(["git", "merge", "--abort"], Reply::ok(""))
+                    .on(["git", "merge"], Reply::ok(""))
+                    .on(["git", "rev-parse"], Reply::ok(tmp.path().to_str().unwrap())),
+            ),
+            token: token.clone(),
+        };
+        let repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(&runner).default_cancel_on(token),
+        );
+        // The probe merge is clean and MERGE_HEAD is present, so `try_merge` reaches
+        // the cleanup abort — which runs on a fresh cancel token and completes
+        // despite the client cancellation the shim fires at that exact moment.
+        assert_eq!(repo.try_merge("other").await.unwrap(), MergeProbe::Clean);
+        // ...and the detached abort really was issued, not skipped.
+        assert!(
+            runner
+                .inner
+                .calls()
+                .iter()
+                .any(|c| c.args_str().contains(&"--abort".to_string())),
+            "the cleanup abort must have run: {:?}",
+            runner.inner.calls()
+        );
     }
 
     // jj try_merge: op head captured first, probe runs, op restore always runs.

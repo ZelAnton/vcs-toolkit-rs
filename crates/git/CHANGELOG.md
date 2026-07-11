@@ -10,7 +10,14 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+
+- feat: add `Git::merge_abort_detached` — `merge --abort` run as a rollback
+  **cleanup** on a fresh cancellation token (not the client's `default_cancel_on`)
+  and under its own bounded deadline, mirroring jj's `Jj::rollback_to`. A cancelled
+  or timed-out probe merge can then still be undone rather than left staged, because
+  the cleanup no longer inherits the fired token. Same `merge --abort` argv as
+  `GitApi::merge_abort`; used by `vcs-core`'s `Repo::try_merge` error-branch
+  rollback. (T-059.)
 
 ### Changed
 -

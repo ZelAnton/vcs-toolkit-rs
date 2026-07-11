@@ -2345,9 +2345,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn merge_abort(&self, dir: &Path) -> Result<()> {
-        self.core
-            .run_unit(c_locale(self.core.command_in(dir, ["merge", "--abort"])))
-            .await
+        self.core.run_unit(self.merge_abort_command(dir)).await
     }
 
     async fn merge_continue(&self, dir: &Path) -> Result<()> {
@@ -2761,6 +2759,40 @@ impl<R: ProcessRunner> Git<R> {
         }
         command.arg("-z").arg("--format=%H")
     }
+
+    /// Build the `merge --abort` command with the C locale forced (a failed
+    /// abort's output feeds the same classifiers as the merge it undoes). Shared
+    /// by the token-inheriting [`merge_abort`](GitApi::merge_abort) and the
+    /// detached [`merge_abort_detached`](Self::merge_abort_detached) so the two
+    /// argv/locale forms cannot drift.
+    fn merge_abort_command(&self, dir: &Path) -> Command {
+        c_locale(self.core.command_in(dir, ["merge", "--abort"]))
+    }
+
+    /// Abort an in-progress merge (`merge --abort`) as a **rollback cleanup** that
+    /// deliberately does **not** inherit this client's
+    /// [`default_cancel_on`](Git::default_cancel_on) token and runs under its own
+    /// bounded `MERGE_ABORT_CLEANUP_TIMEOUT` deadline — mirroring jj's
+    /// `Jj::rollback_to`.
+    ///
+    /// The trait [`merge_abort`](GitApi::merge_abort) inherits the client's cancel
+    /// token, so once that token has already fired — a cancelled or timed-out probe
+    /// merge — the abort that should undo the half-staged trial merge would itself
+    /// be cancelled, leaving the merge in the working tree. Overriding the token
+    /// with a fresh, never-fired [`CancellationToken`] (and giving the cleanup a
+    /// full fresh timeout budget) lets it complete regardless, so a probe's own
+    /// cancellation no longer disables its rollback. Same `merge --abort` argv as
+    /// [`merge_abort`](GitApi::merge_abort); used by the facade `Repo::try_merge`'s
+    /// error-branch cleanup.
+    pub async fn merge_abort_detached(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(
+                self.merge_abort_command(dir)
+                    .cancel_on(CancellationToken::new())
+                    .timeout(MERGE_ABORT_CLEANUP_TIMEOUT),
+            )
+            .await
+    }
 }
 
 // --- Internal helpers --------------------------------------------------------
@@ -2784,6 +2816,13 @@ pub const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
 const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
+
+/// Bounded deadline for the detached rollback abort
+/// ([`Git::merge_abort_detached`]) — the git analogue of jj's `ROLLBACK_TIMEOUT`.
+/// Because that cleanup deliberately runs on a FRESH cancel token (so a cancelled
+/// or timed-out probe merge cannot also cancel it), it needs its own explicit
+/// deadline to stay bounded rather than inheriting one from the main operation.
+const MERGE_ABORT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Point git's editor at a no-op so any command that would open `$EDITOR`
 /// (a rebase reword, the message-confirm on `rebase --continue`) succeeds
@@ -5897,6 +5936,36 @@ mod tests {
                 call.args_str()
             );
         }
+    }
+
+    // `merge_abort_detached` is the rollback-cleanup abort the facade's `try_merge`
+    // uses: it emits the same `merge --abort` as `merge_abort`, but on a FRESH
+    // cancel token, so an already-fired client `default_cancel_on` (a cancelled or
+    // timed-out probe merge) cannot also cancel the cleanup. The bare `merge_abort`
+    // on the same client IS cancelled — proving the fired token is genuinely live
+    // and the detached path deliberately steps around it, not that the token is
+    // inert. The git mirror of jj's `rollback_to_survives_fired_cancellation`.
+    #[tokio::test]
+    async fn merge_abort_detached_survives_fired_cancellation() {
+        use processkit::CancellationToken;
+        let token = CancellationToken::new();
+        token.cancel(); // as a cancelled/deadline-hit probe merge would leave it
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).default_cancel_on(token);
+        let dir = Path::new("/r");
+
+        git.merge_abort_detached(dir)
+            .await
+            .expect("the detached cleanup must run despite the fired client token");
+        assert_eq!(rec.only_call().args_str(), ["merge", "--abort"]);
+
+        // Sanity: the token-inheriting `merge_abort` on the same (fired) client IS
+        // cancelled, so the detached path really did side-step a live token.
+        let bare = git.merge_abort(dir).await;
+        assert!(
+            matches!(bare, Err(Error::Cancelled { .. })),
+            "a bare merge_abort must inherit the fired token: {bare:?}"
+        );
     }
 
     // The `<rev>:<path>` spec requires forward slashes — Windows callers may

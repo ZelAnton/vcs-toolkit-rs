@@ -316,12 +316,18 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
             vcs_git::MergeNoCommit::branch(RevSpec::new(source)?).no_ff(),
         )
         .await;
+    // Every cleanup abort below goes through `merge_abort_detached`, NOT the
+    // token-inheriting `merge_abort`: it runs the rollback on a fresh cancellation
+    // context with its own bounded deadline, so a cancelled or timed-out probe
+    // merge cannot also cancel the abort that undoes it and leave the trial merge
+    // staged. This matches the jj path's shared cancellation-safe rollback
+    // (`Jj::rollback_to`) — one rollback protocol across both backends.
     match merged {
         Ok(()) => {
             // "Already up to date." exits 0 *without* MERGE_HEAD — `merge
             // --abort` would then fail, so only abort an actually-started merge.
             if git.is_merge_in_progress(dir).await? {
-                git.merge_abort(dir).await?;
+                git.merge_abort_detached(dir).await?;
             }
             Ok(MergeProbe::Clean)
         }
@@ -334,14 +340,14 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
             let files = git.conflicted_files(dir).await;
             // A failed abort breaks the guaranteed-rollback contract → propagate
             // rather than return a `Conflicts` that lies about the tree state.
-            git.merge_abort(dir).await?;
+            git.merge_abort_detached(dir).await?;
             Ok(MergeProbe::Conflicts(files?))
         }
         Err(err) => {
             // E.g. a dirty-tree refusal or an unknown ref — the merge usually
             // never started, but clean up if it did.
             if git.is_merge_in_progress(dir).await? {
-                git.merge_abort(dir).await?;
+                git.merge_abort_detached(dir).await?;
             }
             Err(err.into())
         }
