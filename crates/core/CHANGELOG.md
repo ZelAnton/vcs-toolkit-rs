@@ -60,6 +60,13 @@ crates; tag releases as `vcs-core-v<version>`.
   Ok/Err branches. The `try_merge` doc's cancellation caveat is rewritten
   accordingly: the entire rollback (decision plus command) now survives a cancelled
   probe on **both** backends, not just jj. (T-059.)
+- Doc fix: `Repo::local_branches` / `Repo::branch_exists` still described the
+  pre-T-041 jj tombstone behavior — a bookmark deleted locally but still tracked
+  on a remote "lingers" and "can list a name a `delete_branch` just removed" —
+  even though `parse_bookmarks` has filtered that tombstone out since T-041. The
+  docs now say what actually happens: the tombstone is filtered and does not read
+  as an existing branch, while a *conflicted* bookmark (present, no single
+  target) is still reported as existing. (T-066.)
 
 ## [0.8.0] - 2026-07-10
 
