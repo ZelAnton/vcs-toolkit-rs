@@ -1,0 +1,127 @@
+# Scheduled mutation-testing lane (report-only, non-blocking). Coverage
+# (ci.yml's `coverage` job) only proves a line ran during the test suite, not
+# that any assertion would catch it changing behavior — a mutant surviving
+# cargo-mutants is exactly that gap. Running the whole test suite once per
+# candidate mutation is too slow to gate every PR, so this mirrors
+# scheduled-cli-drift.yml's pattern (weekly cron + workflow_dispatch, never
+# wired into ci.yml) and is scoped to the workspace's clean parsers, where a
+# surviving mutant is a genuine assertion gap rather than dead/unreachable-in
+# -CI code:
+#   - crates/diff/src            — the shared git-diff model/parser + `Version`
+#   - crates/git/src/parse.rs    — git output parser
+#   - crates/git/src/conflict.rs — git conflict-marker parser
+#   - crates/jj/src/parse.rs     — jj output parser
+#   - crates/jj/src/conflict.rs  — jj conflict-marker parser
+#   - crates/gitea/src/parse.rs  — tea output parser
+#   - crates/forge/src/{gitea,github,gitlab}_forge.rs — the PR/issue state
+#     mappers (`state_of` / `issue_state_of` / `map_pr` / `map_issue`)
+#
+# Scope is expressed as `-f`/`--file` globs on the `cargo mutants` invocation
+# below (rather than a `mutants.toml` config file) so it stays visible right
+# next to the job that runs it. To run the same scope locally:
+#
+#   cargo mutants -f 'crates/diff/src/*.rs' \
+#     -f crates/git/src/parse.rs -f crates/git/src/conflict.rs \
+#     -f crates/jj/src/parse.rs -f crates/jj/src/conflict.rs \
+#     -f crates/gitea/src/parse.rs \
+#     -f crates/forge/src/gitea_forge.rs \
+#     -f crates/forge/src/github_forge.rs \
+#     -f crates/forge/src/gitlab_forge.rs \
+#     --timeout 60
+name: Scheduled Mutation Testing
+
+on:
+  schedule:
+    # Every Wednesday at 03:41 UTC — an off-the-hour minute, and a different
+    # day/time than scheduled-cli-drift.yml's Monday 04:17 run so the two
+    # long-running scheduled lanes don't compete for the same runner
+    # capacity.
+    - cron: "41 3 * * 3"
+  workflow_dispatch: {}
+
+# Same rationale as scheduled-cli-drift.yml: scheduled runs share one queue
+# slot (at most one running plus one pending), so a stray double-fire of the
+# weekly cron can't spawn overlapping runs. A manual workflow_dispatch run
+# gets its own group instead, so it always executes rather than risking being
+# silently dropped by a scheduled run still queued ahead of it.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('scheduled-mutants-manual-{0}', github.run_id) || 'scheduled-mutants-schedule' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  mutants:
+    name: cargo-mutants (report-only)
+    runs-on: ubuntu-latest
+    # cargo-mutants rebuilds and reruns the test suite once per candidate
+    # mutant; even scoped to the modules above this can run long. Cap the
+    # whole job so a bad run (or enough slow mutants despite the per-mutant
+    # --timeout below) can't burn hours of runner time unnoticed.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: taiki-e/install-action@cargo-mutants
+
+      # Report-only: cargo-mutants exits non-zero whenever a mutant survives,
+      # but that must never fail this job — same posture as ci.yml's
+      # coverage/semver report-only jobs. `continue-on-error: true` here
+      # keeps it advisory; only the summary/artifact steps below (which run
+      # regardless of this step's outcome) surface the result.
+      - name: cargo mutants (scoped to pure parsers + forge state mappers)
+        continue-on-error: true
+        run: |
+          cargo mutants \
+            -f 'crates/diff/src/*.rs' \
+            -f crates/git/src/parse.rs \
+            -f crates/git/src/conflict.rs \
+            -f crates/jj/src/parse.rs \
+            -f crates/jj/src/conflict.rs \
+            -f crates/gitea/src/parse.rs \
+            -f crates/forge/src/gitea_forge.rs \
+            -f crates/forge/src/github_forge.rs \
+            -f crates/forge/src/gitlab_forge.rs \
+            --timeout 60 \
+            --output mutants.out
+
+      - name: Add mutants summary to job summary
+        if: always()
+        run: |
+          {
+            echo "### Mutation testing summary (report-only)"
+            echo '```'
+            for f in caught missed timeout unviable; do
+              count=0
+              if [ -f "mutants.out/$f.txt" ]; then
+                count="$(grep -c . "mutants.out/$f.txt" || true)"
+              fi
+              echo "$f: ${count:-0}"
+            done
+            echo '```'
+            if [ -s mutants.out/missed.txt ]; then
+              echo
+              echo "<details><summary>Surviving mutants</summary>"
+              echo
+              echo '```'
+              cat mutants.out/missed.txt
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-report
+          path: mutants.out
+          if-no-files-found: warn
