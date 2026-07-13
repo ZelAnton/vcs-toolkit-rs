@@ -2322,16 +2322,10 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
 
         let server = git_server(
-            ScriptedRunner::new().on(
-                ["git", "rev-parse"],
-                Reply::ok("/repo/.git\n"),
-            ),
+            ScriptedRunner::new().on(["git", "rev-parse"], Reply::ok("/repo/.git\n")),
             WriteGate::All,
         );
-        let out = server
-            .repo_abort_in_progress()
-            .await
-            .expect("abort ok");
+        let out = server.repo_abort_in_progress().await.expect("abort ok");
         assert!(result_json(&out).contains("operation_state"));
     }
 
