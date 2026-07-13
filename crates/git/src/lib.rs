@@ -1058,6 +1058,12 @@ pub trait GitApi: Send + Sync {
     async fn rebase_abort(&self, dir: &Path) -> Result<()>;
     /// Abort an in-progress `git am` (`am --abort`), restoring the pre-`am` HEAD.
     async fn am_abort(&self, dir: &Path) -> Result<()>;
+    /// Continue a `git am` after resolving conflicts (`am --continue`); the editor
+    /// is suppressed (`GIT_EDITOR=true`) so the patch's message-confirm never hangs
+    /// a headless caller. On a multi-patch mailbox it can stop again on the next
+    /// patch's conflict (exit non-zero) — a conflict, not a hard error, like the
+    /// other sequencer `--continue`s.
+    async fn am_continue(&self, dir: &Path) -> Result<()>;
     /// Continue a rebase after resolving conflicts (`rebase --continue`); the
     /// editor is suppressed (`GIT_EDITOR=true`) so the message-confirm never hangs.
     async fn rebase_continue(&self, dir: &Path) -> Result<()>;
@@ -2395,6 +2401,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn am_continue(&self, dir: &Path) -> Result<()> {
+        // `am --continue` re-applies the resolved patch and commits it; a patch's
+        // message-confirm could open the editor — force a no-op editor so a headless
+        // caller can't hang. C locale: a re-conflict's output feeds `is_merge_conflict`.
+        self.core
+            .run_unit(no_editor(c_locale(
+                self.core.command_in(dir, ["am", "--continue"]),
+            )))
+            .await
+    }
+
     async fn rebase_continue(&self, dir: &Path) -> Result<()> {
         self.core
             .run_unit(no_editor(c_locale(
@@ -3415,6 +3432,7 @@ vcs_cli_support::at_forwarders! {
         fn rebase(onto: &RevSpec) -> Result<()>;
         fn rebase_abort() -> Result<()>;
         fn am_abort() -> Result<()>;
+        fn am_continue() -> Result<()>;
         fn rebase_continue() -> Result<()>;
         fn stash_push(spec: StashPush) -> Result<()>;
         fn stash_pop() -> Result<()>;
@@ -6341,6 +6359,33 @@ mod tests {
         };
         assert!(has_editor(1), "cherry-pick --continue suppresses editor");
         assert!(has_editor(3), "revert --continue suppresses editor");
+    }
+
+    // T-065: `git am` gets both drivers — `am --abort` and `am --continue`. The
+    // continue re-applies the resolved patch and may prompt to confirm the message,
+    // so it suppresses the editor like the other sequencer `--continue`s; the abort
+    // does not prompt, so it does not.
+    #[tokio::test]
+    async fn am_abort_and_continue_commands() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let d = Path::new("/r");
+        git.am_abort(d).await.unwrap();
+        git.am_continue(d).await.unwrap();
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["am", "--abort"]);
+        assert_eq!(calls[1].args_str(), ["am", "--continue"]);
+        let has_editor = |idx: usize| {
+            calls[idx]
+                .envs
+                .iter()
+                .any(|(k, _)| k.to_str() == Some("GIT_EDITOR"))
+        };
+        assert!(
+            !has_editor(0),
+            "am --abort does not prompt, no editor override"
+        );
+        assert!(has_editor(1), "am --continue suppresses editor");
     }
 
     // harden() scrubs GIT_EDITOR/GIT_SEQUENCE_EDITOR from the inherited

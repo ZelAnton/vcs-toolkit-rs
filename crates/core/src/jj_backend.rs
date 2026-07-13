@@ -567,16 +567,23 @@ pub(crate) async fn create_worktree<R: ProcessRunner>(
     // the rollback below must not `remove_dir_all` a directory the caller already
     // had (that would be silent data loss on an unrelated failure).
     let preexisting = abs_path.exists();
+    // Validate every argument the post-`workspace add` step will need — and build
+    // the revset `workspace add` itself doesn't require — *before* the mutation
+    // below. `workspace add -r <base>` puts a fresh empty change on the new
+    // workspace's `@`; `<ws_name>@` resolves to it regardless of the cwd, so the
+    // revset is computable purely from `ws_name` without touching the repo.
+    // Doing this first means a rejected `branch` (or revset) returns via the `?`s
+    // below without ever calling `workspace_add`, so no half-made worktree is
+    // created that would need a rollback. Once `workspace_add` has run, every
+    // later failure path must go through `rollback_failed_create` instead of an
+    // early `?`, or it would leak the workspace/directory it already created.
+    let bookmark_name = BookmarkName::new(branch)?;
+    let anchor = rev(&format!("{ws_name}@"))?;
     jj.workspace_add(dir, WorkspaceAdd::new(ws_name.clone(), rev(base)?, path))
         .await?;
-    // `workspace add -r <base>` puts a fresh empty change on the new workspace's
-    // `@`; `<ws_name>@` resolves to it regardless of the cwd. Anchor the bookmark
-    // there so the worktree carries the requested branch.
-    let revset = format!("{ws_name}@");
-    if let Err(e) = jj
-        .bookmark_create(dir, &BookmarkName::new(branch)?, &rev(&revset)?)
-        .await
-    {
+    // Anchor the bookmark on the fresh workspace's `@` so the worktree carries the
+    // requested branch.
+    if let Err(e) = jj.bookmark_create(dir, &bookmark_name, &anchor).await {
         // The two steps aren't atomic: `workspace add` already created the workspace
         // and (unless it pre-existed) its on-disk dir, but the bookmark didn't land.
         // Roll back the half-made worktree — but report any cleanup residue rather
@@ -895,6 +902,48 @@ mod tests {
         assert!(
             !wt.exists(),
             "the worktree dir that `workspace add` created must be cleaned up on rollback"
+        );
+    }
+
+    // T-064: an invalid `branch` must be rejected *before* `workspace add` ever
+    // runs, so no half-made worktree is left for `rollback_failed_create` to clean
+    // up in the first place. A whitespace-only branch is the reproducer:
+    // `workspace_name_for("  ")` substitutes both spaces and yields the valid
+    // workspace name `__`, so `jj workspace add` would happily succeed — but
+    // `BookmarkName::new("  ")` rejects the value (empty after trim). Scripted
+    // with only a `fallback` reply (no rule for `workspace add`/`bookmark
+    // create`), wrapped in a `RecordingRunner` so the test asserts on *zero calls*
+    // reaching the process seam at all, not just that `workspace add`'s specific
+    // rule went unmatched.
+    #[tokio::test]
+    async fn create_worktree_rejects_invalid_branch_before_workspace_add() {
+        use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("t064-validate-before-mutate");
+        let repo = tmp.path();
+        let wt = repo.join("wt");
+
+        let recorder = RecordingRunner::new(
+            ScriptedRunner::new().fallback(Reply::fail(1, "no rule should ever match")),
+        );
+        let jj = Jj::with_runner(&recorder);
+
+        let result = create_worktree(&jj, repo, &wt, "   ", "@").await;
+
+        assert!(result.is_err(), "a whitespace-only branch must be rejected");
+        assert!(
+            result.unwrap_err().is_invalid_input(),
+            "the rejection must classify as invalid input"
+        );
+        assert!(
+            !wt.exists(),
+            "no workspace directory must be created for a rejected branch"
+        );
+        assert!(
+            recorder.calls().is_empty(),
+            "no process call must run before the branch is validated"
         );
     }
 
