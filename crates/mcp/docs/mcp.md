@@ -56,6 +56,7 @@ Install it with `cargo install vcs-mcp` (or point `command` at a built binary).
 ```text
 vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
+        [--max-output-bytes <n>]
 ```
 
 | Flag | Effect |
@@ -65,6 +66,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--allow-write` | Enable **all** mutating tools. Off by default — read tools only. |
 | `--allow-tools <name,…>` | Enable **only the named** mutating tools (comma-separated; repeatable — occurrences accumulate). Tool names are the method names from the catalogue below (the canonical set is `vcs_mcp::WRITE_TOOLS`); an unknown/misspelled name is **rejected up front** with an error listing the valid write tools, rather than being silently inert. Read tools are unaffected. `--allow-write` wins when both are given. |
 | `--timeout <seconds>` | Per-command deadline so a stalled fetch/forge call can't hang a request (default: 120; `--timeout 0` disables it). |
+| `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `forge_pr_diff`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` rather than a truncated result. |
 | `-h`, `--help` | Print usage and exit. |
 
 ## Tool catalogue
@@ -181,11 +183,16 @@ The `vcs-mcp` binary applies, in order:
    `repo_commit`) can't interleave and lose one's work. Read tools are **not**
    serialized, so a read can still observe transient mid-mutation state; the `forge_*`
    tools are remote calls and aren't behind this lock.
+7. **A content-output budget.** `repo_show_file` and `forge_pr_diff` run under the
+   `--max-output-bytes` ceiling (default 10 MiB), so a giant blob or PR diff can't
+   be buffered whole into the server's (and then the JSON response's) memory —
+   exceeding it returns `OutputTooLarge`, never a silently truncated result.
 
-> Note the hardening and timeout are how the **binary** constructs the `Repo`/`Forge`.
-> A library embedder that builds a `VcsMcpServer` from `Repo::discover(".")` gets a
-> plain, un-hardened client with no default timeout — harden and time-bound the
-> client yourself (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d))`)
+> Note the hardening, timeout, and output budget are how the **binary** constructs
+> the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from
+> `Repo::discover(".")` gets a plain, un-hardened client with no default timeout or
+> output budget — harden and bound the client yourself
+> (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d).default_output_budget(b))`)
 > if you serve untrusted repositories.
 
 ## Embedding the server
