@@ -391,15 +391,21 @@ pub(crate) async fn continue_in_progress<R: ProcessRunner>(
     if !git.conflicted_files(dir).await?.is_empty() {
         return Ok(OperationState::Conflict);
     }
-    // Merge finishes with a plain commit; the sequencer states (rebase, cherry-pick,
-    // revert) each have a `--continue` that can stop AGAIN on the next commit's
-    // conflict (exit non-zero) — that's the `Conflict` outcome, not an error. Bisect
-    // has no continue step, so it is refused **explicitly** rather than pretending to
-    // succeed while still mid-bisect. `am --continue` isn't wired here (unchanged).
+    // Merge finishes with a plain commit; the sequencer states (rebase, am,
+    // cherry-pick, revert) each have a `--continue` that can stop AGAIN on the next
+    // patch/commit's conflict (exit non-zero) — that's the `Conflict` outcome, not an
+    // error. `git am --continue` is a real step (`am_continue`), so an interrupted am
+    // is driven forward here just like a rebase — no longer the silent no-op it used
+    // to be. Bisect alone has no continue step, so it is refused **explicitly** rather
+    // than pretending to succeed while still mid-bisect.
     match in_progress_state(git, dir).await? {
         OperationState::Merge => git.merge_continue(dir).await?,
-        state @ (OperationState::Rebase | OperationState::CherryPick | OperationState::Revert) => {
+        state @ (OperationState::Rebase
+        | OperationState::ApplyMailbox
+        | OperationState::CherryPick
+        | OperationState::Revert) => {
             let continued = match state {
+                OperationState::ApplyMailbox => git.am_continue(dir).await,
                 OperationState::CherryPick => git.cherry_pick_continue(dir).await,
                 OperationState::Revert => git.revert_continue(dir).await,
                 _ => git.rebase_continue(dir).await,
@@ -418,7 +424,7 @@ pub(crate) async fn continue_in_progress<R: ProcessRunner>(
                     .to_string(),
             ));
         }
-        OperationState::ApplyMailbox | OperationState::Clear | OperationState::Conflict => {}
+        OperationState::Clear | OperationState::Conflict => {}
     }
     // Belt and braces: report any unresolved paths the continue left behind.
     if !git.conflicted_files(dir).await?.is_empty() {

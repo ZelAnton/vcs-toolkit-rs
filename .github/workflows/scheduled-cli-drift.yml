@@ -7,6 +7,13 @@
 # glab/tea best-effort, and reports failures via a GitHub issue instead of
 # failing a PR: it never gates `ci.yml` and does not touch that file's
 # triggers or jobs.
+#
+# It also carries the live-forge lifecycle lane (`gitea-live`): a one-shot,
+# pinned Gitea stood up in-job, provisioned with an admin + token, that the real
+# create → merge PR lifecycle (plus issues/releases) runs against end-to-end via
+# `vcs-forge`/`vcs-gitea` — the coverage ci.yml can't have hermetically. Same
+# non-gating, issue-reporting posture: standing up a server is infra-variable, so
+# a hiccup never reds a PR.
 name: Scheduled CLI Drift
 
 on:
@@ -142,6 +149,172 @@ jobs:
 
           This does not block regular CI or PRs; it flags that a newer CLI release may have changed output/behavior our parsers rely on. Investigate the failing run, adjust the code (or, if the failure is a known/expected CLI change, note it here), then close this issue — it will be reopened automatically if the check fails again."
           existing="$(gh issue list --state open --search "in:title \"Scheduled CLI drift check failed\"" --json number --jq '.[0].number' || true)"
+          if [ -n "${existing:-}" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+  # Live-forge lifecycle lane: stand up a one-shot, pinned Gitea, provision an
+  # admin + a scoped token, log `tea` in, seed a repo (an auto-initialised base
+  # plus a head branch one commit ahead, and a release), then drive the real
+  # create → view → comment → edit → merge PR lifecycle (and issues/releases)
+  # end-to-end through the `vcs-forge` facade and `vcs-gitea`. This closes
+  # ROADMAP §6.1: the forge wrappers' create/merge argv "tracks the documented
+  # CLIs but isn't exercised end-to-end in CI (needs a live forge)".
+  #
+  # Why HERE (this weekly, non-gating lane) rather than ci.yml: standing up a
+  # server is heavier and inherently more infra-variable than a hermetic test,
+  # so a hiccup reports via a tracking issue instead of reddening every PR —
+  # matching this file's drift-report posture. The per-PR argv/JSON contract is
+  # already pinned hermetically by the scripted-runner unit tests; this lane adds
+  # the empirical "a real Gitea accepts our argv and its real output parses"
+  # confirmation, whose natural cadence is the weekly drift check.
+  #
+  # No secret ever reaches a log: the admin password and the generated token are
+  # registered as GitHub Actions masks the instant they exist, the token never
+  # leaves the one provisioning step (it is not written to $GITHUB_ENV), and the
+  # test process only ever sees `tea`'s ambient login plus the seeded git remote
+  # — never a raw credential.
+  gitea-live:
+    name: gitea live lifecycle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      # `tea` drives every facade/vcs-gitea operation under test. Best-effort
+      # (same posture as the drift job's install): a download hiccup makes the
+      # live test skip gracefully rather than red this non-gating lane.
+      - name: Install tea (best-effort)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          tea_ver="$(curl -fsSL 'https://gitea.com/api/v1/repos/gitea/tea/releases?limit=1' \
+            | grep -oP '"tag_name":"v?\K[^"]+' | head -1)" || true
+          if [ -n "${tea_ver:-}" ] \
+            && curl -fsSL "https://dl.gitea.com/tea/${tea_ver}/tea-${tea_ver}-linux-amd64" -o "$HOME/.local/bin/tea"; then
+            chmod +x "$HOME/.local/bin/tea"
+          fi
+      - run: tea --version || echo "tea not installed (live lifecycle test will skip)"
+
+      # Stand up a one-shot Gitea. PINNED (not "latest") so provisioning — the
+      # admin-CLI flags and API shapes below — is reproducible; the drift signal
+      # comes from the best-effort-latest `tea` above driving it. INSTALL_LOCK
+      # skips the web installer so it boots straight to a usable API on SQLite.
+      - name: Start one-shot Gitea
+        run: |
+          set -euo pipefail
+          docker run -d --name gitea \
+            -p 3000:3000 \
+            -e GITEA__security__INSTALL_LOCK=true \
+            -e GITEA__server__ROOT_URL=http://localhost:3000/ \
+            -e GITEA__database__DB_TYPE=sqlite3 \
+            -e GITEA__log__LEVEL=warn \
+            gitea/gitea:1.22
+          # Wait for the API to answer before provisioning: the version endpoint
+          # responding means migrations ran and the admin CLI can open the DB.
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/v1/version >/dev/null 2>&1; then
+              echo "gitea is up"; break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "gitea did not become healthy in time" >&2
+              docker logs gitea || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # Provision an admin + a scoped token, log `tea` in, and seed the repo — all
+      # in ONE step so the token stays a local shell variable (masked at birth),
+      # never persisted to $GITHUB_ENV. Only non-secret wiring leaves this step.
+      - name: Provision admin + token, log tea in, and seed a repo
+        run: |
+          set -euo pipefail
+          api="http://localhost:3000/api/v1"
+          # A throwaway admin password for this one-shot instance; masked before use.
+          password="$(openssl rand -base64 24)"
+          echo "::add-mask::$password"
+          docker exec -u git gitea gitea admin user create \
+            --username ci --password "$password" --email ci@example.com \
+            --admin --must-change-password=false
+          # A raw (unwrapped) access token for the API, git push, and tea login;
+          # masked the instant it exists so it can never surface in a later log.
+          token="$(docker exec -u git gitea gitea admin user generate-access-token \
+            --username ci --token-name ci-e2e --scopes all --raw)"
+          echo "::add-mask::$token"
+          # tea's ambient login (the only auth vcs-gitea uses) — the token now lives
+          # only in tea's config file and this step's shell, not in any env or log.
+          tea login add --name ci --url http://localhost:3000 --token "$token"
+          # Create the repo (auto-init → a `main` with one commit).
+          curl -fsS -X POST -H "Authorization: token ${token}" -H 'Content-Type: application/json' \
+            -d '{"name":"e2e","auto_init":true,"default_branch":"main","private":false}' \
+            "$api/user/repos" >/dev/null
+          # Clone it (public → anonymous clone; only the push needs the token) and
+          # add a head branch one commit ahead of main (a real, mergeable PR diff).
+          git clone -q http://localhost:3000/ci/e2e.git "$RUNNER_TEMP/e2e"
+          cd "$RUNNER_TEMP/e2e"
+          git config user.email ci@example.com
+          git config user.name 'CI E2E'
+          git switch -c feature
+          echo 'live-forge lifecycle fixture' > FEATURE.md
+          git add FEATURE.md
+          git commit -q -m 'Add a feature-branch change for the PR lifecycle'
+          # Push authenticating via a Basic-auth request header only (not the remote
+          # URL or git config), so the credential can't surface in git's output;
+          # masked regardless. The origin remote stays a clean, credential-free URL
+          # so `tea` reads the host/owner/repo from it.
+          authb64="$(printf 'ci:%s' "$token" | base64 -w0)"
+          echo "::add-mask::$authb64"
+          git -c http.extraheader="Authorization: Basic ${authb64}" push -q origin feature
+          # Seed a release so release_list has a tag to round-trip (the facade has
+          # no release_create; create it via the API).
+          curl -fsS -X POST -H "Authorization: token ${token}" -H 'Content-Type: application/json' \
+            -d '{"tag_name":"v0.1.0","target":"main","title":"v0.1.0","body":"live-forge fixture release"}' \
+            "$api/repos/ci/e2e/releases" >/dev/null
+          # Export only the NON-secret wiring the ignored tests read (no token).
+          {
+            echo "VCS_GITEA_LIVE=1"
+            echo "VCS_GITEA_TEST_REPO=$RUNNER_TEMP/e2e"
+            echo "VCS_GITEA_BASE_BRANCH=main"
+            echo "VCS_GITEA_HEAD_BRANCH=feature"
+            echo "VCS_GITEA_RELEASE_TAG=v0.1.0"
+          } >> "$GITHUB_ENV"
+
+      # Drive the lifecycle end-to-end against the seeded live repo. `--ignored`
+      # runs the live-gated cases; the facade suite is the create → merge lifecycle,
+      # and the vcs-gitea `cli` suite's list/view parser check runs live too now
+      # that VCS_GITEA_TEST_REPO points at the seeded repo — covering both the
+      # Forge facade and the vcs-gitea client directly. Scoped to the two targets
+      # (not the whole workspace) since only these need the live forge.
+      - run: cargo test -p vcs-forge --test gitea_live -- --ignored --nocapture
+      - run: cargo test -p vcs-gitea --test cli -- --ignored --nocapture
+
+      - name: Stop Gitea
+        if: always()
+        run: docker rm -f gitea || true
+
+      - name: Report failure as a GitHub issue
+        if: failure()
+        # Signal-only, same posture as the drift job above: a distinct tracking
+        # issue (its own title) refreshed rather than re-filed each week.
+        run: |
+          set -euo pipefail
+          title="Live Gitea lifecycle check failed"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="The scheduled live-Gitea lifecycle lane failed: the end-to-end create → view → comment → edit → merge PR lifecycle (plus issues/releases) through vcs-forge/vcs-gitea against a one-shot Gitea did not pass.
+
+          Run: ${run_url}
+
+          This does not block regular CI or PRs. It flags that the real create/merge lifecycle regressed, or that a newer \`tea\` release changed output our parsers rely on. Investigate the failing run, fix the code (or note an expected CLI change here), then close this issue — it reopens automatically if the check fails again."
+          existing="$(gh issue list --state open --search "in:title \"Live Gitea lifecycle check failed\"" --json number --jq '.[0].number' || true)"
           if [ -n "${existing:-}" ]; then
             gh issue comment "$existing" --body "$body"
           else

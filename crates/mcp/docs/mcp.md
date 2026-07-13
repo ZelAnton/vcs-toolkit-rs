@@ -56,6 +56,7 @@ Install it with `cargo install vcs-mcp` (or point `command` at a built binary).
 ```text
 vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
+        [--max-output-bytes <n>]
 ```
 
 | Flag | Effect |
@@ -65,6 +66,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--allow-write` | Enable **all** mutating tools. Off by default — read tools only. |
 | `--allow-tools <name,…>` | Enable **only the named** mutating tools (comma-separated; repeatable — occurrences accumulate). Tool names are the method names from the catalogue below (the canonical set is `vcs_mcp::WRITE_TOOLS`); an unknown/misspelled name is **rejected up front** with an error listing the valid write tools, rather than being silently inert. Read tools are unaffected. `--allow-write` wins when both are given. |
 | `--timeout <seconds>` | Per-command deadline so a stalled fetch/forge call can't hang a request (default: 120; `--timeout 0` disables it). |
+| `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `forge_pr_diff`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` rather than a truncated result. |
 | `-h`, `--help` | Print usage and exit. |
 
 ## Tool catalogue
@@ -101,6 +103,12 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `repo_try_merge` | `{ source }` | Probe whether merging `source` would conflict — a **probe** that's always rolled back, so it has no net effect. Gated because it spawns a *real* trial merge that materializes working-tree content, which on an untrusted repo can run repo-local `filter`/`textconv` drivers the hardened client doesn't sandbox. |
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
+| `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `null` on success. Requires `--allow-write`. |
+| `repo_abort_in_progress` | — | Abort the in-progress repository operation, if any. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; recover through the operation log instead. Requires `--allow-write`. |
+| `repo_continue_in_progress` | — | Continue the in-progress repository operation after resolving conflicts. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; resolving conflicted files is the continuation, and recovery is through the operation log. Requires `--allow-write`. |
+| `repo_new_child` | `{ reference }` | Start new work on top of a branch, bookmark, or revision. On git this checks out `reference`; on jj it creates an undescribed child change. Returns `null` on success. Requires `--allow-write`. |
+| `repo_delete_branch` | `{ name, force? }` | Delete a local branch or bookmark. `force` defaults to `false`, deletes an unmerged git branch when true, and is ignored by jj. Returns `null` on success. Requires `--allow-write`. |
+| `repo_rename_branch` | `{ old, new }` | Rename a local branch or bookmark. Returns `null` on success. Requires `--allow-write`. |
 | `repo_fetch` | — | Fetch from the default remote (`git fetch` / `jj git fetch`). |
 | `repo_push` | `{ branch }` | Push an existing branch/bookmark to `origin` (`git push -u origin <branch>` / `jj git push -b <branch>`). |
 | `repo_create_worktree` | `{ path, branch, base }` | Create a worktree/workspace at `path` on a new `branch` from `base`. |
@@ -175,11 +183,16 @@ The `vcs-mcp` binary applies, in order:
    `repo_commit`) can't interleave and lose one's work. Read tools are **not**
    serialized, so a read can still observe transient mid-mutation state; the `forge_*`
    tools are remote calls and aren't behind this lock.
+7. **A content-output budget.** `repo_show_file` and `forge_pr_diff` run under the
+   `--max-output-bytes` ceiling (default 10 MiB), so a giant blob or PR diff can't
+   be buffered whole into the server's (and then the JSON response's) memory —
+   exceeding it returns `OutputTooLarge`, never a silently truncated result.
 
-> Note the hardening and timeout are how the **binary** constructs the `Repo`/`Forge`.
-> A library embedder that builds a `VcsMcpServer` from `Repo::discover(".")` gets a
-> plain, un-hardened client with no default timeout — harden and time-bound the
-> client yourself (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d))`)
+> Note the hardening, timeout, and output budget are how the **binary** constructs
+> the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from
+> `Repo::discover(".")` gets a plain, un-hardened client with no default timeout or
+> output budget — harden and bound the client yourself
+> (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d).default_output_budget(b))`)
 > if you serve untrusted repositories.
 
 ## Embedding the server

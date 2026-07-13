@@ -35,9 +35,13 @@ script. Its composition is kept in sync with `ci.yml` by hand, not generated —
 if you change a CI job, update `scripts/gate` too.
 
 The pure parsers are property-tested (`proptest`) for panic-freedom, and CI runs the
-`--ignored` suites against several `jj` versions to catch CLI/template drift. The test
-seams (the interface trait, the `mock` feature, and injecting a `ScriptedRunner` /
-`RecordingRunner`) are documented in the
+`--ignored` suites against several `jj` versions to catch CLI/template drift. A separate
+weekly, non-gating [scheduled drift lane](.github/workflows/scheduled-cli-drift.yml)
+re-runs them against the *actual latest* jj/glab/tea and stands up a one-shot **live
+Gitea** to exercise the real create → merge PR lifecycle (plus issues/releases)
+end-to-end through `vcs-forge`/`vcs-gitea`, reporting drift as a tracking issue instead
+of failing a PR. The test seams (the interface trait, the `mock` feature, and injecting a
+`ScriptedRunner` / `RecordingRunner`) are documented in the
 **[testing guide](crates/testkit/docs/testing.md)** — production code depends on the
 trait, so tests need no real binary, temp repo, or network.
 
