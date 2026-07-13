@@ -10,7 +10,23 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Unified PR/MR review actions.** `Forge::pr_approve(number)` submits an
+  approving review across all three backends (`gh pr review --approve` / `glab mr
+  approve` / `tea pr approve`), and `Forge::pr_request_changes(number, body)`
+  submits a request-changes review on GitHub (`gh pr review --request-changes
+  --body`) and Gitea (`tea pr reject`). **`pr_request_changes` is `Unsupported` on
+  GitLab** — GitLab's review model is approve/revoke, with no request-changes action
+  (withdraw an approval via the `vcs-gitlab` wrapper's `mr_revoke`). An empty or
+  whitespace-only `body` is rejected with `Error::InvalidInput` before any CLI
+  spawn. Both are on the `ForgeApi` trait (defaulted to `Unsupported` for external
+  implementers).
+- `ForgeOp` gains `PrApprove` (available on all three real backends, like
+  `PrCheckout`) and `PrRequestChanges` (varies — `false` on GitLab); both are in
+  `ForgeOp::ALL`, and `Forge::supports` reports them.
+- `ForgeCapabilities` gains `pr_approve` and `pr_request_changes` bool flags (with
+  matching builder methods); `pr_request_changes` is always `false` for GitLab even
+  when authed, and both are surfaced by `Forge::capabilities()` / the `forge_info`
+  MCP tool.
 
 ### Changed
 -

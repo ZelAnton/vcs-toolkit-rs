@@ -1,9 +1,9 @@
 # vcs-gitea — Gitea CLI guide
 
 **What you can do:** check auth, the lean pull-request lifecycle (list/view/create/
-merge/close), issues (list/view/create), and release listing — deliberately
-narrower than `gh`/`glab` (see the capability note below). This guide is the full
-reference — every command by theme, with examples.
+merge/close, review approve/reject), issues (list/view/create), and release
+listing — deliberately narrower than `gh`/`glab` (see the capability note below).
+This guide is the full reference — every command by theme, with examples.
 
 `vcs-gitea` drives the Gitea (and Forgejo) CLI (`tea`) from Rust. Every operation
 is `async`, runs inside an OS job (via [`processkit`]) so a `tea` subprocess is
@@ -92,6 +92,8 @@ configured.
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
 | `pr_comment(dir, number, body)` | `tea comment <number> <body>` | `String` |
 | `pr_edit(dir, number, spec)` | `tea pr edit <number> [--title …] [--description …]` | `()` |
+| `pr_approve(dir, number)` | `tea pr approve <number>` | `()` |
+| `pr_reject(dir, number, body)` | `tea pr reject <number> <reason>` | `()` |
 
 `PullRequest` carries `number` (tea's `index` column), `title`, `state`, `merged`,
 `head_branch`, `base_branch`, and `url` — read from tea's table columns (we select
@@ -130,6 +132,17 @@ body)` and chain the optional `.head(b)` (`--head`; `None` = the current branch)
 Unlike `gh`/`glab`, `tea` prints a **textual summary** on success, not the new
 PR's URL (it has no flag to shape create output), so do **not** parse the returned
 `String` as a URL.
+
+### Review
+
+`pr_approve(dir, number)` records an approving review (`tea pr approve <index>`);
+`pr_reject(dir, number, body)` requests changes with a **required** reason
+(`tea pr reject <index> <reason>`). The reason is a bare positional, so — like
+`pr_comment`'s body — it is refused before spawning if it is empty or begins with
+`-` (`reject_flag_like`). On the
+[`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade,
+`Forge::pr_approve` maps to `pr_approve` and `Forge::pr_request_changes` maps to
+`pr_reject`.
 
 ## Issues & releases
 

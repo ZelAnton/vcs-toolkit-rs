@@ -130,6 +130,18 @@ pub(crate) async fn pr_mark_ready<R: ProcessRunner>(
     Ok(())
 }
 
+// The facade's `pr_approve` → glab's `mr_approve`. GitLab has no "request changes"
+// review action (only approve/revoke), so there is no `pr_request_changes` bridge
+// here — the `Forge` dispatch reports it `Unsupported` for GitLab.
+pub(crate) async fn pr_approve<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    glab.mr_approve(dir, number).await?;
+    Ok(())
+}
+
 // `delete_branch` has no `glab mr close` equivalent (GitLab honours the MR's own
 // "delete source branch" setting on merge, not on close), so it is ignored here.
 pub(crate) async fn pr_close<R: ProcessRunner>(

@@ -10,7 +10,14 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **PR review methods.** `GiteaApi::pr_approve(dir, number)` (`tea pr approve
+  <index>`) records an approving review, and `pr_reject(dir, number, body)` (`tea pr
+  reject <index> <reason>`) requests changes with a required reason. The `reason` is
+  a bare positional, so it is guarded with `reject_flag_like` (a leading `-` or empty
+  value is refused before spawning), like `pr_comment`'s body. Both are
+  `at`-forwarded, return `Result<()>`, and have defaulted `Error::Unsupported` trait
+  bodies so external implementers keep compiling. The exact argv is pinned by
+  hermetic tests (the live commands mutate a real PR's review state).
 
 ### Changed
 -

@@ -94,7 +94,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
 | `forge_release_list` | — | Releases, newest first (up to 100; ~50 on Gitea), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
-| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, version, supported, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `version` is the installed CLI's `{major,minor,patch}` (or `null` when unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; `authed` is the auth probe result; the per-op flags are the intersection of "the CLI ships the command", `supported`, and "the CLI is authenticated". |
+| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, version, supported, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `version` is the installed CLI's `{major,minor,patch}` (or `null` when unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; `authed` is the auth probe result; the per-op flags are the intersection of "the CLI ships the command", `supported`, and "the CLI is authenticated". `pr_request_changes` is always `false` for GitLab (its review model is approve/revoke). |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
 
@@ -119,6 +119,8 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `forge_pr_merge` | `{ number, strategy, auto?, delete_branch? }` | Merge a PR/MR with `strategy` = `merge` \| `squash` \| `rebase`. `auto` (merge once requirements are met) and `delete_branch` are **GitHub-only** and default to `false`; on GitLab/Gitea, requesting either returns `invalid_params` rather than merging without it. |
 | `forge_pr_close` | `{ number, delete_branch? }` | Close a PR/MR without merging (`delete_branch` also deletes the source branch, GitHub only). |
 | `forge_pr_mark_ready` | `{ number }` | Mark a draft PR/MR ready for review (`Unsupported` on Gitea). |
+| `forge_pr_approve` | `{ number }` | Submit an approving review (`gh pr review --approve` / `glab mr approve` / `tea pr approve`). Supported on all three forges. |
+| `forge_pr_request_changes` | `{ number, body }` | Submit a request-changes review with a required `body`/reason (`gh pr review --request-changes` / `tea pr reject`). `Unsupported` on **GitLab** (its review model is approve/revoke); an empty body is rejected up front as `invalid_params`. |
 | `forge_pr_checkout` | `{ number }` | Check out a PR/MR's branch into the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr checkout`). Mutates the working copy. |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |
 

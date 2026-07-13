@@ -62,6 +62,8 @@ pub async fn pr_create(&self, spec: PrCreate) -> Result<String>;
 pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String>;
 pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()>;
 pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>; // PrMerge::squash()[.auto()][.delete_branch()] — auto/delete_branch are GitHub-only
+pub async fn pr_approve(&self, number: u64) -> Result<()>; // gh `pr review --approve`, glab `mr approve`, tea `pr approve`
+pub async fn pr_request_changes(&self, number: u64, body: &str) -> Result<()>; // gh `pr review --request-changes`, tea `pr reject` — Unsupported on GitLab
 pub async fn pr_mark_ready(&self, number: u64) -> Result<()>;
 pub async fn pr_close(&self, spec: PrClose) -> Result<()>; // PrClose::new(n)[.delete_branch()] — delete_branch is GitHub-only
 pub async fn pr_checkout(&self, number: u64) -> Result<()>; // gh/tea `pr checkout`, glab `mr checkout` — mutates the working copy
@@ -83,6 +85,13 @@ them to each CLI's own flags (gh/tea `--head`/`--base`, glab
 [`PrEdit`] is the unified edit spec — `PrEdit::new().title(t).body(b)`, each field
 optional; `pr_edit` rejects both-`None` with `Error::InvalidInput` before any
 spawn. `pr_comment` likewise rejects an empty/whitespace-only body up front.
+
+`pr_approve` submits an approving review on all three backends. `pr_request_changes`
+submits a request-changes review on **GitHub** (`gh pr review --request-changes
+--body`) and **Gitea** (`tea pr reject <n> <reason>`), but is **`Unsupported` on
+GitLab** — GitLab's review model is approve/revoke, with no request-changes action
+(withdraw an approval via the `vcs-gitlab` wrapper's `mr_revoke`). Like `pr_comment`,
+`pr_request_changes` rejects an empty/whitespace-only body up front.
 
 Every method mirrors an inherent method on [`Forge`]; the object-safe `ForgeApi`
 trait adds nothing but the `&dyn` boundary.
@@ -155,14 +164,17 @@ concept, so both are `None` there — *unknown*, never a false `Some(false)`.
 
 ## Capability matrix
 
-The CLIs differ in coverage. Gitea's `tea` lacks five operations, which return
+The CLIs differ in coverage. Gitea's `tea` lacks five operations and GitLab lacks
+the request-changes review action; these return
 [`Error::Unsupported { forge, operation }`] (the call does **not** spawn);
 `delete_branch` on `pr_close` is GitHub-only.
 
 | Operation | GitHub | GitLab | Gitea |
 |---|:---:|:---:|:---:|
 | `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` / `pr_checkout` | ✅ | ✅ | ✅ |
+| `pr_approve` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
+| `pr_request_changes` | ✅ | ❌ Unsupported (GitLab review is approve/revoke — use `mr_revoke` on the wrapper) | ✅ (`tea pr reject`) |
 | `repo_view` | ✅ | ✅ | ❌ Unsupported |
 | `pr_mark_ready` | ✅ | ✅ | ❌ Unsupported |
 | `pr_checks` | ✅ | ✅ | ❌ Unsupported |

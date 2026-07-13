@@ -291,6 +291,16 @@ pub struct PrEditParams {
     pub body: Option<String>,
 }
 
+/// Submit a "request changes" review on a pull/merge request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrRequestChangesParams {
+    /// The PR/MR number.
+    pub number: u64,
+    /// The review body / reason. Required — a request-changes review needs a
+    /// reason; an empty (or whitespace-only) body is rejected up front.
+    pub body: String,
+}
+
 /// An issue by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IssueNumberParams {
@@ -365,6 +375,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "forge_pr_mark_ready",
     "forge_pr_comment",
     "forge_pr_edit",
+    "forge_pr_approve",
+    "forge_pr_request_changes",
     "forge_pr_checkout",
 ];
 
@@ -1130,6 +1142,44 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Submit an approving review on a pull/merge request (gh pr review --approve / glab mr approve / tea pr approve). Supported on all three forges. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_approve(
+        &self,
+        Parameters(p): Parameters<PrNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_approve")?;
+        // A remote review action (no local working-copy mutation), so `require_write`
+        // rather than the repo write lock — uniform with `forge_pr_comment`.
+        self.forge()?
+            .pr_approve(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "approved": p.number }))
+    }
+
+    #[tool(
+        description = "Submit a \"request changes\" review with a required body/reason (gh pr review --request-changes --body / tea pr reject). `Unsupported` on GitLab, whose review model is approve/revoke with no request-changes action. An empty body is rejected up front as invalid params. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_request_changes(
+        &self,
+        Parameters(p): Parameters<PrRequestChangesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_request_changes")?;
+        // No MCP-layer argv guard on `body` (see `forge_pr_comment`): GitHub puts it
+        // in a flag-VALUE slot (`--body`), and the Gitea wrapper guards its bare
+        // positional itself. The facade also rejects an empty body — and reports
+        // GitLab `Unsupported` — before any spawn, surfaced here as invalid params.
+        self.forge()?
+            .pr_request_changes(p.number, &p.body)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "requested_changes": p.number }))
+    }
+
+    #[tool(
         description = "Check out a pull/merge request's branch into the local working copy (gh pr checkout / glab mr checkout / tea pr checkout). Mutates the working copy — the head/source branch is fetched and switched to. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
@@ -1150,7 +1200,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, issue_create, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
@@ -1744,6 +1794,139 @@ mod tests {
         assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
     }
 
+    // `forge_pr_approve` is write-gated: refused under `WriteGate::None`, routed to
+    // `gh pr review --approve` when allowed (the runner rule matches only
+    // `["gh","pr","review"]`, so reaching the reply proves the routing).
+    #[tokio::test]
+    async fn forge_pr_approve_gates_and_routes() {
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+            "/repo",
+            vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_approve(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "review"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let out = server
+            .forge_pr_approve(Parameters(PrNumberParams { number: 7 }))
+            .await
+            .expect("approve ok");
+        assert!(
+            result_json(&out).contains("approved"),
+            "{}",
+            result_json(&out)
+        );
+    }
+
+    // `forge_pr_request_changes` is write-gated and routes to `gh pr review
+    // --request-changes`; on GitLab it maps to the facade's `Unsupported`
+    // (invalid_params), and an empty body is rejected up front — both without a spawn.
+    #[tokio::test]
+    async fn forge_pr_request_changes_gates_routes_and_unsupported_on_gitlab() {
+        // Gated under WriteGate::None.
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+            "/repo",
+            vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+        ));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+        let err = server
+            .forge_pr_request_changes(Parameters(PrRequestChangesParams {
+                number: 7,
+                body: "please fix".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        // Allowed on GitHub: routes to `gh pr review`.
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "review"], Reply::ok("")),
+        );
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let out = server
+            .forge_pr_request_changes(Parameters(PrRequestChangesParams {
+                number: 7,
+                body: "please fix".into(),
+            }))
+            .await
+            .expect("request-changes ok");
+        assert!(
+            result_json(&out).contains("requested_changes"),
+            "{}",
+            result_json(&out)
+        );
+
+        // GitLab: Unsupported → invalid_params, without spawning (no runner rule).
+        let glab = vcs_forge::vcs_gitlab::GitLab::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitlab("/repo", glab));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let err = server
+            .forge_pr_request_changes(Parameters(PrRequestChangesParams {
+                number: 7,
+                body: "please fix".into(),
+            }))
+            .await
+            .expect_err("unsupported on gitlab");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("pr_request_changes"),
+            "{}",
+            err.message
+        );
+
+        // An empty body is rejected up front (invalid_params), also without a spawn.
+        let gh = vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new());
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()),
+        ));
+        let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+        let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+        let err = server
+            .forge_pr_request_changes(Parameters(PrRequestChangesParams {
+                number: 7,
+                body: "   ".into(),
+            }))
+            .await
+            .expect_err("empty body rejected");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
     // `forge_pr_checkout` is write-gated like the other forge mutations: refused
     // under `WriteGate::None`, but routed to `gh pr checkout <n>` when allowed.
     #[tokio::test]
@@ -2208,6 +2391,17 @@ mod tests {
         assert_eq!(a.destructive_hint, Some(true));
         assert_eq!(a.read_only_hint, None);
 
+        // The review-action tools are destructive (they change a PR/MR's review state).
+        let tool = VcsMcpServer::forge_pr_approve_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+
+        let tool = VcsMcpServer::forge_pr_request_changes_tool_attr();
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+
         // `forge_pr_checkout` mutates the working copy — destructive, not read-only.
         let tool = VcsMcpServer::forge_pr_checkout_tool_attr();
         let a = tool.annotations.expect("annotations present");
@@ -2272,6 +2466,8 @@ mod tests {
         assert!(names.contains(&"forge_pr_list"), "{names:?}");
         assert!(names.contains(&"forge_pr_comment"), "{names:?}");
         assert!(names.contains(&"forge_pr_edit"), "{names:?}");
+        assert!(names.contains(&"forge_pr_approve"), "{names:?}");
+        assert!(names.contains(&"forge_pr_request_changes"), "{names:?}");
         assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
         assert!(names.contains(&"forge_info"), "{names:?}");
 

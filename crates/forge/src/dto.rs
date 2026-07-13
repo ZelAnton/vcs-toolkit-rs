@@ -118,11 +118,12 @@ fn host_of(url: &str) -> Option<&str> {
 ///
 /// Most of these **vary by backend** — a backend may return
 /// [`Unsupported`](crate::Error::Unsupported) (Gitea's `tea` lacks a current-repo
-/// view, draft toggle, checks command, single-release view, and diff view).
-/// [`PrCheckout`](ForgeOp::PrCheckout) is the exception: every real backend
-/// (GitHub/GitLab/Gitea) supports it, and it is enumerated here so the support
-/// matrix covers the full checkout/mutation surface — a consumer iterating
-/// [`ALL`](ForgeOp::ALL) sees it reported available on all three. An
+/// view, draft toggle, checks command, single-release view, and diff view; GitLab
+/// has no "request changes" review action). [`PrCheckout`](ForgeOp::PrCheckout) and
+/// [`PrApprove`](ForgeOp::PrApprove) are the exceptions: every real backend
+/// (GitHub/GitLab/Gitea) supports them, and they are enumerated here so the support
+/// matrix covers the full checkout/mutation/review surface — a consumer iterating
+/// [`ALL`](ForgeOp::ALL) sees them reported available on all three. An
 /// [`Unknown`](ForgeKind::Unknown) handle (no classified CLI) supports **none** of
 /// them.
 ///
@@ -148,6 +149,16 @@ pub enum ForgeOp {
     /// the working copy. Supported on all three real backends (only an
     /// [`Unknown`](ForgeKind::Unknown) handle lacks it).
     PrCheckout,
+    /// [`pr_approve`](crate::Forge::pr_approve) — submit an approving review.
+    /// Supported on all three real backends (`gh pr review --approve` / `glab mr
+    /// approve` / `tea pr approve`); only an [`Unknown`](ForgeKind::Unknown) handle
+    /// lacks it.
+    PrApprove,
+    /// [`pr_request_changes`](crate::Forge::pr_request_changes) — submit a
+    /// request-changes review. **Unsupported on GitLab** (its review model is
+    /// approve/revoke, with no request-changes action); available on GitHub
+    /// (`gh pr review --request-changes`) and Gitea (`tea pr reject`).
+    PrRequestChanges,
 }
 
 impl ForgeOp {
@@ -162,6 +173,8 @@ impl ForgeOp {
         ForgeOp::ReleaseView,
         ForgeOp::PrDiff,
         ForgeOp::PrCheckout,
+        ForgeOp::PrApprove,
+        ForgeOp::PrRequestChanges,
     ];
 }
 
@@ -824,6 +837,14 @@ pub struct ForgeCapabilities {
     pub pr_checks: bool,
     /// The CLI can merge a PR/MR.
     pub pr_merge: bool,
+    /// The CLI can submit an approving review (`gh pr review --approve` / `glab mr
+    /// approve` / `tea pr approve`).
+    pub pr_approve: bool,
+    /// The CLI can submit a request-changes review (`gh pr review
+    /// --request-changes` / `tea pr reject`). **Always `false` for GitLab** even
+    /// when authed — GitLab's review model is approve/revoke, with no
+    /// request-changes action.
+    pub pr_request_changes: bool,
     /// The CLI can open an issue.
     pub issue_create: bool,
     /// The installed CLI's parsed version (`gh`/`glab`/`tea --version`), or `None`
@@ -860,6 +881,8 @@ impl ForgeCapabilities {
             pr_edit: false,
             pr_checks: false,
             pr_merge: false,
+            pr_approve: false,
+            pr_request_changes: false,
             issue_create: false,
             version: None,
             supported: false,
@@ -897,6 +920,18 @@ impl ForgeCapabilities {
     /// Mark `pr_merge` available.
     pub fn pr_merge(mut self) -> Self {
         self.pr_merge = true;
+        self
+    }
+
+    /// Mark `pr_approve` available.
+    pub fn pr_approve(mut self) -> Self {
+        self.pr_approve = true;
+        self
+    }
+
+    /// Mark `pr_request_changes` available.
+    pub fn pr_request_changes(mut self) -> Self {
+        self.pr_request_changes = true;
         self
     }
 
@@ -1040,6 +1075,8 @@ mod tests {
         assert!(!c.pr_edit);
         assert!(!c.pr_checks);
         assert!(!c.pr_merge);
+        assert!(!c.pr_approve);
+        assert!(!c.pr_request_changes);
         assert!(!c.issue_create);
         // No known version, unsupported, unauthed — the honest "no CLI" shape.
         assert_eq!(c.version, None);
@@ -1150,13 +1187,17 @@ mod tests {
             })
         );
         assert!(!caps.pr_comment && !caps.pr_edit && !caps.pr_checks && !caps.issue_create);
-        // The remaining four setters land their own fields too.
+        assert!(!caps.pr_approve && !caps.pr_request_changes);
+        // The remaining setters land their own fields too.
         let rest = ForgeCapabilities::all_false()
             .pr_comment()
             .pr_edit()
             .pr_checks()
+            .pr_approve()
+            .pr_request_changes()
             .issue_create();
         assert!(rest.pr_comment && rest.pr_edit && rest.pr_checks && rest.issue_create);
+        assert!(rest.pr_approve && rest.pr_request_changes);
         assert!(!rest.pr_create && !rest.pr_merge && !rest.authed);
     }
 }

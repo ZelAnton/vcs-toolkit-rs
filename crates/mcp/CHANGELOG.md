@@ -10,6 +10,13 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Two new write-gated PR/MR **review** tools: `forge_pr_approve` (approve — all
+  three forges) and `forge_pr_request_changes` (request changes with a required
+  body — GitHub/Gitea; `Unsupported` on GitLab, whose review model is
+  approve/revoke). Both follow the existing forge-mutation write-gate pattern
+  (`require_write`, `destructiveHint`) and require `--allow-write` (or
+  `--allow-tools` naming them). `forge_info`'s capability map gains the matching
+  `pr_approve` / `pr_request_changes` flags. (T-072.)
 - Six new write-gated mutation tools: `repo_rebase`, `repo_abort_in_progress`,
   `repo_continue_in_progress`, `repo_new_child`, `repo_delete_branch`, and
   `repo_rename_branch`. They expose `vcs-core` facade methods for managing

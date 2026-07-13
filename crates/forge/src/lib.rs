@@ -13,8 +13,8 @@
 //!
 //! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
 //! lifecycle (list / view / create / comment / edit / merge / mark-ready /
-//! close / checkout, CI checks) · the flat capability map · issues (list / view /
-//! create) · releases (list / view). One tiny call:
+//! close / checkout / approve / request-changes, CI checks) · the flat capability
+//! map · issues (list / view / create) · releases (list / view). One tiny call:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
@@ -71,6 +71,8 @@
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
 //!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
+//!   [`pr_approve`](Forge::pr_approve) /
+//!   [`pr_request_changes`](Forge::pr_request_changes) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
 //!   [`pr_checkout`](Forge::pr_checkout) / [`pr_checks`](Forge::pr_checks) /
 //!   [`pr_diff`](Forge::pr_diff)); the capability
@@ -84,7 +86,11 @@
 //!   [`repo_view`](Forge::repo_view), [`pr_mark_ready`](Forge::pr_mark_ready),
 //!   [`pr_checks`](Forge::pr_checks), [`release_view`](Forge::release_view), and
 //!   [`pr_diff`](Forge::pr_diff) return [`Error::Unsupported`] **without
-//!   spawning**. Classify it with [`Error::is_unsupported`].
+//!   spawning**. GitLab's review model is approve/revoke, so
+//!   [`pr_request_changes`](Forge::pr_request_changes) is
+//!   [`Unsupported`](Error::Unsupported) on a GitLab handle (approve and
+//!   request-changes are otherwise available on the other backends). Classify any of
+//!   these with [`Error::is_unsupported`].
 //! - **Capability introspection** — to branch *before* calling rather than
 //!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
 //!   varying operation is available, and [`ForgeOp::ALL`] enumerates those
@@ -339,15 +345,17 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Whether this handle's backend supports `op`. The operations in
-    /// [`ForgeOp`] are all present on GitHub and GitLab; Gitea (`tea`) supports
-    /// only [`PrCheckout`](ForgeOp::PrCheckout) among them — it has no current-repo
-    /// view, draft toggle, PR-checks command, single-release view, or diff view; and
-    /// an [`Unknown`](ForgeKind::Unknown) backend (no classified CLI) supports
-    /// nothing at all (every operation returns `Unsupported`). Every other facade
-    /// operation works on all three real backends. Branch on this to hide an
-    /// unavailable operation up front instead of calling it and handling
-    /// [`Unsupported`](Error::Unsupported).
+    /// Whether this handle's backend supports `op`. GitHub supports every operation
+    /// in [`ForgeOp`]; GitLab supports all but [`PrRequestChanges`](ForgeOp::PrRequestChanges)
+    /// (its review model is approve/revoke, with no request-changes action); Gitea
+    /// (`tea`) supports [`PrCheckout`](ForgeOp::PrCheckout),
+    /// [`PrApprove`](ForgeOp::PrApprove), and [`PrRequestChanges`](ForgeOp::PrRequestChanges)
+    /// but has no current-repo view, draft toggle, PR-checks command, single-release
+    /// view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
+    /// classified CLI) supports nothing at all (every operation returns
+    /// `Unsupported`). Every other facade operation works on all three real backends.
+    /// Branch on this to hide an unavailable operation up front instead of calling it
+    /// and handling [`Unsupported`](Error::Unsupported).
     pub fn supports(&self, op: ForgeOp) -> bool {
         match (self.kind(), op) {
             // An `Unknown` backend (no classified CLI) supports **nothing** — every
@@ -356,7 +364,8 @@ impl<R: ProcessRunner> Forge<R> {
             // `true` here made a UI render every op as available, each click then
             // failing with `Unsupported`.)
             (ForgeKind::Unknown, _) => false,
-            // The five operations `tea` can't do; GitHub/GitLab do everything.
+            // The five operations `tea` can't do (it *does* ship approve/reject and
+            // checkout); GitHub does everything.
             (
                 ForgeKind::Gitea,
                 ForgeOp::RepoView
@@ -365,6 +374,9 @@ impl<R: ProcessRunner> Forge<R> {
                 | ForgeOp::ReleaseView
                 | ForgeOp::PrDiff,
             ) => false,
+            // GitLab's review model is approve/revoke — there is no request-changes
+            // action, so the facade reports it Unsupported for GitLab.
+            (ForgeKind::GitLab, ForgeOp::PrRequestChanges) => false,
             _ => true,
         }
     }
@@ -561,6 +573,46 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// Submit an **approving** review on a PR/MR — `gh pr review --approve` /
+    /// `glab mr approve` / `tea pr approve`. Supported on all three real backends; an
+    /// [`Unknown`](ForgeKind::Unknown) handle returns
+    /// [`Unsupported`](Error::Unsupported). The negative side of review differs by
+    /// forge: [`pr_request_changes`](Forge::pr_request_changes) on GitHub/Gitea, and
+    /// GitLab's approve/revoke model (withdraw via the wrapper's `mr_revoke`).
+    pub async fn pr_approve(&self, number: u64) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_approve(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::pr_approve(c, &self.cwd, number).await,
+            Backend::Gitea(c) => gitea_forge::pr_approve(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_approve")),
+        }
+    }
+
+    /// Submit a **request-changes** review carrying a required `body`/reason —
+    /// `gh pr review --request-changes --body <body>` (GitHub) / `tea pr reject <n>
+    /// <reason>` (Gitea). **[`Unsupported`](Error::Unsupported) on GitLab**, whose
+    /// review model is approve/revoke with no request-changes action (withdraw an
+    /// approval with the wrapper's `mr_revoke` instead). An empty or whitespace-only
+    /// `body` is rejected with [`InvalidInput`](Error::InvalidInput) before any CLI
+    /// spawn — a request-changes review needs a reason on every backend that supports
+    /// it (and Gitea would reject a blank positional anyway), so fail fast and
+    /// uniformly.
+    pub async fn pr_request_changes(&self, number: u64, body: &str) -> Result<()> {
+        if body.trim().is_empty() {
+            return Err(Error::InvalidInput(
+                "pr_request_changes: a request-changes review requires a non-empty body".into(),
+            ));
+        }
+        match &self.backend {
+            Backend::GitHub(c) => {
+                github_forge::pr_request_changes(c, &self.cwd, number, body).await
+            }
+            Backend::GitLab(_) => Err(unsupported(ForgeKind::GitLab, "pr_request_changes")),
+            Backend::Gitea(c) => gitea_forge::pr_request_changes(c, &self.cwd, number, body).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_request_changes")),
+        }
+    }
+
     /// Close a PR/MR without merging. The [`PrClose`] spec's
     /// [`delete_branch`](PrClose::delete_branch) applies to GitHub only
     /// (`gh pr close --delete-branch`); GitLab and Gitea have no such flag and ignore it.
@@ -705,6 +757,8 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_edit: true,
         pr_checks: true,
         pr_merge: true,
+        pr_approve: true,
+        pr_request_changes: true,
         issue_create: true,
         version: None,
         supported: false,
@@ -722,6 +776,10 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         pr_edit: true,
         pr_checks: true,
         pr_merge: true,
+        pr_approve: true,
+        // GitLab's review model is approve/revoke — no request-changes action, so
+        // this stays `false` even for an authed, modern `glab`.
+        pr_request_changes: false,
         issue_create: true,
         version: None,
         supported: false,
@@ -743,6 +801,9 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_edit: true,
         pr_checks: false,
         pr_merge: true,
+        // `tea` ships both `pr approve` and `pr reject` (request-changes).
+        pr_approve: true,
+        pr_request_changes: true,
         issue_create: true,
         version: None,
         supported: false,
@@ -761,6 +822,8 @@ fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_edit = false;
     caps.pr_checks = false;
     caps.pr_merge = false;
+    caps.pr_approve = false;
+    caps.pr_request_changes = false;
     caps.issue_create = false;
 }
 
@@ -823,6 +886,20 @@ pub trait ForgeApi: Send + Sync {
     }
     /// See [`Forge::pr_merge`](crate::Forge::pr_merge).
     async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>;
+    /// See [`Forge::pr_approve`](crate::Forge::pr_approve). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_approve(&self, number: u64) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_approve"))
+    }
+    /// See [`Forge::pr_request_changes`](crate::Forge::pr_request_changes).
+    /// **Defaulted** to `Error::Unsupported` (the real impl rejects an empty body
+    /// with `Error::InvalidInput` and reports GitLab `Unsupported`).
+    #[allow(unused_variables)]
+    async fn pr_request_changes(&self, number: u64, body: &str) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_request_changes"))
+    }
     /// See [`Forge::pr_mark_ready`](crate::Forge::pr_mark_ready).
     async fn pr_mark_ready(&self, number: u64) -> Result<()>;
     /// See [`Forge::pr_close`](crate::Forge::pr_close).
@@ -890,6 +967,12 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
         self.pr_merge(number, merge).await
+    }
+    async fn pr_approve(&self, number: u64) -> Result<()> {
+        self.pr_approve(number).await
+    }
+    async fn pr_request_changes(&self, number: u64, body: &str) -> Result<()> {
+        self.pr_request_changes(number, body).await
     }
     async fn pr_mark_ready(&self, number: u64) -> Result<()> {
         self.pr_mark_ready(number).await
@@ -1177,6 +1260,8 @@ mod tests {
                 .pr_edit(1, PrEdit::new().title("T"))
                 .await
                 .unwrap_err(),
+            forge.pr_approve(1).await.unwrap_err(),
+            forge.pr_request_changes(1, "please fix").await.unwrap_err(),
         ] {
             assert!(err.is_unsupported(), "{err:?}");
         }
@@ -1239,6 +1324,8 @@ mod tests {
         assert!(caps.pr_edit);
         assert!(caps.pr_checks);
         assert!(caps.pr_merge);
+        assert!(caps.pr_approve);
+        assert!(caps.pr_request_changes, "gh has a request-changes review");
         assert!(caps.issue_create);
         assert!(caps.authed);
         // The version probe fills a confirmed version and clears the floor.
@@ -1362,6 +1449,34 @@ mod tests {
         assert!(caps.pr_comment);
         assert!(caps.pr_edit);
         assert!(caps.pr_merge);
+        assert!(caps.pr_approve, "tea ships `pr approve`");
+        assert!(caps.pr_request_changes, "tea ships `pr reject`");
+        assert!(caps.issue_create);
+    }
+
+    // GitLab's static map lights every action EXCEPT `pr_request_changes` when
+    // authed on a modern `glab` — GitLab's review model is approve/revoke, with no
+    // request-changes action. `pr_approve` is available (`glab mr approve`).
+    #[tokio::test]
+    async fn gitlab_capabilities_authed_has_only_request_changes_false() {
+        let forge = gitlab(
+            ScriptedRunner::new()
+                .on(["glab", "--version"], Reply::ok("glab 1.36.0\n"))
+                .on(["glab", "auth"], Reply::ok("")),
+        );
+        let caps = forge.capabilities().await.unwrap();
+        assert!(caps.authed, "gitlab authed");
+        assert!(caps.supported, "modern glab meets the 1.25 floor");
+        assert!(caps.pr_create);
+        assert!(caps.pr_comment);
+        assert!(caps.pr_edit);
+        assert!(caps.pr_checks);
+        assert!(caps.pr_merge);
+        assert!(caps.pr_approve, "glab ships `mr approve`");
+        assert!(
+            !caps.pr_request_changes,
+            "GitLab has no request-changes review action"
+        );
         assert!(caps.issue_create);
     }
 
@@ -1373,8 +1488,12 @@ mod tests {
     fn supports_matches_unsupported_ops() {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
-            // Gitea ships `tea pr checkout`; the other varying ops are Unsupported.
-            let expected = op == ForgeOp::PrCheckout;
+            // Gitea ships `tea pr checkout`, `pr approve`, and `pr reject`
+            // (request-changes); the other varying ops are Unsupported.
+            let expected = matches!(
+                op,
+                ForgeOp::PrCheckout | ForgeOp::PrApprove | ForgeOp::PrRequestChanges
+            );
             assert_eq!(gitea.supports(op), expected, "gitea supports({op:?})");
         }
         // An Unknown backend supports nothing — every op returns Unsupported, so
@@ -1383,17 +1502,17 @@ mod tests {
         for &op in ForgeOp::ALL {
             assert!(!unknown.supports(op), "unknown should not support {op:?}");
         }
-        for forge in [
-            Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new())),
-            Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
-        ] {
-            for &op in ForgeOp::ALL {
-                assert!(
-                    forge.supports(op),
-                    "{:?} should support {op:?}",
-                    forge.kind()
-                );
-            }
+        // GitHub supports every op.
+        let github = Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new()));
+        for &op in ForgeOp::ALL {
+            assert!(github.supports(op), "github should support {op:?}");
+        }
+        // GitLab supports every op EXCEPT request-changes (its review model is
+        // approve/revoke) — the one op that varies for GitLab.
+        let gitlab = Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new()));
+        for &op in ForgeOp::ALL {
+            let expected = op != ForgeOp::PrRequestChanges;
+            assert_eq!(gitlab.supports(op), expected, "gitlab supports({op:?})");
         }
     }
 
@@ -1644,6 +1763,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
+    }
+
+    // `pr_approve` dispatches to each CLI's own approving-review verb: gh `pr review
+    // --approve`, glab `mr approve`, tea `pr approve` — supported on all three real
+    // backends.
+    #[tokio::test]
+    async fn pr_approve_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_approve(7)
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "review", "7", "--approve"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .pr_approve(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["mr", "approve", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .pr_approve(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "approve", "7"]);
+    }
+
+    // `pr_request_changes` maps to gh `pr review --request-changes --body <body>`
+    // (the body rides in a flag-VALUE slot) and tea `pr reject <n> <reason>` (the
+    // reason a bare positional). On GitLab it is Unsupported — no request-changes
+    // review action — and nothing spawns (the runner has no rule).
+    #[tokio::test]
+    async fn pr_request_changes_dispatches_and_is_unsupported_on_gitlab() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_request_changes(7, "please fix")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "pr",
+                "review",
+                "7",
+                "--request-changes",
+                "--body",
+                "please fix"
+            ]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .pr_request_changes(7, "please fix")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "reject", "7", "please fix"]
+        );
+
+        // GitLab: Unsupported, without spawning (the runner has no rule, so a
+        // leak-through would error differently than the classified Unsupported).
+        let err = Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new()))
+            .pr_request_changes(7, "please fix")
+            .await
+            .unwrap_err();
+        assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+    }
+
+    // `pr_request_changes` rejects an empty / whitespace-only body with InvalidInput
+    // BEFORE any spawn — a request-changes review needs a reason on every backend.
+    #[tokio::test]
+    async fn pr_request_changes_empty_body_is_invalid_input() {
+        let forge = github(ScriptedRunner::new()); // no scripted rules: a spawn would error
+        for body in ["", "   ", "\t\n"] {
+            let err = forge.pr_request_changes(7, body).await.unwrap_err();
+            assert!(
+                matches!(err, crate::Error::InvalidInput(_)),
+                "empty body {body:?} must surface as InvalidInput, got {err:?}"
+            );
+        }
     }
 
     // GitHub's per-check buckets aggregate into one coarse CiStatus.

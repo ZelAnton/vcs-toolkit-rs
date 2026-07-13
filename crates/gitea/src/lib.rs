@@ -13,7 +13,8 @@
 //! # What you can do
 //!
 //! Check auth · the lean pull-request lifecycle (list / view / create / merge /
-//! close / checkout) · issues (list / view / create) · release listing. This is deliberately
+//! close / checkout, review approve/reject) · issues (list / view / create) ·
+//! release listing. This is deliberately
 //! narrower than `gh`/`glab` — `tea` itself lacks some operations (see the surface
 //! notes below). One tiny call to start:
 //!
@@ -52,7 +53,8 @@
 //! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
 //! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
 //! [close](GiteaApi::pr_close) / [checkout](GiteaApi::pr_checkout) /
-//! [comment](GiteaApi::pr_comment) / [edit](GiteaApi::pr_edit)), issues
+//! [comment](GiteaApi::pr_comment) / [edit](GiteaApi::pr_edit) /
+//! [approve](GiteaApi::pr_approve) / [reject](GiteaApi::pr_reject)), issues
 //! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
 //! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
 //! It is deliberately narrower than
@@ -508,6 +510,30 @@ pub trait GiteaApi: Send + Sync {
             operation: "pr_edit".into(),
         })
     }
+    /// Approve a pull request (`tea pr approve <index>`) — record an approving
+    /// review. `number` is a `u64`, so the bare `<index>` positional can never look
+    /// like a flag — nothing to guard. The negative counterpart is
+    /// [`pr_reject`](GiteaApi::pr_reject). **Defaulted** to `Error::Unsupported` so
+    /// external implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_approve(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_approve".into(),
+        })
+    }
+    /// Request changes on a pull request (`tea pr reject <index> <reason>`) — tea's
+    /// "reject" review, which **requires** a reason. The `reason` is a bare
+    /// positional (after the index), so it is guarded with `reject_flag_like` (a
+    /// leading `-` or empty value is refused before any process spawns), like
+    /// [`pr_comment`](GiteaApi::pr_comment)'s body. **Defaulted** to
+    /// `Error::Unsupported` so external implementers keep compiling when the crate
+    /// bumps.
+    #[allow(unused_variables)]
+    async fn pr_reject(&self, dir: &Path, number: u64, body: &str) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "pr_reject".into(),
+        })
+    }
     /// Open issues for `dir` (`tea issues list --output json`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
     /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** open issues
@@ -785,6 +811,30 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
+    async fn pr_approve(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so the bare `<index>` positional can never look like
+        // a flag — nothing to guard. `tea pr approve` records the review (no
+        // structured output), so `run_unit`.
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["pr", "approve", n.as_str()]))
+            .await
+    }
+
+    async fn pr_reject(&self, dir: &Path, number: u64, body: &str) -> Result<()> {
+        // `tea pr reject <index> <reason>` — the reason is a bare positional, so
+        // guard it the way `pr_comment` guards its body: a leading `-` or empty
+        // value is refused before any process spawns.
+        reject_flag_like("reason", body)?;
+        let n = number.to_string();
+        self.core
+            .run_unit(
+                self.core
+                    .command_in(dir, ["pr", "reject", n.as_str(), body]),
+            )
+            .await
+    }
+
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
         // `--limit 100` raises tea's default page size (30), but the Gitea server
         // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
@@ -947,6 +997,8 @@ vcs_cli_support::at_forwarders! {
         fn pr_checkout(number: u64) -> Result<()>;
         fn pr_comment(number: u64, body: &str) -> Result<String>;
         fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
+        fn pr_approve(number: u64) -> Result<()>;
+        fn pr_reject(number: u64, body: &str) -> Result<()>;
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
@@ -1392,6 +1444,50 @@ mod tests {
         let tea = Gitea::with_runner(ScriptedRunner::new());
         assert!(tea.pr_comment(Path::new("."), 7, "-evil").await.is_err());
         assert!(tea.pr_comment(Path::new("."), 7, "").await.is_err());
+    }
+
+    // pr_approve maps to `pr approve <index>`; pr_reject to `pr reject <index>
+    // <reason>` (the reason a bare positional). Both run in the bound repo dir, and
+    // the bound view produces byte-identical argv. The live commands mutate a real
+    // PR's review state, so this hermetic argv pin (not a round-trip) is the contract.
+    #[tokio::test]
+    async fn pr_approve_and_reject_build_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.pr_approve(Path::new("/repo"), 7)
+            .await
+            .expect("approve");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["pr", "approve", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.pr_reject(Path::new("/repo"), 7, "please fix")
+            .await
+            .expect("reject");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "reject", "7", "please fix"]
+        );
+
+        // Reached through the bound view, the argv is byte-identical.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.at(Path::new("/repo"))
+            .pr_approve(7)
+            .await
+            .expect("approve");
+        assert_eq!(rec.only_call().args_str(), ["pr", "approve", "7"]);
+    }
+
+    // pr_reject's `<reason>` is a bare positional, so a flag-like or empty value is
+    // rejected BEFORE any process spawns (the scripted runner has no rule).
+    #[tokio::test]
+    async fn pr_reject_rejects_flag_like_reason() {
+        let tea = Gitea::with_runner(ScriptedRunner::new());
+        assert!(tea.pr_reject(Path::new("."), 7, "-evil").await.is_err());
+        assert!(tea.pr_reject(Path::new("."), 7, "").await.is_err());
     }
 
     // pr_edit emits only the flags the caller set. Flag-VALUE positions pass

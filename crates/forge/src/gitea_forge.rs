@@ -139,6 +139,29 @@ pub(crate) async fn pr_checkout<R: ProcessRunner>(
     Ok(())
 }
 
+// The facade's `pr_approve` → tea's `pr approve`.
+pub(crate) async fn pr_approve<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    tea.pr_approve(dir, number).await?;
+    Ok(())
+}
+
+// The facade's `pr_request_changes` → tea's `pr reject <index> <reason>` (tea's
+// negative review action). The `body` becomes the required reason; the Gitea
+// wrapper guards it (bare positional), and the facade rejects an empty body up front.
+pub(crate) async fn pr_request_changes<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<()> {
+    tea.pr_reject(dir, number, body).await?;
+    Ok(())
+}
+
 pub(crate) async fn issue_list<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,

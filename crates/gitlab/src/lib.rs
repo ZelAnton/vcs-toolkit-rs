@@ -13,8 +13,8 @@
 //! # What you can do
 //!
 //! Check auth · view the project · the lean merge-request lifecycle (list / view /
-//! create / merge / mark-ready / close / checkout) · CI/pipeline status · issues ·
-//! releases.
+//! create / merge / mark-ready / close / checkout, review approve/revoke) ·
+//! CI/pipeline status · issues · releases.
 //! One tiny call to start:
 //!
 //! ```no_run
@@ -562,6 +562,30 @@ pub trait GitLabApi: Send + Sync {
             operation: "mr_edit".into(),
         })
     }
+    /// Approve a merge request (`glab mr approve <id>`) — record the caller's
+    /// approval. GitLab models MR review as **approve / revoke** (there is no
+    /// "request changes" action, unlike GitHub's `pr review --request-changes`), so
+    /// this is the approving half; withdraw it with [`mr_revoke`](GitLabApi::mr_revoke).
+    /// `number` is a `u64`, so the bare `<id>` positional can never look like a flag
+    /// — nothing to guard. **Defaulted** to `Error::Unsupported` so external
+    /// implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_approve(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "mr_approve".into(),
+        })
+    }
+    /// Revoke a previously-recorded approval of a merge request
+    /// (`glab mr revoke <id>`) — the withdrawing half of GitLab's approve/revoke
+    /// review model. `number` is a `u64`, so the bare `<id>` positional can never
+    /// look like a flag. **Defaulted** to `Error::Unsupported` so external
+    /// implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_revoke(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "mr_revoke".into(),
+        })
+    }
     /// The MR's pipeline status, bucketed (`glab mr view <id> --output json`,
     /// reading `head_pipeline.status`). [`CiStatus::None`] when no pipeline ran.
     async fn mr_checks(&self, dir: &Path, number: u64) -> Result<CiStatus>;
@@ -839,6 +863,25 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
+    async fn mr_approve(&self, dir: &Path, number: u64) -> Result<()> {
+        // `number` is a `u64`, so the bare `<id>` positional can never look like a
+        // flag — nothing to guard. `glab mr approve` records the approval and prints
+        // a short confirmation (no structured output), so `run_unit`.
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["mr", "approve", id.as_str()]))
+            .await
+    }
+
+    async fn mr_revoke(&self, dir: &Path, number: u64) -> Result<()> {
+        // `glab mr revoke` withdraws a prior approval (no structured output). Same
+        // `u64` id → no flag-guard needed.
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["mr", "revoke", id.as_str()]))
+            .await
+    }
+
     async fn mr_checks(&self, dir: &Path, number: u64) -> Result<CiStatus> {
         let id = number.to_string();
         self.core
@@ -1057,6 +1100,8 @@ vcs_cli_support::at_forwarders! {
         fn mr_checkout(number: u64) -> Result<()>;
         fn mr_comment(number: u64, body: &str) -> Result<String>;
         fn mr_edit(number: u64, edit: MrEdit) -> Result<()>;
+        fn mr_approve(number: u64) -> Result<()>;
+        fn mr_revoke(number: u64) -> Result<()>;
         fn mr_checks(number: u64) -> Result<CiStatus>;
         fn mr_diff(number: u64) -> Result<Vec<FileDiff>>;
         fn issue_list() -> Result<Vec<Issue>>;
@@ -1584,6 +1629,37 @@ mod tests {
         let glab = GitLab::with_runner(&rec);
         glab.mr_close(Path::new("/repo"), 3).await.expect("close");
         assert_eq!(rec.only_call().args_str(), ["mr", "close", "3"]);
+    }
+
+    // mr_approve maps to `mr approve <id>`; mr_revoke to `mr revoke <id>` — GitLab's
+    // approve/revoke review model (there is no request-changes). Both run in the
+    // bound repo dir, and the bound view produces byte-identical argv. The live
+    // commands mutate a real MR's approval state, so this hermetic argv pin (not a
+    // round-trip) is the contract.
+    #[tokio::test]
+    async fn mr_approve_and_revoke_build_expected_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_approve(Path::new("/repo"), 7)
+            .await
+            .expect("approve");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["mr", "approve", "7"]);
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_revoke(Path::new("/repo"), 7).await.expect("revoke");
+        assert_eq!(rec.only_call().args_str(), ["mr", "revoke", "7"]);
+
+        // Reached through the bound view, the argv is byte-identical.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.at(Path::new("/repo"))
+            .mr_approve(7)
+            .await
+            .expect("approve");
+        assert_eq!(rec.only_call().args_str(), ["mr", "approve", "7"]);
     }
 
     // mr_checkout maps to `mr checkout <id>` and runs in the bound repo dir; the

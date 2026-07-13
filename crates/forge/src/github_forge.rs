@@ -6,7 +6,7 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_github::{
     CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
-    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release, RepoView,
+    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release, RepoView, ReviewAction,
 };
 
 use crate::dto::{
@@ -124,6 +124,30 @@ pub(crate) async fn pr_mark_ready<R: ProcessRunner>(
     number: u64,
 ) -> Result<()> {
     gh.pr_mark_ready(dir, number).await?;
+    Ok(())
+}
+
+// The facade's `pr_approve` maps to gh's typed `pr review --approve` (no body).
+pub(crate) async fn pr_approve<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    gh.pr_review(dir, number, ReviewAction::approve()).await?;
+    Ok(())
+}
+
+// `pr_request_changes` maps to gh's `pr review --request-changes --body <body>`.
+// `ReviewAction::request_changes` encodes gh's "a request-changes review requires a
+// body" invariant by construction (the facade also rejects an empty body up front).
+pub(crate) async fn pr_request_changes<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<()> {
+    gh.pr_review(dir, number, ReviewAction::request_changes(body))
+        .await?;
     Ok(())
 }
 

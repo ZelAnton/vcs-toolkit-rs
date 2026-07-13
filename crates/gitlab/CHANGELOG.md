@@ -10,7 +10,14 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **MR review methods.** `GitLabApi::mr_approve(dir, number)` (`glab mr approve
+  <id>`) records an approval, and `mr_revoke(dir, number)` (`glab mr revoke <id>`)
+  withdraws it — GitLab's approve/revoke review model (there is no "request
+  changes" action, unlike GitHub's `pr review --request-changes`). Both take the
+  `u64` MR id (never flag-like — no positional guard needed) and return `Result<()>`;
+  both are `at`-forwarded, and both have defaulted `Error::Unsupported` trait bodies
+  so external implementers keep compiling. The exact argv is pinned by hermetic
+  tests (the live commands mutate a real MR's approval state).
 
 ### Changed
 -

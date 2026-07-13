@@ -1,8 +1,9 @@
 # vcs-gitlab — GitLab CLI guide
 
 **What you can do:** check auth, view the project, the lean merge-request lifecycle
-(list/view/create/merge/ready/close), CI/pipeline status, issues, and releases.
-This guide is the full reference — every command by theme, with examples.
+(list/view/create/merge/ready/close, review approve/revoke), CI/pipeline status,
+issues, and releases. This guide is the full reference — every command by theme,
+with examples.
 
 `vcs-gitlab` drives the GitLab CLI (`glab`) from Rust. Every operation is `async`,
 runs inside an OS job (via [`processkit`]) so a `glab` subprocess is never
@@ -74,6 +75,8 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_merge(dir, id, merge)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
 | `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
+| `mr_approve(dir, id)` | `glab mr approve <id>` | `()` |
+| `mr_revoke(dir, id)` | `glab mr revoke <id>` | `()` |
 | `mr_checks(dir, id)` | `glab mr view <id> --output json` (reads `head_pipeline.status`) | [`CiStatus`] |
 | `mr_diff(dir, id)` | `glab mr diff <id> --color never` | `Vec<`[`FileDiff`]`>` |
 
@@ -124,6 +127,16 @@ through the same unified-diff parser
 use — `glab mr diff` emits the same git-format diff `git diff` does, so
 `vcs-gitlab` re-exports [`FileDiff`] (and [`ChangeKind`], [`Hunk`], [`DiffLine`])
 rather than depending on `vcs-diff` directly for the type alone.
+
+### Review
+
+GitLab models MR review as **approve / revoke** — there is no "request changes"
+action (unlike GitHub's `pr review --request-changes`). `mr_approve(dir, id)`
+records the caller's approval; `mr_revoke(dir, id)` withdraws it. Both take the
+`u64` id, run `glab mr approve`/`glab mr revoke <id>`, and return `()`. On the
+[`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade,
+`Forge::pr_approve` maps to `mr_approve`; `pr_request_changes` is `Unsupported`
+for GitLab (withdraw an approval with `mr_revoke` instead).
 
 ## Issues & releases
 
