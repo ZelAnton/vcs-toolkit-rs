@@ -144,6 +144,30 @@ repo.new_change("next");        // start a fresh change on top
 repo.jj(&["log", "--no-graph"]); // raw escape hatch
 ```
 
+### Colocated jj + git workspace
+
+Use `JjSandbox::colocated(tag) -> Self` when the test needs the first-class
+colocated layout: a jj workspace whose root has both `.jj` and `.git`, such as
+code that discovers jj in preference to git, watches both state directories, or
+runs direct git commands against the same checkout. It explicitly runs
+`jj git init --colocate`; the flag is not left to jj version defaults or
+`git.colocate` configuration. Like `JjSandbox::init`, it uses `JJ_USER` /
+`JJ_EMAIL` for the init commit and writes repo-scoped jj identity. It also calls
+`configure_identity` for the colocated git repository, so direct git calls are
+deterministic too.
+
+```rust,ignore
+use vcs_testkit::{git, JjSandbox};
+
+let repo = JjSandbox::colocated("colocated-scenario");
+assert!(repo.path().join(".jj").is_dir());
+assert!(repo.path().join(".git").is_dir());
+
+// The same root is ready for direct git scenario steps.
+git(repo.path(), &["status", "--porcelain"]);
+repo.jj(&["status"]);
+```
+
 ---
 
 ## Standalone functions

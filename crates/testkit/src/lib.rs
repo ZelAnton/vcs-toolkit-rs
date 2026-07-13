@@ -30,9 +30,11 @@
 //!   ([`commit_file`](GitSandbox::commit_file), [`branch`](GitSandbox::branch),
 //!   [`checkout`](GitSandbox::checkout), [`rev_parse`](GitSandbox::rev_parse))
 //!   plus the raw [`git`](GitSandbox::git) escape hatch for anything unmodelled.
-//! - **[`JjSandbox`]** — the same shape for a **jj** (git-backed) workspace:
-//!   [`describe`](JjSandbox::describe), [`new_change`](JjSandbox::new_change),
-//!   [`bookmark`](JjSandbox::bookmark), and the raw [`jj`](JjSandbox::jj) hatch.
+//! - **[`JjSandbox`]** — the same shape for a **jj** (git-backed) workspace,
+//!   including [`colocated`](JjSandbox::colocated) workspaces with both `.jj`
+//!   and `.git`: [`describe`](JjSandbox::describe),
+//!   [`new_change`](JjSandbox::new_change), [`bookmark`](JjSandbox::bookmark),
+//!   and the raw [`jj`](JjSandbox::jj) hatch.
 //! - **[`BareRemote`]** — a populated **bare** git repo, a local
 //!   clone/fetch/push source with no network. [`BareRemote::seeded`] gives one
 //!   commit on `main` containing `seed.txt`; [`url`](BareRemote::url) yields a
@@ -179,6 +181,14 @@ fn command(binary: &str, cwd: &Path) -> Command {
             cmd.env("JJ_CONFIG", &nonexistent)
                 .env("JJ_USER", "test")
                 .env("JJ_EMAIL", "test@example.com");
+            // jj 0.42+ stores secure repo-scoped configuration below the
+            // platform config directory, even when `JJ_CONFIG` bypasses user
+            // config files. Keep that store out of the host profile as well.
+            #[cfg(windows)]
+            cmd.env(
+                "APPDATA",
+                std::env::temp_dir().join("vcs-testkit-jj-config"),
+            );
         }
         _ => {}
     }
@@ -418,16 +428,24 @@ impl JjSandbox {
     pub fn init(tag: &str) -> Self {
         let dir = TempDir::new(tag);
         run("jj", dir.path(), &["git", "init"]);
-        run(
-            "jj",
-            dir.path(),
-            &["config", "set", "--repo", "user.name", "Test"],
-        );
-        run(
-            "jj",
-            dir.path(),
-            &["config", "set", "--repo", "user.email", "test@example.com"],
-        );
+        configure_jj_identity(dir.path());
+        JjSandbox { dir }
+    }
+
+    /// Create a colocated jj/git workspace (`jj git init --colocate`) with
+    /// deterministic jj and git identities.
+    ///
+    /// The `--colocate` flag is deliberately explicit: jj's default varies by
+    /// version and can be changed by `git.colocate` config. The resulting
+    /// workspace has both `.jj` and `.git` directories. jj receives the same
+    /// deterministic `JJ_USER` / `JJ_EMAIL` environment as [`Self::init`], its
+    /// repo-scoped `user.*` config is set, and [`configure_identity`] configures
+    /// the colocated git repository for direct git scenario steps.
+    pub fn colocated(tag: &str) -> Self {
+        let dir = TempDir::new(tag);
+        run("jj", dir.path(), &["git", "init", "--colocate"]);
+        configure_jj_identity(dir.path());
+        configure_identity(dir.path());
         JjSandbox { dir }
     }
 
@@ -509,9 +527,39 @@ impl JjSandbox {
     }
 }
 
+/// Set deterministic, repo-scoped jj identity after `jj git init`.
+///
+/// [`command`] still supplies `JJ_USER` / `JJ_EMAIL` to the init command, so
+/// its already-created working-copy commit is deterministic. This config is
+/// retained for code paths that read identity from the repository instead.
+fn configure_jj_identity(dir: &Path) {
+    run("jj", dir, &["config", "set", "--repo", "user.name", "Test"]);
+    run(
+        "jj",
+        dir,
+        &["config", "set", "--repo", "user.email", "test@example.com"],
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn jj_config_value_without_identity(dir: &Path, key: &str) -> String {
+        let out = command("jj", dir)
+            .env_remove("JJ_USER")
+            .env_remove("JJ_EMAIL")
+            .args(["config", "get", key])
+            .output()
+            .expect("run jj config get");
+        assert!(
+            out.status.success(),
+            "`jj config get {key}` exited with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+    }
 
     // Hermetic: uniqueness and cleanup need no binaries.
     #[test]
@@ -624,6 +672,53 @@ mod tests {
             ],
         );
         assert_eq!(email, "test@example.com", "init commit author.email");
+    }
+
+    #[test]
+    #[ignore = "requires the jj binary"]
+    fn colocated_sandbox_has_state_dirs_and_deterministic_identity() {
+        let repo = JjSandbox::colocated("colocated");
+        assert!(repo.path().join(".jj").is_dir(), "jj state directory");
+        assert!(repo.path().join(".git").is_dir(), "git state directory");
+
+        let init_author_email = run_capture(
+            "jj",
+            repo.path(),
+            &[
+                "log",
+                "-r",
+                "root()+",
+                "--no-graph",
+                "-T",
+                "author.email()",
+                "--color",
+                "never",
+            ],
+        );
+        assert_eq!(
+            init_author_email, "test@example.com",
+            "JJ_EMAIL authors the colocated init commit"
+        );
+        assert_eq!(
+            jj_config_value_without_identity(repo.path(), "user.name"),
+            "Test",
+            "repo-scoped jj user.name"
+        );
+        assert_eq!(
+            jj_config_value_without_identity(repo.path(), "user.email"),
+            "test@example.com",
+            "repo-scoped jj user.email"
+        );
+        assert_eq!(
+            run_capture("git", repo.path(), &["config", "--get", "user.name"]),
+            "Test",
+            "colocated git user.name"
+        );
+        assert_eq!(
+            run_capture("git", repo.path(), &["config", "--get", "user.email"]),
+            "test@example.com",
+            "colocated git user.email"
+        );
     }
 }
 
