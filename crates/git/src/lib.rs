@@ -130,6 +130,8 @@ pub use processkit::CancellationToken;
 pub mod conflict;
 mod parse;
 pub use parse::{BlameLine, Branch, BranchStatus, Commit, StatusEntry, Worktree};
+#[doc(hidden)]
+pub use parse::parse_porcelain_v2;
 // The git-format diff model + parser and the version type are shared with
 // `vcs-jj` (identical output) — re-exported so `vcs_git::FileDiff`,
 // `vcs_git::parse_diff`, `vcs_git::GitVersion`, … still resolve.

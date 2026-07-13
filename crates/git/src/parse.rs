@@ -160,7 +160,8 @@ pub(crate) fn parse_porcelain(output: &[u8]) -> Vec<StatusEntry> {
 /// entry stores its original path as the *next* NUL record, so that record is
 /// consumed and skipped. Everything is `strip_prefix`/compare based — no byte
 /// indexing — so arbitrary bytes never panic (proven by proptest).
-pub(crate) fn parse_porcelain_v2(output: &str) -> BranchStatus {
+#[doc(hidden)]
+pub fn parse_porcelain_v2(output: &str) -> BranchStatus {
     let mut status = BranchStatus::default();
     let mut records = output.split('\0');
     while let Some(rec) = records.next() {
