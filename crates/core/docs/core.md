@@ -389,9 +389,10 @@ driven by its own git command: a cherry-pick/revert conflict writes
 on one would be wrong. On jj, which has no paused op, it reports `Conflict` directly.
 
 `continue_in_progress` continues after conflict resolution (git: `commit --no-edit`
-for a merge / `rebase --continue` / `cherry-pick --continue` / `revert --continue`;
-jj: a **no-op** — resolving the files *is* the continuation). It returns the fresh
-*post-call* state:
+for a merge / `rebase --continue` / `am --continue` / `cherry-pick --continue` /
+`revert --continue`; jj: a **no-op** — resolving the files *is* the continuation). A
+`git bisect` has no `--continue`, so it is refused with `Error::Unsupported` rather
+than silently reported still in progress. It returns the fresh *post-call* state:
 - `Conflict` when unresolved paths still block continuing (and **here git
   *does* report `Conflict`**, unlike `in_progress_state`), or when a continued
   rebase/cherry-pick/revert stops on the next commit's conflict.
@@ -539,7 +540,7 @@ Unifies the backends' different models of "mid-operation":
 | `Clear`    | No operation in progress and no conflict. |
 | `Merge`    | A git merge is in progress (`MERGE_HEAD` present). git only. |
 | `Rebase`   | A git rebase is in progress (a `rebase-merge` dir, or a `rebase-apply` dir *not* left by `git am`). git only. |
-| `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts with `am --abort`. git only. |
+| `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts/continues with `am --abort` / `am --continue`. git only. |
 | `CherryPick` | A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Aborts with `cherry-pick --abort`, continues with `cherry-pick --continue`. A cherry-pick conflict writes `CHERRY_PICK_HEAD`, *not* `MERGE_HEAD`, so it's never read as a `Merge`. git only. |
 | `Revert`   | A git revert is in progress (`REVERT_HEAD` present). Aborts with `revert --abort`, continues with `revert --continue`. git only. |
 | `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `Error::Unsupported`. git only. |

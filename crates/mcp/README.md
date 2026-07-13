@@ -22,12 +22,16 @@ available; mutating tools are gated** behind `--allow-write` (all mutations) or
 ```text
 vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
+        [--max-output-bytes <n>]
 ```
 
 The server drives git through a **hardened** client (`Git::hardened()` — repo
 hooks and config disabled, so serving a repository you didn't create can't run its
 hooks) and bounds every command with `--timeout` (default 120s; `0` disables) so a
-stalled fetch/forge call can't hang a request.
+stalled fetch/forge call can't hang a request. Content tools (`repo_show_file`,
+`forge_pr_diff`) are further bounded by `--max-output-bytes` (default 10 MiB; `0`
+disables) so a giant blob or PR diff can't be buffered whole into memory —
+exceeding it returns an error rather than a silently truncated result.
 
 The server speaks MCP over **stdio**; point a client at it via an `mcpServers`
 config entry:

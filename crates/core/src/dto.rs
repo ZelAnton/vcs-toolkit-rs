@@ -265,7 +265,11 @@ pub enum OperationState {
     /// **not** left by `git am` — see [`ApplyMailbox`](OperationState::ApplyMailbox)).
     Rebase,
     /// A git `am` (mailbox patch apply) is in progress. Distinct from `Rebase`
-    /// because it aborts with `am --abort`, not `rebase --abort` (M20).
+    /// because it aborts/continues with `am --abort` / `am --continue`, not the
+    /// `rebase --*` twins (M20). Like the other sequencer states it has a real
+    /// `--continue`, so [`continue_in_progress`](crate::Repo::continue_in_progress)
+    /// drives it forward (reporting `Conflict` if the next patch stops) rather than
+    /// treating it as nothing to do.
     ApplyMailbox,
     /// A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Distinct
     /// from `Merge`: it aborts/continues with `cherry-pick --abort` /
