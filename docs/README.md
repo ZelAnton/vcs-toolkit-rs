@@ -79,6 +79,8 @@ These apply across the wrapper crates:
   subprocess-vs-in-process trade-off and an honest comparison table.
 - **[Stability, versioning & path to 1.0](../crates/core/docs/stability.md)** — per-crate stability
   tiers, the SemVer + MSRV policy, and the public-API review gate.
+- **[Extending vcs-toolkit-rs](extending.md)** — the contributor workflow for adding new
+  capabilities: CLI methods, facade operations, MCP tools, and decision documentation.
 
 ## How the guides relate
 
