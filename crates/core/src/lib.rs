@@ -1041,9 +1041,11 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// Continue the in-progress operation after conflict resolution (git:
-    /// `commit --no-edit` for a merge / `rebase --continue`; jj: a no-op —
-    /// resolving the files *is* the continuation). Returns the fresh *post-call*
-    /// [`OperationState`]:
+    /// `commit --no-edit` for a merge, or the matching `--continue` for a rebase /
+    /// `am` / cherry-pick / revert; jj: a no-op — resolving the files *is* the
+    /// continuation). A `git bisect` has no such step and is refused with
+    /// [`Error::Unsupported`] rather than silently reported still in progress.
+    /// Returns the fresh *post-call* [`OperationState`]:
     /// - `Conflict` when unresolved paths still block continuing (also on git —
     ///   unlike [`in_progress_state`](Self::in_progress_state), this method
     ///   *does* report `Conflict` for git), or when a continued rebase stops on
@@ -3418,6 +3420,90 @@ mod tests {
                 .any(|c| c.args_str() == ["cherry-pick", "--continue"]),
             "must dispatch cherry-pick --continue: {:?}",
             rec.calls()
+        );
+    }
+
+    // T-065: an interrupted `git am` is driven forward with `am --continue`, not left
+    // as a silent no-op. A clean continue finishes the mailbox and reports the
+    // post-call `Clear`; the routing must call `am --continue`, never a rebase/merge
+    // continue (an am shares `rebase-apply/` but marks it `applying`, M20).
+    #[tokio::test]
+    async fn git_continue_dispatches_am_continue() {
+        use processkit::testing::RecordingRunner;
+        let gd = TempDir::new("continue-am");
+        // `git am` marks its `rebase-apply/` dir with an `applying` file.
+        let apply = gd.path().join("rebase-apply");
+        std::fs::create_dir_all(&apply).unwrap();
+        std::fs::write(apply.join("applying"), "x\n").unwrap();
+        let apply_dir = apply.clone();
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok("")) // nothing conflicted → not blocked
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                .when(
+                    move |cmd| {
+                        let is_am = cmd.arguments().first().and_then(|a| a.to_str()) == Some("am");
+                        if is_am {
+                            // A completed `am --continue` clears the whole
+                            // `rebase-apply/` dir, so the post-call probe reads `Clear`
+                            // (removing only `applying` would leave it looking like a
+                            // paused apply-backend rebase).
+                            let _ = std::fs::remove_dir_all(&apply_dir);
+                        }
+                        is_am
+                    },
+                    Reply::ok(""),
+                ),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Clear
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["am", "--continue"]),
+            "must dispatch am --continue: {:?}",
+            rec.calls()
+        );
+    }
+
+    // T-065: an `am --continue` that stops on the NEXT patch's conflict exits
+    // non-zero; continue_in_progress must map that to `Conflict`, not an error — the
+    // same re-stop handling the rebase/cherry-pick/revert paths get. The first
+    // conflict probe must see a clean index (else continue is blocked), the
+    // post-continue probe the new conflict, so a stateful predicate sequences the two
+    // `diff` replies (as in the rebase re-conflict test).
+    #[tokio::test]
+    async fn git_continue_maps_am_re_conflict() {
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let gd = TempDir::new("am-restop");
+        let apply = gd.path().join("rebase-apply");
+        std::fs::create_dir_all(&apply).unwrap();
+        std::fs::write(apply.join("applying"), "x\n").unwrap();
+        let seen_first_diff = StdArc::new(AtomicBool::new(false));
+        let flag = StdArc::clone(&seen_first_diff);
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .when(
+                    move |cmd| {
+                        cmd.arguments().first().and_then(|a| a.to_str()) == Some("diff")
+                            && flag.swap(true, Ordering::SeqCst)
+                    },
+                    Reply::ok("a.rs\0"),
+                )
+                .on(["git", "diff"], Reply::ok(""))
+                .on(["git", "rev-parse"], Reply::ok(gd.path().to_str().unwrap()))
+                .on(
+                    ["git", "am", "--continue"],
+                    Reply::fail(1, "CONFLICT (content): Merge conflict in a.rs"),
+                ),
+        );
+        assert_eq!(
+            repo.continue_in_progress().await.unwrap(),
+            OperationState::Conflict
         );
     }
 
