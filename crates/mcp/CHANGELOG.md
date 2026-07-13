@@ -10,7 +10,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `--max-output-bytes <n>` caps content-tool output (`repo_show_file`,
+  `forge_pr_diff`) at a default 10 MiB ceiling (`0` disables it), the same
+  `OutputBudget` mechanism (T-049) already honoured by the library when a caller
+  injects a budget-bound client. The binary previously served `OutputBudget::unlimited()`
+  on both the repo (git/jj) and forge clients, so a giant blob or PR diff would
+  buffer whole into the server's (and then the JSON response's) memory; exceeding
+  the new default returns `OutputTooLarge` rather than a silently truncated
+  result. (T-067.)
 
 ### Changed
 - Serving a **bare** git repository (`git init --bare`, or a path at or under one
