@@ -467,7 +467,13 @@ without `mock`), the test suite on Linux/Windows/macOS, `cargo-deny`, a
 `cargo package` gate, and an `integration` job that installs several **jj
 versions** (oldest supported … latest) plus an older-git runner image and runs
 the `--ignored` suites against each, so CLI/template drift in the parsers is
-caught before users hit it.
+caught before users hit it. A separate weekly, non-gating
+**[scheduled drift lane](.github/workflows/scheduled-cli-drift.yml)** re-runs the
+`--ignored` suites against the *actual latest* jj/glab/tea, and stands up a
+one-shot **live Gitea** to exercise the real create → merge PR lifecycle (plus
+issues/releases) end-to-end through `vcs-forge`/`vcs-gitea` — the forge coverage
+hermetic fixtures can't give — reporting any drift as a tracking issue rather
+than failing a PR.
 
 ## Publishing
 

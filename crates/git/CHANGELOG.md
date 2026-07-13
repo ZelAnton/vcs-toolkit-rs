@@ -11,6 +11,14 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ### Added
 
+- feat: add `GitApi::am_continue` — `git am --continue` to resume an interrupted
+  mailbox apply after resolving a patch's conflict, completing the `git am` driver
+  pair alongside `am_abort`. Like the other sequencer `--continue`s it suppresses
+  the editor (`GIT_EDITOR=true`) so a headless caller never hangs on the
+  message-confirm, and runs under the C locale so a next-patch re-conflict still
+  feeds `is_merge_conflict`. Mirrored on the `GitAt` cwd-bound view. Used by
+  `vcs-core`'s `Repo::continue_in_progress`, which previously left an in-progress
+  `am` as a silent no-op. (T-065.)
 - feat: add `Git::merge_abort_detached` and `Git::is_merge_in_progress_detached` —
   the `merge --abort` rollback **cleanup** and the "is a trial merge still staged?"
   decision that gates it, each run on a fresh cancellation token (not the client's

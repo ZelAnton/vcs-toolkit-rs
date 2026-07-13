@@ -10,7 +10,8 @@ crates; tag releases as `vcs-testkit-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Add `JjSandbox::colocated` for deterministic jj/git workspaces created with
+  explicit `jj git init --colocate`.
 
 ### Changed
 -

@@ -4,6 +4,7 @@
 //! ```text
 //! vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 //!         [--allow-tools <name,…>] [--timeout <seconds>]
+//!         [--max-output-bytes <n>]
 //! ```
 //!
 //! Read tools are always available; `--allow-write` enables every mutating tool,
@@ -12,6 +13,10 @@
 //! overrides it. The git client is **hardened** (repo hooks and config disabled)
 //! so serving a repository you didn't create can't execute its hooks, and every
 //! command carries a `--timeout` so a stalled network call can't hang the server.
+//! Content-returning tools (`repo_show_file`, `forge_pr_diff`) are bounded by an
+//! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
+//! buffered whole into the server's (and then the JSON response's) memory;
+//! `--max-output-bytes` raises/lowers it, `0` removes the cap.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -19,6 +24,7 @@ use std::time::Duration;
 
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use vcs_core::OutputBudget;
 use vcs_core::Repo;
 use vcs_core::vcs_git::{Git, GitApi};
 use vcs_core::vcs_jj::Jj;
@@ -32,6 +38,14 @@ use vcs_mcp::{VcsMcpServer, WriteGate};
 /// or forge call can't hang a request forever, while leaving headroom for a
 /// normal network op. Override with `--timeout`; `--timeout 0` disables it.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+
+/// Default content-output ceiling (bytes): large enough to hold an ordinary file
+/// or PR diff, small enough that a pathological blob/diff can't buffer unbounded
+/// memory into the server. Override with `--max-output-bytes`; `0` disables it
+/// (the pre-T-049 behaviour). Applies to content tools (`repo_show_file`,
+/// `forge_pr_diff`); exceeding it returns `OutputTooLarge` rather than a
+/// silently truncated result.
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -63,6 +77,10 @@ OPTIONS:
                               when both are given.
     --timeout <seconds>       Per-command timeout (default: 120; 0 disables) — a
                               ceiling so a stalled fetch/forge call can't hang
+    --max-output-bytes <n>    Ceiling on content-tool output in bytes (default:
+                              10485760 = 10 MiB; 0 disables) — repo_show_file and
+                              forge_pr_diff refuse with an error rather than
+                              buffering an oversized blob/diff into memory
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
@@ -75,6 +93,9 @@ struct Args {
     writes: WriteGate,
     /// Per-command deadline; `None` means no timeout (`--timeout 0`).
     timeout: Option<Duration>,
+    /// Content-tool output ceiling in bytes; `None` means unlimited
+    /// (`--max-output-bytes 0`).
+    max_output_bytes: Option<usize>,
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,8 +104,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
 
-    let repo = open_repo(&args.repo, args.timeout)?;
-    let forge = resolve_forge(&repo, args.forge, args.timeout).await;
+    let budget = output_budget(args.max_output_bytes);
+    let repo = open_repo(&args.repo, args.timeout, budget)?;
+    let forge = resolve_forge(&repo, args.forge, args.timeout, budget).await;
     let server = VcsMcpServer::new(repo, forge, args.writes);
 
     // Serve MCP over stdio until the client disconnects.
@@ -97,7 +119,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// variables, and skips system config, so serving a repository the operator
 /// didn't create can't execute its hooks (or honour a `core.fsmonitor` program)
 /// on a tool call. jj has no repo-local hooks, so its client needs no equivalent.
-/// Both carry the per-command `timeout`.
+/// Both carry the per-command `timeout` and the content-output `budget`.
 ///
 /// Delegates the whole discovery walk to `Repo::discover_with`, injecting the
 /// hardened/timeout-bound client for whichever backend it detects — the facade
@@ -106,26 +128,47 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// carries a wildcard arm for a future backend. A bare repository now surfaces as
 /// `vcs_core::Error::BareRepository`, exactly as `Repo::discover` reports it,
 /// rather than the old generic "no git or jj repository found …" string.
-fn open_repo(dir: &Path, timeout: Option<Duration>) -> Result<Repo, Box<dyn std::error::Error>> {
-    let repo = Repo::discover_with(dir, || hardened_git(timeout), || jj_client(timeout))?;
+fn open_repo(
+    dir: &Path,
+    timeout: Option<Duration>,
+    budget: OutputBudget,
+) -> Result<Repo, Box<dyn std::error::Error>> {
+    let repo = Repo::discover_with(
+        dir,
+        || hardened_git(timeout, budget),
+        || jj_client(timeout, budget),
+    )?;
     Ok(repo)
 }
 
-/// A hardened git client carrying the optional per-command `timeout`.
-fn hardened_git(timeout: Option<Duration>) -> Git {
-    match timeout {
-        Some(t) => Git::hardened().default_timeout(t),
-        None => Git::hardened(),
+/// The content-tool [`OutputBudget`] for `max_bytes`: [`OutputBudget::unlimited`]
+/// when `None` (`--max-output-bytes 0`), else a byte ceiling.
+fn output_budget(max_bytes: Option<usize>) -> OutputBudget {
+    match max_bytes {
+        Some(b) => OutputBudget::bytes(b),
+        None => OutputBudget::unlimited(),
     }
 }
 
-/// A jj client carrying the optional per-command `timeout`. jj has no repo-local
-/// hooks, so (unlike git) it needs no hardening profile.
-fn jj_client(timeout: Option<Duration>) -> Jj {
-    match timeout {
+/// A hardened git client carrying the optional per-command `timeout` and the
+/// content-output `budget`.
+fn hardened_git(timeout: Option<Duration>, budget: OutputBudget) -> Git {
+    let git = match timeout {
+        Some(t) => Git::hardened().default_timeout(t),
+        None => Git::hardened(),
+    };
+    git.default_output_budget(budget)
+}
+
+/// A jj client carrying the optional per-command `timeout` and the content-output
+/// `budget`. jj has no repo-local hooks, so (unlike git) it needs no hardening
+/// profile.
+fn jj_client(timeout: Option<Duration>, budget: OutputBudget) -> Jj {
+    let jj = match timeout {
         Some(t) => Jj::new().default_timeout(t),
         None => Jj::new(),
-    }
+    };
+    jj.default_output_budget(budget)
 }
 
 /// Parse argv. Returns `Ok(None)` when `--help` was printed (caller should exit
@@ -136,6 +179,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut allow_write = false;
     let mut allow_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut timeout = Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
+    let mut max_output_bytes = Some(DEFAULT_MAX_OUTPUT_BYTES);
 
     let mut it = args;
     while let Some(arg) = it.next() {
@@ -188,6 +232,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                 // 0 disables the deadline; any positive value sets it.
                 timeout = (secs > 0).then(|| Duration::from_secs(secs));
             }
+            "--max-output-bytes" => {
+                let value = it
+                    .next()
+                    .ok_or("--max-output-bytes needs a value (whole bytes)")?;
+                let bytes: usize = value.parse().map_err(|_| {
+                    format!(
+                        "invalid --max-output-bytes {value:?} (expected a whole number of bytes)"
+                    )
+                })?;
+                // 0 disables the ceiling; any positive value sets it.
+                max_output_bytes = (bytes > 0).then_some(bytes);
+            }
             other => return Err(format!("unknown argument: {other} (try --help)")),
         }
     }
@@ -204,6 +260,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         forge,
         writes,
         timeout,
+        max_output_bytes,
     }))
 }
 
@@ -220,19 +277,22 @@ fn parse_forge(value: &str) -> Result<ForgeKind, String> {
 
 /// Pick the forge: the explicit `--forge`, else the `origin` remote's host, else
 /// none (forge tools then report "no forge configured"). The forge CLI clients
-/// carry the same per-command `timeout` as the repo client.
+/// carry the same per-command `timeout` and content-output `budget` as the repo
+/// client, so `forge_pr_diff` is bounded the same way `repo_show_file` is.
 async fn resolve_forge(
     repo: &Repo,
     forced: Option<ForgeKind>,
     timeout: Option<Duration>,
+    budget: OutputBudget,
 ) -> Option<Forge> {
     let cwd = repo.root().to_path_buf();
     let kind = match forced {
         Some(k) => Some(k),
         None => detect_forge_kind(repo.root(), timeout).await,
     };
-    // Each forge CLI client exposes the same `default_timeout` builder, but they
-    // are distinct types with no shared trait — so apply it inline per arm.
+    // Each forge CLI client exposes the same `default_timeout`/
+    // `default_output_budget` builders, but they are distinct types with no
+    // shared trait — so apply them inline per arm.
     kind.and_then(|k| match k {
         ForgeKind::GitHub => {
             let c = GitHub::new();
@@ -240,6 +300,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
+            let c = c.default_output_budget(budget);
             Some(Forge::from_github(&cwd, c))
         }
         ForgeKind::GitLab => {
@@ -248,6 +309,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
+            let c = c.default_output_budget(budget);
             Some(Forge::from_gitlab(&cwd, c))
         }
         ForgeKind::Gitea => {
@@ -256,6 +318,7 @@ async fn resolve_forge(
                 Some(t) => c.default_timeout(t),
                 None => c,
             };
+            let c = c.default_output_budget(budget);
             Some(Forge::from_gitea(&cwd, c))
         }
         // `ForgeKind` is `#[non_exhaustive]`; a future kind has no constructor here.
@@ -265,9 +328,10 @@ async fn resolve_forge(
 
 /// Best-effort: read the `origin` remote URL (works on a colocated jj repo too)
 /// and classify its host. `None` when there's no git remote or the host is
-/// unrecognised. Uses the hardened, timeout-bound client.
+/// unrecognised. Uses the hardened, timeout-bound client; the remote URL isn't a
+/// content read, so the output budget doesn't apply here.
 async fn detect_forge_kind(root: &Path, timeout: Option<Duration>) -> Option<ForgeKind> {
-    let url = hardened_git(timeout)
+    let url = hardened_git(timeout, OutputBudget::unlimited())
         .remote_url(root, "origin")
         .await
         .ok()?;
@@ -302,6 +366,7 @@ mod tests {
             args.timeout,
             Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         );
+        assert_eq!(args.max_output_bytes, Some(DEFAULT_MAX_OUTPUT_BYTES));
     }
 
     // --allow-tools builds a Set gate; the list splits on commas, trims, and is
@@ -369,6 +434,7 @@ mod tests {
         assert!(parse(&["--repo"]).is_err());
         assert!(parse(&["--forge"]).is_err());
         assert!(parse(&["--timeout"]).is_err());
+        assert!(parse(&["--max-output-bytes"]).is_err());
     }
 
     #[test]
@@ -389,6 +455,26 @@ mod tests {
         assert!(err.contains("invalid --timeout"), "got: {err}");
         // A negative value isn't a valid `u64` either.
         assert!(parse(&["--timeout", "-5"]).is_err());
+    }
+
+    #[test]
+    fn max_output_bytes_zero_disables() {
+        let args = parse(&["--max-output-bytes", "0"]).unwrap().unwrap();
+        assert_eq!(args.max_output_bytes, None);
+    }
+
+    #[test]
+    fn max_output_bytes_positive_sets_ceiling() {
+        let args = parse(&["--max-output-bytes", "4096"]).unwrap().unwrap();
+        assert_eq!(args.max_output_bytes, Some(4096));
+    }
+
+    #[test]
+    fn max_output_bytes_junk_errors() {
+        let err = parse_err(&["--max-output-bytes", "junk"]);
+        assert!(err.contains("invalid --max-output-bytes"), "got: {err}");
+        // A negative value isn't a valid `usize` either.
+        assert!(parse(&["--max-output-bytes", "-5"]).is_err());
     }
 
     #[test]
@@ -419,6 +505,8 @@ mod tests {
             "--allow-write",
             "--timeout",
             "7",
+            "--max-output-bytes",
+            "8192",
         ])
         .unwrap()
         .unwrap();
@@ -426,5 +514,12 @@ mod tests {
         assert_eq!(args.forge, Some(ForgeKind::Gitea));
         assert_eq!(args.writes, WriteGate::All);
         assert_eq!(args.timeout, Some(Duration::from_secs(7)));
+        assert_eq!(args.max_output_bytes, Some(8192));
+    }
+
+    #[test]
+    fn output_budget_conversion() {
+        assert_eq!(output_budget(None), OutputBudget::unlimited());
+        assert_eq!(output_budget(Some(4096)), OutputBudget::bytes(4096));
     }
 }

@@ -104,7 +104,7 @@ use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabiliti
 use rmcp::schemars;
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 use serde::Deserialize;
-use vcs_core::{Repo, VcsRepo};
+use vcs_core::{BranchDelete, Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi};
 
 // --- Tool parameter structs (Deserialize + JsonSchema → the MCP input schema) --
@@ -130,6 +130,39 @@ pub struct CommitParams {
 pub struct PushParams {
     /// The existing local branch (git) / bookmark (jj) to push.
     pub branch: String,
+}
+
+/// Rebase the current line onto a revision.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RebaseParams {
+    /// The branch, bookmark, or revision to rebase onto.
+    pub onto: String,
+}
+
+/// Start new work on top of a revision without modifying it.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct NewChildParams {
+    /// The branch, bookmark, or revision to start the child work from.
+    pub reference: String,
+}
+
+/// Delete a local branch/bookmark.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeleteBranchParams {
+    /// The local branch (git) / bookmark (jj) to delete.
+    pub name: String,
+    /// Delete an unmerged git branch (`git branch -D`). jj ignores this flag.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Rename a local branch/bookmark.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenameBranchParams {
+    /// The existing local branch (git) / bookmark (jj) name.
+    pub old: String,
+    /// The replacement local branch (git) / bookmark (jj) name.
+    pub new: String,
 }
 
 /// Probe a merge.
@@ -315,6 +348,12 @@ pub const WRITE_TOOLS: &[&str] = &[
     "repo_try_merge",
     "repo_commit",
     "repo_checkout",
+    "repo_rebase",
+    "repo_abort_in_progress",
+    "repo_continue_in_progress",
+    "repo_new_child",
+    "repo_delete_branch",
+    "repo_rename_branch",
     "repo_fetch",
     "repo_push",
     "repo_create_worktree",
@@ -681,6 +720,85 @@ impl VcsMcpServer {
         let _write = self.begin_repo_write("repo_checkout").await?;
         self.repo.checkout(&p.reference).await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "checked_out": p.reference }))
+    }
+
+    #[tool(
+        description = "Rebase the current line onto a branch, bookmark, or revision. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_rebase(
+        &self,
+        Parameters(p): Parameters<RebaseParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_rebase").await?;
+        ok_json(&self.repo.rebase(&p.onto).await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Abort the in-progress repository operation, if any. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_abort_in_progress(&self) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_abort_in_progress").await?;
+        let operation_state = self.repo.abort_in_progress().await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "operation_state": operation_state }))
+    }
+
+    #[tool(
+        description = "Continue the in-progress repository operation after resolving conflicts. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_continue_in_progress(&self) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_continue_in_progress").await?;
+        let operation_state = self.repo.continue_in_progress().await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "operation_state": operation_state }))
+    }
+
+    #[tool(
+        description = "Start new work on top of a branch, bookmark, or revision. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_new_child(
+        &self,
+        Parameters(p): Parameters<NewChildParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_new_child").await?;
+        ok_json(&self.repo.new_child(&p.reference).await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Delete a local branch or bookmark. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_delete_branch(
+        &self,
+        Parameters(p): Parameters<DeleteBranchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_delete_branch").await?;
+        let spec = if p.force {
+            BranchDelete::new(p.name).force()
+        } else {
+            BranchDelete::new(p.name)
+        };
+        ok_json(&self.repo.delete_branch(spec).await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Rename a local branch or bookmark. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_rename_branch(
+        &self,
+        Parameters(p): Parameters<RenameBranchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_rename_branch").await?;
+        ok_json(
+            &self
+                .repo
+                .rename_branch(&p.old, &p.new)
+                .await
+                .map_err(core_err)?,
+        )
     }
 
     #[tool(
@@ -2171,6 +2289,145 @@ mod tests {
 
         let _ = client.cancel().await;
         server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn repo_rebase_is_gated_and_rebases() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_rebase(Parameters(RebaseParams {
+                onto: "main".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "rebase"], Reply::ok("")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_rebase(Parameters(RebaseParams {
+                onto: "main".into(),
+            }))
+            .await
+            .expect("rebase ok");
+        assert!(!result_json(&out).is_empty());
+    }
+
+    #[tokio::test]
+    async fn repo_abort_in_progress_is_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server.repo_abort_in_progress().await.expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(
+                ["git", "rev-parse"],
+                Reply::ok("/repo/.git\n"),
+            ),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_abort_in_progress()
+            .await
+            .expect("abort ok");
+        assert!(result_json(&out).contains("operation_state"));
+    }
+
+    #[tokio::test]
+    async fn repo_continue_in_progress_is_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server.repo_continue_in_progress().await.expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new()
+                .on(["git", "diff"], Reply::ok(""))
+                .on(["git", "rev-parse"], Reply::ok("/repo/.git\n")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_continue_in_progress()
+            .await
+            .expect("continue ok");
+        assert!(result_json(&out).contains("operation_state"));
+    }
+
+    #[tokio::test]
+    async fn repo_new_child_is_gated_and_creates() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_new_child(Parameters(NewChildParams {
+                reference: "main".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "checkout"], Reply::ok("")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_new_child(Parameters(NewChildParams {
+                reference: "main".into(),
+            }))
+            .await
+            .expect("new child ok");
+        assert!(!result_json(&out).is_empty());
+    }
+
+    #[tokio::test]
+    async fn repo_delete_branch_is_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_delete_branch(Parameters(DeleteBranchParams {
+                name: "feature".into(),
+                force: false,
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "branch"], Reply::ok("")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_delete_branch(Parameters(DeleteBranchParams {
+                name: "feature".into(),
+                force: false,
+            }))
+            .await
+            .expect("delete branch ok");
+        assert!(!result_json(&out).is_empty());
+    }
+
+    #[tokio::test]
+    async fn repo_rename_branch_is_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_rename_branch(Parameters(RenameBranchParams {
+                old: "old".into(),
+                new: "new".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "branch"], Reply::ok("")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_rename_branch(Parameters(RenameBranchParams {
+                old: "old".into(),
+                new: "new".into(),
+            }))
+            .await
+            .expect("rename branch ok");
+        assert!(!result_json(&out).is_empty());
     }
 }
 

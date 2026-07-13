@@ -24,7 +24,16 @@ crates; tag releases as `vcs-core-v<version>`.
   is added. (T-061.)
 
 ### Changed
--
+- `Repo::continue_in_progress` now drives an in-progress `git am` forward with
+  `am --continue` instead of silently doing nothing. `ApplyMailbox` was falling
+  through the same no-op arm as `Clear`/`Conflict`, so a caller that resolved an
+  `am` conflict and asked to continue got back the unchanged `ApplyMailbox` state
+  as if there were nothing to do — even though `git am --continue` is exactly that
+  step. It now routes through the shared sequencer-continue path (like rebase /
+  cherry-pick / revert), reporting `Conflict` when the next patch stops on its own
+  conflict. `git bisect` remains the sole state refused with `Error::Unsupported`
+  (it genuinely has no `--continue`), keeping the module's "explicit refusal, never
+  a misleading success" policy. (T-065.)
 
 ### Fixed
 - `Repo::open`, called directly on a directory that is itself a **bare** git
