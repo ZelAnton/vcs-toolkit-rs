@@ -7,10 +7,14 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+# Keep cargo-fuzz standalone even when this checkout is nested under another workspace.
+[workspace]
+
 [dependencies]
 # libFuzzer harness macro (`fuzz_target!`). Nightly-only.
 libfuzzer-sys = "0.4"
 # The crates whose public parsers we fuzz, by path.
+vcs-diff = { path = "../crates/diff" }
 vcs-git = { path = "../crates/git" }
 vcs-jj = { path = "../crates/jj" }
 
@@ -24,6 +28,20 @@ bench = false
 [[bin]]
 name = "jj_conflict"
 path = "fuzz_targets/jj_conflict.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "diff_parse"
+path = "fuzz_targets/diff_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_porcelain_v2"
+path = "fuzz_targets/git_porcelain_v2.rs"
 test = false
 doc = false
 bench = false
