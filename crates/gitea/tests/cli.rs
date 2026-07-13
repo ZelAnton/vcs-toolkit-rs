@@ -12,8 +12,11 @@
 //! diverged from our structs, the exact bug class this crate's re-model fixed.
 //! Any *other* error (no Gitea repo, not authenticated, network) is an
 //! environment skip, so they need a live, authenticated Gitea repo to be
-//! meaningful: point `VCS_GITEA_TEST_REPO` at one (defaults to the cwd). **Run
-//! these against a real `tea` before the crate's first release.**
+//! meaningful: point `VCS_GITEA_TEST_REPO` at one (defaults to the cwd). The
+//! weekly `gitea-live` lane in `.github/workflows/scheduled-cli-drift.yml` stands
+//! up a one-shot Gitea, logs `tea` in, and points `VCS_GITEA_TEST_REPO` at a
+//! seeded repo, so these run live there (alongside the `vcs-forge` facade
+//! lifecycle suite) — run them against a real `tea` locally too, the same way.
 
 use std::path::PathBuf;
 
