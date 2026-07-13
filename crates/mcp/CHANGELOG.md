@@ -308,11 +308,7 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [0.4.0] - 2026-07-03
 
 ### Added
-- Six new write-gated mutation tools: `repo_rebase`, `repo_abort_in_progress`,
-  `repo_continue_in_progress`, `repo_new_child`, `repo_delete_branch`, and
-  `repo_rename_branch`. They expose `vcs-core` facade methods for managing
-  repository operations, branches/bookmarks, and new child revisions. All
-  follow the existing write-gate pattern and require `--allow-write`.
+-
 
 ### Changed
 - Rebuilt against the `vcs-core` / `vcs-forge` spec reshapes: the `repo_create_worktree`
@@ -329,11 +325,7 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [0.3.0] - 2026-07-03
 
 ### Added
-- Six new write-gated mutation tools: `repo_rebase`, `repo_abort_in_progress`,
-  `repo_continue_in_progress`, `repo_new_child`, `repo_delete_branch`, and
-  `repo_rename_branch`. They expose `vcs-core` facade methods for managing
-  repository operations, branches/bookmarks, and new child revisions. All
-  follow the existing write-gate pattern and require `--allow-write`.
+-
 
 ### Changed
 - Bumped `processkit` to **1.1.0** (workspace floor now `"1"`, was `0.11.0`). `vcs-mcp`
