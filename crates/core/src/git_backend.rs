@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
 use vcs_git::{
-    CheckoutTarget, Git, GitApi, GitPush, OutputBudget, RefName, RevSpec, StatusEntry, WorktreeAdd,
+    CheckoutTarget, DiffSpec, FileDiff, Git, GitApi, GitPush, OutputBudget, RefName, RevSpec,
+    StatusEntry, WorktreeAdd,
 };
 
 use crate::dto::{
@@ -121,6 +122,15 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Res
     git.diff_stat(dir, &RevSpec::new(&range)?)
         .await
         .map_err(Into::into)
+}
+
+pub(crate) async fn diff<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<Vec<FileDiff>> {
+    // `GitApi::diff(DiffSpec::WorkingTree)` already probes `is_unborn` and targets
+    // the resolved empty-tree oid itself (mirroring the manual probe `diff_stat`
+    // above does against `git.diff_stat`), so no separate empty-tree handling is
+    // needed here — same scope as `diff_stat`, just the parsed hunks instead of the
+    // aggregate counts.
+    git.diff(dir, DiffSpec::WorkingTree).await.map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(

@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
 use vcs_jj::{
-    BookmarkName, ChangedPath, Jj, JjApi, JjFileset, OutputBudget, RevsetExpr, Rollback,
-    WorkspaceAdd,
+    BookmarkName, ChangedPath, DiffSpec, FileDiff, Jj, JjApi, JjFileset, OutputBudget, RevsetExpr,
+    Rollback, WorkspaceAdd,
 };
 
 use crate::dto::{
@@ -177,6 +177,12 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<DiffStat> {
     // `jj.diff_stat` already returns the shared `vcs_diff::DiffStat` — no remap.
     jj.diff_stat(dir, &rev("@")?).await.map_err(Into::into)
+}
+
+pub(crate) async fn diff<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Vec<FileDiff>> {
+    // `JjApi::diff(DiffSpec::WorkingTree)` targets `@` (vs its parent) internally
+    // — the same scope `diff_stat` above targets explicitly via `rev("@")`.
+    jj.diff(dir, DiffSpec::WorkingTree).await.map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(

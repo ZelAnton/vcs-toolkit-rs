@@ -10,6 +10,16 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `Repo::diff()` (and the matching `VcsRepo::diff` trait method): the full parsed
+  working-copy diff (`Vec<FileDiff>`), the same scope `diff_stat` already covers
+  (git: working tree vs `HEAD`, targeting the empty-tree oid on an unborn repo;
+  jj: `@` vs its parent) — dispatching to the already-existing `GitApi::diff`/
+  `JjApi::diff` with `DiffSpec::WorkingTree`, so it inherits the backend client's
+  `OutputBudget` (an over-budget diff errors with `OutputTooLarge` rather than
+  being silently truncated). Cross-backend revision-range diffs remain
+  deliberately off the facade — reach those through the raw `git()`/`jj()`
+  client. `FileDiff` (the shared `vcs_diff::FileDiff`) is now re-exported from
+  the crate root alongside `DiffStat`. (T-068.)
 - `Repo::discover_with(dir, git, jj)`: the injected-client counterpart of
   `Repo::discover`. It runs the **same** discovery walk and error classification
   (`Error::NotARepository` / `Error::BareRepository`, via the same

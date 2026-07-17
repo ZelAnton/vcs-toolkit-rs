@@ -70,7 +70,7 @@
 //!   [`delete_branch`](Repo::delete_branch),
 //!   [`rename_branch`](Repo::rename_branch) (branch on git, bookmark on jj).
 //! - **Status** — [`changed_files`](Repo::changed_files),
-//!   [`diff_stat`](Repo::diff_stat),
+//!   [`diff_stat`](Repo::diff_stat), [`diff`](Repo::diff),
 //!   [`has_uncommitted_changes`](Repo::has_uncommitted_changes),
 //!   [`has_tracked_changes`](Repo::has_tracked_changes),
 //!   [`conflicted_files`](Repo::conflicted_files), and
@@ -94,7 +94,8 @@
 //!
 //! Because the backends genuinely diverge in places, several common methods carry
 //! a documented asymmetry (e.g. `upstream`/`ahead`/`behind` are always `None` on
-//! jj; [`diff_stat`](Repo::diff_stat) excludes untracked files on git but not jj;
+//! jj; [`diff_stat`](Repo::diff_stat) and [`diff`](Repo::diff) exclude untracked
+//! files on git but not jj;
 //! [`in_progress_state`](Repo::in_progress_state) never returns `Conflict` on git).
 //! The method docs spell each one out — the facade unifies the *shape*, not away
 //! the truth.
@@ -185,9 +186,9 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial,
-    WorktreeInfo, WorktreeRemove,
+    BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, FileDiff,
+    MergeProbe, OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate,
+    WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
@@ -790,6 +791,33 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// The full parsed diff for the working copy — the same scope as
+    /// [`diff_stat`](Self::diff_stat) (git: working tree vs `HEAD`, using the
+    /// empty-tree oid on an unborn repo; jj: `@` vs its parent), but returning the
+    /// per-file hunks/lines ([`FileDiff`]) rather than just the aggregate counts.
+    /// Dispatches to the already-existing `GitApi::diff`/`JjApi::diff` with
+    /// [`vcs_git::DiffSpec::WorkingTree`], so it inherits the backend client's
+    /// [`OutputBudget`] — an over-budget diff errors with
+    /// [`OutputTooLarge`](processkit::Error::OutputTooLarge) rather than
+    /// buffering (or silently truncating) an unbounded diff.
+    ///
+    /// Backend nuance (same as `diff_stat`): git diffs the working tree against
+    /// `HEAD`, which **excludes untracked files**; jj diffs `@` against its
+    /// parent, which **includes** newly-added files. So a brand-new file shows in
+    /// [`changed_files`](Self::changed_files) but *not* here on git, whereas on jj
+    /// it shows in both — don't assume the two backends return the same file set.
+    ///
+    /// Cross-backend revision-range diffs are deliberately **not** exposed here
+    /// (see the crate docs' "what's deliberately not unified" — range diffs stay
+    /// on the raw [`git`](Self::git)/[`jj`](Self::jj) client, via `GitApi::diff`/
+    /// `JjApi::diff` with `DiffSpec::Rev`).
+    pub async fn diff(&self) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::diff(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::diff(j, &self.cwd).await,
+        }
+    }
+
     /// Recent history: up to `max` commits reachable from `revspec_or_revset`
     /// (git revspec / jj revset), most-recent-first (git `log`'s default order /
     /// jj `log`'s topological order).
@@ -1316,6 +1344,7 @@ facade_trait! {
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
+        fn diff() -> Result<Vec<FileDiff>>;
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn show_file(rev: &str, path: &str) -> Result<String>;
         fn show_file_within(rev: &str, path: &str, budget: OutputBudget) -> Result<String>;
@@ -3537,6 +3566,81 @@ mod tests {
                 .iter()
                 .any(|c| c.args_str() == ["diff", "--shortstat", oid, "--"]),
             "diff_stat should target the resolved empty tree on an unborn repo: {:?}",
+            rec.calls()
+        );
+    }
+
+    // `Repo::diff` on git dispatches to `GitApi::diff(DiffSpec::WorkingTree)` — the
+    // same argv shape `diff_text_builds_working_tree_args` pins in `vcs-git`
+    // (`is_unborn` probe, then `diff HEAD --no-color --no-ext-diff -M
+    // --src-prefix=a/ --dst-prefix=b/ --`) — and parses the git-format output into
+    // `FileDiff`s.
+    #[tokio::test]
+    async fn git_diff_dispatches_working_tree_diff() {
+        use processkit::testing::RecordingRunner;
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "rev-parse"], Reply::ok("deadbeef\n")) // HEAD resolves
+                .on(["git", "diff"], Reply::ok(out)),
+        );
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        let files = repo.diff().await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("m"));
+        assert_eq!(files[0].change, ChangeKind::Modified);
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == [
+                    "diff",
+                    "HEAD",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "-M",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--",
+                ]),
+            "diff should target HEAD (working tree, same scope as diff_stat): {:?}",
+            rec.calls()
+        );
+    }
+
+    // On an unborn git repo `Repo::diff` targets the resolved empty tree instead of
+    // the unresolvable `HEAD` — same fallback `diff_stat` uses, exercised here
+    // through `GitApi::diff`'s own internal `is_unborn` probe rather than the
+    // manual one `git_backend::diff_stat` performs.
+    #[tokio::test]
+    async fn git_diff_unborn_uses_empty_tree() {
+        let oid = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "rev-parse"], Reply::fail(1, "")) // HEAD unborn
+                .on(["git", "hash-object"], Reply::ok(format!("{oid}\n")))
+                .on(["git", "diff", oid], Reply::ok("")),
+        );
+        let files = repo.diff().await.unwrap();
+        assert!(files.is_empty());
+    }
+
+    // `Repo::diff` on jj dispatches to `JjApi::diff(DiffSpec::WorkingTree)`, which
+    // targets `@` (vs its parent) — the same scope `diff_stat` targets via
+    // `rev("@")` — and parses the `--git`-format output into `FileDiff`s.
+    #[tokio::test]
+    async fn jj_diff_dispatches_at_change() {
+        use processkit::testing::RecordingRunner;
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(out)));
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        let files = repo.diff().await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("m"));
+        assert_eq!(files[0].change, ChangeKind::Modified);
+        assert!(
+            rec.calls().iter().any(|c| c.args_str()
+                == ["diff", "-r", "@", "--git", "--color", "never"]),
+            "diff should target @ vs its parent (same scope as diff_stat): {:?}",
             rec.calls()
         );
     }

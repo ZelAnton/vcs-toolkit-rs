@@ -192,6 +192,7 @@ pub async fn branch_exists(&self, name: &str) -> Result<bool>;
 pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>>;
 pub async fn changed_files(&self)    -> Result<Vec<FileChange>>;
 pub async fn diff_stat(&self)        -> Result<DiffStat>;
+pub async fn diff(&self)             -> Result<Vec<FileDiff>>;
 pub async fn snapshot(&self)         -> Result<RepoSnapshot>;
 ```
 
@@ -213,7 +214,15 @@ copy — **repo-relative, `/` separators** (git `diff --diff-filter=U` / jj
 
 `changed_files` is the working-copy change set (git `status` / jj
 `diff -r @ --summary`), as `Vec<FileChange>`. `diff_stat` is the aggregate
-insertion/deletion counts.
+insertion/deletion counts; `diff` is the same working-copy scope, but returns the
+**full parsed diff** (per-file hunks/lines, `Vec<FileDiff>`) — dispatching to the
+already-existing `GitApi::diff`/`JjApi::diff` with `DiffSpec::WorkingTree`, so it
+inherits the backend client's `OutputBudget`: an over-budget diff errors with
+`OutputTooLarge` rather than being silently truncated. Cross-backend
+revision-range diffs are deliberately **not** exposed here — see
+["When to use the facade vs the raw client"](#when-to-use-the-facade-vs-the-raw-client);
+reach a range diff through the raw `git()`/`jj()` client (`GitApi::diff`/
+`JjApi::diff` with `DiffSpec::Rev`).
 
 > **Lossless paths.** `changed_files`/`conflicted_files` carry each path as a
 > `PathBuf` (not a `String`): a filename whose bytes are not valid UTF-8 — legal on
@@ -232,11 +241,11 @@ when dirty. Note the asymmetry: `tracking` (the upstream ref plus ahead/behind,
 bundled into one [`UpstreamTracking`](#reposnapshot)) is always `None` on jj (no
 git-style upstream tracking).
 
-> **Backend nuance — untracked files.** `diff_stat` counts the git working tree
-> against `HEAD` (`git diff`, which **excludes untracked files**), but on jj it
-> counts the `@` change against its parent (which **includes** newly-added
-> files). So a brand-new file shows in `changed_files` but *not* in `diff_stat`
-> on git, whereas on jj it shows in both.
+> **Backend nuance — untracked files.** `diff_stat` and `diff` count/diff the git
+> working tree against `HEAD` (`git diff`, which **excludes untracked files**),
+> but on jj they diff the `@` change against its parent (which **includes**
+> newly-added files). So a brand-new file shows in `changed_files` but *not* in
+> `diff_stat`/`diff` on git, whereas on jj it shows in all three.
 
 ```rust,no_run
 # async fn f(repo: vcs_core::Repo) -> vcs_core::Result<()> {
@@ -250,6 +259,9 @@ for c in repo.changed_files().await? {
 }
 let stat = repo.diff_stat().await?;
 println!("{} files, +{} -{}", stat.files_changed, stat.insertions, stat.deletions);
+for f in repo.diff().await? {
+    println!("{:?} {} ({} hunks)", f.change, f.path.display(), f.hunks.len());
+}
 # Ok(()) }
 ```
 
@@ -525,6 +537,22 @@ pub struct DiffStat {
 ```
 
 `Default` derives to all-zero.
+
+### `FileDiff`
+
+The shared `vcs_diff::FileDiff` (also `GitApi::diff`/`JjApi::diff`'s return type),
+returned by [`Repo::diff`](#status--files) directly — no remapping.
+
+```rust,ignore
+#[non_exhaustive]
+pub struct FileDiff {
+    pub change: ChangeKind,
+    pub path: PathBuf,             // the *new* path for a rename; forward-slash normalised, lossless
+    pub old_path: Option<PathBuf>, // original path for a rename; None otherwise
+    pub hunks: Vec<Hunk>,          // the `@@` hunks; empty for a binary file or a pure rename
+    pub raw: String,               // the verbatim per-file diff section
+}
+```
 
 ### `WorktreeInfo`
 

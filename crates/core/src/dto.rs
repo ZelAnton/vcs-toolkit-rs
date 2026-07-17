@@ -193,6 +193,11 @@ impl FileChange {
 /// [`vcs_diff::DiffStat`], returned by the backends directly (no remapping).
 pub use vcs_diff::DiffStat;
 
+/// One file's full parsed diff (hunks and lines) — the shared
+/// [`vcs_diff::FileDiff`], returned by [`Repo::diff`](crate::Repo::diff) directly
+/// (no remapping); the same type `GitApi::diff`/`JjApi::diff` already return.
+pub use vcs_diff::FileDiff;
+
 /// One attached worktree (git) / workspace (jj).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

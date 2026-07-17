@@ -13,7 +13,7 @@
 //! overrides it. The git client is **hardened** (repo hooks and config disabled)
 //! so serving a repository you didn't create can't execute its hooks, and every
 //! command carries a `--timeout` so a stalled network call can't hang the server.
-//! Content-returning tools (`repo_show_file`, `forge_pr_diff`) are bounded by an
+//! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`) are bounded by an
 //! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
 //! buffered whole into the server's (and then the JSON response's) memory;
 //! `--max-output-bytes` raises/lowers it, `0` removes the cap.
@@ -43,8 +43,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// or PR diff, small enough that a pathological blob/diff can't buffer unbounded
 /// memory into the server. Override with `--max-output-bytes`; `0` disables it
 /// (the pre-T-049 behaviour). Applies to content tools (`repo_show_file`,
-/// `forge_pr_diff`); exceeding it returns `OutputTooLarge` rather than a
-/// silently truncated result.
+/// `repo_diff`, `forge_pr_diff`); exceeding it returns `OutputTooLarge` rather
+/// than a silently truncated result.
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
 #[tokio::main]
@@ -78,9 +78,10 @@ OPTIONS:
     --timeout <seconds>       Per-command timeout (default: 120; 0 disables) — a
                               ceiling so a stalled fetch/forge call can't hang
     --max-output-bytes <n>    Ceiling on content-tool output in bytes (default:
-                              10485760 = 10 MiB; 0 disables) — repo_show_file and
-                              forge_pr_diff refuse with an error rather than
-                              buffering an oversized blob/diff into memory
+                              10485760 = 10 MiB; 0 disables) — repo_show_file,
+                              repo_diff, and forge_pr_diff refuse with an error
+                              rather than buffering an oversized blob/diff into
+                              memory
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a

@@ -619,6 +619,14 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "The full parsed working-copy diff (per-file hunks/lines) — same scope as repo_diff_stat: git working tree vs HEAD (excludes untracked files), jj @ vs its parent (includes newly-added files).",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_diff(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(&self.repo.diff().await.map_err(core_err)?)
+    }
+
+    #[tool(
         description = "Recent history: up to `max` commits reachable from `revspec_or_revset` (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@\"), most-recent-first. `author`/`date` are null on jj — its typed log doesn't currently surface authorship or a timestamp.",
         annotations(read_only_hint = true)
     )]
@@ -1389,6 +1397,64 @@ mod tests {
             .await
             .expect("under-budget show_file ok");
         assert!(result_json(&out).contains("fn main"));
+    }
+
+    // `repo_diff` is a read tool (no write gate) that surfaces the facade's full
+    // parsed working-copy diff as JSON.
+    #[tokio::test]
+    async fn repo_diff_returns_parsed_diff() {
+        let out_text = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let server = git_server(
+            ScriptedRunner::new()
+                .on(["git", "rev-parse"], Reply::ok("deadbeef\n")) // HEAD resolves
+                .on(["git", "diff"], Reply::ok(out_text)),
+            WriteGate::None,
+        );
+        let out = server.repo_diff().await.expect("repo_diff ok");
+        let json = result_json(&out);
+        assert!(json.contains("\\\"m\\\""), "{json}");
+        assert!(json.contains("Modified"), "{json}");
+    }
+
+    // T-049/T-068: `repo_diff` INHERITS the output budget of the client its `Repo`
+    // was built over, exactly like `repo_show_file` — an over-budget diff surfaces
+    // as a tool error (the wrapped `OutputTooLarge`), never a silently truncated
+    // diff. A budget below the ceiling returns the diff in full.
+    #[tokio::test]
+    async fn repo_diff_honours_inherited_output_budget() {
+        let big = "diff --git a/m b/m\n".to_string() + &"+x\n".repeat(100_000);
+        // Over budget → the tool errors instead of returning a clipped diff.
+        let budgeted = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "rev-parse"], Reply::ok("deadbeef\n"))
+                .on(["git", "diff"], Reply::ok(&big)),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", budgeted));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let err = server
+            .repo_diff()
+            .await
+            .expect_err("over-budget diff must error, not truncate");
+        assert!(
+            format!("{err:?}").to_lowercase().contains("ceiling")
+                || format!("{err:?}").to_lowercase().contains("too large")
+                || format!("{err:?}").to_lowercase().contains("exceeded"),
+            "error should name the output ceiling: {err:?}"
+        );
+
+        // Under the same budget a small diff still reads in full.
+        let small_text = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let small = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "rev-parse"], Reply::ok("deadbeef\n"))
+                .on(["git", "diff"], Reply::ok(small_text)),
+        )
+        .default_output_budget(vcs_core::OutputBudget::bytes(64 * 1024));
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git("/repo", "/repo", small));
+        let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
+        let out = server.repo_diff().await.expect("under-budget diff ok");
+        assert!(result_json(&out).contains("Modified"));
     }
 
     // `repo_info` is a plain UTF-8 round trip in the ordinary case: `backend`,
