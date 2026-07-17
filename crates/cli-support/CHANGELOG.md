@@ -10,7 +10,12 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `clone_dest_cleanable` / `cleanup_failed_clone_dest` — the R7 failed-clone
+  cleanup helper (compute whether a clone destination is safe to remove *before*
+  running the clone; best-effort `remove_dir_all` on the error path only, never
+  touching a non-empty pre-existing destination). Consolidates the
+  byte-identical logic previously duplicated in `vcs_git::clone_repo` and
+  `vcs_jj::git_clone`, which now call these helpers. (T-082.)
 
 ### Changed
 -

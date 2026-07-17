@@ -287,7 +287,14 @@ pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()>
 ```
 
 Commit exactly `paths` with `message` (git `commit --only`, jj
-`commit <filesets>`). **Paths are repo-relative.**
+`commit <filesets>`). **Paths are repo-relative** — and stay so regardless of the
+handle's `cwd`. On a subdirectory-bound git handle the commit is run from the
+worktree's resolved top-level (`git rev-parse --show-toplevel`),
+so a path from `changed_files` (which git reports repo-root-relative from any cwd)
+round-trips back into `commit_paths` and addresses the *same* file — rather than
+being re-rooted at the subdir (`sub/f` → `sub/sub/f`). The linked-worktree case is
+handled too: the top-level is resolved from the current worktree, not the handle's
+recorded `root`.
 
 ## Remotes
 

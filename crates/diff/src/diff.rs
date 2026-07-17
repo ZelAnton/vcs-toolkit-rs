@@ -28,6 +28,14 @@ pub enum DiffSpec {
     WorkingTree,
     /// A specific revision/revset or range, e.g. `HEAD~1` / `main..HEAD`
     /// (`git diff <rev>`) or `@-` / `main..@` (`jj diff -r <revset>`).
+    ///
+    /// This crate is intentionally plain data — no I/O, no validation — so
+    /// this string is passed through unchecked; guarding it against a
+    /// flag-like value (a leading `-`) is each backend wrapper's job, and the
+    /// two differ: `vcs-git` runs an inline `reject_flag_like` check (plus a
+    /// trailing `--`) before using it, while `vcs-jj` relies on it landing in
+    /// `jj`'s `-r <revset>` flag-value slot, which the CLI itself rejects if
+    /// dash-prefixed. Don't assume either guarantee from this type alone.
     Rev(String),
 }
 
@@ -55,6 +63,40 @@ impl DiffStat {
             insertions,
             deletions,
         }
+    }
+
+    /// Parse a single `git diff --shortstat` / `jj diff --stat` summary clause,
+    /// e.g. ` 3 files changed, 12 insertions(+), 4 deletions(-)`. Any of the
+    /// three sub-clauses may be absent (a pure-insertion diff omits `deletions`;
+    /// no changes at all yields an empty string → all zeros) — a missing or
+    /// unparsable count defaults to `0` rather than erroring, since this is fed
+    /// arbitrary CLI text.
+    ///
+    /// Shared by `vcs_git::parse::parse_shortstat` and
+    /// `vcs_jj::parse::parse_diff_stat`, which were previously byte-identical
+    /// past their own preprocessing (jj additionally selects the last line
+    /// mentioning "changed" before calling this). The keyed-substring matching
+    /// ("file"/"insertion"/"deletion") assumes the **English/C-locale** wording
+    /// both CLIs emit under the C locale the callers force — see their own
+    /// `LC_ALL=C` comments at the call site.
+    pub fn parse(summary: &str) -> Self {
+        let mut stat = Self::default();
+        for part in summary.split(',') {
+            let part = part.trim();
+            let n = part
+                .split_whitespace()
+                .next()
+                .and_then(|tok| tok.parse().ok())
+                .unwrap_or(0);
+            if part.contains("file") {
+                stat.files_changed = n;
+            } else if part.contains("insertion") {
+                stat.insertions = n;
+            } else if part.contains("deletion") {
+                stat.deletions = n;
+            }
+        }
+        stat
     }
 }
 
@@ -554,6 +596,21 @@ mod tests {
         let hunk = &parse_diff(full)[0].hunks[0];
         assert_eq!((hunk.old_start, hunk.old_lines), (3, 1));
         assert_eq!((hunk.new_start, hunk.new_lines), (3, 1));
+    }
+
+    #[test]
+    fn diff_stat_parses_all_clauses() {
+        let got = DiffStat::parse(" 3 files changed, 12 insertions(+), 4 deletions(-)\n");
+        assert_eq!(got, DiffStat::new(3, 12, 4));
+    }
+
+    #[test]
+    fn diff_stat_tolerates_missing_clauses_and_empty() {
+        // Pure-insertion diff omits deletions; no changes yields all zeros.
+        let only_ins = DiffStat::parse(" 1 file changed, 2 insertions(+)\n");
+        assert_eq!(only_ins.insertions, 2);
+        assert_eq!(only_ins.deletions, 0);
+        assert_eq!(DiffStat::parse(""), DiffStat::default());
     }
 }
 

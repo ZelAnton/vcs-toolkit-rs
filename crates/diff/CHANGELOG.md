@@ -10,7 +10,11 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `DiffStat::parse` — parses a `git diff --shortstat` / `jj diff --stat` summary
+  clause (`N files changed, X insertions(+), Y deletions(-)`, any sub-clause
+  optional) into a `DiffStat`. Consolidates the byte-identical parsing loop
+  previously duplicated in `vcs_git::parse::parse_shortstat` and
+  `vcs_jj::parse::parse_diff_stat`, which now delegate to it. (T-082.)
 
 ### Changed
 -

@@ -227,11 +227,35 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
     paths: &[PathBuf],
     message: &str,
 ) -> Result<()> {
-    // `CommitPaths` carries `PathBuf`s and routes them through git's NUL-safe
-    // `--pathspec-from-file` transport, so a non-UTF-8 path from `status` /
-    // `changed_files` round-trips into the commit unchanged.
+    // `git commit --only -- <paths>` resolves its pathspecs against the *process
+    // cwd*, but the facade hands us **repo-relative** paths: git `status` (the
+    // source of `changed_files`) always prints repo-root-relative paths whatever
+    // the cwd, and the `commit_paths` contract promises the same shape. When the
+    // handle is bound to a subdirectory (`Repo::discover`/`at` keep `cwd` below
+    // `root`), running the commit from `dir` would re-root every pathspec —
+    // repo-relative `sub/f.txt` becomes `sub/sub/f.txt` — committing the wrong
+    // file or matching none. `--literal-pathspecs` (kept for the glob-magic guard)
+    // also rules out a `:(top)` pathspec prefix. So resolve *this* worktree's
+    // top-level and run the commit from there, where the repo-relative pathspecs
+    // land correctly.
+    //
+    // Resolve the top-level with `git rev-parse --show-toplevel` (a fixed,
+    // injection-free argv via the client's dir-bound escape hatch), NOT by reusing
+    // `Repo::root`: an `at()` handle bound into a *linked* worktree keeps the
+    // original root, which is a different worktree's toplevel — the wrong dir to
+    // commit from. `--show-toplevel` always reports the current worktree's own
+    // root as an absolute path (so, unlike `--git-dir`, no join against `dir`).
+    // Committing UTF-8-named worktree dirs is the same assumption `common_dir`/
+    // `git_dir` already make; the path *set* is untouched (see below).
+    let top_level = PathBuf::from(
+        git.run_args_in(dir, &["rev-parse", "--show-toplevel"])
+            .await?,
+    );
+    // `CommitPaths` carries the untouched `PathBuf`s and routes them through git's
+    // NUL-safe `--pathspec-from-file` transport, so a non-UTF-8 repo-relative path
+    // from `status` / `changed_files` round-trips into the commit unchanged.
     git.commit_paths(
-        dir,
+        &top_level,
         vcs_git::CommitPaths::new(paths.iter().cloned(), message),
     )
     .await?;
@@ -547,5 +571,59 @@ mod tests {
         assert_eq!(change_kind_from_code("R "), ChangeKind::Renamed);
         // A copy (only emitted with copy detection on) is a new file, not a modify.
         assert_eq!(change_kind_from_code("C "), ChangeKind::Added);
+    }
+
+    // T-078: with the handle bound to a *subdirectory* (`cwd` = `/repo/sub`,
+    // repo root = `/repo`), `commit_paths` must first resolve the current
+    // worktree's top-level (`git rev-parse --show-toplevel`) and then run the
+    // partial commit from THERE — not from `dir` — so the repo-relative pathspec
+    // `sub/file.txt` is committed verbatim instead of being re-rooted at the
+    // subdir (`sub/sub/file.txt`). Hermetic: argv **and** cwd are pinned via the
+    // recording runner; no real git is spawned.
+    #[tokio::test]
+    async fn commit_paths_runs_from_resolved_worktree_top_level() {
+        use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
+
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    Reply::ok("/repo\n"),
+                )
+                .on(["git", "--literal-pathspecs", "commit"], Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec);
+
+        commit_paths(
+            &git,
+            Path::new("/repo/sub"),
+            &[PathBuf::from("sub/file.txt")],
+            "edit from subdir",
+        )
+        .await
+        .expect("commit_paths");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "resolve the top-level, then commit");
+        // 1) top-level resolution runs in the bound subdir.
+        assert_eq!(calls[0].args_str(), ["rev-parse", "--show-toplevel"]);
+        assert_eq!(calls[0].cwd.as_deref(), Some(Path::new("/repo/sub")));
+        // 2) the commit runs from the RESOLVED top-level, not the bound subdir …
+        assert_eq!(
+            calls[1].cwd.as_deref(),
+            Some(Path::new("/repo")),
+            "the partial commit must run from the worktree root, not the cwd"
+        );
+        // … and the repo-relative pathspec is carried through untouched.
+        let commit_args = calls[1].args_str();
+        assert!(
+            commit_args.iter().any(|a| a == "--only"),
+            "a partial commit: {commit_args:?}"
+        );
+        assert_eq!(
+            commit_args.last().map(String::as_str),
+            Some("sub/file.txt"),
+            "the repo-relative pathspec is passed through unchanged"
+        );
     }
 }

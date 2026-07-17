@@ -10,13 +10,26 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `normalize_workspace_root`/`workspace_root_matches`: the pure path-normalisation
+  and jj-workspace-root-matching helpers, factored out of the async
+  (`vcs-core`) and blocking (`blocking::workspace_name_for_path`) jj-workspace
+  resolvers so both use the same comparison set. `workspace_root_matches` is
+  the union of the two resolvers' previously-diverged comparisons — a `root`/
+  `path` pair either resolver used to match still matches. (T-080.)
 
 ### Changed
--
+- `blocking::workspace_name_for_path` now matches a candidate workspace root
+  against the requested path via the shared `workspace_root_matches` instead
+  of its own inline `normalize`/comparison logic — same signature and
+  behaviour (a superset of matches, see `workspace_root_matches`'s docs), no
+  observable change for callers. (T-080.)
 
 ### Fixed
--
+- **Docs:** the crate-level `# Safety` rustdoc names `DiffSpec::Rev` (the
+  `diff_text`/`diff` target, via `diff_text_budgeted`) as a concrete instance
+  of the already-documented "flag-value slots are not guarded" rule — it
+  lands verbatim in `-r <revset>`, same as any other flag-value slot. No
+  behaviour change. (T-081.)
 
 ## [0.10.0] - 2026-07-10
 

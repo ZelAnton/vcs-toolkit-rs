@@ -143,6 +143,12 @@
 //! guarded. For eager validation at an input boundary, [`RevsetExpr`] validates
 //! up front. Paths go through the exact-path [`JjFileset`] form.
 //!
+//! A concrete instance of the flag-value-slot rule: [`DiffSpec::Rev`] on
+//! `diff_text`/`diff` (`diff_text_budgeted`) is a bare `String` from the
+//! shared `vcs-diff` crate, passed verbatim into `-r <revset>` — unguarded
+//! here, same as any other flag-value slot, and rejected by `jj` itself if it
+//! starts with `-`.
+//!
 //! # In-depth guide
 //!
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs
@@ -1958,16 +1964,13 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // R7: like `vcs_git::clone_repo`, a failed clone can leave a partial `dest`
         // that blocks a retry ("destination already exists"); `timeout_grace` can't
         // prevent it (Windows' job-kill is atomic; the Unix grace is too short for a
-        // multi-GB partial). Clean a `dest` we could have created — absent or an empty
-        // dir — but never a non-empty pre-existing one (that's the caller's data,
-        // untouched because jj/git refuses to clone into it). Best-effort, error path.
-        let cleanable = match std::fs::read_dir(dest) {
-            Err(_) => true,
-            Ok(mut entries) => entries.next().is_none(),
-        };
+        // multi-GB partial). Clean it via the shared `vcs_cli_support` helper — see its
+        // docs for the "never touch a non-empty pre-existing dest" contract and why
+        // `cleanable` must be computed before the clone runs.
+        let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
         let result = self.core.run_unit(command).await;
-        if result.is_err() && cleanable {
-            let _ = std::fs::remove_dir_all(dest);
+        if result.is_err() {
+            vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
         }
         result
     }
@@ -2672,6 +2675,61 @@ impl<'a, R: ProcessRunner> JjAt<'a, R> {
     }
 }
 
+/// Normalise a path for comparison against jj's `workspace root` output:
+/// canonicalize (resolve symlinks / macOS case) and strip the Windows
+/// verbatim prefix (`\\?\…`, which `canonicalize` adds but jj never emits). A
+/// path that doesn't exist (or otherwise fails to canonicalize — e.g. a
+/// worktree directory already removed) falls back to its own literal form.
+///
+/// Shared by [`workspace_root_matches`] and `vcs-core`'s async worktree-removal
+/// path, so the two resolvers normalise identically (T-080).
+pub fn normalize_workspace_root(p: &Path) -> PathBuf {
+    let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    #[cfg(windows)]
+    {
+        return strip_windows_verbatim_prefix(canonical);
+    }
+    #[cfg(not(windows))]
+    canonical
+}
+
+/// Convert Windows' verbatim path spelling into the spelling emitted by jj.
+/// `std::fs::canonicalize` prefixes local paths with `\\?\` and UNC paths with
+/// `\\?\UNC\`; jj's workspace metadata uses ordinary local/UNC paths instead.
+#[cfg(windows)]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path = path.to_string_lossy();
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        PathBuf::from(path.to_string())
+    }
+}
+
+/// Whether a workspace whose `jj workspace root` resolved to `root` is the
+/// workspace requested at `path`. **The single comparison set** shared by both
+/// jj-workspace-by-path resolvers in this workspace — `vcs-core`'s async
+/// `Repo::remove_worktree` path (`jj_backend::workspace_name_for_path`) and
+/// this crate's synchronous [`blocking::workspace_name_for_path`] (the `Drop`
+/// path) — so "does this path resolve to a workspace" answers the same
+/// question on both sides. The two used to carry independently-maintained,
+/// already-diverged comparison sets (T-080); this is their union, so a path
+/// either side used to resolve still resolves:
+///
+/// - the canonicalised `root` against the canonicalised `path` (handles a
+///   symlink / `.`/`..` detour / case difference in either);
+/// - the raw `root` against the canonicalised `path` (handles a `root` that
+///   itself failed to canonicalize but is already in `path`'s resolved form);
+/// - the raw `root` against the raw `path` (handles a `path` that failed to
+///   canonicalize — e.g. it no longer exists — falling back to literal
+///   equality).
+pub fn workspace_root_matches(root: &Path, path: &Path) -> bool {
+    let target = normalize_workspace_root(path);
+    normalize_workspace_root(root) == target || root == target || root == path
+}
+
 /// Synchronous, best-effort helpers for contexts that cannot `.await` — chiefly
 /// a `Drop` guard. They shell out through `std::process` directly (no async, no
 /// job-containment), so reserve them for short-lived cleanup.
@@ -2714,7 +2772,6 @@ pub mod blocking {
     ///   workspaces did not resolve via `workspace root --name` (so `path`'s absence
     ///   can't be proven). The caller can report it instead of silently doing nothing.
     pub fn workspace_name_for_path(dir: &Path, path: &Path) -> io::Result<Option<String>> {
-        let target = normalize(path);
         let out = Command::new(super::BINARY)
             .current_dir(dir)
             // `--ignore-working-copy`: this is a **read-only** probe run from a Drop
@@ -2766,7 +2823,7 @@ pub mod blocking {
             match root {
                 Ok(r) if r.status.success() => {
                     let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
-                    if normalize(&p) == target || p == target || p == path {
+                    if super::workspace_root_matches(&p, path) {
                         return Ok(Some(name.to_string()));
                     }
                 }
@@ -2785,22 +2842,6 @@ pub mod blocking {
                 unresolved.join(", "),
             )))
         }
-    }
-
-    /// Canonicalise + strip the Windows verbatim prefix (`\\?\…`, which
-    /// `canonicalize` adds but jj never emits) for stable path comparison.
-    fn normalize(p: &Path) -> PathBuf {
-        let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-        #[cfg(windows)]
-        {
-            let s = canonical.to_string_lossy();
-            if let Some(rest) = s.strip_prefix(r"\\?\")
-                && !rest.starts_with("UNC\\")
-            {
-                return PathBuf::from(rest.to_string());
-            }
-        }
-        canonical
     }
 }
 
@@ -2823,6 +2864,87 @@ mod tests {
         assert_eq!(BINARY, "jj");
     }
 
+    // T-080: `workspace_root_matches` is the single comparison set shared by
+    // both jj-workspace-by-path resolvers (`vcs-core`'s async
+    // `remove_worktree` and this crate's `blocking::workspace_name_for_path`
+    // Drop path), so a table-driven pin here fixes the unified semantics for
+    // both call sites at once — table-driven over real directories so the
+    // canonicalisation checks (not just raw equality) are actually exercised.
+    #[test]
+    fn workspace_root_matches_unifies_the_comparison_set() {
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("t080-workspace-root-matches");
+        let root = tmp.path().join("ws");
+        std::fs::create_dir_all(&root).unwrap();
+        let other = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+
+        // Raw equality (both sides' `root == path` check).
+        assert!(
+            workspace_root_matches(&root, &root),
+            "identical paths must match"
+        );
+
+        // A `path` that canonicalizes to the same directory via a `.`/`..`
+        // detour matches through the canonicalised-root-vs-canonicalised-target
+        // check (`normalize(root) == normalize(path)`).
+        let detour = root.join(".").join("..").join(root.file_name().unwrap());
+        assert!(
+            workspace_root_matches(&root, &detour),
+            "a `.`/`..` detour resolving to the same directory must match"
+        );
+        assert!(
+            workspace_root_matches(&detour, &root),
+            "the match must be symmetric in which side carries the detour"
+        );
+
+        // A `path` that does not exist on disk (so it fails to canonicalize and
+        // falls back to its literal form) still matches an equal-by-value `root`.
+        let missing = tmp.path().join("gone").join("ws");
+        assert!(
+            workspace_root_matches(&missing, &missing),
+            "a non-existent but literally-equal path/root pair must still match"
+        );
+
+        // An unrelated, non-matching directory must never match.
+        assert!(
+            !workspace_root_matches(&root, &other),
+            "distinct directories must not match"
+        );
+        assert!(
+            !workspace_root_matches(&root, &missing),
+            "an unrelated non-existent path must not match either"
+        );
+    }
+
+    // UNC paths are deliberately non-existent here: cleanup commonly reaches this
+    // fallback after a workspace directory has gone away, so the literal forms must
+    // still compare as one root when canonicalisation is unavailable.
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_unc_paths_normalize_and_match_ordinary_unc_paths() {
+        let ordinary = Path::new(r"\\server\share\workspace");
+        let verbatim = Path::new(r"\\?\UNC\server\share\workspace");
+
+        assert_eq!(
+            strip_windows_verbatim_prefix(verbatim.to_path_buf()),
+            ordinary,
+            "a verbatim UNC path must become its ordinary UNC spelling"
+        );
+        assert_eq!(
+            normalize_workspace_root(verbatim),
+            normalize_workspace_root(ordinary)
+        );
+        assert!(
+            workspace_root_matches(verbatim, ordinary),
+            "a verbatim workspace root must match an ordinary requested path"
+        );
+        assert!(
+            workspace_root_matches(ordinary, verbatim),
+            "an ordinary workspace root must match a verbatim requested path"
+        );
+    }
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
     #[allow(dead_code)]
     fn bound_view_is_copy_for_default_runner() {

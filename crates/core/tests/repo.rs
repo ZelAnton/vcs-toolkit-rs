@@ -123,6 +123,82 @@ async fn open_detects_git_and_reports_changes() {
     );
 }
 
+// T-078: a partial commit addressed by a **repo-relative** path must commit the
+// same file whether the handle is bound to the repo root or to a nested
+// subdirectory. `git commit --only` reads pathspecs relative to the process cwd,
+// so before the fix a handle bound to `sub/` re-rooted `sub/nested.txt` into
+// `sub/sub/nested.txt` — the round-trip `changed_files → commit_paths` from a
+// subdir committed the wrong file (usually a "did not match any files" failure).
+// The fix runs the commit from the resolved worktree top-level. Mirrors the jj
+// precedent (T-040), which fixed the same repo-relative-vs-cwd mismatch on jj.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn git_commit_paths_repo_relative_from_root_and_subdir() {
+    let sandbox = seeded_git();
+    let dir = sandbox.path();
+    // A tracked file nested one level down.
+    sandbox.commit_file("sub/nested.txt", "one\n", "add nested");
+
+    // (1) From a handle bound to the repo ROOT: edit, then commit the
+    // repo-relative path. The parity baseline (this case already worked).
+    sandbox.write("sub/nested.txt", "two\n");
+    let at_root = Repo::discover(dir).expect("open at root");
+    at_root
+        .commit_paths(
+            &[std::path::PathBuf::from("sub/nested.txt")],
+            "edit from root",
+        )
+        .await
+        .expect("commit_paths from root");
+    assert!(
+        at_root
+            .changed_files()
+            .await
+            .expect("status")
+            .iter()
+            .all(|c| c.path != std::path::Path::new("sub/nested.txt")),
+        "the root-bound commit cleared the change"
+    );
+
+    // (2) From a handle bound to the SUBDIRECTORY (root != cwd): the same
+    // repo-relative path must commit the same file. `changed_files` reports it
+    // repo-relative (git porcelain is repo-root-relative from any cwd), so feed
+    // exactly what it returns straight back into `commit_paths`.
+    sandbox.write("sub/nested.txt", "three\n");
+    let subdir = dir.join("sub");
+    let at_sub = Repo::discover(&subdir).expect("open at subdir");
+    assert_ne!(
+        at_sub.cwd(),
+        at_sub.root(),
+        "the handle is bound below the repo root"
+    );
+
+    let changed = at_sub.changed_files().await.expect("status");
+    let path = changed
+        .iter()
+        .find(|c| c.kind == ChangeKind::Modified)
+        .map(|c| c.path.clone())
+        .expect("the edit shows up in status");
+    assert_eq!(
+        path,
+        std::path::Path::new("sub/nested.txt"),
+        "status is repo-relative even from a subdir"
+    );
+    at_sub
+        .commit_paths(&[path], "edit from subdir")
+        .await
+        .expect("commit_paths from subdir");
+    assert!(
+        at_sub
+            .changed_files()
+            .await
+            .expect("status")
+            .iter()
+            .all(|c| c.path != std::path::Path::new("sub/nested.txt")),
+        "the subdir round-trip committed the right file"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires the jj binary"]
 async fn open_detects_jj_and_reports_changes() {

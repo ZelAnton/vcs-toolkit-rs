@@ -24,6 +24,15 @@ crates; tag releases as `vcs-core-v<version>`.
   is added. (T-061.)
 
 ### Changed
+- `jj_backend::workspace_name_for_path` (the resolver behind the async
+  `Repo::remove_worktree`) now matches a candidate workspace root against the
+  requested path via `vcs_jj::workspace_root_matches`, the comparison set now
+  shared with `vcs-jj`'s blocking Drop-path resolver
+  (`vcs_jj::blocking::workspace_name_for_path`, used by
+  `cleanup_worktree_blocking`) — the two jj-workspace-by-path resolvers had
+  independently drifted to different comparison sets; they now share one
+  (a superset of both, so no path either used to resolve stops resolving).
+  No signature change; internal only. (T-080.)
 - `Repo::continue_in_progress` now drives an in-progress `git am` forward with
   `am --continue` instead of silently doing nothing. `ApplyMailbox` was falling
   through the same no-op arm as `Clear`/`Conflict`, so a caller that resolved an
@@ -36,6 +45,25 @@ crates; tag releases as `vcs-core-v<version>`.
   a misleading success" policy. (T-065.)
 
 ### Fixed
+- `Repo::commit_paths` on the **git** backend now honours its documented
+  "paths are repo-relative" contract from a subdirectory-bound handle. `git commit
+  --only -- <paths>` resolves its pathspecs against the process cwd, but the facade
+  hands it repo-relative paths (git `status` — the source of `changed_files` — is
+  always repo-root-relative whatever the cwd). When the handle was bound below the
+  root (`Repo::discover`/`Repo::at` on a subdirectory — `discover` walks up, so
+  `cwd` ≠ `root`), the round-trip `changed_files → commit_paths` re-rooted every
+  path (repo-relative `sub/f.txt` became the pathspec `sub/sub/f.txt`), so the
+  commit usually failed with "did not match any files" — and, on an unlucky name
+  collision, could have committed the *wrong* file. The git backend now resolves
+  the current worktree's top-level (`git rev-parse --show-toplevel`) and runs the
+  commit from there, so a repo-relative path commits the same file whether the
+  handle is bound to the repo root or a nested subdirectory. It resolves the
+  top-level from the *current* worktree rather than reusing the handle's recorded
+  `root`, so an `at()` handle bound into a **linked worktree** commits against its
+  own toplevel, not the main worktree's. `--literal-pathspecs` is retained (its
+  glob-magic guard also rules out a `:(top)` prefix). The jj backend was already
+  correct (its `status` runs from the workspace root and its filesets are
+  root-relative — T-040). No public API change. (T-078.)
 - `Repo::open`, called directly on a directory that is itself a **bare** git
   repository (`git init --bare`: `HEAD`/`config`/`objects`/`refs` with no `.git`
   subdirectory), now returns `Error::BareRepository` instead of the generic
@@ -60,6 +88,13 @@ crates; tag releases as `vcs-core-v<version>`.
   Ok/Err branches. The `try_merge` doc's cancellation caveat is rewritten
   accordingly: the entire rollback (decision plus command) now survives a cancelled
   probe on **both** backends, not just jj. (T-059.)
+- Doc fix: `Repo::local_branches` / `Repo::branch_exists` still described the
+  pre-T-041 jj tombstone behavior — a bookmark deleted locally but still tracked
+  on a remote "lingers" and "can list a name a `delete_branch` just removed" —
+  even though `parse_bookmarks` has filtered that tombstone out since T-041. The
+  docs now say what actually happens: the tombstone is filtered and does not read
+  as an existing branch, while a *conflicted* bookmark (present, no single
+  target) is still reported as existing. (T-066.)
 
 ## [0.8.0] - 2026-07-10
 

@@ -34,7 +34,13 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
--
+- **Docs:** the crate-level `# Safety` rustdoc and `docs/security.md` claimed
+  *every* revision/range input goes through the validated `RevSpec` newtype;
+  `DiffSpec::Rev` (`diff_text`/`diff`, `diff_text_within`/`diff_within`) never
+  did — it's a bare `String` from the shared `vcs-diff` crate, guarded
+  per-call by an inline `reject_flag_like` (plus a trailing `--`) inside
+  `diff_text_budgeted` instead. Docs now name it as the one exception; no
+  behaviour change. (T-081.)
 
 ## [0.10.0] - 2026-07-10
 

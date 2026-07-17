@@ -739,7 +739,6 @@ async fn workspace_name_for_path<R: ProcessRunner>(
     dir: &Path,
     path: &Path,
 ) -> Result<String> {
-    let target = normalize_for_compare(path);
     let workspaces = jj.workspace_list(dir).await?;
     let names: Vec<String> = workspaces.iter().map(|ws| ws.name.clone()).collect();
     let roots = jj.workspace_roots(dir, &names).await;
@@ -757,7 +756,10 @@ async fn workspace_name_for_path<R: ProcessRunner>(
     for (ws, root) in workspaces.into_iter().zip(roots) {
         match root {
             Ok(root) => {
-                if normalize_for_compare(&root) == target || root == path {
+                // Shared with `vcs_jj::blocking::workspace_name_for_path` (the
+                // Drop-path resolver) so both sides answer "does this path
+                // resolve to a workspace" identically (T-080).
+                if vcs_jj::workspace_root_matches(&root, path) {
                     return Ok(ws.name);
                 }
             }
@@ -781,23 +783,6 @@ async fn workspace_name_for_path<R: ProcessRunner>(
             unresolved.join(", "),
         ))))
     }
-}
-
-/// Normalise a path for comparison against jj's `workspace root` output:
-/// canonicalize (resolve symlinks / macOS case) and strip the Windows verbatim
-/// prefix (`\\?\…`, which `canonicalize` adds but jj never emits).
-fn normalize_for_compare(p: &Path) -> PathBuf {
-    let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    #[cfg(windows)]
-    {
-        let s = canonical.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\")
-            && !rest.starts_with("UNC\\")
-        {
-            return PathBuf::from(rest.to_string());
-        }
-    }
-    canonical
 }
 
 /// Project a `jj diff --summary` entry into a [`FileChange`]. For a rename/copy
@@ -839,6 +824,53 @@ mod tests {
         assert_eq!(change_kind_from_status('R'), ChangeKind::Renamed);
     }
 
+    // The async resolver delegates to `vcs_jj::workspace_root_matches`, which also
+    // backs the blocking Drop-path resolver. Pin both UNC spellings here at the async
+    // `workspace_name_for_path` boundary so either side continues to resolve the
+    // registered workspace when canonicalisation cannot access the UNC root.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn workspace_name_for_path_matches_verbatim_unc_in_both_directions() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        for (root, path) in [
+            (
+                r"\\?\UNC\server\share\workspace",
+                r"\\server\share\workspace",
+            ),
+            (
+                r"\\server\share\workspace",
+                r"\\?\UNC\server\share\workspace",
+            ),
+        ] {
+            let jj = Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"workspace\"\tc0ffee\t\n"),
+                    )
+                    .on(
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "workspace",
+                        ],
+                        Reply::ok(format!("{root}\n")),
+                    ),
+            );
+
+            assert_eq!(
+                workspace_name_for_path(&jj, Path::new(r"C:\repo"), Path::new(path))
+                    .await
+                    .expect("the matching workspace must resolve"),
+                "workspace"
+            );
+        }
+    }
     // A `ScriptedRunner` that also performs `jj workspace add`'s real side effect —
     // creating the destination directory — so a hermetic test can exercise the
     // rollback's "we created the dir, so clean it up" branch faithfully: the dir

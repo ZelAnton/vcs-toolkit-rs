@@ -70,6 +70,8 @@ trait, so tests need no real binary, temp repo, or network.
   ambiguous, so it becomes a presence-only setter or a spec field).
 - Keep new code in the style of the surrounding code; `cargo fmt` and the clippy gate
   above are the baseline.
+- **[Extending vcs-toolkit-rs](docs/extending.md)** — the full contributor workflow for
+  adding capabilities: CLI methods, facade operations, MCP tools, and decision records.
 
 ## Releasing
 

@@ -647,29 +647,16 @@ fn expand_rename(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
 /// Parse the summary footer of `jj diff --stat`, e.g. `4 files changed, 157
 /// insertions(+), 137 deletions(-)` (same shape as git's `--shortstat`). The
 /// footer is the last line mentioning "changed"; no such line → all zeros.
+/// Preprocessing (line selection) is the only jj-specific part — the clause
+/// parse itself delegates to the shared [`DiffStat::parse`] (also used by
+/// `vcs_git::parse::parse_shortstat`).
 pub(crate) fn parse_diff_stat(output: &str) -> DiffStat {
     let summary = output
         .lines()
         .rev()
         .find(|line| line.contains("changed"))
         .unwrap_or("");
-    let mut stat = DiffStat::default();
-    for part in summary.split(',') {
-        let part = part.trim();
-        let n = part
-            .split_whitespace()
-            .next()
-            .and_then(|tok| tok.parse().ok())
-            .unwrap_or(0);
-        if part.contains("file") {
-            stat.files_changed = n;
-        } else if part.contains("insertion") {
-            stat.insertions = n;
-        } else if part.contains("deletion") {
-            stat.deletions = n;
-        }
-    }
-    stat
+    DiffStat::parse(summary)
 }
 
 #[cfg(test)]
