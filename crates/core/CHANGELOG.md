@@ -19,7 +19,10 @@ crates; tag releases as `vcs-core-v<version>`.
   being silently truncated). Cross-backend revision-range diffs remain
   deliberately off the facade — reach those through the raw `git()`/`jj()`
   client. `FileDiff` (the shared `vcs_diff::FileDiff`) is now re-exported from
-  the crate root alongside `DiffStat`. (T-068.)
+  the crate root alongside `DiffStat`. On jj this runs the same default
+  working-copy-snapshotting `jj diff` as `diff_stat` (records an op-log entry;
+  see both methods' rustdoc for why the non-recording `--ignore-working-copy`
+  mode is deliberately not used here). (T-068.)
 - `Repo::discover_with(dir, git, jj)`: the injected-client counterpart of
   `Repo::discover`. It runs the **same** discovery walk and error classification
   (`Error::NotARepository` / `Error::BareRepository`, via the same

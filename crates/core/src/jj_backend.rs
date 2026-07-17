@@ -182,7 +182,9 @@ pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Resul
 pub(crate) async fn diff<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Vec<FileDiff>> {
     // `JjApi::diff(DiffSpec::WorkingTree)` targets `@` (vs its parent) internally
     // — the same scope `diff_stat` above targets explicitly via `rev("@")`.
-    jj.diff(dir, DiffSpec::WorkingTree).await.map_err(Into::into)
+    jj.diff(dir, DiffSpec::WorkingTree)
+        .await
+        .map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(

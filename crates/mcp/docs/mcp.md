@@ -191,6 +191,21 @@ The `vcs-mcp` binary applies, in order:
    diff can't be buffered whole into the server's (and then the JSON response's)
    memory — exceeding it returns `OutputTooLarge`, never a silently truncated
    result.
+8. **`readOnlyHint` scope on jj.** On a jj-backed repo, every `repo_*` read tool
+   (`repo_status`, `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`,
+   `repo_branches`, `repo_current_branch`, `repo_worktrees`, …) runs a plain jj
+   command, which is jj's default working-copy-**snapshotting** mode: it imports
+   any bare filesystem edit into a fresh `@` and records a new operation in the
+   op log. `readOnlyHint` here means "does not change tracked content or refs",
+   not "records zero jj operations" — the op-log entry is a reversible
+   bookkeeping side effect (`jj op undo`), not a content mutation. A genuinely
+   non-recording read exists internally (`--ignore-working-copy`, exposed as
+   `vcs-core`'s `snapshot_readonly`/`local_branches_readonly` and used by
+   `vcs-watch`'s polling loop) but is deliberately **not** wired into these MCP
+   tools: it reports the state of the *last recorded* operation rather than the
+   live working tree, so a bare edit no jj command has yet snapshotted would be
+   silently invisible — the opposite of what an agent calling `repo_status`/
+   `repo_diff` right after editing a file needs.
 
 > Note the hardening, timeout, and output budget are how the **binary** constructs
 > the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from

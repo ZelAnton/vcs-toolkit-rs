@@ -16,7 +16,9 @@ crates; tag releases as `vcs-mcp-v<version>`.
   including newly-added files). Surfaces `vcs-core`'s new `Repo::diff()`
   (`Vec<FileDiff>`) as JSON, modeled on `repo_show_file`/`forge_pr_diff` — it
   inherits the repo client's `OutputBudget`, so an over-budget diff errors with
-  `OutputTooLarge` rather than a silently truncated result. (T-068.)
+  `OutputTooLarge` rather than a silently truncated result. Like every other
+  jj-backed read tool, `repo_diff` lets jj snapshot the working copy (records an
+  op-log entry — see the Safety model's `readOnlyHint` note in `mcp.md`). (T-068.)
 - Two new write-gated PR/MR **review** tools: `forge_pr_approve` (approve — all
   three forges) and `forge_pr_request_changes` (request changes with a required
   body — GitHub/Gitea; `Unsupported` on GitLab, whose review model is

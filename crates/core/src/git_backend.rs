@@ -130,7 +130,9 @@ pub(crate) async fn diff<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<V
     // above does against `git.diff_stat`), so no separate empty-tree handling is
     // needed here — same scope as `diff_stat`, just the parsed hunks instead of the
     // aggregate counts.
-    git.diff(dir, DiffSpec::WorkingTree).await.map_err(Into::into)
+    git.diff(dir, DiffSpec::WorkingTree)
+        .await
+        .map_err(Into::into)
 }
 
 pub(crate) async fn log<R: ProcessRunner>(

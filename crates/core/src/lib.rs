@@ -784,6 +784,22 @@ impl<R: ProcessRunner> Repo<R> {
     /// on jj it shows in both. On an unborn git repo (no commits yet) the count is
     /// taken against the empty tree, so a pre-first-commit working tree stats
     /// instead of erroring.
+    ///
+    /// jj snapshot caveat: like every other jj-backed read here (`status`,
+    /// `changed_files`, `snapshot`, `log`, …), this runs a plain `jj diff` — jj's
+    /// default mode, which first **snapshots the working copy** (imports any bare
+    /// filesystem edit into a fresh `@`) and **records a new operation** in the op
+    /// log. That is a bookkeeping side effect, not a content mutation (no tracked
+    /// file/ref changes, and it is transparently undoable via `jj op undo`), but it
+    /// is not a *no-op* read either. A genuinely non-recording read exists
+    /// (`--ignore-working-copy`, wired up as `vcs_jj`'s `_ignoring_working_copy`
+    /// client methods and this crate's [`snapshot_readonly`](Self::snapshot_readonly)
+    /// / `local_branches_readonly`, built for [`vcs-watch`](https://docs.rs/vcs-watch)'s
+    /// polling loop) but is deliberately **not** used here: it reports the state of
+    /// the *last recorded* operation rather than the live working tree, so a bare
+    /// edit no jj command has yet snapshotted would be silently invisible — wrong
+    /// for a method whose whole purpose is reporting the *current* working-copy
+    /// state.
     pub async fn diff_stat(&self) -> Result<DiffStat> {
         match &self.backend {
             Backend::Git(g) => git_backend::diff_stat(g, &self.cwd).await,
@@ -811,6 +827,13 @@ impl<R: ProcessRunner> Repo<R> {
     /// (see the crate docs' "what's deliberately not unified" — range diffs stay
     /// on the raw [`git`](Self::git)/[`jj`](Self::jj) client, via `GitApi::diff`/
     /// `JjApi::diff` with `DiffSpec::Rev`).
+    ///
+    /// Same jj snapshot caveat as [`diff_stat`](Self::diff_stat): on jj this is a
+    /// plain `jj diff -r @ --git`, jj's default working-copy-snapshotting mode
+    /// (records an operation in the op log — a reversible bookkeeping side effect,
+    /// not a tracked-content mutation), deliberately not the non-recording
+    /// `--ignore-working-copy` mode, which would make this method blind to any not-
+    /// yet-snapshotted edit.
     pub async fn diff(&self) -> Result<Vec<FileDiff>> {
         match &self.backend {
             Backend::Git(g) => git_backend::diff(g, &self.cwd).await,
@@ -3590,9 +3613,8 @@ mod tests {
         assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert!(
-            rec.calls()
-                .iter()
-                .any(|c| c.args_str() == [
+            rec.calls().iter().any(|c| c.args_str()
+                == [
                     "diff",
                     "HEAD",
                     "--no-color",
@@ -3638,11 +3660,48 @@ mod tests {
         assert_eq!(files[0].path, Path::new("m"));
         assert_eq!(files[0].change, ChangeKind::Modified);
         assert!(
-            rec.calls().iter().any(|c| c.args_str()
-                == ["diff", "-r", "@", "--git", "--color", "never"]),
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str() == ["diff", "-r", "@", "--git", "--color", "never"]),
             "diff should target @ vs its parent (same scope as diff_stat): {:?}",
             rec.calls()
         );
+    }
+
+    // R-01 (T-068 review): `Repo::diff()` must stay consistent with the already-
+    // shipped `Repo::diff_stat()` precedent on jj's working-copy-snapshot
+    // behaviour — neither passes `--ignore-working-copy`, so both let jj snapshot
+    // the working copy (record an operation) exactly the same way. Pinned
+    // hermetically so the two can't silently drift apart (e.g. one gaining the
+    // flag while the other doesn't, which would make the "same scope as
+    // diff_stat" doc claim false). See `Repo::diff`/`Repo::diff_stat`'s rustdoc
+    // for why `--ignore-working-copy` is deliberately not used by either: it would
+    // make the read blind to any not-yet-snapshotted working-tree edit.
+    #[tokio::test]
+    async fn jj_diff_and_diff_stat_snapshot_the_working_copy_consistently() {
+        use processkit::testing::RecordingRunner;
+
+        let diff_rec =
+            RecordingRunner::new(ScriptedRunner::new().on(["jj", "diff"], Reply::ok("")));
+        let diff_repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&diff_rec));
+        diff_repo.diff().await.unwrap();
+
+        let stat_rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["jj", "diff"], Reply::ok("0 files changed\n")),
+        );
+        let stat_repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&stat_rec));
+        stat_repo.diff_stat().await.unwrap();
+
+        for (name, rec) in [("diff", &diff_rec), ("diff_stat", &stat_rec)] {
+            assert!(
+                rec.calls()
+                    .iter()
+                    .all(|c| !c.args_str().iter().any(|a| a == "--ignore-working-copy")),
+                "{name} must let jj snapshot the working copy (no --ignore-working-copy), \
+                 consistent with its sibling: {:?}",
+                rec.calls()
+            );
+        }
     }
 
     // `Repo::log` on git maps `GitApi::log`'s typed `Commit` (hash/author/date/
