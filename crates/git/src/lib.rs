@@ -106,6 +106,18 @@
 //! spawning if empty or starting with `-`. Flag-value slots (`-b <name>`) are
 //! consumed verbatim; paths always go through `--` / pathspec.
 //!
+//! One named exception to the "revisions go through `RevSpec`" rule:
+//! [`DiffSpec::Rev`] — the diff target on
+//! [`GitApi::diff_text`]/[`GitApi::diff`] and [`Git::diff_text_within`]/
+//! [`Git::diff_within`] — is a bare `String` from the shared, backend-agnostic
+//! `vcs-diff` crate, not a `RevSpec`. It is still guarded, just per-call rather
+//! than by the type: `diff_text_budgeted` runs the same
+//! [`reject_flag_like`](vcs_cli_support::reject_flag_like) check inline before
+//! using it, and a trailing `--` pins it as a revision rather than a pathspec.
+//! Behaviourally equivalent to `RevSpec::new`'s guarantee, just enforced at the
+//! call site because `vcs-diff` is intentionally a plain-data, dependency-free
+//! crate with no newtype of its own to construct through.
+//!
 //! # In-depth guide
 //!
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs

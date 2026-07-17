@@ -41,6 +41,17 @@ the validated type — so the guarantee is in the type, not an easily-forgotten
 call. For the remaining bare-positional `&str` inputs (remote names, URLs, config
 keys) an internal `reject_flag_like` guard runs on every call.
 
+One named exception to the newtype rule: the diff target,
+`DiffSpec::Rev(String)`, on `diff_text`/`diff` (both crates). It comes from the
+shared, backend-agnostic `vcs-diff` crate as a bare `String`, not a `RevSpec` /
+`RevsetExpr`, so it can't go through a newtype constructor without giving
+`vcs-diff` a dependency on either backend's validation. It's still guarded —
+just per-call instead of by the type: on git, `diff_text_budgeted` runs the
+same `reject_flag_like` check inline before using it, plus a trailing `--` to
+keep it from resolving as a pathspec; on jj it lands in the `-r <revset>`
+flag-value slot (see "not guarded, by design" below), which the CLI itself
+rejects if dash-prefixed.
+
 A rejected value surfaces as a spawn-side **`processkit::Error::Spawn`** — the
 same variant a missing binary produces — carrying the program name and an
 `InvalidInput` IO source describing it (classifiable via `Error::is_invalid_input`).

@@ -28,6 +28,14 @@ pub enum DiffSpec {
     WorkingTree,
     /// A specific revision/revset or range, e.g. `HEAD~1` / `main..HEAD`
     /// (`git diff <rev>`) or `@-` / `main..@` (`jj diff -r <revset>`).
+    ///
+    /// This crate is intentionally plain data — no I/O, no validation — so
+    /// this string is passed through unchecked; guarding it against a
+    /// flag-like value (a leading `-`) is each backend wrapper's job, and the
+    /// two differ: `vcs-git` runs an inline `reject_flag_like` check (plus a
+    /// trailing `--`) before using it, while `vcs-jj` relies on it landing in
+    /// `jj`'s `-r <revset>` flag-value slot, which the CLI itself rejects if
+    /// dash-prefixed. Don't assume either guarantee from this type alone.
     Rev(String),
 }
 

@@ -143,6 +143,12 @@
 //! guarded. For eager validation at an input boundary, [`RevsetExpr`] validates
 //! up front. Paths go through the exact-path [`JjFileset`] form.
 //!
+//! A concrete instance of the flag-value-slot rule: [`DiffSpec::Rev`] on
+//! `diff_text`/`diff` (`diff_text_budgeted`) is a bare `String` from the
+//! shared `vcs-diff` crate, passed verbatim into `-r <revset>` — unguarded
+//! here, same as any other flag-value slot, and rejected by `jj` itself if it
+//! starts with `-`.
+//!
 //! # In-depth guide
 //!
 //! Beyond this page, this crate ships a full how-to guide — rendered on docs.rs

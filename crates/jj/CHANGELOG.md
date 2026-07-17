@@ -25,7 +25,11 @@ crates; tag releases as `vcs-jj-v<version>`.
   observable change for callers. (T-080.)
 
 ### Fixed
--
+- **Docs:** the crate-level `# Safety` rustdoc names `DiffSpec::Rev` (the
+  `diff_text`/`diff` target, via `diff_text_budgeted`) as a concrete instance
+  of the already-documented "flag-value slots are not guarded" rule — it
+  lands verbatim in `-r <revset>`, same as any other flag-value slot. No
+  behaviour change. (T-081.)
 
 ## [0.10.0] - 2026-07-10
 
