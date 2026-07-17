@@ -2684,14 +2684,25 @@ pub fn normalize_workspace_root(p: &Path) -> PathBuf {
     let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     #[cfg(windows)]
     {
-        let s = canonical.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\")
-            && !rest.starts_with("UNC\\")
-        {
-            return PathBuf::from(rest.to_string());
-        }
+        return strip_windows_verbatim_prefix(canonical);
     }
+    #[cfg(not(windows))]
     canonical
+}
+
+/// Convert Windows' verbatim path spelling into the spelling emitted by jj.
+/// `std::fs::canonicalize` prefixes local paths with `\\?\` and UNC paths with
+/// `\\?\UNC\`; jj's workspace metadata uses ordinary local/UNC paths instead.
+#[cfg(windows)]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path = path.to_string_lossy();
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        PathBuf::from(path.to_string())
+    }
 }
 
 /// Whether a workspace whose `jj workspace root` resolved to `root` is the
@@ -2904,6 +2915,33 @@ mod tests {
         );
     }
 
+    // UNC paths are deliberately non-existent here: cleanup commonly reaches this
+    // fallback after a workspace directory has gone away, so the literal forms must
+    // still compare as one root when canonicalisation is unavailable.
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_unc_paths_normalize_and_match_ordinary_unc_paths() {
+        let ordinary = Path::new(r"\\server\share\workspace");
+        let verbatim = Path::new(r"\\?\UNC\server\share\workspace");
+
+        assert_eq!(
+            strip_windows_verbatim_prefix(verbatim.to_path_buf()),
+            ordinary,
+            "a verbatim UNC path must become its ordinary UNC spelling"
+        );
+        assert_eq!(
+            normalize_workspace_root(verbatim),
+            normalize_workspace_root(ordinary)
+        );
+        assert!(
+            workspace_root_matches(verbatim, ordinary),
+            "a verbatim workspace root must match an ordinary requested path"
+        );
+        assert!(
+            workspace_root_matches(ordinary, verbatim),
+            "an ordinary workspace root must match a verbatim requested path"
+        );
+    }
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
     #[allow(dead_code)]
     fn bound_view_is_copy_for_default_runner() {

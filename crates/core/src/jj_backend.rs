@@ -824,6 +824,53 @@ mod tests {
         assert_eq!(change_kind_from_status('R'), ChangeKind::Renamed);
     }
 
+    // The async resolver delegates to `vcs_jj::workspace_root_matches`, which also
+    // backs the blocking Drop-path resolver. Pin both UNC spellings here at the async
+    // `workspace_name_for_path` boundary so either side continues to resolve the
+    // registered workspace when canonicalisation cannot access the UNC root.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn workspace_name_for_path_matches_verbatim_unc_in_both_directions() {
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+
+        for (root, path) in [
+            (
+                r"\\?\UNC\server\share\workspace",
+                r"\\server\share\workspace",
+            ),
+            (
+                r"\\server\share\workspace",
+                r"\\?\UNC\server\share\workspace",
+            ),
+        ] {
+            let jj = Jj::with_runner(
+                ScriptedRunner::new()
+                    .on(
+                        ["jj", "workspace", "list"],
+                        Reply::ok("\"workspace\"\tc0ffee\t\n"),
+                    )
+                    .on(
+                        [
+                            "jj",
+                            "--ignore-working-copy",
+                            "workspace",
+                            "root",
+                            "--name",
+                            "workspace",
+                        ],
+                        Reply::ok(format!("{root}\n")),
+                    ),
+            );
+
+            assert_eq!(
+                workspace_name_for_path(&jj, Path::new(r"C:\repo"), Path::new(path))
+                    .await
+                    .expect("the matching workspace must resolve"),
+                "workspace"
+            );
+        }
+    }
     // A `ScriptedRunner` that also performs `jj workspace add`'s real side effect —
     // creating the destination directory — so a hermetic test can exercise the
     // rollback's "we created the dir, so clean it up" branch faithfully: the dir
