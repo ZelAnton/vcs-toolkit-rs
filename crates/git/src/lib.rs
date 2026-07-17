@@ -2549,20 +2549,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // auth) can leave a **partial, non-empty** `dest` that blocks a retry with
         // "destination path already exists and is not empty". `timeout_grace` alone
         // can't prevent it — Windows' job-kill is atomic (no graceful tier) and the
-        // Unix grace is too short to delete a multi-GB partial. So clean it ourselves.
-        //
-        // Only clean a `dest` we could have *created*: absent, or an empty directory.
-        // git refuses to clone into a **non-empty** existing dir, so a non-empty `dest`
-        // means the failure was that refusal and the caller's data is untouched — never
-        // delete that. (A best-effort blocking remove on the error path; a partial clone
-        // may be large, but this path is rare.)
-        let cleanable = match std::fs::read_dir(dest) {
-            Err(_) => true,                              // absent/unreadable → clone creates it
-            Ok(mut entries) => entries.next().is_none(), // an empty directory
-        };
+        // Unix grace is too short to delete a multi-GB partial. So clean it ourselves,
+        // via the shared `vcs_cli_support` helper (also used by `vcs_jj::git_clone`) —
+        // see its docs for the "never touch a non-empty pre-existing dest" contract and
+        // why `cleanable` must be computed before the clone runs.
+        let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
         let result = self.core.run_unit(command).await;
-        if result.is_err() && cleanable {
-            let _ = std::fs::remove_dir_all(dest);
+        if result.is_err() {
+            vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
         }
         result
     }

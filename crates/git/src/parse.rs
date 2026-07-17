@@ -431,25 +431,12 @@ pub(crate) fn parse_blame_porcelain(output: &str) -> Vec<BlameLine> {
 
 /// Parse `git diff --shortstat`, e.g. ` 3 files changed, 12 insertions(+), 4
 /// deletions(-)`. Any clause may be absent (a pure-insertion diff omits
-/// deletions; no changes yields an empty string → all zeros).
+/// deletions; no changes yields an empty string → all zeros). Delegates to the
+/// shared [`DiffStat::parse`] (also used by `vcs_jj::parse::parse_diff_stat`),
+/// which both crates' callers force the **C locale** for — see `c_locale` at
+/// the `shortstat`/`diff --stat` call sites.
 pub(crate) fn parse_shortstat(output: &str) -> DiffStat {
-    let mut stat = DiffStat::default();
-    for part in output.split(',') {
-        let part = part.trim();
-        let n = part
-            .split_whitespace()
-            .next()
-            .and_then(|tok| tok.parse().ok())
-            .unwrap_or(0);
-        if part.contains("file") {
-            stat.files_changed = n;
-        } else if part.contains("insertion") {
-            stat.insertions = n;
-        } else if part.contains("deletion") {
-            stat.deletions = n;
-        }
-    }
-    stat
+    DiffStat::parse(output)
 }
 
 /// Parse `git ls-remote --heads <remote>` output — `<sha>\trefs/heads/<name>`

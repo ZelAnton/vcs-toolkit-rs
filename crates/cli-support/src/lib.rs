@@ -503,6 +503,40 @@ pub fn reject_flag_like(program: &str, what: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// R7 clone-cleanup: whether `dest` is safe to remove if a `clone`/`git_clone`
+/// about to run into it fails — either absent, or an already-empty directory.
+/// Compute this **before** running the clone, and pass the result to
+/// [`cleanup_failed_clone_dest`] on the error path — `git`/`jj` both refuse to
+/// clone into a **non-empty** existing directory, so if `dest` already had
+/// contents going in, a failure means that refusal, and the caller's
+/// pre-existing data must never be deleted. Re-checking emptiness *after* the
+/// clone ran would be wrong: a failed clone can leave `dest` partially
+/// populated, so a post-hoc check could wrongly call a partial clone's leftovers
+/// "empty" (or simply disagree with the pre-clone state).
+///
+/// Shared by `vcs_git::clone_repo` and `vcs_jj::git_clone`, which previously
+/// carried a byte-identical copy of this check plus its own best-effort
+/// `remove_dir_all` on the error path.
+pub fn clone_dest_cleanable(dest: &Path) -> bool {
+    match std::fs::read_dir(dest) {
+        Err(_) => true, // absent/unreadable → clone would create it
+        Ok(mut entries) => entries.next().is_none(), // an empty directory
+    }
+}
+
+/// Best-effort cleanup of a failed clone's partial `dest` (R7) — call only on
+/// the clone's error path, passing `cleanable` as computed by
+/// [`clone_dest_cleanable`] **before** the clone ran. A no-op when `cleanable`
+/// is `false` (never touches a non-empty pre-existing `dest`). Swallows a
+/// `remove_dir_all` failure (e.g. another process holding a file open) — this
+/// is opportunistic tidy-up, not something a clone failure should itself fail
+/// on.
+pub fn cleanup_failed_clone_dest(dest: &Path, cleanable: bool) {
+    if cleanable {
+        let _ = std::fs::remove_dir_all(dest);
+    }
+}
+
 /// Total attempts for a transient-retried `fetch` (1 try + 2 retries).
 pub const FETCH_ATTEMPTS: u32 = 3;
 /// Fixed backoff between fetch retries.
