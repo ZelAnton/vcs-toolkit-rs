@@ -739,7 +739,6 @@ async fn workspace_name_for_path<R: ProcessRunner>(
     dir: &Path,
     path: &Path,
 ) -> Result<String> {
-    let target = normalize_for_compare(path);
     let workspaces = jj.workspace_list(dir).await?;
     let names: Vec<String> = workspaces.iter().map(|ws| ws.name.clone()).collect();
     let roots = jj.workspace_roots(dir, &names).await;
@@ -757,7 +756,10 @@ async fn workspace_name_for_path<R: ProcessRunner>(
     for (ws, root) in workspaces.into_iter().zip(roots) {
         match root {
             Ok(root) => {
-                if normalize_for_compare(&root) == target || root == path {
+                // Shared with `vcs_jj::blocking::workspace_name_for_path` (the
+                // Drop-path resolver) so both sides answer "does this path
+                // resolve to a workspace" identically (T-080).
+                if vcs_jj::workspace_root_matches(&root, path) {
                     return Ok(ws.name);
                 }
             }
@@ -781,23 +783,6 @@ async fn workspace_name_for_path<R: ProcessRunner>(
             unresolved.join(", "),
         ))))
     }
-}
-
-/// Normalise a path for comparison against jj's `workspace root` output:
-/// canonicalize (resolve symlinks / macOS case) and strip the Windows verbatim
-/// prefix (`\\?\…`, which `canonicalize` adds but jj never emits).
-fn normalize_for_compare(p: &Path) -> PathBuf {
-    let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    #[cfg(windows)]
-    {
-        let s = canonical.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\")
-            && !rest.starts_with("UNC\\")
-        {
-            return PathBuf::from(rest.to_string());
-        }
-    }
-    canonical
 }
 
 /// Project a `jj diff --summary` entry into a [`FileChange`]. For a rename/copy

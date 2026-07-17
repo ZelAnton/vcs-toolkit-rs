@@ -24,6 +24,15 @@ crates; tag releases as `vcs-core-v<version>`.
   is added. (T-061.)
 
 ### Changed
+- `jj_backend::workspace_name_for_path` (the resolver behind the async
+  `Repo::remove_worktree`) now matches a candidate workspace root against the
+  requested path via `vcs_jj::workspace_root_matches`, the comparison set now
+  shared with `vcs-jj`'s blocking Drop-path resolver
+  (`vcs_jj::blocking::workspace_name_for_path`, used by
+  `cleanup_worktree_blocking`) — the two jj-workspace-by-path resolvers had
+  independently drifted to different comparison sets; they now share one
+  (a superset of both, so no path either used to resolve stops resolving).
+  No signature change; internal only. (T-080.)
 - `Repo::continue_in_progress` now drives an in-progress `git am` forward with
   `am --continue` instead of silently doing nothing. `ApplyMailbox` was falling
   through the same no-op arm as `Clear`/`Conflict`, so a caller that resolved an
