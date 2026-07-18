@@ -313,6 +313,19 @@ being re-rooted at the subdir (`sub/f` → `sub/sub/f`). The linked-worktree cas
 handled too: the top-level is resolved from the current worktree, not the handle's
 recorded `root`.
 
+## Line attribution
+
+```rust,ignore
+pub async fn annotate(&self, path: &str, rev: Option<&str>) -> Result<Vec<AnnotationLine>>;
+```
+
+`annotate` reports who last changed each line of repo-relative `path`, using git
+`blame` or jj `file annotate`. `rev`, when supplied, is forwarded unchanged as a
+git revspec / jj revset; `None` reads git `HEAD` / jj `@`. Every result has an id,
+1-based line number, and content. On git, `author` and `date` (Unix seconds) are
+also populated; jj's typed annotation supplies neither, so those fields are null
+rather than guessed.
+
 ## Remotes
 
 ```rust,ignore

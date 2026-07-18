@@ -10,6 +10,11 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `Repo::annotate(path, rev)`: unified per-line file attribution backed by git
+  `blame` / jj `file annotate`. The `AnnotationLine` DTO exposes id, 1-based line,
+  and content on both backends; git additionally supplies `author` and `date` (Unix
+  seconds), while jj returns those asymmetric fields as `None` rather than guessed.
+  A supplied revspec/revset is forwarded unchanged. (T-070.)
 - `Repo::create_branch(name)` (and the matching `VcsRepo::create_branch` trait
   method): creates a local branch (git) / bookmark (jj) at the current head
   **without switching the working copy** (git `branch <name>`, via the

@@ -527,6 +527,57 @@ impl Commit {
     }
 }
 
+/// One line of file attribution — the honest least common denominator between
+/// git's `blame` and jj's `file annotate`. See [`Repo::annotate`](crate::Repo::annotate).
+///
+/// `author`/`date` are `Some` only on git: jj's typed annotation reports the
+/// change that introduced a line, but not an author or timestamp. This DTO leaves
+/// both fields `None` on jj rather than fabricating provenance. `date`, when
+/// present, is git's author timestamp as Unix seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AnnotationLine {
+    /// Revision that last changed the line: git's full commit object id / jj's
+    /// short change id.
+    pub id: String,
+    /// Line number in the annotated file (1-based).
+    pub line: u32,
+    /// The line's content, without its row-separating newline.
+    pub content: String,
+    /// Author name on git; `None` on jj (see the type docs).
+    pub author: Option<String>,
+    /// Author timestamp as Unix seconds on git; `None` on jj (see the type docs).
+    pub date: Option<i64>,
+}
+
+impl AnnotationLine {
+    /// An attributed `id`/`line`/`content` with no author/date (jj's typed
+    /// annotation shape); chain [`author`](AnnotationLine::author) and
+    /// [`date`](AnnotationLine::date) for git's shape. Lets external `VcsRepo`
+    /// implementations and tests construct this `#[non_exhaustive]` DTO.
+    pub fn new(id: impl Into<String>, line: u32, content: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            line,
+            content: content.into(),
+            author: None,
+            date: None,
+        }
+    }
+
+    /// Set the author name.
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Set the author timestamp in Unix seconds.
+    pub fn date(mut self, date: i64) -> Self {
+        self.date = Some(date);
+        self
+    }
+}
 /// How a worktree was materialised. The facade always reports
 /// [`Plain`](CreateOutcome::Plain); the [`CowCloned`](CreateOutcome::CowCloned)
 /// variant exists so a consumer that layers a copy-on-write strategy on top can

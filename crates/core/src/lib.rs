@@ -187,9 +187,9 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, FileDiff,
-    MergeProbe, OperationState, RepoSnapshot, UpstreamTracking, WorktreeCreate,
-    WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
+    AnnotationLine, BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat,
+    FileChange, FileDiff, MergeProbe, OperationState, RepoSnapshot, UpstreamTracking,
+    WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
@@ -867,6 +867,21 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Per-line attribution for `path`, optionally at `rev` (a git revspec / jj
+    /// revset). `None` reads the current git `HEAD` / jj `@`; a supplied revision is
+    /// passed to the selected backend without facade-level interpretation.
+    ///
+    /// Backend nuance: [`AnnotationLine::author`]/[`AnnotationLine::date`] are
+    /// `Some` only on git — jj's typed annotation exposes only the introducing
+    /// change and line content, so the facade leaves them `None` rather than guessing
+    /// (see [`AnnotationLine`]).
+    pub async fn annotate(&self, path: &str, rev: Option<&str>) -> Result<Vec<AnnotationLine>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::annotate(g, &self.cwd, path, rev).await,
+            Backend::Jj(j) => jj_backend::annotate(j, &self.cwd, path, rev).await,
+        }
+    }
+
     /// The content of `path` as it exists at `rev` (git revspec / jj revset), e.g.
     /// `HEAD:src/lib.rs` on git or `@-` + a fileset on jj — both normalise
     /// backslash path separators and return the file's bytes verbatim (including
@@ -1382,6 +1397,7 @@ facade_trait! {
         fn diff() -> Result<Vec<FileDiff>>;
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn show_file(rev: &str, path: &str) -> Result<String>;
+        fn annotate(path: &str, rev: Option<&str>) -> Result<Vec<AnnotationLine>>;
         fn show_file_within(rev: &str, path: &str, budget: OutputBudget) -> Result<String>;
         fn snapshot() -> Result<RepoSnapshot>;
         fn snapshot_readonly() -> Result<RepoSnapshot>;
@@ -3792,6 +3808,56 @@ mod tests {
         assert_eq!(commits[0].description, "wip");
         assert_eq!(commits[0].author, None);
         assert_eq!(commits[0].date, None);
+    }
+
+    // `Repo::annotate` maps git blame's richer per-line metadata into the common
+    // DTO and forwards the optional revspec before the pathspec separator.
+    #[tokio::test]
+    async fn git_annotate_maps_blame_and_forwards_revspec() {
+        use processkit::testing::RecordingRunner;
+
+        let sha = "a".repeat(40);
+        let rec = RecordingRunner::replying(Reply::ok(format!(
+            "{sha} 3 7 1\nauthor Jane\nauthor-time 1717700000\nauthor-tz +0200\n\tlet x = 1;\n"
+        )));
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+        let lines = repo.annotate("src/lib.rs", Some("HEAD~1")).await.unwrap();
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id, sha);
+        assert_eq!(lines[0].line, 7);
+        assert_eq!(lines[0].content, "let x = 1;");
+        assert_eq!(lines[0].author.as_deref(), Some("Jane"));
+        assert_eq!(lines[0].date, Some(1_717_700_000));
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["blame", "--line-porcelain", "HEAD~1", "--", "src/lib.rs"]
+        );
+    }
+
+    // jj's annotation has the common id/line/content fields but no author/date;
+    // it takes a plain path after `--` and keeps jj's default snapshotting mode.
+    #[tokio::test]
+    async fn jj_annotate_maps_annotation_and_forwards_revset() {
+        use processkit::testing::RecordingRunner;
+
+        let rec = RecordingRunner::replying(Reply::ok("kz\tline one\n"));
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        let lines = repo.annotate("src/lib.rs", Some("@-")).await.unwrap();
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id, "kz");
+        assert_eq!(lines[0].line, 1);
+        assert_eq!(lines[0].content, "line one");
+        assert_eq!(lines[0].author, None);
+        assert_eq!(lines[0].date, None);
+        let args = rec.only_call().args_str();
+        assert_eq!(&args[..4], ["file", "annotate", "-r", "@-"]);
+        assert_eq!(&args[args.len() - 2..], ["--", "src/lib.rs"]);
+        assert!(
+            !args.iter().any(|arg| arg == "--ignore-working-copy"),
+            "annotate must use jj's live, snapshotting working-copy mode: {args:?}"
+        );
     }
 
     // `Repo::show_file` on git dispatches to `GitApi::show_file` and forwards its

@@ -83,7 +83,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 - **`destructiveHint = false` + `idempotentHint = true`** (not `readOnlyHint`) —
   every `repo_*` query that, on **jj**, runs a default working-copy-**snapshotting**
   command and so records a (reversible, append-only) op-log operation: `repo_status`,
-  `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`,
+  `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`, `repo_annotate`,
   `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`. On git
   these are plain reads; the annotation is the honest backend-agnostic classification.
 
@@ -95,6 +95,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_diff_stat` | — | Aggregate insertion/deletion/file counts for the working copy. |
 | `repo_diff` | — | The full parsed working-copy diff, one file entry per changed file — same scope as `repo_diff_stat` (git: working tree vs `HEAD`, excludes untracked files; jj: `@` vs its parent, includes newly-added files). Runs under the content-output budget (see below). |
 | `repo_log` | `{ revspec_or_revset, max }` | Up to `max` commits reachable from `revspec_or_revset` (a git revspec or jj revset), most-recent-first. `author`/`date` are null on jj. |
+| `repo_annotate` | `{ path, rev? }` | Per-line attribution at optional git revspec / jj revset. Each line has id, line, and content; `author`/`date` are null on jj. |
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |
@@ -213,7 +214,7 @@ The `vcs-mcp` binary applies, in order:
    result.
 8. **Annotation honesty on jj (no `readOnlyHint` on the snapshotting reads).** On a
    jj-backed repo, every `repo_*` query except `repo_info` (`repo_status`,
-   `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`,
+   `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`, `repo_annotate`,
    `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`) runs a
    plain jj command in jj's default working-copy-**snapshotting** mode: it imports any
    bare filesystem edit into a fresh `@` and records a new operation in the op log.

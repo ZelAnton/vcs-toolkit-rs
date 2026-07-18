@@ -10,8 +10,8 @@ use vcs_git::{
 };
 
 use crate::dto::{
-    ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
-    RepoSnapshot, UpstreamTracking, WorktreeInfo,
+    AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
+    OperationState, RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -647,4 +647,23 @@ mod tests {
             "the repo-relative pathspec is passed through unchanged"
         );
     }
+}
+
+pub(crate) async fn annotate<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    path: &str,
+    rev: Option<&str>,
+) -> Result<Vec<AnnotationLine>> {
+    let rev = rev.map(RevSpec::new).transpose()?;
+    Ok(git
+        .blame(dir, path, rev)
+        .await?
+        .into_iter()
+        .map(|line| {
+            AnnotationLine::new(line.commit, line.final_line, line.content)
+                .author(line.author)
+                .date(line.author_time)
+        })
+        .collect())
 }

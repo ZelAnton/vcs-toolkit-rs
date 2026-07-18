@@ -10,6 +10,12 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `repo_annotate` read tool (`{ path, rev? }`): per-line attribution through
+  `Repo::annotate`, returning id, 1-based line, content, and git-only
+  `author`/`date` fields (null on jj). It deliberately uses
+  `destructiveHint = false` + `idempotentHint = true`, not `readOnlyHint`, because
+  default `jj file annotate` snapshots the working copy and records a reversible
+  op-log operation. (T-070.)
 - New write-gated mutation tool `repo_create_branch` (`{ name }`): creates a
   local branch (git) / bookmark (jj) at the current head without switching the
   working copy (`git branch <name>` / `jj bookmark create <name> -r @`),

@@ -223,6 +223,16 @@ pub struct ShowFileParams {
     pub path: String,
 }
 
+/// Attribute each line of a file.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AnnotateParams {
+    /// Repo-relative path of the file to annotate.
+    pub path: String,
+    /// Optional git revspec / jj revset. Omit for git `HEAD` / jj `@`.
+    #[serde(default)]
+    pub rev: Option<String>,
+}
+
 /// A pull/merge request by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrNumberParams {
@@ -689,6 +699,23 @@ impl VcsMcpServer {
             &self
                 .repo
                 .show_file(&p.rev, &p.path)
+                .await
+                .map_err(core_err)?,
+        )
+    }
+
+    #[tool(
+        description = "Per-line attribution for a repo-relative file, optionally at a git revspec or jj revset. Each line has id, line, and content; author/date are null on jj because its typed annotation exposes no author or timestamp. Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    pub async fn repo_annotate(
+        &self,
+        Parameters(p): Parameters<AnnotateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .repo
+                .annotate(&p.path, p.rev.as_deref())
                 .await
                 .map_err(core_err)?,
         )
@@ -1393,6 +1420,34 @@ mod tests {
         assert!(json.contains("deadbeef"), "{json}");
         assert!(json.contains("Fix bug"), "{json}");
         assert!(json.contains("Jane"), "{json}");
+    }
+
+    // `repo_annotate` is an ungated read tool that serializes the facade's
+    // unified line-attribution DTO, including git's asymmetric author/date.
+    #[tokio::test]
+    async fn repo_annotate_returns_content_json() {
+        let sha = "a".repeat(40);
+        let server = git_server(
+            ScriptedRunner::new().on(
+                ["git", "blame"],
+                Reply::ok(format!(
+                    "{sha} 2 5 1\nauthor Jane\nauthor-time 1717700000\nauthor-tz +0200\n\tlet x = 1;\n"
+                )),
+            ),
+            WriteGate::None,
+        );
+        let out = server
+            .repo_annotate(Parameters(AnnotateParams {
+                path: "src/lib.rs".into(),
+                rev: Some("HEAD~1".into()),
+            }))
+            .await
+            .expect("repo_annotate ok");
+        let json = result_json(&out);
+        assert!(json.contains(&sha), "{json}");
+        assert!(json.contains("let x = 1;"), "{json}");
+        assert!(json.contains("Jane"), "{json}");
+        assert!(json.contains("1717700000"), "{json}");
     }
 
     // `repo_show_file` is a read tool (no write gate) that surfaces the facade's
@@ -2571,6 +2626,7 @@ mod tests {
             ("repo_log", VcsMcpServer::repo_log_tool_attr()),
             ("repo_show_file", VcsMcpServer::repo_show_file_tool_attr()),
             ("repo_branches", VcsMcpServer::repo_branches_tool_attr()),
+            ("repo_annotate", VcsMcpServer::repo_annotate_tool_attr()),
             (
                 "repo_current_branch",
                 VcsMcpServer::repo_current_branch_tool_attr(),
@@ -2668,6 +2724,7 @@ mod tests {
             "repo_diff",
             "repo_log",
             "repo_show_file",
+            "repo_annotate",
             "repo_branches",
             "repo_current_branch",
             "repo_conflicts",

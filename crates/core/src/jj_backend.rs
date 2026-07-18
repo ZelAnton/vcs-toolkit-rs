@@ -15,8 +15,8 @@ use vcs_jj::{
 };
 
 use crate::dto::{
-    ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe, OperationState,
-    RepoSnapshot, WorktreeInfo,
+    AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
+    OperationState, RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -1359,4 +1359,19 @@ mod tests {
             calls[0].args_str()
         );
     }
+}
+
+pub(crate) async fn annotate<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    path: &str,
+    revset: Option<&str>,
+) -> Result<Vec<AnnotationLine>> {
+    let revset = revset.map(rev).transpose()?;
+    Ok(jj
+        .file_annotate(dir, path, revset)
+        .await?
+        .into_iter()
+        .map(|line| AnnotationLine::new(line.change_id, line.line, line.content))
+        .collect())
 }
