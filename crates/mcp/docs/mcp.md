@@ -71,7 +71,21 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 
 ## Tool catalogue
 
-### Read tools (always available, `readOnlyHint`)
+### Read tools (always available)
+
+These are the query tools — **always callable**, regardless of the write gate.
+Their MCP *annotation* splits by whether the query can perturb the backend it
+reads (see the Safety model's "annotation honesty on jj" note):
+
+- **`readOnlyHint`** — genuinely read-only on **both** backends: `repo_info` (it
+  spawns no backend command at all) and every `forge_*` read tool (they drive the
+  forge CLI, not the repo working copy).
+- **`destructiveHint = false` + `idempotentHint = true`** (not `readOnlyHint`) —
+  every `repo_*` query that, on **jj**, runs a default working-copy-**snapshotting**
+  command and so records a (reversible, append-only) op-log operation: `repo_status`,
+  `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`,
+  `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`. On git
+  these are plain reads; the annotation is the honest backend-agnostic classification.
 
 | Tool | Params | Returns |
 |---|---|---|
@@ -153,11 +167,16 @@ The `vcs-mcp` binary applies, in order:
    on; `--allow-tools <name,…>` grants a **per-tool allowlist** (e.g. allow
    `repo_commit` and `repo_push` but not the worktree or forge mutations).
 2. **Tool annotations.** Mutating tools are annotated `destructiveHint` so an MCP
-   client can surface a confirmation prompt; the genuinely read-only tools carry
-   `readOnlyHint`. `repo_try_merge` is **write-gated** (not read-only): although it
-   always rolls back and leaves no net trace, it spawns a *real* trial merge that
-   materializes working-tree content, so it is treated like `repo_checkout` — see
-   the next point.
+   client can surface a confirmation prompt. Only the tools that are read-only on
+   **both** backends carry `readOnlyHint` (`repo_info`, the `forge_*` reads); the
+   `repo_*` queries that snapshot the jj working copy carry
+   `destructiveHint = false` + `idempotentHint = true` instead of `readOnlyHint`,
+   because on jj they record a (reversible) op-log operation — see the "annotation
+   honesty on jj" note below. `repo_try_merge` uses the same non-destructive/
+   idempotent annotation but is additionally **write-gated** (not read-only):
+   although it always rolls back and leaves no net trace, it spawns a *real* trial
+   merge that materializes working-tree content, so it is treated like
+   `repo_checkout` — see the next point.
 3. **A hardened git client.** The binary opens the repo with `Git::hardened()`,
    which disables repo hooks and `core.fsmonitor`, pins a repo-local
    `core.sshCommand` empty, scrubs repo-redirecting and command-hook `GIT_*`
@@ -191,21 +210,31 @@ The `vcs-mcp` binary applies, in order:
    diff can't be buffered whole into the server's (and then the JSON response's)
    memory — exceeding it returns `OutputTooLarge`, never a silently truncated
    result.
-8. **`readOnlyHint` scope on jj.** On a jj-backed repo, every `repo_*` read tool
-   (`repo_status`, `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`,
-   `repo_branches`, `repo_current_branch`, `repo_worktrees`, …) runs a plain jj
-   command, which is jj's default working-copy-**snapshotting** mode: it imports
-   any bare filesystem edit into a fresh `@` and records a new operation in the
-   op log. `readOnlyHint` here means "does not change tracked content or refs",
-   not "records zero jj operations" — the op-log entry is a reversible
-   bookkeeping side effect (`jj op undo`), not a content mutation. A genuinely
-   non-recording read exists internally (`--ignore-working-copy`, exposed as
-   `vcs-core`'s `snapshot_readonly`/`local_branches_readonly` and used by
-   `vcs-watch`'s polling loop) but is deliberately **not** wired into these MCP
-   tools: it reports the state of the *last recorded* operation rather than the
-   live working tree, so a bare edit no jj command has yet snapshotted would be
-   silently invisible — the opposite of what an agent calling `repo_status`/
-   `repo_diff` right after editing a file needs.
+8. **Annotation honesty on jj (no `readOnlyHint` on the snapshotting reads).** On a
+   jj-backed repo, every `repo_*` query except `repo_info` (`repo_status`,
+   `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`,
+   `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`) runs a
+   plain jj command in jj's default working-copy-**snapshotting** mode: it imports any
+   bare filesystem edit into a fresh `@` and records a new operation in the op log.
+   The MCP spec defines `readOnlyHint` as "the tool does not modify its environment",
+   and recording an op-log operation *is* a state change — so these tools deliberately
+   **do not** claim `readOnlyHint`. They are annotated `destructiveHint = false` +
+   `idempotentHint = true` instead: the op-log entry is append-only and fully
+   reversible (`jj op undo`) and changes no tracked content, refs, or bookmarks, and a
+   re-run with no interim edit records nothing further — but it is not *nothing*, so
+   the annotation stays honest rather than redefining `readOnlyHint` in prose. (On the
+   git backend these same tools are ordinary reads; the annotation is the conservative
+   cross-backend truth, since a read-only operation is trivially non-destructive and
+   idempotent.) They remain **callable without a write gate** — a snapshot mutates no
+   tracked content or refs, so it needs no `--allow-write`. A genuinely non-recording
+   read exists internally (`--ignore-working-copy`, exposed as `vcs-core`'s
+   `snapshot_readonly`/`local_branches_readonly` and used by `vcs-watch`'s polling
+   loop) but is deliberately **not** wired into these MCP tools: it reports the state
+   of the *last recorded* operation rather than the live working tree, so a bare edit
+   no jj command has yet snapshotted would be silently invisible — the opposite of
+   what an agent calling `repo_status`/`repo_diff` right after editing a file needs.
+   That is why `--ignore-working-copy` is not an acceptable way to reclaim
+   `readOnlyHint` here: it would trade a false annotation for stale reads.
 
 > Note the hardening, timeout, and output budget are how the **binary** constructs
 > the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from

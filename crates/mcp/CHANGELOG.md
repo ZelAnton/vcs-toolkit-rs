@@ -10,15 +10,16 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
-- New read-only tool `repo_diff`: the full parsed working-copy diff (one file
+- New read tool `repo_diff`: the full parsed working-copy diff (one file
   entry per changed file), the same scope `repo_diff_stat` already covers (git:
   working tree vs `HEAD`, excluding untracked files; jj: `@` vs its parent,
   including newly-added files). Surfaces `vcs-core`'s new `Repo::diff()`
   (`Vec<FileDiff>`) as JSON, modeled on `repo_show_file`/`forge_pr_diff` — it
   inherits the repo client's `OutputBudget`, so an over-budget diff errors with
   `OutputTooLarge` rather than a silently truncated result. Like every other
-  jj-backed read tool, `repo_diff` lets jj snapshot the working copy (records an
-  op-log entry — see the Safety model's `readOnlyHint` note in `mcp.md`). (T-068.)
+  jj-backed `repo_*` read, it lets jj snapshot the working copy (records an op-log
+  entry), so it is annotated `destructiveHint = false` + `idempotentHint = true`
+  rather than `readOnlyHint` — see the annotation change below. (T-068.)
 - Two new write-gated PR/MR **review** tools: `forge_pr_approve` (approve — all
   three forges) and `forge_pr_request_changes` (request changes with a required
   body — GitHub/Gitea; `Unsupported` on GitLab, whose review model is
@@ -41,6 +42,24 @@ crates; tag releases as `vcs-mcp-v<version>`.
   result. (T-067.)
 
 ### Changed
+- **MCP annotation fix (op-log honesty on jj).** The `repo_*` read tools that, on a
+  jj backend, run a default working-copy-**snapshotting** jj command — and so record
+  a (reversible) op-log operation — no longer advertise `readOnlyHint = true`, which
+  the MCP spec defines as "does not modify its environment". Affected:
+  `repo_status`, `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`,
+  `repo_show_file`, `repo_branches`, `repo_current_branch`, `repo_conflicts`,
+  `repo_worktrees`. They are now annotated `destructiveHint = false` +
+  `idempotentHint = true` (the same honest classification `repo_try_merge` uses): the
+  op-log snapshot is append-only/recoverable and changes no tracked content, refs, or
+  bookmarks. `repo_info` and every `forge_*` read tool are genuinely read-only on both
+  backends (no working-copy snapshot) and **keep** `readOnlyHint`. This is a
+  metadata-only change — every tool stays callable in the default read-only mode (a
+  snapshot is not a content/ref mutation, so none is write-gated) and no input/output
+  shape changes; a client that auto-runs only `readOnlyHint` tools may now prompt for
+  these jj-snapshotting reads. Documentation-only redefinition of `readOnlyHint` was
+  rejected, and `--ignore-working-copy` is deliberately not used to reclaim it (it
+  would report the last recorded operation rather than the live working tree — a stale
+  read for a status/diff query). (T-068.)
 - Serving a **bare** git repository (`git init --bare`, or a path at or under one
   with no working tree) now fails with the same classification `vcs-core` reports —
   `BareRepository: <path>` — instead of the generic

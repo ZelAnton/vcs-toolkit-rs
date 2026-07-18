@@ -581,14 +581,28 @@ fn forge_err(e: vcs_forge::Error) -> ErrorData {
 impl VcsMcpServer {
     // --- repo: read --------------------------------------------------------
 
+    // NOTE (T-068): NOT `read_only_hint = true`. On jj this tool runs a plain,
+    // working-copy-**snapshotting** jj command that records an op-log operation, so
+    // asserting `readOnlyHint` ("does not modify its environment") would violate the
+    // MCP contract. It is classified as the honest, backend-agnostic truth instead —
+    // non-destructive + idempotent (the op-log snapshot is append-only/recoverable
+    // and changes no tracked content, refs, or bookmarks) — the same classification
+    // `repo_try_merge` uses. See the `jj_snapshotting_read_tools_*` tests and the
+    // Safety model note in `docs/mcp.md`. It stays callable without a write gate (an
+    // op-log snapshot is not a content/ref mutation).
     #[tool(
-        description = "A batched snapshot of the repo state: branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, and operation state.",
-        annotations(read_only_hint = true)
+        description = "A batched snapshot of the repo state: branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, and operation state. Read query; on jj it snapshots the working copy (records a reversible op-log operation), so it is annotated non-destructive rather than readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.snapshot().await.map_err(core_err)?)
     }
 
+    // T-068: `read_only_hint = true` is correct here (unlike the other repo_* reads).
+    // `repo_info` spawns NO backend command at all — it reads the backend kind and the
+    // root/cwd paths the facade cached at construction, and the forge kind — so it can
+    // never snapshot a jj working copy or record an op-log operation. The read-only
+    // guarantee holds on both backends. Pinned by `truly_read_only_tools_keep_read_only_hint`.
     #[tool(
         description = "Which backend (git/jj), the repository root, the working directory, and the configured forge (if any).",
         annotations(read_only_hint = true)
@@ -602,33 +616,42 @@ impl VcsMcpServer {
         })
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate).
     #[tool(
-        description = "The working-copy changes (added/modified/deleted/renamed paths).",
-        annotations(read_only_hint = true)
+        description = "The working-copy changes (added/modified/deleted/renamed paths). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_status(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.changed_files().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate).
     #[tool(
-        description = "Aggregate insertion/deletion/file counts for the working copy.",
-        annotations(read_only_hint = true)
+        description = "Aggregate insertion/deletion/file counts for the working copy. Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_diff_stat(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.diff_stat().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate).
     #[tool(
-        description = "The full parsed working-copy diff (per-file hunks/lines) — same scope as repo_diff_stat: git working tree vs HEAD (excludes untracked files), jj @ vs its parent (includes newly-added files).",
-        annotations(read_only_hint = true)
+        description = "The full parsed working-copy diff (per-file hunks/lines) — same scope as repo_diff_stat: git working tree vs HEAD (excludes untracked files), jj @ vs its parent (includes newly-added files). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_diff(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.diff().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate). A plain `jj log`
+    // snapshots the working copy first, exactly like the other repo_* reads.
     #[tool(
-        description = "Recent history: up to `max` commits reachable from `revspec_or_revset` (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@\"), most-recent-first. `author`/`date` are null on jj — its typed log doesn't currently surface authorship or a timestamp.",
-        annotations(read_only_hint = true)
+        description = "Recent history: up to `max` commits reachable from `revspec_or_revset` (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@\"), most-recent-first. `author`/`date` are null on jj — its typed log doesn't currently surface authorship or a timestamp. Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_log(
         &self,
@@ -643,9 +666,12 @@ impl VcsMcpServer {
         )
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate). A plain `jj file show`
+    // snapshots the working copy first, exactly like the other repo_* reads.
     #[tool(
-        description = "The content of a file at a revision (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@-\"). Returns the file's bytes verbatim (including any trailing newline).",
-        annotations(read_only_hint = true)
+        description = "The content of a file at a revision (a git revspec, e.g. \"HEAD\", or a jj revset, e.g. \"@-\"). Returns the file's bytes verbatim (including any trailing newline). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_show_file(
         &self,
@@ -660,33 +686,44 @@ impl VcsMcpServer {
         )
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate).
     #[tool(
-        description = "Local branch (git) / bookmark (jj) names.",
-        annotations(read_only_hint = true)
+        description = "Local branch (git) / bookmark (jj) names. Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_branches(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.local_branches().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate).
     #[tool(
-        description = "The current branch/bookmark (null when detached/unset).",
-        annotations(read_only_hint = true)
+        description = "The current branch/bookmark (null when detached/unset). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_current_branch(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.current_branch().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate). `jj resolve --list`
+    // snapshots the working copy first, exactly like the other repo_* reads.
     #[tool(
-        description = "Paths with unresolved merge conflicts (repo-relative, '/'-separated).",
-        annotations(read_only_hint = true)
+        description = "Paths with unresolved merge conflicts (repo-relative, '/'-separated). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_conflicts(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.conflicted_files().await.map_err(core_err)?)
     }
 
+    // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
+    // NOT readOnlyHint; still callable without a write gate). `jj workspace list`
+    // snapshots the working copy first (the per-workspace `workspace root` probes it
+    // fans out are already `--ignore-working-copy`, but the top-level list is not).
     #[tool(
-        description = "Attached worktrees (git) / workspaces (jj).",
-        annotations(read_only_hint = true)
+        description = "Attached worktrees (git) / workspaces (jj). Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_worktrees(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(&self.repo.list_worktrees().await.map_err(core_err)?)
@@ -2475,14 +2512,164 @@ mod tests {
         assert_eq!(a.read_only_hint, None);
     }
 
-    // The macro-generated tool definitions carry the right MCP annotations: read
-    // tools are read-only, mutation tools are destructive.
+    // The macro-generated tool definitions carry the right MCP annotations: a
+    // genuinely read-only tool (`repo_info` — no backend spawn) is read-only, a
+    // mutation tool is destructive. (`repo_snapshot` used to be the read example
+    // here, but T-068 reclassified it — it snapshots the jj working copy — so the
+    // read example is now `repo_info`, the one repo_* read that never spawns.)
     #[test]
     fn tool_annotations_mark_read_vs_destructive() {
-        let read = VcsMcpServer::repo_snapshot_tool_attr();
+        let read = VcsMcpServer::repo_info_tool_attr();
         assert_eq!(read.annotations.unwrap().read_only_hint, Some(true));
         let write = VcsMcpServer::repo_commit_tool_attr();
         assert_eq!(write.annotations.unwrap().destructive_hint, Some(true));
+    }
+
+    // T-068 (variant C — strict MCP compliance). Every `repo_*` read tool that, on
+    // the jj backend, dispatches to a plain (working-copy-**snapshotting**) jj
+    // command records an op-log operation — so it must NOT assert `readOnlyHint`
+    // ("does not modify its environment"), which would break the MCP contract. The
+    // honest, backend-agnostic classification is non-destructive + idempotent (the
+    // op-log snapshot is append-only/recoverable and changes no tracked content,
+    // refs, or bookmarks; on git these tools are read-only, a strict subset). This
+    // list is the *verified* set (checked against `vcs-jj`'s command construction and
+    // `jj_backend.rs`), which is broader than the ticket's initial sketch: `repo_log`,
+    // `repo_show_file`, and `repo_conflicts` snapshot too (`jj log` / `jj file show` /
+    // `jj resolve --list` are all default-snapshotting), and are included here for
+    // consistency. `repo_worktrees` snapshots via its top-level `jj workspace list`
+    // (its per-workspace `workspace root` fan-out is already `--ignore-working-copy`).
+    // Pinning all three annotation fields makes an accidental re-classification (or a
+    // silent `read_only_hint = true` creeping back) fail the build.
+    #[test]
+    fn jj_snapshotting_read_tools_are_not_read_only_but_non_destructive() {
+        let tools = [
+            ("repo_snapshot", VcsMcpServer::repo_snapshot_tool_attr()),
+            ("repo_status", VcsMcpServer::repo_status_tool_attr()),
+            ("repo_diff_stat", VcsMcpServer::repo_diff_stat_tool_attr()),
+            ("repo_diff", VcsMcpServer::repo_diff_tool_attr()),
+            ("repo_log", VcsMcpServer::repo_log_tool_attr()),
+            ("repo_show_file", VcsMcpServer::repo_show_file_tool_attr()),
+            ("repo_branches", VcsMcpServer::repo_branches_tool_attr()),
+            (
+                "repo_current_branch",
+                VcsMcpServer::repo_current_branch_tool_attr(),
+            ),
+            ("repo_conflicts", VcsMcpServer::repo_conflicts_tool_attr()),
+            ("repo_worktrees", VcsMcpServer::repo_worktrees_tool_attr()),
+        ];
+        for (name, tool) in tools {
+            let a = tool
+                .annotations
+                .unwrap_or_else(|| panic!("{name} must carry annotations"));
+            assert_eq!(
+                a.read_only_hint, None,
+                "{name} must NOT assert readOnlyHint — on jj it snapshots the working \
+                 copy (records an op-log operation), so the read-only claim is false"
+            );
+            assert_eq!(
+                a.destructive_hint,
+                Some(false),
+                "{name} is non-destructive (the jj op-log snapshot is append-only and \
+                 recoverable; no tracked content/refs/bookmarks change)"
+            );
+            assert_eq!(
+                a.idempotent_hint,
+                Some(true),
+                "{name} is idempotent (a re-run with no interim filesystem edit records \
+                 no further op-log operation)"
+            );
+        }
+    }
+
+    // T-068: the complement. The genuinely backend-agnostic read-only tools KEEP
+    // `readOnlyHint = true`. `repo_info` makes no backend spawn at all (cached
+    // kind/root/cwd + forge kind); every `forge_*` read tool drives the forge CLI, not
+    // the jj working copy — so neither can snapshot, and the read-only claim holds on
+    // both backends. This is the consistency half of the fix: only the tools that
+    // *actually* reach a snapshotting jj command were reclassified, not the whole read
+    // surface.
+    #[test]
+    fn truly_read_only_tools_keep_read_only_hint() {
+        let tools = [
+            ("repo_info", VcsMcpServer::repo_info_tool_attr()),
+            (
+                "forge_auth_status",
+                VcsMcpServer::forge_auth_status_tool_attr(),
+            ),
+            ("forge_repo_view", VcsMcpServer::forge_repo_view_tool_attr()),
+            ("forge_pr_list", VcsMcpServer::forge_pr_list_tool_attr()),
+            ("forge_pr_view", VcsMcpServer::forge_pr_view_tool_attr()),
+            ("forge_pr_checks", VcsMcpServer::forge_pr_checks_tool_attr()),
+            ("forge_pr_diff", VcsMcpServer::forge_pr_diff_tool_attr()),
+            (
+                "forge_issue_list",
+                VcsMcpServer::forge_issue_list_tool_attr(),
+            ),
+            (
+                "forge_issue_view",
+                VcsMcpServer::forge_issue_view_tool_attr(),
+            ),
+            (
+                "forge_release_list",
+                VcsMcpServer::forge_release_list_tool_attr(),
+            ),
+            (
+                "forge_release_view",
+                VcsMcpServer::forge_release_view_tool_attr(),
+            ),
+            ("forge_info", VcsMcpServer::forge_info_tool_attr()),
+        ];
+        for (name, tool) in tools {
+            let a = tool
+                .annotations
+                .unwrap_or_else(|| panic!("{name} must carry annotations"));
+            assert_eq!(
+                a.read_only_hint,
+                Some(true),
+                "{name} is genuinely read-only on both backends and must keep readOnlyHint"
+            );
+        }
+    }
+
+    // T-068: reclassifying the jj-snapshotting reads must NOT change their
+    // availability — they stay ordinary read tools, callable in the default
+    // read-only mode. An op-log snapshot mutates neither tracked content nor refs, so
+    // (unlike `repo_try_merge`, which materializes working-tree content that can run
+    // untrusted filter/textconv drivers) it needs no `--allow-write`; none of these
+    // names may leak into `WRITE_TOOLS`. Two of them are also exercised end-to-end
+    // under `WriteGate::None` to prove they run without a gate.
+    #[tokio::test]
+    async fn reclassified_reads_stay_ungated_and_callable() {
+        for name in [
+            "repo_snapshot",
+            "repo_status",
+            "repo_diff_stat",
+            "repo_diff",
+            "repo_log",
+            "repo_show_file",
+            "repo_branches",
+            "repo_current_branch",
+            "repo_conflicts",
+            "repo_worktrees",
+        ] {
+            assert!(
+                !WRITE_TOOLS.contains(&name),
+                "{name} is a read tool — it must not be write-gated"
+            );
+        }
+
+        // End-to-end: they run under the default read-only gate (no --allow-write).
+        let server = git_server(
+            ScriptedRunner::new()
+                .on(["git", "status"], Reply::ok(" M a.rs\0"))
+                .on(["git", "symbolic-ref"], Reply::ok("main\n")),
+            WriteGate::None,
+        );
+        server.repo_status().await.expect("repo_status ungated");
+        server
+            .repo_current_branch()
+            .await
+            .expect("repo_current_branch ungated");
     }
 
     // The server identifies itself as `vcs-mcp` on the wire, not rmcp's default
