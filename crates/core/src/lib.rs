@@ -67,6 +67,7 @@
 //! - **Refs** — [`current_branch`](Repo::current_branch),
 //!   [`trunk`](Repo::trunk), [`local_branches`](Repo::local_branches),
 //!   [`branch_exists`](Repo::branch_exists),
+//!   [`create_branch`](Repo::create_branch),
 //!   [`delete_branch`](Repo::delete_branch),
 //!   [`rename_branch`](Repo::rename_branch) (branch on git, bookmark on jj).
 //! - **Status** — [`changed_files`](Repo::changed_files),
@@ -747,6 +748,16 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Create a local branch (git) / bookmark (jj) at the current head, without
+    /// switching the working copy (git `branch <name>`; jj `bookmark create <name>
+    /// -r @`).
+    pub async fn create_branch(&self, name: &str) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::create_branch(g, &self.cwd, name).await,
+            Backend::Jj(j) => jj_backend::create_branch(j, &self.cwd, name).await,
+        }
+    }
+
     /// Delete a local branch (git) / bookmark (jj). The [`BranchDelete`] spec's
     /// [`force`](BranchDelete::force) applies to git only (`branch -D` vs `-d`); jj
     /// has no force and ignores it.
@@ -1363,6 +1374,7 @@ facade_trait! {
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
         fn conflicted_files() -> Result<Vec<PathBuf>>;
+        fn create_branch(name: &str) -> Result<()>;
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
@@ -2673,6 +2685,48 @@ mod tests {
                 err.to_string().contains("at least one path"),
                 "unexpected error: {err}"
             );
+        }
+    }
+
+    // `create_branch` dispatches to `git branch <name>` (no checkout) on git and to
+    // `jj bookmark create <name> -r @` (anchored on the current head, not moving it)
+    // on jj.
+    #[tokio::test]
+    async fn create_branch_dispatches_per_backend() {
+        use processkit::testing::RecordingRunner;
+        let grec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&grec))
+            .create_branch("feat")
+            .await
+            .unwrap();
+        assert_eq!(grec.only_call().args_str(), ["branch", "feat"]);
+
+        let jrec = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec))
+            .create_branch("feat")
+            .await
+            .unwrap();
+        assert_eq!(
+            jrec.only_call().args_str(),
+            ["bookmark", "create", "feat", "-r", "@", "--color", "never"]
+        );
+    }
+
+    // The `RefName`/`BookmarkName` newtype guards reject a leading `-` (an
+    // injectable flag-like name) and an empty name — before either backend spawns
+    // anything (`ScriptedRunner::new()` has no rules, so a spawn attempt would
+    // panic on an unmatched command instead of hitting this assertion).
+    #[tokio::test]
+    async fn create_branch_rejects_invalid_name_without_spawning() {
+        for repo in [
+            git_repo(ScriptedRunner::new()),
+            jj_repo(ScriptedRunner::new()),
+        ] {
+            for bad in ["-evil", ""] {
+                repo.create_branch(bad)
+                    .await
+                    .expect_err(&format!("{bad:?} must be refused before spawning"));
+            }
         }
     }
 

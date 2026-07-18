@@ -146,6 +146,13 @@ pub struct NewChildParams {
     pub reference: String,
 }
 
+/// Create a local branch/bookmark at the current head.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateBranchParams {
+    /// The local branch (git) / bookmark (jj) name to create.
+    pub name: String,
+}
+
 /// Delete a local branch/bookmark.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteBranchParams {
@@ -362,6 +369,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "repo_abort_in_progress",
     "repo_continue_in_progress",
     "repo_new_child",
+    "repo_create_branch",
     "repo_delete_branch",
     "repo_rename_branch",
     "repo_fetch",
@@ -821,6 +829,19 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_new_child").await?;
         ok_json(&self.repo.new_child(&p.reference).await.map_err(core_err)?)
+    }
+
+    #[tool(
+        description = "Create a local branch or bookmark at the current head, without switching the working copy (git branch <name> / jj bookmark create <name> -r @). Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_create_branch(
+        &self,
+        Parameters(p): Parameters<CreateBranchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_create_branch").await?;
+        self.repo.create_branch(&p.name).await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "created_branch": p.name }))
     }
 
     #[tool(
@@ -2819,6 +2840,34 @@ mod tests {
             .await
             .expect("new child ok");
         assert!(!result_json(&out).is_empty());
+    }
+
+    #[tokio::test]
+    async fn repo_create_branch_is_gated() {
+        let server = git_server(ScriptedRunner::new(), WriteGate::None);
+        let err = server
+            .repo_create_branch(Parameters(CreateBranchParams {
+                name: "feature".into(),
+            }))
+            .await
+            .expect_err("gated");
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+        let server = git_server(
+            ScriptedRunner::new().on(["git", "branch"], Reply::ok("")),
+            WriteGate::All,
+        );
+        let out = server
+            .repo_create_branch(Parameters(CreateBranchParams {
+                name: "feature".into(),
+            }))
+            .await
+            .expect("create branch ok");
+        assert!(
+            result_json(&out).contains("created_branch"),
+            "{}",
+            result_json(&out)
+        );
     }
 
     #[tokio::test]

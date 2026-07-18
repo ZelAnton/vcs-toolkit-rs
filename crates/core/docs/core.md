@@ -283,9 +283,14 @@ files, so it has no untracked concept and this is identical to
 ## Branch mutations
 
 ```rust,ignore
+pub async fn create_branch(&self, name: &str)                -> Result<()>;
 pub async fn delete_branch(&self, spec: BranchDelete) -> Result<()>; // BranchDelete::new(name)[.force()]
 pub async fn rename_branch(&self, old: &str, new: &str)     -> Result<()>;
 ```
+
+`create_branch` creates a local branch (git) / bookmark (jj) at the current
+head, **without switching the working copy** (git `branch <name>`; jj
+`bookmark create <name> -r @`).
 
 `delete_branch` deletes a local branch (git) / bookmark (jj). **`force` applies
 to git only** (`branch -D` vs `-d`); jj has no force and ignores the flag.

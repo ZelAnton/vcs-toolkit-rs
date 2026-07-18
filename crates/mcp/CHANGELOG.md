@@ -10,6 +10,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- New write-gated mutation tool `repo_create_branch` (`{ name }`): creates a
+  local branch (git) / bookmark (jj) at the current head without switching the
+  working copy (`git branch <name>` / `jj bookmark create <name> -r @`),
+  surfacing `vcs-core`'s new `Repo::create_branch`. Follows the existing
+  write-gate pattern (`WRITE_TOOLS`, `begin_repo_write`, `destructiveHint`) and
+  requires `--allow-write` (or `--allow-tools` naming it); unlike
+  `repo_delete_branch`/`repo_rename_branch`, it returns a meaningful
+  `{ created_branch }` JSON body rather than `null`. (T-069.)
 - New read tool `repo_diff`: the full parsed working-copy diff (one file
   entry per changed file), the same scope `repo_diff_stat` already covers (git:
   working tree vs `HEAD`, excluding untracked files; jj: `@` vs its parent,

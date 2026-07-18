@@ -69,6 +69,15 @@ pub(crate) async fn conflicted_files<R: ProcessRunner>(
     Ok(git.conflicted_files(dir).await?)
 }
 
+pub(crate) async fn create_branch<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    name: &str,
+) -> Result<()> {
+    git.create_branch(dir, &RefName::new(name)?).await?;
+    Ok(())
+}
+
 pub(crate) async fn delete_branch<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,

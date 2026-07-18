@@ -146,6 +146,16 @@ pub(crate) async fn conflicted_files<R: ProcessRunner>(
     Ok(jj.resolve_list(dir, &rev("@")?).await?)
 }
 
+pub(crate) async fn create_branch<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    name: &str,
+) -> Result<()> {
+    jj.bookmark_create(dir, &BookmarkName::new(name)?, &rev("@")?)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn delete_branch<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,

@@ -10,6 +10,14 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `Repo::create_branch(name)` (and the matching `VcsRepo::create_branch` trait
+  method): creates a local branch (git) / bookmark (jj) at the current head
+  **without switching the working copy** (git `branch <name>`, via the
+  already-existing `GitApi::create_branch`; jj `bookmark create <name> -r @`,
+  via the already-existing `JjApi::bookmark_create`). Closes the CRUD lifecycle
+  on the facade alongside `delete_branch`/`rename_branch`. Name validation
+  reuses the existing `RefName`/`BookmarkName` newtype guards — no new
+  injection-guard logic. (T-069.)
 - `Repo::diff()` (and the matching `VcsRepo::diff` trait method): the full parsed
   working-copy diff (`Vec<FileDiff>`), the same scope `diff_stat` already covers
   (git: working tree vs `HEAD`, targeting the empty-tree oid on an unborn repo;

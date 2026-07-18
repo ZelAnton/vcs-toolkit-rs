@@ -122,6 +122,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_abort_in_progress` | — | Abort the in-progress repository operation, if any. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; recover through the operation log instead. Requires `--allow-write`. |
 | `repo_continue_in_progress` | — | Continue the in-progress repository operation after resolving conflicts. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; resolving conflicted files is the continuation, and recovery is through the operation log. Requires `--allow-write`. |
 | `repo_new_child` | `{ reference }` | Start new work on top of a branch, bookmark, or revision. On git this checks out `reference`; on jj it creates an undescribed child change. Returns `null` on success. Requires `--allow-write`. |
+| `repo_create_branch` | `{ name }` | Create a local branch or bookmark at the current head, without switching the working copy (`git branch <name>` / `jj bookmark create <name> -r @`). Returns `{ created_branch }`. Requires `--allow-write`. |
 | `repo_delete_branch` | `{ name, force? }` | Delete a local branch or bookmark. `force` defaults to `false`, deletes an unmerged git branch when true, and is ignored by jj. Returns `null` on success. Requires `--allow-write`. |
 | `repo_rename_branch` | `{ old, new }` | Rename a local branch or bookmark. Returns `null` on success. Requires `--allow-write`. |
 | `repo_fetch` | — | Fetch from the default remote (`git fetch` / `jj git fetch`). |
