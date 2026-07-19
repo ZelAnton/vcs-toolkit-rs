@@ -104,7 +104,9 @@
 //! (remote names, URLs, config keys) keep an internal
 //! [`reject_flag_like`](vcs_cli_support::reject_flag_like) guard — refused before
 //! spawning if empty or starting with `-`. Flag-value slots (`-b <name>`) are
-//! consumed verbatim; paths always go through `--` / pathspec.
+//! consumed verbatim; paths — and a config *value*, which may legitimately begin
+//! with `-` (e.g. `-1`) and so can't be flag-rejected — go through a `--` option
+//! terminator instead (see [`config_set`](GitApi::config_set)).
 //!
 //! One named exception to the "revisions go through `RevSpec`" rule:
 //! [`DiffSpec::Rev`] — the diff target on
@@ -1124,12 +1126,22 @@ pub trait GitApi: Send + Sync {
     /// whose exit 1 covers both "unset" and "no such section" — git doesn't
     /// distinguish). A multi-valued key errors; read those via `run`.
     async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>>;
-    /// Set a config key in the repository's local config (`config <key> <value>`).
+    /// Set a config key in the repository's local config (`config -- <key> <value>`).
     ///
-    /// **Trusted-input sink.** `key` is guarded against a flag-shape, but this
-    /// writes whatever key/value it's given — including code-execution keys like
-    /// `core.sshCommand` or `filter.<drv>.clean`. Never wire untrusted input into
-    /// it; a `harden()`ed client does *not* protect against config *you* write.
+    /// The `--` option terminator pins both `key` and `value` as positionals, so a
+    /// `value` that looks like a flag (`--global`, `--file=<path>`, or a plain `-1`)
+    /// is written *literally* as the key's value — git can never reparse it as an
+    /// option redirecting the write to another config file. `value` therefore keeps
+    /// no flag-shape guard on purpose (a config value may legitimately start with
+    /// `-`); it is the flag *parse* that is blocked, not the leading dash. `key`
+    /// additionally can't be flag-shaped (guarded before the terminator is reached).
+    ///
+    /// **Trusted-input sink.** This still writes whatever key/value it's given —
+    /// including code-execution keys like `core.sshCommand` or `filter.<drv>.clean`.
+    /// The `--` guard stops a `value` being *misparsed* as a flag; it does **not**
+    /// sanitise a genuinely dangerous *key* you choose to write. Never wire
+    /// untrusted input into it; a `harden()`ed client does *not* protect against
+    /// config *you* write.
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
     /// Add a remote (`remote add <name> <url>`).
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
@@ -2623,8 +2635,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()> {
         reject_flag_like("config key", key)?;
+        // `--` closes git's option grammar: `key` and `value` are pinned as bare
+        // positionals, so a `value` shaped like a flag (`--global`, `--file=<path>`,
+        // `--worktree`) is stored *literally* rather than reparsed by git as an
+        // option that would redirect the write to another config file. `value`
+        // deliberately keeps no `reject_flag_like` guard — a config value may
+        // legitimately begin with `-` (e.g. `-1`); it is the flag *parse* that must
+        // be blocked, not the leading dash. (`key` stays flag-guarded above, before
+        // the terminator is even reached.) Verified on git 2.54; the `repo.rs`
+        // integration round-trip re-checks it on the live binary. (T-083.)
         self.core
-            .run_unit(self.core.command_in(dir, ["config", key, value]))
+            .run_unit(self.core.command_in(dir, ["config", "--", key, value]))
             .await
     }
 
@@ -6292,6 +6313,38 @@ mod tests {
                 .config_get(Path::new("."), "remote.all")
                 .await
                 .is_err()
+        );
+    }
+
+    // T-083: `config_set` pins `key` and `value` behind a `--` option terminator,
+    // so a `value` shaped like a flag (`--global`, `--file=<path>`) sits in argv
+    // where git can only read it as a positional value — never as an option
+    // redirecting the write to another config file. The exact argv is pinned here;
+    // `repo.rs`'s round-trip re-checks the effect on the live git binary.
+    #[tokio::test]
+    async fn config_set_pins_value_behind_option_terminator() {
+        // A flag-shaped value must land *after* `--`, verbatim.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.config_set(Path::new("/r"), "user.name", "--file=/etc/evil")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["config", "--", "user.name", "--file=/etc/evil"],
+            "value must sit after `--`, unreachable to git's option parser"
+        );
+
+        // A legitimately `-`-leading value is passed through untouched — the guard
+        // blocks the flag *parse*, not the leading dash, so `-1` is not rejected.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.config_set(Path::new("/r"), "gc.auto", "-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["config", "--", "gc.auto", "-1"]
         );
     }
 
