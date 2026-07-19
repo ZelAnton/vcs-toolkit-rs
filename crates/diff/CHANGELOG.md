@@ -16,7 +16,12 @@ crates; tag releases as `vcs-diff-v<version>`.
 -
 
 ### Fixed
--
+- **`FileDiff::path`/`old_path` no longer corrupt a Unix filename containing a
+  literal backslash.** `normalize_slashes` unconditionally rewrote every `\` to
+  `/`, right after `unquote_git_path` had specifically decoded a C-quoted `\\`
+  back into `\` to keep the path lossless. Git diff output always uses `/`
+  separators (a literal backslash is C-quoted), so the rewrite was pure risk
+  with no upside on any platform; it is now removed rather than gated. (T-084.)
 
 ## [0.7.0] - 2026-07-19
 
