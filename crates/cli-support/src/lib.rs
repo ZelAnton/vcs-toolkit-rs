@@ -504,33 +504,45 @@ pub fn reject_flag_like(program: &str, what: &str, value: &str) -> Result<()> {
 }
 
 /// R7 clone-cleanup: whether `dest` is safe to remove if a `clone`/`git_clone`
-/// about to run into it fails — either absent, or an already-empty directory.
-/// Compute this **before** running the clone, and pass the result to
-/// [`cleanup_failed_clone_dest`] on the error path — `git`/`jj` both refuse to
-/// clone into a **non-empty** existing directory, so if `dest` already had
-/// contents going in, a failure means that refusal, and the caller's
-/// pre-existing data must never be deleted. Re-checking emptiness *after* the
-/// clone ran would be wrong: a failed clone can leave `dest` partially
-/// populated, so a post-hoc check could wrongly call a partial clone's leftovers
-/// "empty" (or simply disagree with the pre-clone state).
+/// about to run into it fails — either **provably absent** (`read_dir` fails
+/// with `NotFound`), or an already-empty directory. Compute this **before**
+/// running the clone, and pass the result to [`cleanup_failed_clone_dest`] on
+/// the error path — `git`/`jj` both refuse to clone into a **non-empty**
+/// existing directory, so if `dest` already had contents going in, a failure
+/// means that refusal, and the caller's pre-existing data must never be
+/// deleted. Re-checking emptiness *after* the clone ran would be wrong: a
+/// failed clone can leave `dest` partially populated, so a post-hoc check
+/// could wrongly call a partial clone's leftovers "empty" (or simply disagree
+/// with the pre-clone state).
+///
+/// Any `read_dir` failure *other than* `NotFound` (permission denied, a
+/// transient I/O error, `dest` being a plain file — `NotADirectory`) is
+/// treated as **not** cleanable: it doesn't prove `dest` is absent, and
+/// `dest` may well be a pre-existing non-empty directory the caller can't
+/// read into right now. Deleting on an unproven guess would risk
+/// `remove_dir_all`-ing a directory full of the caller's data; cleanup simply
+/// becoming a no-op is the safe degradation (the clone itself already failed
+/// with a clear git/jj error).
 ///
 /// Shared by `vcs_git::clone_repo` and `vcs_jj::git_clone`, which previously
 /// carried a byte-identical copy of this check plus its own best-effort
 /// `remove_dir_all` on the error path.
 pub fn clone_dest_cleanable(dest: &Path) -> bool {
     match std::fs::read_dir(dest) {
-        Err(_) => true, // absent/unreadable → clone would create it
-        Ok(mut entries) => entries.next().is_none(), // an empty directory
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound, // proven absent
+        Ok(mut entries) => entries.next().is_none(),            // an empty directory
     }
 }
 
 /// Best-effort cleanup of a failed clone's partial `dest` (R7) — call only on
 /// the clone's error path, passing `cleanable` as computed by
 /// [`clone_dest_cleanable`] **before** the clone ran. A no-op when `cleanable`
-/// is `false` (never touches a non-empty pre-existing `dest`). Swallows a
-/// `remove_dir_all` failure (e.g. another process holding a file open) — this
-/// is opportunistic tidy-up, not something a clone failure should itself fail
-/// on.
+/// is `false` — including whenever `dest`'s state couldn't be proven safe
+/// (absent, or an already-empty directory): this never touches a non-empty
+/// pre-existing `dest`, nor one `clone_dest_cleanable` simply failed to read.
+/// Swallows a `remove_dir_all` failure (e.g. another process holding a file
+/// open) — this is opportunistic tidy-up, not something a clone failure
+/// should itself fail on.
 pub fn cleanup_failed_clone_dest(dest: &Path, cleanable: bool) {
     if cleanable {
         let _ = std::fs::remove_dir_all(dest);
@@ -1623,6 +1635,74 @@ mod tests {
         for e in &not_input {
             assert!(!is_invalid_input(e), "should NOT be invalid input: {e:?}");
         }
+    }
+
+    /// A unique, self-cleaning scratch dir under the OS temp dir (pid + counter
+    /// keeps parallel tests from colliding; no `tempfile` dev-dependency needed
+    /// for this one hermetic check).
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let p = std::env::temp_dir().join(format!(
+                "vcs-cli-support-clone-dest-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            Scratch(p)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // R7 (T-085): `clone_dest_cleanable` must return `true` only when `dest`'s
+    // absence/emptiness is actually proven, never on an unrelated `read_dir`
+    // failure — that path used to be `Err(_) => true`, which could tell
+    // `cleanup_failed_clone_dest` to `remove_dir_all` a pre-existing, non-empty
+    // directory it merely failed to read (permission denied, transient I/O).
+    #[test]
+    fn clone_dest_cleanable_requires_proven_absence_or_emptiness() {
+        // Absent (NotFound) → cleanable.
+        let absent = Scratch::new();
+        assert!(clone_dest_cleanable(&absent.0));
+
+        // An existing, empty directory → cleanable.
+        let empty = Scratch::new();
+        std::fs::create_dir_all(&empty.0).expect("create empty dir");
+        assert!(clone_dest_cleanable(&empty.0));
+
+        // An existing, non-empty directory → NOT cleanable.
+        let nonempty = Scratch::new();
+        std::fs::create_dir_all(&nonempty.0).expect("create dir");
+        std::fs::write(nonempty.0.join("keep.txt"), b"user data").expect("write file");
+        assert!(!clone_dest_cleanable(&nonempty.0));
+
+        // `dest` is a plain file, not a directory: `read_dir` fails with
+        // `NotADirectory`/similar — NOT `NotFound` — so this must NOT be
+        // classified as cleanable, even though `remove_dir_all` would in fact
+        // fail harmlessly on a file. The point is the classification must not
+        // rely on that coincidence.
+        let file = Scratch::new();
+        std::fs::write(&file.0, b"not a directory").expect("write file");
+        let err = std::fs::read_dir(&file.0).expect_err("read_dir on a file fails");
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "must be a genuine NotADirectory-style failure, not NotFound"
+        );
+        assert!(!clone_dest_cleanable(&file.0));
+
+        // And `cleanup_failed_clone_dest` must leave that file untouched when
+        // called with `cleanable = false`.
+        cleanup_failed_clone_dest(&file.0, false);
+        assert!(
+            file.0.is_file(),
+            "cleanup must not touch a non-cleanable dest"
+        );
     }
 
     // Backoff is exponential off the base, capped at `max_backoff`, and zero when

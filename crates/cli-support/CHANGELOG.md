@@ -16,7 +16,12 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 -
 
 ### Fixed
--
+- `clone_dest_cleanable` now returns `true` only when `dest` is *provably*
+  absent (`read_dir` fails with `NotFound`) or an already-empty directory —
+  previously **any** `read_dir` error (permission denied, transient I/O, a
+  plain-file `dest`) was treated as cleanable, which could tell
+  `cleanup_failed_clone_dest` to `remove_dir_all` a pre-existing, non-empty
+  directory it merely failed to read. (T-085.)
 
 ## [0.7.0] - 2026-07-19
 
