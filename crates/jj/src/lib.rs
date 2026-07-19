@@ -977,20 +977,26 @@ fn normalize_changed_paths(entries: Vec<ChangedPath>) -> Result<Vec<ChangedPath>
         .collect()
 }
 
-/// Validate that `path` is workspace-root-relative and normalise its separators,
+/// Validate that `path` is workspace-root-relative and normalise Windows separators,
 /// operating on the **raw path bytes** so a non-UTF-8 (Unix) filename is never
-/// corrupted by a `String` round-trip. The structural checks (`/`, `\`, `:`, `.`,
-/// `..`) are all single-byte ASCII, so byte-wise slicing is exact.
+/// corrupted by a `String` round-trip. The structural checks (`/`, `.`, `..`, plus
+/// Windows-only `\` and `:`) are all single-byte ASCII, so byte-wise slicing is exact.
 fn normalize_workspace_path(path: &Path) -> Result<PathBuf> {
     // `as_encoded_bytes` is the raw OS bytes on Unix (lossless) and WTF-8
     // elsewhere; only ASCII structure is inspected, so both are safe to scan.
     let raw = path.as_os_str().as_encoded_bytes();
+    #[cfg(windows)]
     let normalized: Vec<u8> = raw
         .iter()
         .map(|&b| if b == b'\\' { b'/' } else { b })
         .collect();
-    // Absolute if it leads with `/` or carries a `X:` drive letter.
-    if normalized.first() == Some(&b'/') || (normalized.len() >= 2 && normalized[1] == b':') {
+    #[cfg(not(windows))]
+    let normalized = raw.to_vec();
+
+    let is_absolute = normalized.first() == Some(&b'/');
+    #[cfg(windows)]
+    let is_absolute = is_absolute || (normalized.len() >= 2 && normalized[1] == b':');
+    if is_absolute {
         return Err(Error::parse(
             BINARY,
             format!("summary path is not workspace-relative: {path:?}"),
@@ -3501,11 +3507,11 @@ mod tests {
     }
 
     #[test]
-    fn summary_paths_normalise_windows_and_reject_workspace_escapes() {
+    fn summary_paths_normalise_dot_segments_and_reject_workspace_escapes() {
         let paths = normalize_changed_paths(vec![ChangedPath {
             status: 'R',
-            path: "src\\.\\new.rs".into(),
-            old_path: Some("src\\old.rs".into()),
+            path: "src/./new.rs".into(),
+            old_path: Some("src/old.rs".into()),
         }])
         .expect("normalise");
         assert_eq!(paths[0].path, Path::new("src/new.rs"));
@@ -3517,6 +3523,40 @@ mod tests {
         }])
         .expect_err("must reject a path outside the workspace");
         assert!(err.to_string().contains("escapes the workspace root"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn summary_paths_normalise_backslash_separators_on_windows() {
+        let paths = normalize_changed_paths(vec![ChangedPath {
+            status: 'R',
+            path: "src\\.\\new.rs".into(),
+            old_path: Some("src\\old.rs".into()),
+        }])
+        .expect("normalise");
+        assert_eq!(paths[0].path, Path::new("src/new.rs"));
+        assert_eq!(paths[0].old_path.as_deref(), Some(Path::new("src/old.rs")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn summary_paths_preserve_backslashes_and_colons_on_unix() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let paths = normalize_changed_paths(vec![ChangedPath {
+            status: 'R',
+            path: "a:b\\new.txt".into(),
+            old_path: Some("a:b\\old.txt".into()),
+        }])
+        .expect("Unix filename is workspace-relative");
+        assert_eq!(paths[0].path.as_os_str().as_bytes(), b"a:b\\new.txt");
+        assert_eq!(
+            paths[0]
+                .old_path
+                .as_deref()
+                .map(|path| path.as_os_str().as_bytes()),
+            Some(&b"a:b\\old.txt"[..])
+        );
     }
 
     #[tokio::test]

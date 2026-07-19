@@ -271,7 +271,7 @@ fn parse_section(section: &str) -> Option<FileDiff> {
     // A rename keeps its old path so a caller can record the deletion too.
     let old_path = if rename_to.is_some() {
         kind = ChangeKind::Renamed;
-        rename_from.map(normalize_slashes)
+        rename_from
     } else {
         None
     };
@@ -286,7 +286,7 @@ fn parse_section(section: &str) -> Option<FileDiff> {
         .or_else(|| header_b_path(section))?;
     Some(FileDiff {
         change: kind,
-        path: path_from_bytes(&normalize_slashes(path)),
+        path: path_from_bytes(&path),
         old_path: old_path.map(|p| path_from_bytes(&p)),
         hunks,
         raw: section.to_string(),
@@ -297,14 +297,6 @@ fn parse_section(section: &str) -> Option<FileDiff> {
 /// `None` when it is absent (so a `/dev/null` side yields no path).
 fn strip_side_prefix(path: Vec<u8>, prefix: &[u8]) -> Option<Vec<u8>> {
     path.strip_prefix(prefix).map(<[u8]>::to_vec)
-}
-
-/// Normalise `\` path separators to `/` on the raw bytes (git renders a Windows
-/// path with backslashes; the DTO is forward-slash normalised across backends).
-fn normalize_slashes(path: Vec<u8>) -> Vec<u8> {
-    path.into_iter()
-        .map(|b| if b == b'\\' { b'/' } else { b })
-        .collect()
 }
 
 /// Parse a hunk header `@@ -<os>[,<ol>] +<ns>[,<nl>] @@[ <section>]` into an empty
@@ -523,6 +515,17 @@ mod tests {
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, std::path::Path::new("a\tb.txt"));
+    }
+
+    // Git already emits `/` as its path separator. A literal backslash is C-quoted
+    // in diff output and must survive decoding unchanged on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn diff_preserves_c_quoted_backslash_path_on_unix() {
+        let full = "diff --git \"a/a\\\\b.txt\" \"b/a\\\\b.txt\"\n--- \"a/a\\\\b.txt\"\n+++ \"b/a\\\\b.txt\"\n@@ -1 +1 @@\n-x\n+y\n";
+        let files = parse_diff(full);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, std::path::Path::new("a\\b.txt"));
     }
 
     #[test]

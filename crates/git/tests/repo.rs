@@ -708,6 +708,33 @@ async fn tags_show_config_and_remotes_round_trip() {
         None
     );
 
+    // T-083 (security): a `value` shaped like a git flag must be stored *literally*,
+    // never reparsed as an option. Without the `--` terminator, `--file=<path>`
+    // would redirect the write into an arbitrary config file; here it must land as
+    // the plain string value of `vcs.flagish`, and no such file may be created.
+    // (Relative path → git resolves it against the command's cwd, which is `dir`.)
+    git.config_set(dir, "vcs.flagish", "--file=pwned.cfg")
+        .await
+        .expect("set flag-shaped value");
+    assert_eq!(
+        git.config_get(dir, "vcs.flagish").await.expect("get"),
+        Some("--file=pwned.cfg".to_string()),
+        "a flag-shaped value must round-trip literally"
+    );
+    assert!(
+        !dir.join("pwned.cfg").exists(),
+        "a `--file=` value must not be honoured as an option writing an arbitrary file"
+    );
+    // A legitimate `-`-leading value (not a real flag) survives unchanged too — the
+    // fix blocks the flag *parse*, not every leading dash.
+    git.config_set(dir, "vcs.count", "-1")
+        .await
+        .expect("set -1");
+    assert_eq!(
+        git.config_get(dir, "vcs.count").await.expect("get"),
+        Some("-1".to_string())
+    );
+
     // Remotes: add, then re-point.
     git.remote_add(dir, "up", "https://example.com/a.git")
         .await
