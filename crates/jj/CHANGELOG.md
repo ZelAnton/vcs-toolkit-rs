@@ -16,7 +16,15 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
--
+- **`status`/`diff_summary`/`resolve --list` no longer corrupt or reject a Unix
+  filename containing a literal backslash or colon.** `parse::normalize_slashes`
+  (used by `parse_diff_summary`/`parse_resolve_list`) and
+  `normalize_workspace_path`'s `\`→`/` rewrite — plus the latter's
+  second-byte-`:` drive-letter heuristic — are now **Windows-only**
+  (`#[cfg(windows)]`), matching `JjFileset::path`'s existing convention. On
+  Unix a `\` is a legitimate filename byte and a `:` is legal anywhere in a
+  name; both are now preserved verbatim instead of being rewritten or, for a
+  leading `a:b.txt`-style name, rejected with `Error::parse`. (T-084.)
 
 ## [0.11.0] - 2026-07-19
 
