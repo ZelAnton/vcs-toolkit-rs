@@ -23,8 +23,7 @@ no_progress = true
 # to its single most common link target; raising the rate limit via the
 # token is the narrower fix.
 #
-# No host is excluded below. Add an entry here — with a one-line reason,
-# matching the style of comments elsewhere in this repo's CI config — only
-# once a *specific* host is empirically shown to be flaky, rate-limited, or
-# auth-gated for this job; excluding preemptively just hides real breakage.
-exclude = []
+# shields.io serves decorative README badges rather than documentation targets;
+# its image endpoint timed out after every real link had passed, making the
+# docs-health gate depend on a third-party badge renderer's availability.
+exclude = ['^https://img\.shields\.io/']
