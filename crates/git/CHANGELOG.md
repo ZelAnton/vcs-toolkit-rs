@@ -16,7 +16,12 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
--
+- security: `GitApi::config_set` now passes its argv as `git config -- <key> <value>`,
+  pinning `key` and `value` behind the `--` option terminator. A `value` shaped like
+  a flag (`--global`, `--file=<path>`, `--worktree`, …) is stored literally instead of
+  being reparsed by git as an option that could redirect the write to an arbitrary
+  config file. A legitimate `-`-leading value (e.g. `-1`) is still accepted — the flag
+  *parse* is blocked, not the leading dash. (T-083.)
 
 ## [0.11.0] - 2026-07-19
 
