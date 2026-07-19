@@ -527,13 +527,20 @@ pub(crate) fn workspace_root_from_bytes(stdout: &[u8]) -> PathBuf {
     path_from_bytes(&stdout[..end])
 }
 
-/// Normalise `\` path separators to `/` on raw bytes — jj's `--summary` /
-/// `resolve --list` emit the OS-native separator (backslashes on Windows), which
-/// the unified DTO reports forward-slash across backends/platforms.
+/// Normalise Windows `\` path separators to `/` on raw bytes. jj's `--summary` /
+/// `resolve --list` emit OS-native separators, while on Unix a backslash is a
+/// legitimate filename byte and must remain untouched.
 fn normalize_slashes(path: &[u8]) -> Vec<u8> {
-    path.iter()
-        .map(|&b| if b == b'\\' { b'/' } else { b })
-        .collect()
+    #[cfg(windows)]
+    {
+        path.iter()
+            .map(|&b| if b == b'\\' { b'/' } else { b })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_vec()
+    }
 }
 
 /// Byte-slice `find`: the index of the first occurrence of `needle` in `hay`.
@@ -876,11 +883,25 @@ mod tests {
         );
         assert_eq!(got, vec![PathBuf::from("src/a.rs"), PathBuf::from("b.txt")]);
         assert!(parse_resolve_list(b"").is_empty());
-        // OS-native backslash separators (Windows) are normalised to `/`.
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_list_normalises_backslash_separators_on_windows() {
         assert_eq!(
             parse_resolve_list(b"sub\\c.txt    2-sided conflict\n"),
             vec![PathBuf::from("sub/c.txt")]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_list_preserves_backslash_path_bytes_on_unix() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let got = parse_resolve_list(b"sub\\c.txt    2-sided conflict\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].as_os_str().as_bytes(), b"sub\\c.txt");
     }
 
     // A non-UTF-8 conflicted path (legal on Unix) survives byte-for-byte.
@@ -1073,8 +1094,9 @@ mod tests {
         assert!(got[2].old_path.is_none());
     }
 
-    // jj `--summary` emits OS-native separators (backslashes on Windows); paths are
-    // normalised to forward slashes to match the `--git` diff and the git backend.
+    // jj `--summary` emits OS-native separators. Windows paths are normalised to
+    // forward slashes to match the unified DTO.
+    #[cfg(windows)]
     #[test]
     fn diff_summary_normalises_backslash_separators() {
         let got = parse_diff_summary(b"M deep\\nested\\f.rs\nR win\\{a.rs => b.rs}\n");
@@ -1083,6 +1105,23 @@ mod tests {
         assert_eq!(
             got[1].old_path.as_deref(),
             Some(PathBuf::from("win/a.rs").as_path())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diff_summary_preserves_backslash_path_bytes_on_unix() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let got = parse_diff_summary(b"M deep\\nested\\f.rs\nR win\\{a.rs => b.rs}\n");
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"deep\\nested\\f.rs");
+        assert_eq!(got[1].path.as_os_str().as_bytes(), b"win\\b.rs");
+        assert_eq!(
+            got[1]
+                .old_path
+                .as_deref()
+                .map(|path| path.as_os_str().as_bytes()),
+            Some(&b"win\\a.rs"[..])
         );
     }
 
