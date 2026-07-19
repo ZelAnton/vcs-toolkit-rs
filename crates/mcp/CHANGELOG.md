@@ -84,6 +84,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
   shapes change. (T-061.)
 
 ### Fixed
+- `repo_rebase`, `repo_new_child`, `repo_delete_branch`, and `repo_rename_branch`
+  now return JSON confirmations instead of `null`: `{ rebased_onto }`,
+  `{ new_child_of }`, `{ deleted_branch, force }`, and
+  `{ renamed: { old, new } }`, respectively. (T-079.)
 - `repo_info`'s `root`/`cwd` no longer bypass the crate's non-UTF-8 path
   fail-closed policy (T-050): they used to serialize through
   `to_string_lossy`, silently substituting `U+FFFD` for a non-UTF-8

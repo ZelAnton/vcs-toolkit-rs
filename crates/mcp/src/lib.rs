@@ -823,7 +823,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<RebaseParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_rebase").await?;
-        ok_json(&self.repo.rebase(&p.onto).await.map_err(core_err)?)
+        self.repo.rebase(&p.onto).await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "rebased_onto": p.onto }))
     }
 
     #[tool(
@@ -855,7 +856,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<NewChildParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_new_child").await?;
-        ok_json(&self.repo.new_child(&p.reference).await.map_err(core_err)?)
+        self.repo.new_child(&p.reference).await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "new_child_of": p.reference }))
     }
 
     #[tool(
@@ -880,12 +882,15 @@ impl VcsMcpServer {
         Parameters(p): Parameters<DeleteBranchParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_delete_branch").await?;
+        let deleted_branch = p.name.clone();
+        let force = p.force;
         let spec = if p.force {
             BranchDelete::new(p.name).force()
         } else {
             BranchDelete::new(p.name)
         };
-        ok_json(&self.repo.delete_branch(spec).await.map_err(core_err)?)
+        self.repo.delete_branch(spec).await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "deleted_branch": deleted_branch, "force": force }))
     }
 
     #[tool(
@@ -897,13 +902,11 @@ impl VcsMcpServer {
         Parameters(p): Parameters<RenameBranchParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let _write = self.begin_repo_write("repo_rename_branch").await?;
-        ok_json(
-            &self
-                .repo
-                .rename_branch(&p.old, &p.new)
-                .await
-                .map_err(core_err)?,
-        )
+        self.repo
+            .rename_branch(&p.old, &p.new)
+            .await
+            .map_err(core_err)?;
+        ok_json(&serde_json::json!({ "renamed": { "old": p.old, "new": p.new } }))
     }
 
     #[tool(
@@ -2839,7 +2842,14 @@ mod tests {
             }))
             .await
             .expect("rebase ok");
-        assert!(!result_json(&out).is_empty());
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["rebased_onto"], "main", "{text}");
     }
 
     #[tokio::test]
@@ -2896,7 +2906,14 @@ mod tests {
             }))
             .await
             .expect("new child ok");
-        assert!(!result_json(&out).is_empty());
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["new_child_of"], "main", "{text}");
     }
 
     #[tokio::test]
@@ -2946,11 +2963,19 @@ mod tests {
         let out = server
             .repo_delete_branch(Parameters(DeleteBranchParams {
                 name: "feature".into(),
-                force: false,
+                force: true,
             }))
             .await
             .expect("delete branch ok");
-        assert!(!result_json(&out).is_empty());
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["deleted_branch"], "feature", "{text}");
+        assert_eq!(value["force"], true, "{text}");
     }
 
     #[tokio::test]
@@ -2976,7 +3001,15 @@ mod tests {
             }))
             .await
             .expect("rename branch ok");
-        assert!(!result_json(&out).is_empty());
+        let text = out
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.clone())
+            .expect("text content");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(value["renamed"]["old"], "old", "{text}");
+        assert_eq!(value["renamed"]["new"], "new", "{text}");
     }
 }
 

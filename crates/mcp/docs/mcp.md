@@ -119,13 +119,13 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_try_merge` | `{ source }` | Probe whether merging `source` would conflict — a **probe** that's always rolled back, so it has no net effect. Gated because it spawns a *real* trial merge that materializes working-tree content, which on an untrusted repo can run repo-local `filter`/`textconv` drivers the hardened client doesn't sandbox. |
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
-| `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `null` on success. Requires `--allow-write`. |
+| `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `{ rebased_onto }`. Requires `--allow-write`. |
 | `repo_abort_in_progress` | — | Abort the in-progress repository operation, if any. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; recover through the operation log instead. Requires `--allow-write`. |
 | `repo_continue_in_progress` | — | Continue the in-progress repository operation after resolving conflicts. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; resolving conflicted files is the continuation, and recovery is through the operation log. Requires `--allow-write`. |
-| `repo_new_child` | `{ reference }` | Start new work on top of a branch, bookmark, or revision. On git this checks out `reference`; on jj it creates an undescribed child change. Returns `null` on success. Requires `--allow-write`. |
+| `repo_new_child` | `{ reference }` | Start new work on top of a branch, bookmark, or revision. On git this checks out `reference`; on jj it creates an undescribed child change. Returns `{ new_child_of }`. Requires `--allow-write`. |
 | `repo_create_branch` | `{ name }` | Create a local branch or bookmark at the current head, without switching the working copy (`git branch <name>` / `jj bookmark create <name> -r @`). Returns `{ created_branch }`. Requires `--allow-write`. |
-| `repo_delete_branch` | `{ name, force? }` | Delete a local branch or bookmark. `force` defaults to `false`, deletes an unmerged git branch when true, and is ignored by jj. Returns `null` on success. Requires `--allow-write`. |
-| `repo_rename_branch` | `{ old, new }` | Rename a local branch or bookmark. Returns `null` on success. Requires `--allow-write`. |
+| `repo_delete_branch` | `{ name, force? }` | Delete a local branch or bookmark. `force` defaults to `false`, deletes an unmerged git branch when true, and is ignored by jj. Returns `{ deleted_branch, force }`. Requires `--allow-write`. |
+| `repo_rename_branch` | `{ old, new }` | Rename a local branch or bookmark. Returns `{ renamed: { old, new } }`. Requires `--allow-write`. |
 | `repo_fetch` | — | Fetch from the default remote (`git fetch` / `jj git fetch`). |
 | `repo_push` | `{ branch }` | Push an existing branch/bookmark to `origin` (`git push -u origin <branch>` / `jj git push -b <branch>`). |
 | `repo_create_worktree` | `{ path, branch, base }` | Create a worktree/workspace at `path` on a new `branch` from `base`. |
