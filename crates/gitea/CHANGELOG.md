@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.0] - 2026-07-19
+
+### Added
 - **PR review methods.** `GiteaApi::pr_approve(dir, number)` (`tea pr approve
   <index>`) records an approving review, and `pr_reject(dir, number, body)` (`tea pr
   reject <index> <reason>`) requests changes with a required reason. The `reason` is
@@ -407,7 +418,8 @@ crates; tag releases as `vcs-gitea-v<version>`.
   `--limit 999`, so a PR beyond the first page is no longer a false "not found"
   (PRs beyond 999 still are; documented).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.6.0...vcs-gitea-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.5.2...vcs-gitea-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.5.1...vcs-gitea-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitea-v0.5.0...vcs-gitea-v0.5.1

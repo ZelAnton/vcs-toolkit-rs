@@ -10,6 +10,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.0] - 2026-07-19
+
+### Added
 - `DiffStat::parse` — parses a `git diff --shortstat` / `jj diff --stat` summary
   clause (`N files changed, X insertions(+), Y deletions(-)`, any sub-clause
   optional) into a `DiffStat`. Consolidates the byte-identical parsing loop
@@ -284,7 +295,8 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.6.0...vcs-diff-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.2...vcs-diff-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.1...vcs-diff-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.0...vcs-diff-v0.5.1

@@ -1,6 +1,6 @@
 [package]
 name = "vcs-forge"
-version = "0.6.0"
+version = "0.7.0"
 description = "One async Rust API over GitHub, GitLab, and Gitea: unified pull/merge requests, issues, and releases across the gh, glab, and tea CLIs."
 edition.workspace = true
 rust-version.workspace = true
@@ -17,21 +17,21 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 # tests) and the structured `Error` the wrappers return.
 processkit.workspace = true
 # The transient-fetch-error classifier reused by the facade `Error`.
-vcs-cli-support = { path = "../cli-support", version = "0.6" }
+vcs-cli-support = { path = "../cli-support", version = "0.7" }
 # The three forge wrappers this facade dispatches across.
 # NOTE: `github_forge` now reads `PullRequest::is_draft`, added after vcs-github
 # 0.8.0 — so vcs-github's NEXT release must be >= minor and this floor raised to
 # match (>= "0.9"), or a published vcs-forge would resolve an older vcs-github
 # without the field. (An `all` release via `cargo set-version` bumps this in step;
 # the reminder guards a github-only release.)
-vcs-github = { path = "../github", version = "0.10" }
-vcs-gitlab = { path = "../gitlab", version = "0.6" }
-vcs-gitea = { path = "../gitea", version = "0.6" }
+vcs-github = { path = "../github", version = "0.11" }
+vcs-gitlab = { path = "../gitlab", version = "0.7" }
+vcs-gitea = { path = "../gitea", version = "0.7" }
 # Shared git-format unified-diff model (re-exported below as `vcs_forge::FileDiff`
 # and friends) — `pr_diff` returns it directly since GitHub/GitLab already emit
 # the same unified-diff format the parser expects, so no facade-specific DTO
 # wraps it. Path-dependency by the same pattern as `crates/git/Cargo.toml`.
-vcs-diff = { path = "../diff", version = "0.6" }
+vcs-diff = { path = "../diff", version = "0.7" }
 # `async fn` in the object-safe `ForgeApi` trait (dyn-friendly).
 async-trait = "0.1"
 # Optional: derive `Serialize` on the unified DTOs behind the `serde` feature

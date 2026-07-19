@@ -10,6 +10,17 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.9.0] - 2026-07-19
+
+### Added
 - `Repo::annotate(path, rev)`: unified per-line file attribution backed by git
   `blame` / jj `file annotate`. The `AnnotationLine` DTO exposes id, 1-based line,
   and content on both backends; git additionally supplies `author` and `date` (Unix
@@ -736,7 +747,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.8.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.9.0...HEAD
+[0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.8.0...vcs-core-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.2...vcs-core-v0.8.0
 [0.7.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...vcs-core-v0.7.2
 [0.7.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.0...vcs-core-v0.7.1

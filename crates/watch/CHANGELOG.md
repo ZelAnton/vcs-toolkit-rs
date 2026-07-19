@@ -18,6 +18,119 @@ crates; tag releases as `vcs-watch-v<version>`.
 ### Fixed
 -
 
+## [0.7.0] - 2026-07-19
+
+### Added
+
+- Add backoff retry and terminal-failure signaling to vcs-watch loop
+- Add a capability/version gate for forge CLI wrappers
+
+
+### Changed
+
+- Reconcile processkit 2.1.1 migration with second concurrent crate-version release
+- watch: observe .git alongside .jj for colocated jj repos
+- Synchronize facade_trait! documentation between vcs-core and vcs-forge
+- Separate observation from working-copy mutation in vcs-watch for jj
+- Pass host context into CredentialProvider for repo-scoped operations
+- Support argv-limit-safe bulk path operations in git add/commit/log
+- Turn the release workflow into a SemVer and package gate
+- Apply rustfmt to T-038's jj/core/watch changes
+- Include the MIT license text in every published crate package
+- Fully model in-progress cherry-pick, revert, and bisect operations
+- Include the MIT license text in every published crate package
+- Make vcs-watch error boundary opaque and forward tracing to vcs-core
+- Apply rustfmt to T-055's new watch test files
+- Release: vcs-diff v0.6.0, vcs-cli-support v0.6.0, vcs-git v0.10.0, vcs-jj v0.10.0, vcs-github v0.10.0, vcs-gitlab v0.6.0, vcs-gitea v0.6.0, vcs-forge v0.6.0, vcs-testkit v0.6.0, vcs-core v0.8.0, vcs-watch v0.6.0, vcs-mcp v0.6.0
+
+
+### Fixed
+
+- Fix rustfmt drift and a stale byte-exact test assertion
+- Fix CRLF line endings introduced into 13 Cargo.toml manifests
+
+
+### Removed
+
+- Drop redundant leading-dash guard from GitHub/GitLab forge write tools
+
+
+### Changed
+
+- Reconcile processkit 2.1.1 migration with concurrent crate-version release
+- Release: vcs-diff v0.5.2, vcs-cli-support v0.5.2, vcs-git v0.9.2, vcs-jj v0.9.2, vcs-github v0.9.2, vcs-gitlab v0.5.2, vcs-gitea v0.5.2, vcs-forge v0.5.2, vcs-testkit v0.5.2, vcs-core v0.7.2, vcs-watch v0.5.2, vcs-mcp v0.5.2
+
+
+### Changed
+
+- core: rename Repo::open to Repo::discover; add strict Repo::open
+- Bump processkit to 2.1.1 and migrate off non-exhaustive struct literals
+- Release: vcs-diff v0.5.1, vcs-cli-support v0.5.1, vcs-git v0.9.1, vcs-jj v0.9.1, vcs-github v0.9.1, vcs-gitlab v0.5.1, vcs-gitea v0.5.1, vcs-forge v0.5.1, vcs-testkit v0.5.1, vcs-core v0.7.1, vcs-watch v0.5.1, vcs-mcp v0.5.1
+
+
+### Changed
+
+- Release: vcs-diff v0.5.0, vcs-cli-support v0.5.0, vcs-git v0.9.0, vcs-jj v0.9.0, vcs-github v0.9.0, vcs-gitlab v0.5.0, vcs-gitea v0.5.0, vcs-forge v0.5.0, vcs-testkit v0.5.0, vcs-core v0.7.0, vcs-watch v0.5.0, vcs-mcp v0.5.0
+
+
+### Changed
+
+- refactor(a7): make data-carrying RepoEvent/Error variants #[non_exhaustive] (field-safe)
+- Release: vcs-diff v0.4.0, vcs-cli-support v0.4.0, vcs-git v0.8.0, vcs-jj v0.8.0, vcs-github v0.8.0, vcs-gitlab v0.4.0, vcs-gitea v0.4.0, vcs-forge v0.4.0, vcs-testkit v0.4.0, vcs-core v0.6.0, vcs-watch v0.4.0, vcs-mcp v0.4.0
+
+
+### Added
+
+- feat(watch): Error classifiers + processkit_error reach-through
+
+
+### Changed
+
+- Release: vcs-diff v0.3.0, vcs-cli-support v0.3.0, vcs-git v0.7.0, vcs-jj v0.7.0, vcs-github v0.7.0, vcs-gitlab v0.3.0, vcs-gitea v0.3.0, vcs-forge v0.3.0, vcs-testkit v0.3.0, vcs-core v0.5.0, vcs-watch v0.3.0, vcs-mcp v0.3.0
+
+
+### Fixed
+
+- fix(wave0): data-loss & security bleeders (C1/C2/C3/H1/H5/P1)
+- fix(wave1): dead/degraded safety (H2/H3/H4/H6/H10/R1/R3)
+- fix(wave2): bound watch raw-event bridge + deadline the baseline snapshot (R2/R4)
+- fix(wave2): a gone upstream reads uncountable, not in-sync (M17, breaking DTO)
+- fix(m-cluster-followup): snapshot() detects git am (BLOCKER) + audit status + M17/M19/M20 doc coherence
+
+
+### Added
+
+- feat(api)!: Tier-1 interface — RepoSnapshot tracking cohesion, CheckBucket enum, unified git log, aligned status fields
+
+
+### Changed
+
+- deps: processkit 0.10.1 — testing-module imports, program-aware cassettes, cancellation core, Signalled/Timeout diagnostics
+- meta: discoverability — sharpen descriptions/keywords/categories + README intro + GitHub topics
+- build(deps): adopt processkit 0.11.0 (stats opt-in, OutputLine, cancel-race fix)
+- Release: vcs-diff v0.2.0, vcs-cli-support v0.2.0, vcs-git v0.6.0, vcs-jj v0.6.0, vcs-github v0.6.0, vcs-gitlab v0.2.0, vcs-gitea v0.2.0, vcs-forge v0.2.0, vcs-testkit v0.2.0, vcs-core v0.4.0, vcs-watch v0.2.0, vcs-mcp v0.2.0
+
+
+### Fixed
+
+- fix(watch+testkit+forge+gitlab): doc + isolation minors
+
+
+### Added
+
+- feat(watch): vcs-watch — filesystem-watch repo events (Wave E)
+- feat(watch+ci+mcp): hermetic watch pipeline tests, requery timeout, stats, Stream; CI feature matrix; testable mcp args (Wave R)
+
+
+### Changed
+
+- Release: vcs-diff v0.1.0, vcs-cli-support v0.1.0, vcs-git v0.5.0, vcs-jj v0.5.0, vcs-github v0.5.0, vcs-gitlab v0.1.0, vcs-gitea v0.1.0, vcs-forge v0.1.0, vcs-testkit v0.1.0, vcs-core v0.3.0, vcs-watch v0.1.0, vcs-mcp v0.1.0
+
+
+### Fixed
+
+- fix: whole-solution review follow-ups — parser/config robustness, backend parity, watch worktrees, forge contracts
+
 ## [0.6.0] - 2026-07-10
 
 ### Added
@@ -404,7 +517,8 @@ crates; tag releases as `vcs-watch-v<version>`.
   per-worktree gitdir was watched, so `BranchCreated`/`BranchDeleted` never
   fired for a watched worktree.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.6.0...vcs-watch-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.2...vcs-watch-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.1...vcs-watch-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-watch-v0.5.0...vcs-watch-v0.5.1

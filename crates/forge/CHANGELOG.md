@@ -10,6 +10,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.0] - 2026-07-19
+
+### Added
 - **Unified PR/MR review actions.** `Forge::pr_approve(number)` submits an
   approving review across all three backends (`gh pr review --approve` / `glab mr
   approve` / `tea pr approve`), and `Forge::pr_request_changes(number, body)`
@@ -481,7 +492,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.6.0...vcs-forge-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.2...vcs-forge-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.1...vcs-forge-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.0...vcs-forge-v0.5.1

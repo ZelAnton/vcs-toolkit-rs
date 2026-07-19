@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.0] - 2026-07-19
+
+### Added
 - **MR review methods.** `GitLabApi::mr_approve(dir, number)` (`glab mr approve
   <id>`) records an approval, and `mr_revoke(dir, number)` (`glab mr revoke <id>`)
   withdraws it — GitLab's approve/revoke review model (there is no "request
@@ -461,7 +472,8 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `mr_list` passes `--per-page 100` — glab's default of 30 silently truncated
   larger result sets. The cap is now explicit and documented.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.6.0...vcs-gitlab-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.2...vcs-gitlab-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.1...vcs-gitlab-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.0...vcs-gitlab-v0.5.1

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.7.0] - 2026-07-19
+
+### Added
 - `clone_dest_cleanable` / `cleanup_failed_clone_dest` — the R7 failed-clone
   cleanup helper (compute whether a clone destination is safe to remove *before*
   running the clone; best-effort `remove_dir_all` on the error path only, never
@@ -445,7 +456,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.6.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.7.0...HEAD
+[0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.6.0...vcs-cli-support-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.2...vcs-cli-support-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.1...vcs-cli-support-v0.5.2
 [0.5.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.0...vcs-cli-support-v0.5.1

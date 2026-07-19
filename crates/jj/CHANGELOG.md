@@ -10,6 +10,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.11.0] - 2026-07-19
+
+### Added
 - `normalize_workspace_root`/`workspace_root_matches`: the pure path-normalisation
   and jj-workspace-root-matching helpers, factored out of the async
   (`vcs-core`) and blocking (`blocking::workspace_name_for_path`) jj-workspace
@@ -814,7 +825,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.10.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.11.0...HEAD
+[0.11.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.10.0...vcs-jj-v0.11.0
 [0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.2...vcs-jj-v0.10.0
 [0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.1...vcs-jj-v0.9.2
 [0.9.1]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.0...vcs-jj-v0.9.1
