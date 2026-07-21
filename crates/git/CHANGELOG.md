@@ -10,7 +10,20 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- feat: typed git-submodule support — `GitApi::submodule_list`,
+  `submodule_status`, and `submodule_update` (mirrored on the `GitAt` cwd-bound
+  view). `submodule_list` parses the machine-unambiguous
+  `git config --file .gitmodules --list -z` source into `Vec<Submodule>` (name /
+  path / url / branch), reporting a repo with no `.gitmodules` as an empty list
+  without spawning. `submodule_status` parses `git submodule status` into
+  `Vec<SubmoduleStatus>` with a typed `SubmoduleState` from the `-`/`+`/`U`/space
+  prefix. `submodule_update` is a `SubmoduleUpdate` builder (`--init`,
+  `--recursive`, `--depth`, path scoping) whose positional paths are flag-guarded
+  behind a `--` terminator and which pins `GIT_TERMINAL_PROMPT=0`. Both reads are
+  execution-free; `submodule_update` materializes/executes nested repositories,
+  and its interaction with the hardened profile (untrusted nested config, the
+  `protocol.*` transport allowlist, per-nested-repo filter/smudge vectors) is
+  documented in the security guide. (T-096.)
 
 ### Changed
 -

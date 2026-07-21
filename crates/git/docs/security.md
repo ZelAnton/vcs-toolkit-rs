@@ -220,6 +220,49 @@ the user/repo TOML files jj itself trusts — there is deliberately no
 side (git hooks fire only when *git* commands run there), so harden the `Git`
 client you point at it and leave `Jj` plain.
 
+## Submodules (untrusted nested config)
+
+A submodule is a *second, independent* repository the superproject points at —
+its URL and mount path are declared in the superproject's `.gitmodules`, and its
+content (config, hooks, `.gitattributes`) is separate. When the superproject is
+untrusted, so is every submodule it declares. The three submodule methods sit on
+**two different sides** of that trust boundary:
+
+- **`submodule_list` and `submodule_status` are pure reads.** `submodule_list`
+  parses `.gitmodules` through `git config --file .gitmodules --list` — which only
+  *reads* the file, executing nothing — and `submodule_status` reads the recorded
+  gitlink and each initialized submodule's HEAD. Neither clones, fetches, nor
+  materializes a working tree, so neither runs a nested repo's config. Use
+  `submodule_list` to **inspect** what a `.gitmodules` declares (the URLs a later
+  update would fetch from, the paths it would write) *before* deciding to run one.
+
+- **`submodule_update` executes a nested repository's content.** With `--init` it
+  clones/fetches each submodule from the URL `.gitmodules` records and checks out
+  its working tree. That means it:
+  - **fetches over the network from an attacker-influenced URL** — a malicious
+    `.gitmodules` can point a submodule anywhere. git's own `protocol.*` allowlist
+    (since 2.38 it blocks the `file://`/`ext::` local transports for submodules by
+    default — CVE-2022-39253) is the mitigation here; `harden()` does **not**
+    further restrict `protocol.*`.
+  - **materializes the submodule's working tree**, running that nested repo's
+    checkout-time drivers (`filter.<drv>.smudge`, `.gitattributes`) — the same
+    residual repo-local-config vectors listed above, now **per nested repo**.
+
+  The hardened environment *does* extend into the update: the `git` subprocesses
+  `submodule update` spawns inherit the client's environment, so the env-based
+  pins (`core.hooksPath=/dev/null`, `core.fsmonitor=false`, the empty
+  `core.sshCommand`, `GIT_CONFIG_NOSYSTEM`, `GIT_TERMINAL_PROMPT=0`, and the
+  scrubbed `GIT_*` redirectors) apply to the nested operations too. But those pins
+  do not close the filter/textconv or `protocol.file.allow` vectors. So for a
+  **fully untrusted** superproject, run `submodule_update` only inside an OS-level
+  sandbox — or vet the declared submodules with `submodule_list` first and update
+  only the ones you trust.
+
+The positional submodule paths on `submodule_update` are flag-guarded and passed
+after a `--` terminator, so a caller-supplied path can never smuggle a flag — but
+the argv guard is orthogonal to the nested-execution boundary above, which is
+about *what a submodule's own content does*, not the argv shape.
+
 ## Untrusted file content
 
 The conflicted-file parsers treat their input as arbitrary bytes: `vcs_git::conflict`

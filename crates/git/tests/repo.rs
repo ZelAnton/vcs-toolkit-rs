@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
     AnnotatedTag, CheckoutTarget, CommitPaths, Git, GitApi, MergeCheck, MergeCommit, RefName,
-    RevSpec, WorktreeAdd, WorktreeRemove,
+    RevSpec, SubmoduleState, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
-use vcs_testkit::{BareRemote, TempDir, configure_identity as configure};
+use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
 
 // Terse constructors for the validated newtypes in test call sites; the literals
 // here are always valid, so `unwrap` is fine in tests.
@@ -656,6 +656,83 @@ async fn clone_repo_from_local_bare_remote() {
         git.current_branch(&dest).await.expect("branch").as_deref(),
         Some("main")
     );
+}
+
+// Submodule list/status/update against a real git and a local (network-free)
+// submodule source: the argv + parser forms verified hermetically must line up
+// with the live binary's output, including the `+` (RevisionMismatch) → Current
+// transition that `submodule_update` drives. The update exercises the
+// checkout path — the recorded commit is already in the submodule's object store
+// from the full initial clone, so it needs no fetch and no `protocol.file.allow`
+// relaxation.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn submodule_list_status_and_update_cycle() {
+    // A standalone repo (two commits) that serves as the submodule's upstream.
+    let source = GitSandbox::init("subm-src");
+    source.commit_file("a.txt", "v1\n", "src c1");
+    let c1 = source.rev_parse("HEAD");
+    source.commit_file("a.txt", "v2\n", "src c2");
+    let c2 = source.rev_parse("HEAD");
+
+    // The superproject, with the source mounted at `libs/sub` (pinned at c2).
+    let sup = GitSandbox::init("subm-super");
+    sup.commit_file("r.txt", "root\n", "root c1");
+    sup.add_submodule(source.path(), "libs/sub");
+    let dir = sup.path();
+    let git = Git::new();
+
+    // `submodule_list` reads `.gitmodules`: one entry with the mount path/url.
+    let subs = git.submodule_list(dir).await.expect("submodule_list");
+    assert_eq!(subs.len(), 1, "one declared submodule");
+    assert_eq!(subs[0].name, "libs/sub");
+    assert_eq!(subs[0].path, std::path::Path::new("libs/sub"));
+    assert!(!subs[0].url.is_empty(), "url recorded from .gitmodules");
+
+    // Freshly added ⇒ initialized and in sync with the recorded gitlink (c2).
+    let status = git.submodule_status(dir).await.expect("submodule_status");
+    assert_eq!(status.len(), 1);
+    assert_eq!(status[0].path, std::path::Path::new("libs/sub"));
+    assert_eq!(status[0].state, SubmoduleState::Current);
+    assert_eq!(status[0].sha, c2, "gitlink pins the source HEAD");
+
+    // Check out c1 *inside* the submodule so the working commit no longer
+    // matches the superproject's recorded c2 ⇒ status flips to `+`
+    // (RevisionMismatch), and the reported sha is the checked-out commit (c1).
+    vcs_testkit::git(&dir.join("libs/sub"), &["checkout", "-q", &c1]);
+    let drifted = git
+        .submodule_status(dir)
+        .await
+        .expect("status after checkout");
+    assert_eq!(drifted.len(), 1);
+    assert_eq!(drifted[0].state, SubmoduleState::RevisionMismatch);
+    assert_eq!(drifted[0].sha, c1, "reports the checked-out commit");
+
+    // `submodule_update` re-checks-out the recorded c2 (already present locally,
+    // so no fetch) ⇒ back to Current at c2.
+    git.submodule_update(dir, SubmoduleUpdate::new().path("libs/sub"))
+        .await
+        .expect("submodule_update");
+    let restored = git
+        .submodule_status(dir)
+        .await
+        .expect("status after update");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].state, SubmoduleState::Current);
+    assert_eq!(restored[0].sha, c2);
+
+    // Deinit (a purely local op — no fetch, no `protocol.file.allow` needed) ⇒
+    // status flips to Uninitialized (`-` prefix), still reporting the recorded
+    // gitlink sha (c2) and no describe suffix.
+    sup.git(&["submodule", "deinit", "-f", "libs/sub"]);
+    let deinit = git
+        .submodule_status(dir)
+        .await
+        .expect("status after deinit");
+    assert_eq!(deinit.len(), 1);
+    assert_eq!(deinit[0].state, SubmoduleState::Uninitialized);
+    assert_eq!(deinit[0].sha, c2);
+    assert_eq!(deinit[0].describe, None);
 }
 
 // Tag cycle, file-at-revision, config and remote management round-trips.
