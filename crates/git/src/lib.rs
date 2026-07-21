@@ -3040,59 +3040,17 @@ fn parse_commit_order(output: &str) -> Vec<String> {
         .collect()
 }
 
+// The six raw escape-hatch helpers (`run_args`/`run_raw_args`/`run_in`/… and the
+// `*_in` twins) are byte-identical forwards into `core` across all five CLI
+// wrappers, so the shared macro in `vcs-cli-support` generates them (see
+// `vcs_cli_support::raw_run_forwarders!`).
+vcs_cli_support::raw_run_forwarders! {
+    Git, "git", "\"status\", \"-s\"", "",
+    "the same unguarded escape hatch — only the working directory is bound, \
+     no `-C`/extra flag is injected"
+}
+
 impl<R: ProcessRunner> Git<R> {
-    /// Run `git <args>` over string slices — `git.run_args(&["status", "-s"])`
-    /// without allocating a `Vec<String>`. Inherent (not on the object-safe
-    /// trait), so it can take `&[&str]`; forwards to the same path as
-    /// [`GitApi::run`].
-    pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(args).await
-    }
-
-    /// Like [`run_args`](Git::run_args) but never errors on a non-zero exit
-    /// (mirrors [`GitApi::run_raw`]).
-    pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output_string(args).await
-    }
-
-    /// Run `git <args>` **in `dir`** (the process is spawned with `dir` as its
-    /// working directory), returning trimmed stdout — the dir-bound twin of the
-    /// process-cwd [`run`](GitApi::run). This is what [`GitAt::run`] forwards to;
-    /// call [`run`](GitApi::run) on the client for the process-cwd escape hatch.
-    /// Argv is forwarded verbatim (the same unguarded escape hatch — only the
-    /// working directory is bound, no `-C`/extra flag is injected).
-    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_in`](Git::run_in) but never errors on a non-zero exit — the
-    /// dir-bound twin of [`run_raw`](GitApi::run_raw). What [`GitAt::run_raw`]
-    /// forwards to.
-    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
-    /// Like [`run_args`](Git::run_args) but **bound to `dir`** — the `&[&str]` twin
-    /// of [`run_in`](Git::run_in). What [`GitAt::run_args`] forwards to.
-    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_raw_args`](Git::run_raw_args) but **bound to `dir`** — the
-    /// `&[&str]` twin of [`run_raw_in`](Git::run_raw_in). What
-    /// [`GitAt::run_raw_args`] forwards to.
-    pub async fn run_raw_args_in(
-        &self,
-        dir: &Path,
-        args: &[&str],
-    ) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
     /// The empty-tree object id for the repository at `dir`, matching its **active
     /// object format** — the format-correct stand-in for `HEAD` when diffing/stat-ing
     /// the working tree of an unborn (no-commits-yet) repository.

@@ -1510,64 +1510,21 @@ impl<R: ProcessRunner> GitHub<R> {
         Ok(vcs_diff::parse_diff(&text))
     }
 
-    /// Run `gh <args>` over string slices — `gh.run_args(&["pr", "list"])`
-    /// without allocating a `Vec<String>`. Inherent (not on the object-safe
-    /// trait), so it can take `&[&str]`; forwards to the same path as
-    /// [`GitHubApi::run`].
-    pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(args).await
-    }
-
-    /// Like [`run_args`](GitHub::run_args) but never errors on a non-zero exit
-    /// (mirrors [`GitHubApi::run_raw`]).
-    pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output_string(args).await
-    }
-
-    /// Run `gh <args>` **in `dir`** (the process is spawned with `dir` as its
-    /// working directory, so `gh` infers the repo from `dir`'s remote), returning
-    /// trimmed stdout — the dir-bound twin of the process-cwd [`run`](GitHubApi::run).
-    /// This is what [`GitHubAt::run`] forwards to; call [`run`](GitHubApi::run) on the
-    /// client for the process-cwd escape hatch. Argv is forwarded verbatim (only the
-    /// working directory is bound, no `-R`/extra flag is injected).
-    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_in`](GitHub::run_in) but never errors on a non-zero exit — the
-    /// dir-bound twin of [`run_raw`](GitHubApi::run_raw). What [`GitHubAt::run_raw`]
-    /// forwards to.
-    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
-    /// Like [`run_args`](GitHub::run_args) but **bound to `dir`** — the `&[&str]`
-    /// twin of [`run_in`](GitHub::run_in). What [`GitHubAt::run_args`] forwards to.
-    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_raw_args`](GitHub::run_raw_args) but **bound to `dir`** — the
-    /// `&[&str]` twin of [`run_raw_in`](GitHub::run_raw_in). What
-    /// [`GitHubAt::run_raw_args`] forwards to.
-    pub async fn run_raw_args_in(
-        &self,
-        dir: &Path,
-        args: &[&str],
-    ) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
     /// Bind this client to `dir`, returning a [`GitHubAt`] handle whose `dir`-taking
     /// methods omit that argument: `gh.at(dir).pr_list()` runs
     /// [`pr_list`](GitHubApi::pr_list) against `dir`.
     pub fn at<'a>(&'a self, dir: &'a Path) -> GitHubAt<'a, R> {
         GitHubAt { gh: self, dir }
     }
+}
+
+// The six raw escape-hatch helpers (`run_args`/`run_raw_args`/`run_in`/… and the
+// `*_in` twins) are byte-identical forwards into `core` across all five CLI
+// wrappers, so the shared macro in `vcs-cli-support` generates them (see
+// `vcs_cli_support::raw_run_forwarders!`).
+vcs_cli_support::raw_run_forwarders! {
+    GitHub, "gh", "\"pr\", \"list\"", ", so `gh` infers the repo from `dir`'s remote",
+    "only the working directory is bound, no `-R`/extra flag is injected"
 }
 
 /// A [`GitHub`] client with a working directory bound, so its repo-scoped methods
