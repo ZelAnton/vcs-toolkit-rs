@@ -926,8 +926,9 @@ pub trait GitHubApi: Send + Sync {
     /// (`gh release view <tag> --json …`). gh reports `is_latest` only from
     /// [`release_list`](GitHubApi::release_list); here it defaults to `false`.
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
-    /// Create a release, returning its URL (`gh release create <tag> [--title
-    /// <title>] [--notes <notes>] [--draft] [--prerelease]`) — see [`ReleaseCreate`].
+    /// Create a release, returning its URL
+    /// (`gh release create <tag> [--title <title>] [--notes <notes>] [--draft] [--prerelease]`)
+    /// — see [`ReleaseCreate`].
     /// gh creates the git tag from the default branch's latest state if it doesn't
     /// yet exist. Asset uploads are out of scope (attach files with
     /// [`run`](GitHubApi::run)). **Defaulted** to `Error::Unsupported` so external
