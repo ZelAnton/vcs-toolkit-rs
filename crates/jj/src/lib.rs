@@ -781,7 +781,12 @@ pub trait JjApi: Send + Sync {
 
     // --- Discovery / identity ------------------------------------------------
 
-    /// Working-copy root of the current workspace (`jj root`).
+    /// Working-copy root of the current workspace (`jj root`). Decoded
+    /// byte-losslessly from raw stdout (like
+    /// [`workspace_root`](JjApi::workspace_root)), not via
+    /// `String::from_utf8_lossy`: a non-UTF-8 root (legal on Unix) survives
+    /// byte-for-byte, and only the trailing line terminator is stripped — a root
+    /// that legitimately ends in a space/tab is preserved.
     async fn root(&self, dir: &Path) -> Result<PathBuf>;
     /// The local bookmark on the working-copy change `@`, if exactly one (or the
     /// first of several); `None` when `@` carries no bookmark. `ws` enforces the
@@ -1176,10 +1181,23 @@ impl<R: ProcessRunner> Jj<R> {
     /// honouring `wc` so an ignoring-working-copy caller (e.g.
     /// [`status_wc`](Self::status_wc) on [`WorkingCopy::Ignore`]) does not have
     /// this lookup itself snapshot the working copy.
+    ///
+    /// `parse_bytes`: like [`workspace_root`](JjApi::workspace_root), a workspace
+    /// root path need not be valid UTF-8 on Unix, so the `PathBuf` is built from
+    /// raw stdout bytes (via [`parse::workspace_root_from_bytes`]), stripping only
+    /// the trailing line terminator — never `String::from_utf8_lossy` (which would
+    /// flatten a non-UTF-8 root to `U+FFFD`) or a `str::trim_end`-style trim
+    /// (which would also eat a root that legitimately ends in a space/tab). This
+    /// matters beyond `root` itself: `status_wc`/`diff_summary` resolve their cwd
+    /// through this same lookup, so a mangled root would make them spawn `jj` in
+    /// a directory that does not exist.
     async fn root_wc(&self, dir: &Path, wc: WorkingCopy) -> Result<PathBuf> {
-        Ok(PathBuf::from(
-            self.core.run(self.cmd_in_wc(dir, ["root"], wc)).await?,
-        ))
+        self.core
+            .parse_bytes(
+                self.cmd_in_wc(dir, ["root"], wc),
+                parse::workspace_root_from_bytes,
+            )
+            .await
     }
 
     /// Shared core of [`bookmarks`](JjApi::bookmarks) /
@@ -3539,6 +3557,53 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].status, 'M');
         assert_eq!(entries[1].path, Path::new("b.rs"));
+    }
+
+    // T-090: `root_wc` (and hence `root`) must decode `jj root`'s stdout
+    // byte-losslessly via `parse_bytes` + `workspace_root_from_bytes` — the same
+    // path `workspace_root` already used — not `PathBuf::from(self.core.run(..))`,
+    // which decodes lossily (`from_utf8_lossy`) and trims *all* trailing
+    // whitespace via `str::trim_end`. That would flatten a non-UTF-8 root to
+    // `U+FFFD` and truncate one that legitimately ends in a space/tab (both legal
+    // on Unix). `ScriptedRunner`'s `Reply` can only carry a valid `String` (its
+    // `stdout` field), so this integration test exercises the trailing-space half
+    // of that contract at the `Jj::root` level; the non-UTF-8 half of the same
+    // parser is already covered by `workspace_root_preserves_non_utf8_and_trailing_space`
+    // in `parse.rs`, which `root_wc` now shares byte-for-byte.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn root_preserves_a_trailing_space_byte_for_byte() {
+        use std::os::unix::ffi::OsStrExt;
+        let jj =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "root"], Reply::ok("/repo/ws \n")));
+        let root = jj.root(Path::new(".")).await.expect("root");
+        assert_eq!(root.as_os_str().as_bytes(), b"/repo/ws ");
+    }
+
+    // T-090: before this fix, `root_wc`'s lossy+trimmed decode meant `status_wc`
+    // (and `diff_summary`) could resolve their machine query's cwd to a directory
+    // that isn't the real workspace root whenever the root ends in a
+    // space/tab (legal on Unix) — a real repo like that would spawn `jj diff`
+    // against a path that doesn't exist. Assert the `diff --summary` call's cwd
+    // carries the trailing space byte-for-byte, proving `status_wc` resolves it
+    // through the same byte-lossless `root_wc`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn status_resolves_diff_cwd_from_the_byte_lossless_root() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["jj", "root"], Reply::ok("/repo/ws \n"))
+                .on(["jj", "diff"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        jj.status(Path::new(".")).await.expect("status");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[1].cwd.as_deref(),
+            Some(Path::new("/repo/ws ")),
+            "diff --summary must run in the root byte-for-byte, trailing space intact"
+        );
     }
 
     #[test]
