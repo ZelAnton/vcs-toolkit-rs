@@ -106,16 +106,16 @@ async fn release_list_and_view_round_trip() {
     let dir = std::path::Path::new(".");
 
     let releases = gh.release_list(dir).await.expect("release_list");
-    assert!(
-        releases.iter().any(|r| r.tag_name == "vcs-git-v0.4.0"),
-        "expected the released tag, got {releases:?}"
-    );
+    let released_tag = releases
+        .first()
+        .map(|release| release.tag_name.clone())
+        .expect("this repo has releases");
 
     let release = gh
-        .release_view(dir, "vcs-git-v0.4.0")
+        .release_view(dir, &released_tag)
         .await
         .expect("release_view");
-    assert_eq!(release.tag_name, "vcs-git-v0.4.0");
+    assert_eq!(release.tag_name, released_tag);
     // `release_view` fetches body/url, so both are `Some` and non-empty (the lean
     // `release_list` leaves them `None`).
     assert!(
