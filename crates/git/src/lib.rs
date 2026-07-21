@@ -845,7 +845,7 @@ pub trait GitApi: Send + Sync {
     /// silently falling back to git's pathspec DWIM and returning `HEAD`'s
     /// history filtered by that path (C2/M13) — the same convention already
     /// used by [`log_paths`](GitApi::log_paths),
-    /// [`diff_text_budgeted`](GitApi::diff_text_budgeted),
+    /// [`diff_text`](GitApi::diff_text),
     /// [`diff_range_is_empty`](GitApi::diff_range_is_empty),
     /// [`diff_stat`](GitApi::diff_stat), and [`checkout`](GitApi::checkout).
     async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
