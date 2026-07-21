@@ -834,11 +834,20 @@ pub trait GitApi: Send + Sync {
     /// Local branches, current one flagged (`git branch`).
     async fn branches(&self, dir: &Path) -> Result<Vec<Branch>>;
     /// Up to `max` commits reachable from `revspec`, newest first
-    /// (`git log <revspec>`). Pass `"HEAD"` for the current branch's history, or
-    /// a range like `"main..HEAD"` / `"origin/main..HEAD"` to scope it. Mirrors
-    /// [`JjApi::log`](../vcs_jj/trait.JjApi.html#tymethod.log)'s revset argument,
-    /// so cross-backend code uses one signature. The `revspec` is a validated
-    /// [`RevSpec`], so it can never be parsed as a flag.
+    /// (`git log <revspec> -- `). Pass `"HEAD"` for the current branch's
+    /// history, or a range like `"main..HEAD"` / `"origin/main..HEAD"` to scope
+    /// it. Mirrors [`JjApi::log`](../vcs_jj/trait.JjApi.html#tymethod.log)'s
+    /// revset argument, so cross-backend code uses one signature. The
+    /// `revspec` is a validated [`RevSpec`], so it can never be parsed as a
+    /// flag. The argv ends in a literal `--` (end of revisions, no pathspecs)
+    /// so a `revspec` that happens to match an existing file's name (e.g.
+    /// `Makefile`) resolves as a revision or fails outright, rather than
+    /// silently falling back to git's pathspec DWIM and returning `HEAD`'s
+    /// history filtered by that path (C2/M13) — the same convention already
+    /// used by [`log_paths`](GitApi::log_paths),
+    /// [`diff_text_budgeted`](GitApi::diff_text_budgeted),
+    /// [`diff_range_is_empty`](GitApi::diff_range_is_empty),
+    /// [`diff_stat`](GitApi::diff_stat), and [`checkout`](GitApi::checkout).
     async fn log(&self, dir: &Path, revspec: &RevSpec, max: usize) -> Result<Vec<Commit>>;
     /// Like [`log`](GitApi::log), but scoped to commits that touched `paths`
     /// (`git --literal-pathspecs log <revspec> -n <max> -- <paths>`) — e.g. "who
@@ -1552,6 +1561,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                         n.as_str(),
                         "-z",
                         "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                        "--",
                     ],
                 ),
                 parse::parse_log,
@@ -4128,7 +4138,8 @@ mod tests {
                 "main..HEAD",
                 "-n5",
                 "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"
+                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--"
             ]
         );
     }
