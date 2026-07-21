@@ -486,27 +486,86 @@ pub(crate) fn parse_reachable_bookmarks(output: &str) -> Vec<Bookmark> {
     out
 }
 
-/// Parse `jj resolve --list` output: each line is a conflicted path left-aligned
-/// in a column, then a run of spaces, then a human conflict description. Take the
-/// path (the text before the first 2-space gap), forward-slash normalised (jj
-/// emits the OS-native separator here, like `--summary`).
+/// Parse `jj resolve --list` output: each line is a conflicted path, then a run
+/// of literal spaces, then a human conflict description (e.g. `2-sided
+/// conflict`, `2-sided conflict including 1 deletion`). Investigated against
+/// real `jj resolve --list` output (jj 0.42, both single- and multi-conflict
+/// invocations): the path column is right-padded with **at least 4 spaces**,
+/// widened further so every row's description starts at the *same* byte
+/// column — the padding width is `(longest path in this invocation's output) +
+/// 4`, not a fixed constant, and **not derivable from a single line in
+/// isolation** (it depends on every other row jj chose to print alongside it).
+///
+/// A naive "cut at the first 2-space gap" truncates any path that itself
+/// contains an embedded run of 2+ spaces (`"a  b.txt"` -> `"a"`), and an
+/// unconditional `trim_ascii` on the cut result corrupts a path with a
+/// genuine leading/trailing space. Both are legal path bytes that must
+/// round-trip losslessly, mirroring the git backend's `conflicted_files`
+/// (see `resolve_list_preserves_non_utf8_path_bytes`).
+///
+/// Instead, split on the **last** maximal run of 2+ consecutive space bytes
+/// in the line ([`resolve_list_path`]): jj's conflict descriptions are always
+/// plain, single-spaced English (`"N-sided conflict"`, optionally `"
+/// including K deletion(s)"`), so a run of 2+ spaces never occurs inside the
+/// description itself, and the column padding (>= 2 spaces, empirically >= 4
+/// here) is always the *rightmost* such run in the line — regardless of how
+/// many other single- or double-space runs the path itself contains earlier
+/// in the line. This correctly preserves an embedded double space and a
+/// **leading** single space in the path, while still stripping only the
+/// padding.
+///
+/// **Known limit** (a case no purely textual parse of this format can
+/// resolve): a **trailing** space in the path — even a single one — sits
+/// directly against the padding, so the two merge into one contiguous run
+/// and are indistinguishable; the trailing space is swallowed along with the
+/// padding and the returned path loses it. This is a fundamental ambiguity
+/// of the human-oriented, column-aligned format (nothing marks where the
+/// real path ends and the padding begins), not a bug in this function;
+/// lifting it would need a machine-readable source (e.g. a template), which
+/// `jj resolve --list` does not offer at the crate's validated floor (jj >=
+/// 0.38, see [`crate::JjCapabilities`]).
 ///
 /// Consumes **raw bytes** and yields [`PathBuf`]s (via [`path_from_bytes`]) so a
-/// non-UTF-8 conflicted path survives losslessly, mirroring the git backend's
-/// `conflicted_files`.
+/// non-UTF-8 conflicted path survives losslessly.
 pub(crate) fn parse_resolve_list(output: &[u8]) -> Vec<PathBuf> {
     output
         .split(|&b| b == b'\n')
         .filter_map(|line| {
-            // The path is the bytes before the first 2-space column gap.
-            let cut = find_subslice(line, b"  ").unwrap_or(line.len());
-            let path = line[..cut].trim_ascii();
+            let path = resolve_list_path(line);
             if path.is_empty() {
                 return None;
             }
             Some(path_from_bytes(&normalize_slashes(path)))
         })
         .collect()
+}
+
+/// The path portion of one `jj resolve --list` row: everything before the
+/// **last** maximal run of 2+ consecutive space bytes (the column padding
+/// before the description). Falls back to the whole line when no such run
+/// exists (e.g. a blank line, or a line with no padded description at all).
+/// See [`parse_resolve_list`] for why the *last* (not first) run is the
+/// correct split point, and its documented edge case.
+fn resolve_list_path(line: &[u8]) -> &[u8] {
+    let mut split_at = None;
+    let mut i = 0;
+    while i < line.len() {
+        if line[i] == b' ' {
+            let start = i;
+            while i < line.len() && line[i] == b' ' {
+                i += 1;
+            }
+            if i - start >= 2 {
+                split_at = Some(start);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    match split_at {
+        Some(idx) => &line[..idx],
+        None => line,
+    }
 }
 
 /// Build a workspace-root [`PathBuf`] from the raw stdout of `jj workspace root`.
@@ -883,6 +942,61 @@ mod tests {
         );
         assert_eq!(got, vec![PathBuf::from("src/a.rs"), PathBuf::from("b.txt")]);
         assert!(parse_resolve_list(b"").is_empty());
+    }
+
+    // A conflicted path with an embedded double space is legal (e.g. "a  b.txt")
+    // and must not be truncated at that internal run — only the column padding
+    // (the *last* 2+-space run in the line) is the description boundary.
+    #[test]
+    fn resolve_list_preserves_embedded_double_space_in_path() {
+        let got = parse_resolve_list(b"a  b.txt     2-sided conflict\n");
+        assert_eq!(got, vec![PathBuf::from("a  b.txt")]);
+    }
+
+    // A conflicted path with a leading space is legal and must survive: the
+    // fix removed the unconditional `trim_ascii` that used to strip it.
+    #[test]
+    fn resolve_list_preserves_leading_space_in_path() {
+        let got = parse_resolve_list(b" lead.txt    2-sided conflict\n");
+        assert_eq!(got, vec![PathBuf::from(" lead.txt")]);
+    }
+
+    // Documented, conscious limit (see `parse_resolve_list`'s "Known limit"):
+    // a *trailing* path space sits directly against the padding and the two
+    // are indistinguishable, so it is lost. Pinned here so a future change to
+    // the split heuristic doesn't silently alter this — a deliberate
+    // trade-off, not an oversight.
+    #[test]
+    fn resolve_list_documented_limit_drops_a_trailing_path_space() {
+        // The real path is "trail.txt " (one trailing space); jj's own 4-space
+        // minimum column gap follows immediately, so this parser cannot tell
+        // where the trailing space ends and the gap begins.
+        let got = parse_resolve_list(b"trail.txt     2-sided conflict\n");
+        assert_eq!(got, vec![PathBuf::from("trail.txt")]);
+    }
+
+    // Real `jj resolve --list` output (jj 0.42) widens the padding to align
+    // every row's description at the same column, based on the *longest*
+    // path in the whole invocation — captured verbatim from a live repo to
+    // pin the actual byte shape this parser must handle, not just a
+    // hand-picked minimal fixture.
+    #[test]
+    fn resolve_list_handles_real_jj_column_alignment() {
+        let got = parse_resolve_list(
+            b" lead.txt                 2-sided conflict\n\
+              a  b.txt                  2-sided conflict\n\
+              del.txt                   2-sided conflict including 1 deletion\n\
+              reallylongfilename.txt    2-sided conflict\n",
+        );
+        assert_eq!(
+            got,
+            vec![
+                PathBuf::from(" lead.txt"),
+                PathBuf::from("a  b.txt"),
+                PathBuf::from("del.txt"),
+                PathBuf::from("reallylongfilename.txt"),
+            ]
+        );
     }
 
     #[cfg(windows)]
