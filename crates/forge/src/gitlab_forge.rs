@@ -225,6 +225,36 @@ pub(crate) async fn issue_create<R: ProcessRunner>(
     Ok(glab.issue_create(dir, title, body).await?)
 }
 
+pub(crate) async fn issue_close<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    glab.issue_close(dir, number).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_reopen<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    glab.issue_reopen(dir, number).await?;
+    Ok(())
+}
+
+// The facade's `issue_comment` → glab's `issue note <id> -m <body>` (glab models an
+// issue comment as a "note", like `mr note`). The glab wrapper guards the `-`
+// stdin/editor sentinel; the facade rejects an empty body up front.
+pub(crate) async fn issue_comment<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(glab.issue_comment(dir, number, body).await?)
+}
+
 pub(crate) async fn release_list<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,

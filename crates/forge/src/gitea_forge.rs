@@ -191,6 +191,36 @@ pub(crate) async fn issue_create<R: ProcessRunner>(
     Ok(tea.issue_create(dir, title, body).await?)
 }
 
+pub(crate) async fn issue_close<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    tea.issue_close(dir, number).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_reopen<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    tea.issue_reopen(dir, number).await?;
+    Ok(())
+}
+
+// The facade's `issue_comment` → tea's shared `comment <index> <body>` subcommand
+// (the issue/PR index space is shared). The Gitea wrapper guards the bare-positional
+// body; the facade rejects an empty body up front.
+pub(crate) async fn issue_comment<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(tea.issue_comment(dir, number, body).await?)
+}
+
 pub(crate) async fn release_list<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,

@@ -244,8 +244,8 @@ impl Default for MrEdit {
 /// is guarded with `reject_flag_like` (mirroring `vcs-github`'s
 /// `api`/`release_view`); guard any future bare positional the same way.
 /// Separately, the description/body/comment/notes flag-VALUE fields (`mr_create`,
-/// `mr_edit`, `issue_create`, `mr_comment`, `release_create`) are guarded with
-/// `reject_dash_sentinel` against glab's *own* `"-"` stdin/editor sentinel —
+/// `mr_edit`, `issue_create`, `issue_comment`, `mr_comment`, `release_create`) are
+/// guarded with `reject_dash_sentinel` against glab's *own* `"-"` stdin/editor sentinel —
 /// unrelated to argv injection, but the same "refuse before spawning" shape.
 pub const BINARY: &str = "glab";
 
@@ -683,6 +683,42 @@ pub trait GitLabApi: Send + Sync {
     /// dash-sentinel guard on `body` (refused with an `Error::Spawn` whose
     /// source is `io::ErrorKind::InvalidInput` before anything spawns).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+    /// Close an issue (`glab issue close <id>`). `number` is a `u64`, so the bare
+    /// `<id>` positional can never look like a flag — nothing to guard. **Defaulted**
+    /// to `Error::Unsupported` so external implementers keep compiling when the crate
+    /// bumps (only the `GitLab` concrete impl and the regenerated `MockGitLabApi`
+    /// override it).
+    #[allow(unused_variables)]
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_close".into(),
+        })
+    }
+    /// Reopen a closed issue (`glab issue reopen <id>`). `number` is a `u64`, so the
+    /// bare `<id>` positional can never look like a flag — nothing to guard.
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps (only the `GitLab` concrete impl and the regenerated
+    /// `MockGitLabApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_reopen".into(),
+        })
+    }
+    /// Add a note (comment) to an issue, returning the command's output
+    /// (`glab issue note <id> -m <body>`). The note body rides in a flag-VALUE
+    /// position, so no argv-injection guard is needed — but a body that is *exactly*
+    /// `"-"` is glab's stdin/editor sentinel, refused with an `Error::Spawn` whose
+    /// source is `io::ErrorKind::InvalidInput` before anything spawns (same rule as
+    /// [`mr_comment`](GitLabApi::mr_comment)). **Defaulted** to `Error::Unsupported`
+    /// so external implementers keep compiling when the crate bumps (only the
+    /// `GitLab` concrete impl and the regenerated `MockGitLabApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "issue_comment".into(),
+        })
+    }
     /// Releases for `dir` (`glab release list --per-page 100 --output json`).
     /// Returns up to 100 (100 is the GitLab API per-page max); use
     /// [`run`](GitLabApi::run) for more.
@@ -1044,6 +1080,35 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .await
     }
 
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issue", "close", id.as_str()]))
+            .await
+    }
+
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        let id = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issue", "reopen", id.as_str()]))
+            .await
+    }
+
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        // `-m` is a flag-VALUE position; glab consumes the next token verbatim, so
+        // no argv-injection guard. A literal `-` note body is glab's stdin/editor
+        // sentinel, not the string itself — refuse it before spawning (mirrors
+        // `mr_comment`).
+        reject_dash_sentinel("comment body", body)?;
+        let id = number.to_string();
+        self.core
+            .run(
+                self.core
+                    .command_in(dir, ["issue", "note", id.as_str(), "-m", body]),
+            )
+            .await
+    }
+
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>> {
         // `--per-page 100` (the GitLab API max) overrides glab's default page
         // size of 30, which would otherwise silently truncate the list.
@@ -1206,6 +1271,9 @@ vcs_cli_support::at_forwarders! {
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn issue_close(number: u64) -> Result<()>;
+        fn issue_reopen(number: u64) -> Result<()>;
+        fn issue_comment(number: u64, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
         fn release_create(spec: ReleaseCreate) -> Result<String>;
@@ -1907,6 +1975,41 @@ mod tests {
                 "--yes"
             ]
         );
+    }
+
+    // `issue close`/`issue reopen` take only the bare `<id>` (no flags, no
+    // structured output); `issue note <id> -m <body>` posts a comment and returns
+    // the trimmed output.
+    #[tokio::test]
+    async fn issue_close_reopen_and_comment_build_argv() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/i/7#note_5\n"));
+        let glab = GitLab::with_runner(&rec);
+
+        glab.issue_close(Path::new("/r"), 7).await.expect("close");
+        glab.issue_reopen(Path::new("/r"), 7).await.expect("reopen");
+        let out = glab
+            .issue_comment(Path::new("/r"), 7, "LGTM")
+            .await
+            .expect("comment");
+        assert_eq!(out, "https://gl/i/7#note_5");
+
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["issue", "close", "7"]);
+        assert_eq!(calls[1].args_str(), ["issue", "reopen", "7"]);
+        assert_eq!(calls[2].args_str(), ["issue", "note", "7", "-m", "LGTM"]);
+    }
+
+    // A literal `-` comment body is glab's stdin/editor sentinel — refused before
+    // anything spawns (the same dash-sentinel guard as `mr_comment`/`issue_create`).
+    #[tokio::test]
+    async fn issue_comment_rejects_bare_dash_body() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        assert!(
+            glab.issue_comment(Path::new("/r"), 7, "-").await.is_err(),
+            "a bare `-` note body is refused"
+        );
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     // release_list builds the `--per-page 100 --output json` argv and parses the

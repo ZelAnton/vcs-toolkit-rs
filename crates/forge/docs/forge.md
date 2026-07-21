@@ -72,6 +72,9 @@ pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
 pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
+pub async fn issue_close(&self, number: u64) -> Result<()>; // gh/glab `issue close`, tea `issues close`
+pub async fn issue_reopen(&self, number: u64) -> Result<()>; // gh/glab `issue reopen`, tea `issues reopen`
+pub async fn issue_comment(&self, number: u64, body: &str) -> Result<String>; // gh `issue comment --body`, glab `issue note -m`, tea `comment <n>`
 pub async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
 pub async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
 pub async fn release_create(&self, spec: ReleaseCreate) -> Result<String>; // ReleaseCreate::new(tag)[.title(…)][.notes(…)][.draft()][.prerelease()] — draft/prerelease are GitHub/Gitea-only
@@ -86,7 +89,16 @@ them to each CLI's own flags (gh/tea `--head`/`--base`, glab
 
 [`PrEdit`] is the unified edit spec — `PrEdit::new().title(t).body(b)`, each field
 optional; `pr_edit` rejects both-`None` with `Error::InvalidInput` before any
-spawn. `pr_comment` likewise rejects an empty/whitespace-only body up front.
+spawn. `pr_comment` and `issue_comment` likewise reject an empty/whitespace-only
+body up front.
+
+`issue_close`/`issue_reopen`/`issue_comment` complete the issue lifecycle (the
+triage verbs) alongside `issue_create`/`issue_list`/`issue_view`. All three are
+supported on every real backend — gh/glab `issue close`/`issue reopen`, tea `issues
+close`/`issues reopen`; the comment maps to gh `issue comment --body`, glab `issue
+note -m`, and tea's shared `comment <index> <body>` (issues and PRs share Gitea's
+index space). A body beginning with `-` is fine on GitHub/GitLab (flag-value slot);
+on Gitea it is a bare positional, so start such a body with a non-`-` character.
 
 `pr_approve` submits an approving review on all three backends. `pr_request_changes`
 submits a request-changes review on **GitHub** (`gh pr review --request-changes
@@ -188,6 +200,7 @@ the request-changes review action; these return
 | `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` / `pr_checkout` | ✅ | ✅ | ✅ |
 | `pr_approve` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
+| `issue_close` / `issue_reopen` / `issue_comment` | ✅ | ✅ | ✅ |
 | `release_create` / `release_delete` | ✅ | ✅ | ✅ |
 | `release_create` honours `draft` / `prerelease` | ✅ | ❌ Unsupported (GitLab has no draft/pre-release concept) | ✅ |
 | `pr_request_changes` | ✅ | ❌ Unsupported (GitLab review is approve/revoke — use `mr_revoke` on the wrapper) | ✅ (`tea pr reject`) |

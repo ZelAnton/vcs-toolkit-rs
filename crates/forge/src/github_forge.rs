@@ -232,6 +232,33 @@ pub(crate) async fn issue_create<R: ProcessRunner>(
     Ok(gh.issue_create(dir, title, body).await?)
 }
 
+pub(crate) async fn issue_close<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    gh.issue_close(dir, number).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_reopen<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+) -> Result<()> {
+    gh.issue_reopen(dir, number).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_comment<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    body: &str,
+) -> Result<String> {
+    Ok(gh.issue_comment(dir, number, body).await?)
+}
+
 pub(crate) async fn release_list<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,

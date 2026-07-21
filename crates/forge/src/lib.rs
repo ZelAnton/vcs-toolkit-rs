@@ -78,7 +78,9 @@
 //!   [`pr_checkout`](Forge::pr_checkout) / [`pr_checks`](Forge::pr_checks) /
 //!   [`pr_diff`](Forge::pr_diff)); the capability
 //!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
-//!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
+//!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create) /
+//!   [`issue_close`](Forge::issue_close) / [`issue_reopen`](Forge::issue_reopen) /
+//!   [`issue_comment`](Forge::issue_comment));
 //!   releases ([`release_list`](Forge::release_list) /
 //!   [`release_view`](Forge::release_view) / [`release_create`](Forge::release_create) /
 //!   [`release_delete`](Forge::release_delete)). List ops cap at 100 — drop to the
@@ -352,7 +354,9 @@ impl<R: ProcessRunner> Forge<R> {
     /// (its review model is approve/revoke, with no request-changes action); Gitea
     /// (`tea`) supports [`PrCheckout`](ForgeOp::PrCheckout),
     /// [`PrApprove`](ForgeOp::PrApprove), [`PrRequestChanges`](ForgeOp::PrRequestChanges),
-    /// [`ReleaseCreate`](ForgeOp::ReleaseCreate), and [`ReleaseDelete`](ForgeOp::ReleaseDelete)
+    /// [`ReleaseCreate`](ForgeOp::ReleaseCreate), [`ReleaseDelete`](ForgeOp::ReleaseDelete),
+    /// and the three issue-lifecycle ops [`IssueClose`](ForgeOp::IssueClose) /
+    /// [`IssueReopen`](ForgeOp::IssueReopen) / [`IssueComment`](ForgeOp::IssueComment)
     /// but has no current-repo view, draft toggle, PR-checks command, single-release
     /// view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
     /// classified CLI) supports nothing at all (every operation returns
@@ -723,6 +727,59 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// Close an issue (`gh issue close` / `glab issue close` / `tea issues close`).
+    /// Supported on all three real backends; an [`Unknown`](ForgeKind::Unknown)
+    /// handle returns [`Unsupported`](Error::Unsupported).
+    pub async fn issue_close(&self, number: u64) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::issue_close(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::issue_close(c, &self.cwd, number).await,
+            Backend::Gitea(c) => gitea_forge::issue_close(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_close")),
+        }
+    }
+
+    /// Reopen a closed issue (`gh issue reopen` / `glab issue reopen` / `tea issues
+    /// reopen`). Supported on all three real backends; an
+    /// [`Unknown`](ForgeKind::Unknown) handle returns
+    /// [`Unsupported`](Error::Unsupported).
+    pub async fn issue_reopen(&self, number: u64) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::issue_reopen(c, &self.cwd, number).await,
+            Backend::GitLab(c) => gitlab_forge::issue_reopen(c, &self.cwd, number).await,
+            Backend::Gitea(c) => gitea_forge::issue_reopen(c, &self.cwd, number).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_reopen")),
+        }
+    }
+
+    /// Post a comment to an existing issue, returning the CLI's output (the comment
+    /// URL on GitHub/GitLab; `tea` prints a textual summary). An empty (or
+    /// whitespace-only) body is rejected with [`Error::InvalidInput`] before any CLI
+    /// spawn — a blank comment is a caller bug the CLIs either post empty or reject
+    /// opaquely, so fail fast and uniformly (the same facade-level guard as
+    /// [`pr_comment`](Forge::pr_comment)).
+    ///
+    /// Body handling differs by backend, exactly as for [`pr_comment`](Forge::pr_comment):
+    /// GitHub (`gh issue comment --body`) and GitLab (`glab issue note -m`) put the
+    /// body in a flag-value slot, so a body that begins with `-` is fine. Gitea's
+    /// `tea comment <n> <body>` takes the body as a **positional**, so a body whose
+    /// first non-space character is `-` (e.g. a Markdown bullet list, or `---`) is
+    /// rejected with an error. When targeting Gitea, start such a body with a
+    /// non-`-` character.
+    pub async fn issue_comment(&self, number: u64, body: &str) -> Result<String> {
+        if body.trim().is_empty() {
+            return Err(Error::InvalidInput(
+                "issue_comment: comment body must not be empty".into(),
+            ));
+        }
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::issue_comment(c, &self.cwd, number, body).await,
+            Backend::GitLab(c) => gitlab_forge::issue_comment(c, &self.cwd, number, body).await,
+            Backend::Gitea(c) => gitea_forge::issue_comment(c, &self.cwd, number, body).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_comment")),
+        }
+    }
+
     /// Releases for the bound directory, newest first (up to 100 on GitHub/GitLab;
     /// **Gitea returns at most ~50** per its server page cap — drop to the underlying
     /// client and page for more).
@@ -794,6 +851,9 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_approve: true,
         pr_request_changes: true,
         issue_create: true,
+        issue_close: true,
+        issue_reopen: true,
+        issue_comment: true,
         release_create: true,
         release_delete: true,
         version: None,
@@ -817,6 +877,10 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         // this stays `false` even for an authed, modern `glab`.
         pr_request_changes: false,
         issue_create: true,
+        // `glab` ships `issue close`/`issue reopen`/`issue note`.
+        issue_close: true,
+        issue_reopen: true,
+        issue_comment: true,
         // `glab` ships `release create`/`release delete`. The `draft`/`prerelease`
         // create *options* are unsupported on GitLab, but the create command itself
         // is available — that per-option gap is enforced at call time, not here.
@@ -846,6 +910,11 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_approve: true,
         pr_request_changes: true,
         issue_create: true,
+        // `tea` ships `issues close`/`issues reopen`, and issue comments ride the
+        // shared `tea comment <index>` subcommand (the issue/PR index space is shared).
+        issue_close: true,
+        issue_reopen: true,
+        issue_comment: true,
         // `tea` ships `releases create` (with draft/prerelease) and `releases delete`.
         release_create: true,
         release_delete: true,
@@ -869,6 +938,9 @@ fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_approve = false;
     caps.pr_request_changes = false;
     caps.issue_create = false;
+    caps.issue_close = false;
+    caps.issue_reopen = false;
+    caps.issue_comment = false;
     caps.release_create = false;
     caps.release_delete = false;
 }
@@ -967,6 +1039,27 @@ pub trait ForgeApi: Send + Sync {
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
     /// See [`Forge::issue_create`](crate::Forge::issue_create).
     async fn issue_create(&self, spec: IssueCreate) -> Result<String>;
+    /// See [`Forge::issue_close`](crate::Forge::issue_close). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn issue_close(&self, number: u64) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "issue_close"))
+    }
+    /// See [`Forge::issue_reopen`](crate::Forge::issue_reopen). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn issue_reopen(&self, number: u64) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "issue_reopen"))
+    }
+    /// See [`Forge::issue_comment`](crate::Forge::issue_comment). **Defaulted** to
+    /// `Error::Unsupported` (the real impl rejects an empty body with
+    /// `Error::InvalidInput` before any spawn).
+    #[allow(unused_variables)]
+    async fn issue_comment(&self, number: u64, body: &str) -> Result<String> {
+        Err(Error::unsupported(self.kind(), "issue_comment"))
+    }
     /// See [`Forge::release_list`](crate::Forge::release_list).
     async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
     /// See [`Forge::release_view`](crate::Forge::release_view).
@@ -1057,6 +1150,15 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
         self.issue_create(spec).await
+    }
+    async fn issue_close(&self, number: u64) -> Result<()> {
+        self.issue_close(number).await
+    }
+    async fn issue_reopen(&self, number: u64) -> Result<()> {
+        self.issue_reopen(number).await
+    }
+    async fn issue_comment(&self, number: u64, body: &str) -> Result<String> {
+        self.issue_comment(number, body).await
     }
     async fn release_list(&self) -> Result<Vec<ForgeRelease>> {
         self.release_list().await
@@ -1398,6 +1500,9 @@ mod tests {
         assert!(caps.pr_approve);
         assert!(caps.pr_request_changes, "gh has a request-changes review");
         assert!(caps.issue_create);
+        assert!(caps.issue_close, "gh ships `issue close`");
+        assert!(caps.issue_reopen, "gh ships `issue reopen`");
+        assert!(caps.issue_comment, "gh ships `issue comment`");
         assert!(caps.release_create, "gh ships `release create`");
         assert!(caps.release_delete, "gh ships `release delete`");
         assert!(caps.authed);
@@ -1435,6 +1540,9 @@ mod tests {
         assert!(!caps.pr_checks);
         assert!(!caps.pr_merge);
         assert!(!caps.issue_create);
+        assert!(!caps.issue_close);
+        assert!(!caps.issue_reopen);
+        assert!(!caps.issue_comment);
     }
 
     // A `gh` **below the version floor** zeroes the op flags exactly like an
@@ -1569,8 +1677,9 @@ mod tests {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
             // Gitea ships `tea pr checkout`, `pr approve`, `pr reject`
-            // (request-changes), and both `releases create`/`releases delete`; the
-            // other varying ops are Unsupported.
+            // (request-changes), both `releases create`/`releases delete`, and the
+            // three issue-lifecycle ops (`issues close`/`issues reopen`/`comment`);
+            // the other varying ops are Unsupported.
             let expected = matches!(
                 op,
                 ForgeOp::PrCheckout
@@ -1578,6 +1687,9 @@ mod tests {
                     | ForgeOp::PrRequestChanges
                     | ForgeOp::ReleaseCreate
                     | ForgeOp::ReleaseDelete
+                    | ForgeOp::IssueClose
+                    | ForgeOp::IssueReopen
+                    | ForgeOp::IssueComment
             );
             assert_eq!(gitea.supports(op), expected, "gitea supports({op:?})");
         }
@@ -2072,6 +2184,104 @@ mod tests {
         let forge = github(ScriptedRunner::new()); // no scripted rules: a spawn would error
         for body in ["", "   ", "\t\n"] {
             let err = forge.pr_request_changes(7, body).await.unwrap_err();
+            assert!(
+                matches!(err, crate::Error::InvalidInput(_)),
+                "empty body {body:?} must surface as InvalidInput, got {err:?}"
+            );
+        }
+    }
+
+    // `issue_close` / `issue_reopen` dispatch to each backend's state-change verb:
+    // gh `issue close`/`issue reopen`, glab `issue close`/`issue reopen`, tea
+    // `issues close`/`issues reopen`. These are live mutations, so the hermetic argv
+    // pin is the contract.
+    #[tokio::test]
+    async fn issue_close_and_reopen_dispatch_per_backend() {
+        // close
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .issue_close(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issue", "close", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .issue_close(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issue", "close", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .issue_close(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issues", "close", "7"]);
+
+        // reopen
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .issue_reopen(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issue", "reopen", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .issue_reopen(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issue", "reopen", "7"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .issue_reopen(7)
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["issues", "reopen", "7"]);
+    }
+
+    // `issue_comment` maps to gh `issue comment --body` / glab `issue note -m` /
+    // tea `comment <index> <body>`, and returns the CLI's trimmed output.
+    #[tokio::test]
+    async fn issue_comment_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/i/7#c1\n"));
+        let out = Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .issue_comment(7, "ping")
+            .await
+            .unwrap();
+        assert_eq!(out, "https://gh/i/7#c1");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["issue", "comment", "7", "--body", "ping"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/i/7#note_5\n"));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .issue_comment(7, "ping")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["issue", "note", "7", "-m", "ping"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok("Comment created\n"));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .issue_comment(7, "ping")
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["comment", "7", "ping"]);
+    }
+
+    // `issue_comment` rejects an empty / whitespace-only body with InvalidInput
+    // BEFORE any spawn — uniform with `pr_comment` (a blank comment is a caller bug).
+    #[tokio::test]
+    async fn issue_comment_empty_body_is_invalid_input() {
+        let forge = github(ScriptedRunner::new()); // no scripted rules: a spawn would error
+        for body in ["", "   ", "\t\n"] {
+            let err = forge.issue_comment(7, body).await.unwrap_err();
             assert!(
                 matches!(err, crate::Error::InvalidInput(_)),
                 "empty body {body:?} must surface as InvalidInput, got {err:?}"

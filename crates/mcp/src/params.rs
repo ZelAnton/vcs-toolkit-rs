@@ -231,6 +231,15 @@ pub struct IssueCreateParams {
     pub body: String,
 }
 
+/// Post a comment to an existing issue.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct IssueCommentParams {
+    /// The issue number (GitLab uses the project-scoped `iid`).
+    pub number: u64,
+    /// The markdown comment body.
+    pub body: String,
+}
+
 /// A release by tag.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReleaseTagParams {

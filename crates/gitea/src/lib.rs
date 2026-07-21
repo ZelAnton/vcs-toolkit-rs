@@ -615,6 +615,42 @@ pub trait GiteaApi: Send + Sync {
     /// its URL) — there is no `--output`/`--fields` flag to shape create output —
     /// so this returns the trimmed stdout verbatim rather than a parsed URL.
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+    /// Close an issue (`tea issues close <index>`). `number` is a `u64`, so the bare
+    /// `<index>` positional can never look like a flag — nothing to guard.
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps (only the `Gitea` concrete impl and the regenerated
+    /// `MockGiteaApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_close".into(),
+        })
+    }
+    /// Reopen a closed issue (`tea issues reopen <index>`). `number` is a `u64`, so
+    /// the bare `<index>` positional can never look like a flag — nothing to guard.
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps (only the `Gitea` concrete impl and the regenerated
+    /// `MockGiteaApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_reopen".into(),
+        })
+    }
+    /// Add a comment to an issue, returning the command's output
+    /// (`tea comment <index> <body>`). Gitea issues and PRs share the `index` space
+    /// and the same `tea comment` subcommand, so this is the issue-side twin of
+    /// [`pr_comment`](GiteaApi::pr_comment): the `body` is a bare positional, guarded
+    /// with `reject_flag_like` (a leading `-` or empty value is rejected before any
+    /// process spawns). **Defaulted** to `Error::Unsupported` so external
+    /// implementers keep compiling when the crate bumps (only the `Gitea` concrete
+    /// impl and the regenerated `MockGiteaApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "issue_comment".into(),
+        })
+    }
     /// Releases for `dir` (`tea releases list --output json`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
     /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** releases in
@@ -973,6 +1009,35 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             .await
     }
 
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        // `tea issues close <index>` flips the issue state to closed. `number` is a
+        // `u64`, so the bare index can never look like a flag — nothing to guard.
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issues", "close", n.as_str()]))
+            .await
+    }
+
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        // `tea issues reopen <index>` flips the issue state back to open. `number`
+        // is a `u64`, so the bare index can never look like a flag — nothing to guard.
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issues", "reopen", n.as_str()]))
+            .await
+    }
+
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        // `tea comment <index> <body>` — the same subcommand `pr_comment` uses (the
+        // issue/PR index space is shared). `body` is a bare positional, so guard it
+        // with `reject_flag_like` the way `pr_comment` does.
+        reject_flag_like("body", body)?;
+        let n = number.to_string();
+        self.core
+            .run(self.core.command_in(dir, ["comment", n.as_str(), body]))
+            .await
+    }
+
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>> {
         // `--limit 100` raises tea's default page size (30), but the Gitea server
         // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
@@ -1082,6 +1147,9 @@ vcs_cli_support::at_forwarders! {
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn issue_close(number: u64) -> Result<()>;
+        fn issue_reopen(number: u64) -> Result<()>;
+        fn issue_comment(number: u64, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_create(spec: ReleaseCreate) -> Result<String>;
         fn release_delete(tag: &str) -> Result<()>;
@@ -1696,6 +1764,51 @@ mod tests {
                 "broken"
             ]
         );
+    }
+
+    // `issues close`/`issues reopen` take only the bare `<index>` (no flags); the
+    // live commands mutate a real issue's state, so this hermetic argv pin (not a
+    // round-trip) is the contract. `issue_comment` reuses the shared `tea comment
+    // <index> <body>` subcommand (issue/PR index space is shared).
+    #[tokio::test]
+    async fn issue_close_reopen_and_comment_build_argv() {
+        let rec = RecordingRunner::replying(Reply::ok("Comment created\n"));
+        let tea = Gitea::with_runner(&rec);
+
+        tea.issue_close(Path::new("/repo"), 7).await.expect("close");
+        tea.issue_reopen(Path::new("/repo"), 7)
+            .await
+            .expect("reopen");
+        let out = tea
+            .issue_comment(Path::new("/repo"), 7, "ping")
+            .await
+            .expect("comment");
+        assert_eq!(out, "Comment created");
+
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["issues", "close", "7"]);
+        assert_eq!(calls[0].cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(calls[1].args_str(), ["issues", "reopen", "7"]);
+        assert_eq!(calls[2].args_str(), ["comment", "7", "ping"]);
+
+        // Reached through the bound view, the argv is byte-identical.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.at(Path::new("/repo"))
+            .issue_close(7)
+            .await
+            .expect("close");
+        assert_eq!(rec.only_call().args_str(), ["issues", "close", "7"]);
+    }
+
+    // `issue_comment`'s body is a bare positional (the shared `tea comment`
+    // subcommand), so a flag-like or empty body is rejected BEFORE any process
+    // spawns — same guard as `pr_comment`.
+    #[tokio::test]
+    async fn issue_comment_rejects_flag_like_body() {
+        let tea = Gitea::with_runner(ScriptedRunner::new());
+        assert!(tea.issue_comment(Path::new("."), 7, "-evil").await.is_err());
+        assert!(tea.issue_comment(Path::new("."), 7, "").await.is_err());
     }
 
     // release_list parses tea's fixed release table (all-string values, tea's

@@ -10,7 +10,14 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Three write-gated forge mutation tools: `forge_issue_close` (`{ number }`),
+  `forge_issue_reopen` (`{ number }`), and `forge_issue_comment` (`{ number, body }`),
+  exposing `Forge::issue_close`/`issue_reopen`/`issue_comment` over MCP. All three
+  require write access (`--allow-write`, or `--allow-tools` naming them) and are
+  annotated `destructiveHint` (real forge mutations — not the jj-snapshot
+  `idempotentHint` pattern); they are added to `WRITE_TOOLS`. `forge_issue_comment`
+  rejects an empty body up front as `invalid_params`. `forge_info`'s capability map
+  gains the `issue_close`/`issue_reopen`/`issue_comment` flags.
 
 ### Changed
 -

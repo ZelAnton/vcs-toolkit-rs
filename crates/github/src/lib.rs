@@ -58,6 +58,8 @@
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
 //!   timeout); issues & releases ([`issue_create`](GitHubApi::issue_create),
+//!   [`issue_close`](GitHubApi::issue_close), [`issue_reopen`](GitHubApi::issue_reopen),
+//!   [`issue_comment`](GitHubApi::issue_comment),
 //!   [`release_view`](GitHubApi::release_view), …); plus the escape hatches
 //!   [`run`](GitHubApi::run) / [`api`](GitHubApi::api) for anything unmodelled.
 //! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
@@ -918,6 +920,41 @@ pub trait GitHubApi: Send + Sync {
     /// A single issue by number, with `body`/`url` filled
     /// (`gh issue view <n> --json …`).
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
+    /// Close an issue (`gh issue close <n>`). `number` is a `u64`, so the bare
+    /// positional can never look like a flag — nothing to guard. **Defaulted** to
+    /// `Error::Unsupported` so external implementers of the trait keep compiling
+    /// when the crate bumps (only the `GitHub` concrete impl and the regenerated
+    /// `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_close".into(),
+        })
+    }
+    /// Reopen a closed issue (`gh issue reopen <n>`). `number` is a `u64`, so the
+    /// bare positional can never look like a flag — nothing to guard. **Defaulted**
+    /// to `Error::Unsupported` so external implementers of the trait keep compiling
+    /// when the crate bumps (only the `GitHub` concrete impl and the regenerated
+    /// `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "issue_reopen".into(),
+        })
+    }
+    /// Add a comment to an issue, returning its URL
+    /// (`gh issue comment <n> --body <body>`). The body rides in a flag-VALUE slot,
+    /// so a leading `-` is safe and no argv guard is needed (same as
+    /// [`pr_comment`](GitHubApi::pr_comment)). **Defaulted** to `Error::Unsupported`
+    /// so external implementers of the trait keep compiling when the crate bumps
+    /// (only the `GitHub` concrete impl and the regenerated `MockGitHubApi` override
+    /// it).
+    #[allow(unused_variables)]
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "issue_comment".into(),
+        })
+    }
     /// Releases, newest first (`gh release list --limit 100 --json …`); `body`/`url`
     /// are not fetched here — use [`release_view`](GitHubApi::release_view).
     /// Returns up to 100 releases; use [`run`](GitHubApi::run) for more.
@@ -1414,6 +1451,33 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
+    async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issue", "close", n.as_str()]))
+            .await
+    }
+
+    async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
+        let n = number.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["issue", "reopen", n.as_str()]))
+            .await
+    }
+
+    async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
+        // `--body` is mandatory here: without it gh falls back to an interactive
+        // prompt, which would hang a headless run (same as `pr_comment`). The body
+        // rides in a flag-VALUE slot, so a leading `-` is safe — no argv guard.
+        let n = number.to_string();
+        self.core
+            .run(
+                self.core
+                    .command_in(dir, ["issue", "comment", n.as_str(), "--body", body]),
+            )
+            .await
+    }
+
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>> {
         self.core
             .try_parse(
@@ -1579,6 +1643,9 @@ vcs_cli_support::at_forwarders! {
         fn run_watch(id: u64) -> Result<WorkflowRun>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn issue_view(number: u64) -> Result<Issue>;
+        fn issue_close(number: u64) -> Result<()>;
+        fn issue_reopen(number: u64) -> Result<()>;
+        fn issue_comment(number: u64, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
         fn release_create(spec: ReleaseCreate) -> Result<String>;
@@ -2327,6 +2394,46 @@ mod tests {
         assert_eq!(
             calls[1].args_str(),
             ["issue", "create", "--title", "T", "--body", "B"]
+        );
+    }
+
+    // `issue close`/`issue reopen` take only the bare `u64` index (no flags, no
+    // structured output); `issue comment` puts the body in a flag-VALUE `--body`
+    // slot and returns the new comment's URL.
+    #[tokio::test]
+    async fn issue_close_reopen_and_comment_build_argv() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/i/7#c1\n"));
+        let gh = GitHub::with_runner(&rec);
+
+        gh.issue_close(Path::new("/r"), 7).await.expect("close");
+        gh.issue_reopen(Path::new("/r"), 7).await.expect("reopen");
+        assert_eq!(
+            gh.issue_comment(Path::new("/r"), 7, "ping").await.unwrap(),
+            "https://gh/i/7#c1"
+        );
+
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["issue", "close", "7"]);
+        assert_eq!(calls[1].args_str(), ["issue", "reopen", "7"]);
+        assert_eq!(
+            calls[2].args_str(),
+            ["issue", "comment", "7", "--body", "ping"]
+        );
+    }
+
+    // The comment body rides in a flag-VALUE slot, so gh consumes a leading-`-`
+    // body verbatim (a Markdown bullet list / `---` rule is legitimate) — the
+    // argv is pinned to prove no guard mangles or rejects it.
+    #[tokio::test]
+    async fn issue_comment_passes_leading_dash_body_verbatim() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/i/7#c2\n"));
+        let gh = GitHub::with_runner(&rec);
+        gh.issue_comment(Path::new("/r"), 7, "- a bullet")
+            .await
+            .expect("dash body");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["issue", "comment", "7", "--body", "- a bullet"]
         );
     }
 

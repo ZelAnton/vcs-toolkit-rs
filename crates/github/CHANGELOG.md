@@ -10,7 +10,14 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Issue lifecycle methods.** `GitHubApi::issue_close(dir, number)` (`gh issue
+  close <n>`) and `issue_reopen(dir, number)` (`gh issue reopen <n>`) flip an
+  issue's state and return `Result<()>`; `issue_comment(dir, number, body)`
+  (`gh issue comment <n> --body <body>`) posts a comment and returns its URL. The
+  comment body rides in a flag-VALUE slot, so a leading `-` is safe (no positional
+  guard needed). All three are `at`-forwarded and have defaulted
+  `Error::Unsupported` trait bodies so external implementers keep compiling; the
+  exact argv is pinned by hermetic tests.
 
 ### Changed
 -

@@ -119,8 +119,10 @@ fn host_of(url: &str) -> Option<&str> {
 /// Most of these **vary by backend** — a backend may return
 /// [`Unsupported`](crate::Error::Unsupported) (Gitea's `tea` lacks a current-repo
 /// view, draft toggle, checks command, single-release view, and diff view; GitLab
-/// has no "request changes" review action). [`PrCheckout`](ForgeOp::PrCheckout) and
-/// [`PrApprove`](ForgeOp::PrApprove) are the exceptions: every real backend
+/// has no "request changes" review action). [`PrCheckout`](ForgeOp::PrCheckout),
+/// [`PrApprove`](ForgeOp::PrApprove), and the three issue-lifecycle ops
+/// [`IssueClose`](ForgeOp::IssueClose) / [`IssueReopen`](ForgeOp::IssueReopen) /
+/// [`IssueComment`](ForgeOp::IssueComment) are the exceptions: every real backend
 /// (GitHub/GitLab/Gitea) supports them, and they are enumerated here so the support
 /// matrix covers the full checkout/mutation/review surface — a consumer iterating
 /// [`ALL`](ForgeOp::ALL) sees them reported available on all three. An
@@ -170,6 +172,18 @@ pub enum ForgeOp {
     /// delete` / `tea releases delete`); only an [`Unknown`](ForgeKind::Unknown)
     /// handle lacks it.
     ReleaseDelete,
+    /// [`issue_close`](crate::Forge::issue_close) — close an issue. Supported on all
+    /// three real backends (`gh issue close` / `glab issue close` / `tea issues
+    /// close`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
+    IssueClose,
+    /// [`issue_reopen`](crate::Forge::issue_reopen) — reopen a closed issue. Supported
+    /// on all three real backends (`gh issue reopen` / `glab issue reopen` / `tea
+    /// issues reopen`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
+    IssueReopen,
+    /// [`issue_comment`](crate::Forge::issue_comment) — post a comment to an issue.
+    /// Supported on all three real backends (`gh issue comment` / `glab issue note` /
+    /// `tea comment`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
+    IssueComment,
 }
 
 impl ForgeOp {
@@ -190,6 +204,9 @@ impl ForgeOp {
         ForgeOp::PrRequestChanges,
         ForgeOp::ReleaseCreate,
         ForgeOp::ReleaseDelete,
+        ForgeOp::IssueClose,
+        ForgeOp::IssueReopen,
+        ForgeOp::IssueComment,
     ];
 }
 
@@ -935,6 +952,15 @@ pub struct ForgeCapabilities {
     pub pr_request_changes: bool,
     /// The CLI can open an issue.
     pub issue_create: bool,
+    /// The CLI can close an issue (`gh issue close` / `glab issue close` / `tea
+    /// issues close`).
+    pub issue_close: bool,
+    /// The CLI can reopen a closed issue (`gh issue reopen` / `glab issue reopen` /
+    /// `tea issues reopen`).
+    pub issue_reopen: bool,
+    /// The CLI can post a comment to an existing issue (`gh issue comment` / `glab
+    /// issue note` / `tea comment`).
+    pub issue_comment: bool,
     /// The CLI can create a release (`gh release create` / `glab release create` /
     /// `tea releases create`). The `draft`/`prerelease` *options* are a separate
     /// GitLab gap (see [`ReleaseCreate`]); this flag only reports that the CLI ships
@@ -980,6 +1006,9 @@ impl ForgeCapabilities {
             pr_approve: false,
             pr_request_changes: false,
             issue_create: false,
+            issue_close: false,
+            issue_reopen: false,
+            issue_comment: false,
             release_create: false,
             release_delete: false,
             version: None,

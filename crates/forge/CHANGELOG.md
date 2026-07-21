@@ -10,7 +10,18 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Unified issue-lifecycle operations.** `Forge::issue_close(number)` /
+  `issue_reopen(number)` close and reopen an issue, and `issue_comment(number,
+  body)` posts a comment — supported on all three backends (`gh`/`glab` `issue
+  close`/`issue reopen`, `tea issues close`/`issues reopen`; the comment maps to
+  `gh issue comment --body` / `glab issue note -m` / `tea comment <index>`). An
+  empty or whitespace-only comment body is rejected with `Error::InvalidInput`
+  before any spawn (uniform with `pr_comment`). New `ForgeOp::IssueClose` /
+  `IssueReopen` / `IssueComment` variants join `ForgeOp::ALL` and are reported by
+  `Forge::supports` (available on every real backend), and the `ForgeCapabilities`
+  map gains `issue_close` / `issue_reopen` / `issue_comment` fields. The three
+  `ForgeApi` trait methods have defaulted `Error::Unsupported` bodies so external
+  implementers keep compiling.
 
 ### Changed
 -

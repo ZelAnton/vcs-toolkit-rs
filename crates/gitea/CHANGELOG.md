@@ -10,7 +10,15 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Issue lifecycle methods.** `GiteaApi::issue_close(dir, number)` (`tea issues
+  close <index>`) and `issue_reopen(dir, number)` (`tea issues reopen <index>`)
+  flip an issue's state and return `Result<()>`; `issue_comment(dir, number, body)`
+  (`tea comment <index> <body>`) posts a comment and returns the command output,
+  reusing the shared `tea comment` subcommand (Gitea's issue/PR index space is
+  shared, like `pr_comment`). The comment body is a bare positional, so it is
+  guarded with `reject_flag_like`. All three are `at`-forwarded and have defaulted
+  `Error::Unsupported` trait bodies so external implementers keep compiling; the
+  exact argv is pinned by hermetic tests.
 
 ### Changed
 -

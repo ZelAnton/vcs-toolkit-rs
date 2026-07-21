@@ -147,6 +147,65 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Close an issue (gh issue close / glab issue close / tea issues close). Supported on all three forges. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_issue_close(
+        &self,
+        Parameters(p): Parameters<IssueNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_issue_close")?;
+        // A remote mutation (closes the issue on the forge), not a local
+        // working-copy change, so `require_write` rather than the repo write lock —
+        // uniform with `forge_issue_create`/`forge_pr_close`.
+        self.forge()?
+            .issue_close(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "closed": p.number }))
+    }
+
+    #[tool(
+        description = "Reopen a closed issue (gh issue reopen / glab issue reopen / tea issues reopen). Supported on all three forges. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_issue_reopen(
+        &self,
+        Parameters(p): Parameters<IssueNumberParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_issue_reopen")?;
+        // A remote mutation, so `require_write` rather than the repo write lock.
+        self.forge()?
+            .issue_reopen(p.number)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "reopened": p.number }))
+    }
+
+    #[tool(
+        description = "Post a comment to an existing issue, returning the CLI's output. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_issue_comment(
+        &self,
+        Parameters(p): Parameters<IssueCommentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_issue_comment")?;
+        // No MCP-layer argv guard on `body` (see `forge_pr_comment`): GitHub
+        // (`gh issue comment --body`) and GitLab (`glab issue note -m`) put the body
+        // in a flag-VALUE slot, where a leading `-` is safe and typical for Markdown;
+        // Gitea's `tea comment <n> <body>` is the one bare positional, and the Gitea
+        // wrapper already guards it with `reject_flag_like`. An empty body is rejected
+        // by the facade itself, before any spawn.
+        let out = self
+            .forge()?
+            .issue_comment(p.number, &p.body)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "output": out }))
+    }
+
+    #[tool(
         description = "Open a pull/merge request, returning the CLI's output (the URL on success). Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
@@ -401,7 +460,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, issue_close, issue_reopen, issue_comment, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {

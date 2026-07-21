@@ -10,7 +10,15 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Issue lifecycle methods.** `GitLabApi::issue_close(dir, number)` (`glab issue
+  close <id>`) and `issue_reopen(dir, number)` (`glab issue reopen <id>`) flip an
+  issue's state and return `Result<()>`; `issue_comment(dir, number, body)`
+  (`glab issue note <id> -m <body>`) posts a note and returns the command output.
+  The note body rides in a flag-VALUE slot, but a body of exactly `"-"` is glab's
+  stdin/editor sentinel, refused with `reject_dash_sentinel` before spawning (the
+  same rule as `mr_comment`/`issue_create`). All three are `at`-forwarded and have
+  defaulted `Error::Unsupported` trait bodies so external implementers keep
+  compiling; the exact argv is pinned by hermetic tests.
 
 ### Changed
 -

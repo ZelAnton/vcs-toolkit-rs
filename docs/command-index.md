@@ -319,6 +319,9 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `issue_list` | `issue list --limit 100 --json …` | ≤100 |
 | `issue_view` | `issue view <n> --json …` | |
 | `issue_create` | `issue create --title <t> --body <b>` | returns issue URL |
+| `issue_close` | `issue close <n>` | |
+| `issue_reopen` | `issue reopen <n>` | |
+| `issue_comment` | `issue comment <n> --body <body>` | returns comment URL |
 | `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs |
 | `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id` |
 | `run_watch` | `run watch <id>`, then `run view <id>` | **blocks** until the run finishes |
@@ -370,6 +373,9 @@ breadth.
 | `issue_list` | `issue list --per-page 100 --output json` | ≤100 |
 | `issue_view` | `issue view <number> --output json` | |
 | `issue_create` | `issue create --title … --description … --yes` | returns issue URL |
+| `issue_close` | `issue close <id>` | |
+| `issue_reopen` | `issue reopen <id>` | |
+| `issue_comment` | `issue note <id> -m <body>` | returns command output; dash-sentinel-guarded body |
 | `release_list` | `release list --per-page 100 --output json` | ≤100 |
 | `release_view` | `release view <tag> --output json` | |
 | `release_create` | `release create <tag> [--name …] [--notes …]` | via `ReleaseCreate`; no draft/prerelease (`Unsupported`) |
@@ -414,6 +420,9 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | `issue_list` | `issues list --output json` | ≤~50 |
 | `issue_view` | `issues <number> --output json` | first-class single-issue view (unlike `pr_view`) |
 | `issue_create` | `issues create --title … --description …` | returns text output |
+| `issue_close` | `issues close <index>` | |
+| `issue_reopen` | `issues reopen <index>` | |
+| `issue_comment` | `comment <index> <body>` | shared with PRs; flag-guarded body |
 | `release_list` | `releases list --output json` | ≤~50 |
 | `release_create` | `releases create --tag <tag> [--title …] [--note …] [--draft] [--prerelease]` | via `ReleaseCreate` |
 | `release_delete` | `releases delete <tag>` | flag-guarded tag |

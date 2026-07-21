@@ -480,6 +480,116 @@ async fn forge_issue_tools_route_and_gate() {
     assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
 }
 
+// The three issue-lifecycle mutations are write-gated: refused under
+// `WriteGate::None`, and (when allowed) routed to the right `gh` verb — `issue
+// close`/`issue reopen`/`issue comment` (the runner rule matches only the leading
+// tokens, so reaching the reply proves the routing).
+#[tokio::test]
+async fn forge_issue_close_reopen_comment_gate_and_route() {
+    // Gated under WriteGate::None (no spawn needed).
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+        "/repo",
+        vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+    ));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+    for err in [
+        server
+            .forge_issue_close(Parameters(IssueNumberParams { number: 7 }))
+            .await
+            .expect_err("close gated"),
+        server
+            .forge_issue_reopen(Parameters(IssueNumberParams { number: 7 }))
+            .await
+            .expect_err("reopen gated"),
+        server
+            .forge_issue_comment(Parameters(IssueCommentParams {
+                number: 7,
+                body: "ping".into(),
+            }))
+            .await
+            .expect_err("comment gated"),
+    ] {
+        assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+    }
+
+    // Allowed: each routes to its `gh issue <verb>` command and reports the result.
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new()
+            .on(["gh", "issue", "close"], Reply::ok(""))
+            .on(["gh", "issue", "reopen"], Reply::ok(""))
+            .on(["gh", "issue", "comment"], Reply::ok("https://gh/i/7#c1\n")),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+    let out = server
+        .forge_issue_close(Parameters(IssueNumberParams { number: 7 }))
+        .await
+        .expect("close ok");
+    assert!(
+        result_json(&out).contains("closed"),
+        "{}",
+        result_json(&out)
+    );
+
+    let out = server
+        .forge_issue_reopen(Parameters(IssueNumberParams { number: 7 }))
+        .await
+        .expect("reopen ok");
+    assert!(
+        result_json(&out).contains("reopened"),
+        "{}",
+        result_json(&out)
+    );
+
+    let out = server
+        .forge_issue_comment(Parameters(IssueCommentParams {
+            number: 7,
+            body: "ping".into(),
+        }))
+        .await
+        .expect("comment ok");
+    assert!(
+        result_json(&out).contains("gh/i/7"),
+        "{}",
+        result_json(&out)
+    );
+}
+
+// `forge_issue_comment` rejects an empty body up front (invalid_params) — the
+// facade's empty-body guard surfaced through the tool, before any spawn.
+#[tokio::test]
+async fn forge_issue_comment_empty_body_is_invalid_params() {
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+        "/repo",
+        vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+    ));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+    let err = server
+        .forge_issue_comment(Parameters(IssueCommentParams {
+            number: 7,
+            body: "   ".into(),
+        }))
+        .await
+        .expect_err("empty body rejected");
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+}
+
 // `forge_pr_diff` is read-only (works with no write access) and returns the
 // parsed per-file diff as JSON.
 #[tokio::test]
@@ -1341,6 +1451,9 @@ async fn forge_info_with_authed_github_reports_all_true() {
     assert_eq!(value["capabilities"]["pr_checks"], true);
     assert_eq!(value["capabilities"]["pr_merge"], true);
     assert_eq!(value["capabilities"]["issue_create"], true);
+    assert_eq!(value["capabilities"]["issue_close"], true);
+    assert_eq!(value["capabilities"]["issue_reopen"], true);
+    assert_eq!(value["capabilities"]["issue_comment"], true);
 }
 
 // The `forge_info` tool is read-only — its annotation is `readOnlyHint`,
@@ -1379,6 +1492,19 @@ fn tool_annotations_mark_forge_info_as_read_only() {
     let a = tool.annotations.expect("annotations present");
     assert_eq!(a.destructive_hint, Some(true));
     assert_eq!(a.read_only_hint, None);
+
+    // The three issue-lifecycle mutations are real forge mutations (close/reopen an
+    // issue, post a comment) — destructive, not read-only (K-017: the
+    // snapshot-side-effect idempotent pattern is for jj-backed *reads*, not these).
+    for tool in [
+        VcsMcpServer::forge_issue_close_tool_attr(),
+        VcsMcpServer::forge_issue_reopen_tool_attr(),
+        VcsMcpServer::forge_issue_comment_tool_attr(),
+    ] {
+        let a = tool.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+    }
 }
 
 // The macro-generated tool definitions carry the right MCP annotations: a
@@ -1593,6 +1719,9 @@ async fn in_process_client_lists_and_calls_tools() {
     assert!(names.contains(&"forge_pr_approve"), "{names:?}");
     assert!(names.contains(&"forge_pr_request_changes"), "{names:?}");
     assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
+    assert!(names.contains(&"forge_issue_close"), "{names:?}");
+    assert!(names.contains(&"forge_issue_reopen"), "{names:?}");
+    assert!(names.contains(&"forge_issue_comment"), "{names:?}");
     assert!(names.contains(&"forge_info"), "{names:?}");
 
     let result = client
