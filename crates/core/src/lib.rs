@@ -191,7 +191,7 @@ pub use dto::{
     FileChange, FileDiff, MergeProbe, OperationState, RepoSnapshot, UpstreamTracking,
     WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
 };
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
 // per-client default ([`Repo::from_git`]/[`from_jj`] over a client built with
 // `default_output_budget`) or a per-call override
@@ -208,9 +208,9 @@ pub use vcs_git::OutputBudget;
 pub use vcs_git;
 pub use vcs_jj;
 // Re-export `processkit` itself so a `vcs-core`-only consumer can name the
-// wrapped error directly — `match err { Error::Vcs(vcs_core::processkit::Error::
-// Timeout { .. }) => … }` — and reach `Outcome`/`CancellationToken`/… without
-// adding `processkit` as a separate dependency. (`Error::Vcs` carries a
+// wrapped error directly — `match err.kind() { ErrorKind::Vcs(vcs_core::processkit::
+// Error::Timeout { .. }) => … }` — and reach `Outcome`/`CancellationToken`/… without
+// adding `processkit` as a separate dependency. (`ErrorKind::Vcs` carries a
 // `processkit::Error`; the classifiers below cover the common branches.)
 pub use processkit;
 // Also surfaced at the crate root so the token a `default_cancel_on` client takes
@@ -309,8 +309,8 @@ fn is_git_marker(path: &Path) -> bool {
 /// happens to contain one or two similarly-named entries isn't misdetected —
 /// symmetric with [`is_jj_marker`]/[`is_git_marker`]: a *valid* marker, not
 /// mere partial name overlap. Used to give bare repositories their own
-/// [`Error::BareRepository`](crate::Error::BareRepository) instead of the
-/// generic [`Error::NotARepository`](crate::Error::NotARepository) (issue #6).
+/// [`ErrorKind::BareRepository`](crate::ErrorKind::BareRepository) instead of the
+/// generic [`ErrorKind::NotARepository`](crate::ErrorKind::NotARepository) (issue #6).
 fn is_bare_git_repo_marker(dir: &Path) -> bool {
     dir.join("HEAD").is_file()
         && dir.join("config").is_file()
@@ -384,8 +384,8 @@ impl Repo<JobRunner> {
     /// Discover the repository at or above `dir` and open a handle bound to
     /// `dir`, using the real job-backed runner. Walks up from `dir` toward the
     /// filesystem root — see [`discover`] — so it finds a repository whose root
-    /// is `dir` itself or any ancestor. Errors with [`Error::NotARepository`]
-    /// when no `.git`/`.jj` is found, or with [`Error::BareRepository`] when the
+    /// is `dir` itself or any ancestor. Errors with [`ErrorKind::NotARepository`]
+    /// when no `.git`/`.jj` is found, or with [`ErrorKind::BareRepository`] when the
     /// walk instead reaches a **bare** git repository (`git init --bare`) before
     /// any `.jj`/`.git` — a bare repo has no working tree for this facade to
     /// drive (issue #6).
@@ -404,8 +404,8 @@ impl Repo<JobRunner> {
                 // repository at all" or "a bare git repository sits in the
                 // way", so the caller gets the more precise error.
                 return Err(match find_bare_git_repo(&dir) {
-                    Some(bare_root) => Error::BareRepository(bare_root),
-                    None => Error::NotARepository(dir),
+                    Some(bare_root) => ErrorKind::BareRepository(bare_root).into(),
+                    None => ErrorKind::NotARepository(dir).into(),
                 });
             }
         };
@@ -425,7 +425,7 @@ impl Repo<JobRunner> {
     /// hold the `.jj`/`.git` marker (a `.jj` directory with a `repo` entry, or a
     /// `.git` directory / gitlink file — the same validated markers [`discover`]
     /// uses), or this errors with
-    /// [`Error::NotARepository(dir)`](Error::NotARepository)
+    /// [`ErrorKind::NotARepository(dir)`](ErrorKind::NotARepository)
     /// even if a repository exists somewhere above `dir`. Mirrors the
     /// discover-vs-open split in gitoxide (`gix::discover` vs `gix::open`) and
     /// libgit2 (`git_repository_discover` vs `git_repository_open`) — see
@@ -434,7 +434,7 @@ impl Repo<JobRunner> {
     /// If `dir` itself is a **bare** git repository (`git init --bare`: no
     /// `.git` subdirectory, just `HEAD`/`config`/`objects`/`refs` directly in
     /// `dir` — see `is_bare_git_repo_marker`), this errors with
-    /// [`Error::BareRepository(dir)`](Error::BareRepository) instead of the
+    /// [`ErrorKind::BareRepository(dir)`](ErrorKind::BareRepository) instead of the
     /// generic `NotARepository`, matching what [`Repo::discover`] reports for
     /// the same directory (issue #6) — `open` still never walks up, so this
     /// only applies to `dir` itself, not an ancestor.
@@ -447,9 +447,9 @@ impl Repo<JobRunner> {
         } else if is_git_marker(&dir.join(".git")) {
             BackendKind::Git
         } else if is_bare_git_repo_marker(&dir) {
-            return Err(Error::BareRepository(dir));
+            return Err(ErrorKind::BareRepository(dir).into());
         } else {
-            return Err(Error::NotARepository(dir));
+            return Err(ErrorKind::NotARepository(dir).into());
         };
         let backend = match kind {
             BackendKind::Git => Backend::Git(Arc::new(Git::new())),
@@ -506,9 +506,9 @@ impl<R: ProcessRunner> Repo<R> {
     /// own to keep in sync.
     ///
     /// # Errors
-    /// The same as [`Repo::discover`]: [`Error::NotARepository`] when no `.git`/`.jj`
+    /// The same as [`Repo::discover`]: [`ErrorKind::NotARepository`] when no `.git`/`.jj`
     /// marker is found from `dir` up to the filesystem root, or
-    /// [`Error::BareRepository`] when the walk instead reaches a **bare** git
+    /// [`ErrorKind::BareRepository`] when the walk instead reaches a **bare** git
     /// repository (`git init --bare`) first. It reuses the very same private
     /// `find_bare_git_repo` diagnostic path as [`Repo::discover`], so the bare-repo
     /// distinction is reported identically no matter which entry point opened the
@@ -544,8 +544,8 @@ impl<R: ProcessRunner> Repo<R> {
                 // bare git repository sits in the way", so the injected-client path
                 // reports the precise error rather than a stringly-typed blob.
                 return Err(match find_bare_git_repo(&dir) {
-                    Some(bare_root) => Error::BareRepository(bare_root),
-                    None => Error::NotARepository(dir),
+                    Some(bare_root) => ErrorKind::BareRepository(bare_root).into(),
+                    None => ErrorKind::NotARepository(dir).into(),
                 });
             }
         };
@@ -899,7 +899,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// through [`from_git`](Repo::from_git)/[`from_jj`](Repo::from_jj)). Reads the
     /// blob under `budget`: past the ceiling it errors with an
     /// [`OutputTooLarge`](processkit::Error::OutputTooLarge)-carrying
-    /// [`Error::Vcs`] (actual and allowed sizes) rather than buffering an unbounded
+    /// [`ErrorKind::Vcs`] (actual and allowed sizes) rather than buffering an unbounded
     /// file — use it to read a legitimately large file
     /// ([`OutputBudget::unlimited`], or a higher cap) or to tighten the cap for one
     /// call. A truncated blob is never returned as if complete.
@@ -969,7 +969,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// (non-UTF-8-incapable) fileset handling applies.
     pub async fn commit_paths(&self, paths: &[PathBuf], message: &str) -> Result<()> {
         if paths.is_empty() {
-            return Err(Error::Io(std::io::Error::new(
+            return Err(Error::from(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "commit_paths requires at least one path: an empty set would error \
                  on git but commit the entire working copy on jj",
@@ -1123,7 +1123,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// `commit --no-edit` for a merge, or the matching `--continue` for a rebase /
     /// `am` / cherry-pick / revert; jj: a no-op — resolving the files *is* the
     /// continuation). A `git bisect` has no such step and is refused with
-    /// [`Error::Unsupported`] rather than silently reported still in progress.
+    /// [`ErrorKind::Unsupported`] rather than silently reported still in progress.
     /// Returns the fresh *post-call* [`OperationState`]:
     /// - `Conflict` when unresolved paths still block continuing (also on git —
     ///   unlike [`in_progress_state`](Self::in_progress_state), this method
@@ -1170,9 +1170,9 @@ impl<R: ProcessRunner> Repo<R> {
     /// created it (a pre-existing directory the caller already had is left intact),
     /// then the workspace is forgotten. Residue is no longer swallowed: if the
     /// rollback can't remove that directory or can't `forget` the workspace, the call
-    /// fails with a composite [`Error::Io`] naming what still needs cleaning up (and
+    /// fails with a composite [`ErrorKind::Io`] naming what still needs cleaning up (and
     /// is safe to re-run); a clean rollback instead surfaces the original
-    /// bookmark-step error unchanged (its [`Error::Vcs`] classification) — so a failed
+    /// bookmark-step error unchanged (its [`ErrorKind::Vcs`] classification) — so a failed
     /// call never silently leaks a half-made worktree.
     pub async fn create_worktree(&self, spec: WorktreeCreate) -> Result<CreateOutcome> {
         let WorktreeCreate { path, branch, base } = &spec;
@@ -1185,12 +1185,12 @@ impl<R: ProcessRunner> Repo<R> {
     /// Remove the worktree/workspace at `path`. For jj this resolves the
     /// workspace name by matching `path`, deletes the directory, then forgets it;
     /// a `path` that matches none of the **resolvable** jj workspaces returns
-    /// [`Error::WorktreeNotFound`], but when some registered workspace can't be
+    /// [`ErrorKind::WorktreeNotFound`], but when some registered workspace can't be
     /// resolved via `jj workspace root --name` the path's absence is unprovable, so a
-    /// distinct diagnosable [`Error::Io`] (naming the unresolved workspaces;
+    /// distinct diagnosable [`ErrorKind::Io`] (naming the unresolved workspaces;
     /// [`is_resource_not_found`](Error::is_resource_not_found) stays `false`) is
     /// returned instead. A directory that can't be deleted is likewise surfaced (an
-    /// [`Error::Io`] naming the still-registered workspace, with the `forget` left for
+    /// [`ErrorKind::Io`] naming the still-registered workspace, with the `forget` left for
     /// the retry). (For the short-lived, blocking `Drop`-path variant, see
     /// [`cleanup_worktree_blocking`](Self::cleanup_worktree_blocking).)
     ///
@@ -1232,7 +1232,7 @@ impl<R: ProcessRunner> Repo<R> {
                 &self.cwd,
                 vcs_git::WorktreeRemove::new(path).force(),
             )
-            .map_err(Error::Io),
+            .map_err(Error::from),
             Backend::Jj(_) => {
                 // jj resolves a relative worktree path against the repo dir (its
                 // cwd), so resolve it the same way here — the lookup and the dir
@@ -1244,7 +1244,7 @@ impl<R: ProcessRunner> Repo<R> {
                 // silently treated as a no-op): the blocking resolver no longer folds
                 // both into `None`.
                 match vcs_jj::blocking::workspace_name_for_path(&self.cwd, &abs_path)
-                    .map_err(Error::Io)?
+                    .map_err(Error::from)?
                 {
                     Some(name) => {
                         // Same main-workspace guard as the async `remove_worktree`
@@ -1256,7 +1256,7 @@ impl<R: ProcessRunner> Repo<R> {
                         // bypass it. Force is implied on this Drop path, but this guard
                         // is unconditional — a repo-wipe is never the intent.
                         if name == "default" || abs_path.join(".jj").join("repo").is_dir() {
-                            return Err(Error::Io(std::io::Error::new(
+                            return Err(Error::from(std::io::Error::new(
                                 std::io::ErrorKind::InvalidInput,
                                 "refusing to remove the repository's main workspace",
                             )));
@@ -1270,7 +1270,7 @@ impl<R: ProcessRunner> Repo<R> {
                         // the cleanup can be safely re-run once the directory is free.
                         if abs_path.exists() {
                             std::fs::remove_dir_all(&abs_path).map_err(|e| {
-                                Error::Io(std::io::Error::new(
+                                Error::from(std::io::Error::new(
                                     e.kind(),
                                     format!(
                                         "failed to remove the worktree directory {} ({e}); the jj \
@@ -1281,7 +1281,7 @@ impl<R: ProcessRunner> Repo<R> {
                                 ))
                             })?;
                         }
-                        vcs_jj::blocking::workspace_forget(&self.cwd, &name).map_err(Error::Io)
+                        vcs_jj::blocking::workspace_forget(&self.cwd, &name).map_err(Error::from)
                     }
                     None => Ok(()),
                 }
@@ -1546,18 +1546,18 @@ mod tests {
         std::fs::create_dir_all(root.join("objects")).unwrap();
         std::fs::create_dir_all(root.join("refs")).unwrap();
 
-        match Repo::discover(root) {
-            Err(Error::BareRepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::BareRepository, got {other:?}"),
+        match Repo::discover(root).map_err(Error::into_kind) {
+            Err(ErrorKind::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected ErrorKind::BareRepository, got {other:?}"),
         }
 
         // The strict, non-walking `open`, called directly on the bare repo's own
         // root, also special-cases it via `is_bare_git_repo_marker` — mirroring
         // `discover`'s classification for this same directory (issue #6/#8
         // symmetry), even though `open` itself never walks up.
-        match Repo::open(root) {
-            Err(Error::BareRepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::BareRepository, got {other:?}"),
+        match Repo::open(root).map_err(Error::into_kind) {
+            Err(ErrorKind::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected ErrorKind::BareRepository, got {other:?}"),
         }
     }
 
@@ -1574,16 +1574,16 @@ mod tests {
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
 
-        match Repo::discover(&nested) {
-            Err(Error::BareRepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::BareRepository, got {other:?}"),
+        match Repo::discover(&nested).map_err(Error::into_kind) {
+            Err(ErrorKind::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected ErrorKind::BareRepository, got {other:?}"),
         }
 
         // The strict `open` never walks up, so it reports `NotARepository` on
         // the nested dir regardless of what sits above it.
-        match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+        match Repo::open(&nested).map_err(Error::into_kind) {
+            Err(ErrorKind::NotARepository(p)) => assert_eq!(p, nested),
+            other => panic!("expected ErrorKind::NotARepository, got {other:?}"),
         }
     }
 
@@ -1598,9 +1598,9 @@ mod tests {
         std::fs::write(root.join("HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::write(root.join("config"), "[core]\n\tbare = true\n").unwrap();
 
-        match Repo::discover(root) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+        match Repo::discover(root).map_err(Error::into_kind) {
+            Err(ErrorKind::NotARepository(p)) => assert_eq!(p, root),
+            other => panic!("expected ErrorKind::NotARepository, got {other:?}"),
         }
     }
 
@@ -1634,9 +1634,9 @@ mod tests {
     #[test]
     fn open_reports_not_a_repository_when_nothing_found() {
         let tmp = TempDir::new("norepo-open");
-        match Repo::open(tmp.path()) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, tmp.path()),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+        match Repo::open(tmp.path()).map_err(Error::into_kind) {
+            Err(ErrorKind::NotARepository(p)) => assert_eq!(p, tmp.path()),
+            other => panic!("expected ErrorKind::NotARepository, got {other:?}"),
         }
     }
 
@@ -1651,9 +1651,9 @@ mod tests {
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
 
-        match Repo::open(&nested) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, nested),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+        match Repo::open(&nested).map_err(Error::into_kind) {
+            Err(ErrorKind::NotARepository(p)) => assert_eq!(p, nested),
+            other => panic!("expected ErrorKind::NotARepository, got {other:?}"),
         }
         // `discover` from the same nested dir finds the repo at `root`.
         assert_eq!(
@@ -1784,9 +1784,9 @@ mod tests {
                 Jj::with_runner(ScriptedRunner::new())
             },
         );
-        match outcome {
-            Err(Error::BareRepository(p)) => assert_eq!(p, root),
-            other => panic!("expected Error::BareRepository, got {other:?}"),
+        match outcome.map_err(Error::into_kind) {
+            Err(ErrorKind::BareRepository(p)) => assert_eq!(p, root),
+            other => panic!("expected ErrorKind::BareRepository, got {other:?}"),
         }
         assert!(
             !git_built.get() && !jj_built.get(),
@@ -1800,9 +1800,11 @@ mod tests {
             empty.path(),
             || Git::with_runner(ScriptedRunner::new()),
             || Jj::with_runner(ScriptedRunner::new()),
-        ) {
-            Err(Error::NotARepository(p)) => assert_eq!(p, empty.path()),
-            other => panic!("expected Error::NotARepository, got {other:?}"),
+        )
+        .map_err(Error::into_kind)
+        {
+            Err(ErrorKind::NotARepository(p)) => assert_eq!(p, empty.path()),
+            other => panic!("expected ErrorKind::NotARepository, got {other:?}"),
         }
     }
 
@@ -3265,8 +3267,11 @@ mod tests {
             .await
             .expect_err("a divergence must error, not report a stale Clean");
         assert!(
-            matches!(err, Error::Rollback(vcs_jj::Rollback::SkippedDiverged)),
-            "expected Error::Rollback(SkippedDiverged), got {err:?}"
+            matches!(
+                err.kind(),
+                ErrorKind::Rollback(vcs_jj::Rollback::SkippedDiverged)
+            ),
+            "expected ErrorKind::Rollback(SkippedDiverged), got {err:?}"
         );
         assert!(
             rec.calls()
@@ -3943,7 +3948,7 @@ mod tests {
 
     #[test]
     fn error_classifiers_recognise_markers() {
-        let conflict = Error::Vcs(processkit::Error::exit(
+        let conflict = ErrorKind::Vcs(processkit::Error::exit(
             "git",
             1,
             "CONFLICT (content): Merge conflict in a.rs",
@@ -3952,7 +3957,7 @@ mod tests {
         assert!(conflict.is_merge_conflict());
         assert!(!conflict.is_nothing_to_commit());
         // A non-Vcs error classifies as none of them.
-        assert!(!Error::NotARepository("/x".into()).is_merge_conflict());
+        assert!(!ErrorKind::NotARepository("/x".into()).is_merge_conflict());
     }
 }
 

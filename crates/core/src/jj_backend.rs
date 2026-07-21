@@ -18,7 +18,7 @@ use crate::dto::{
     AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
     OperationState, RepoSnapshot, WorktreeInfo,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 
 /// Validate a facade revset string into a [`RevsetExpr`] at the boundary, mapping
 /// a rejected value to a classifiable input-validation error. The internal `"@"`
@@ -488,12 +488,12 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
 
 /// Turn a [`Rollback`] outcome into a facade [`Result`]: a completed (or unneeded)
 /// rollback is `Ok`; a **failed** restore or a **divergence-refused** one is a
-/// [`Error::Rollback`], carrying the structured outcome so the caller can tell them
+/// [`ErrorKind::Rollback`], carrying the structured outcome so the caller can tell them
 /// apart. Used by [`try_merge`] to decide whether its probe result is trustworthy.
 fn rollback_result(rollback: Rollback) -> Result<()> {
     match rollback {
         Rollback::Restored | Rollback::NotAttempted => Ok(()),
-        diverged_or_failed => Err(Error::Rollback(diverged_or_failed)),
+        diverged_or_failed => Err(ErrorKind::Rollback(diverged_or_failed).into()),
     }
 }
 
@@ -648,9 +648,9 @@ async fn rollback_failed_create<R: ProcessRunner>(
     if residue.is_empty() {
         // A clean rollback: the bookmark-step failure is the whole story, surfaced
         // with its original classification.
-        return Error::Vcs(cause);
+        return Error::from(cause);
     }
-    Error::Io(std::io::Error::other(format!(
+    Error::from(std::io::Error::other(format!(
         "creating the worktree failed at `bookmark create` ({cause}), and the rollback \
          could not fully clean up: {}. Finish the cleanup manually and retry.",
         residue.join("; ")
@@ -684,7 +684,7 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     //     file (a pointer to the store) — verified on jj 0.42, and stable across
     //     a rename. If either holds, this is the repository, not a stray worktree.
     if name == DEFAULT_WORKSPACE || abs_path.join(".jj").join("repo").is_dir() {
-        return Err(Error::Io(std::io::Error::new(
+        return Err(Error::from(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "refusing to remove the repository's main workspace (its directory is \
              the main working copy and owns the object store)",
@@ -699,7 +699,7 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     // jj command ran there, exactly the state git's `worktree remove` refuses on.
     // (Skip when the directory is already gone: nothing to lose, just re-forget.)
     if !force && abs_path.exists() && !jj.current_change(&abs_path).await?.empty {
-        return Err(Error::Io(std::io::Error::other(
+        return Err(Error::from(std::io::Error::other(
             "worktree has uncommitted changes; pass force = true to remove it \
              (the changes are snapshotted in jj's op log and recoverable)",
         )));
@@ -717,7 +717,7 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
             // repeatable: the directory is still on disk AND the workspace is still
             // registered (its name was resolved above). Once the directory is free, a
             // retry re-resolves the same name and finishes the removal + forget.
-            Error::Io(std::io::Error::new(
+            Error::from(std::io::Error::new(
                 e.kind(),
                 format!(
                     "failed to remove the worktree directory {} ({e}); the jj workspace \
@@ -786,13 +786,13 @@ async fn workspace_name_for_path<R: ProcessRunner>(
     }
     if unresolved.is_empty() {
         // Every registered workspace resolved and none matched: a genuine miss.
-        Err(Error::WorktreeNotFound(path.to_path_buf()))
+        Err(ErrorKind::WorktreeNotFound(path.to_path_buf()).into())
     } else {
         // Some registered workspaces did not resolve, so `path`'s absence can't be
         // proven — surface a DISTINCT, diagnosable error (not a clean
         // `WorktreeNotFound`, so `is_resource_not_found` stays false) that names the
         // unresolved workspaces, rather than misreporting a real one as "not found".
-        Err(Error::Io(std::io::Error::other(format!(
+        Err(Error::from(std::io::Error::other(format!(
             "could not resolve the worktree at {}: {} registered workspace(s) did not \
              resolve via `jj workspace root --name` ({}); the path may belong to one of \
              them — resolve or `jj workspace forget` it manually",

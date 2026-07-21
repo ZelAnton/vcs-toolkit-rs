@@ -127,7 +127,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// owns the `.git`/`.jj` detection and the bare-repository diagnostic, so this
 /// binary no longer re-implements the walk, matches `BackendKind` by hand, or
 /// carries a wildcard arm for a future backend. A bare repository now surfaces as
-/// `vcs_core::Error::BareRepository`, exactly as `Repo::discover` reports it,
+/// `vcs_core::ErrorKind::BareRepository`, exactly as `Repo::discover` reports it,
 /// rather than the old generic "no git or jj repository found …" string.
 fn open_repo(
     dir: &Path,
