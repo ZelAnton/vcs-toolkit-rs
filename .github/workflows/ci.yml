@@ -194,6 +194,23 @@ jobs:
       # and the `tracing` per-command events.
       - run: cargo test --workspace --all-features
 
+  # Compile Criterion benchmarks, but never run timing measurements on noisy shared
+  # runners. This is an ordinary required `run` step: a non-zero cargo exit code
+  # fails the job, so stale benchmark APIs or manifests cannot silently drift.
+  benchmarks:
+    name: benchmark compilation
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - name: Compile Criterion benchmarks
+        run: cargo bench --no-run --locked
+
   # Run the real-binary integration suites (`--ignored`) against multiple jj
   # versions — jj's CLI/revset/template surface churns fast and the parsers are
   # validated empirically, so this catches drift (a new jj that changes output)

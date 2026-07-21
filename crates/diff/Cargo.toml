@@ -32,6 +32,12 @@ serde = ["dep:serde"]
 proptest = "1"
 # Exercise the `serde` feature's derives (used only by the feature-gated test).
 serde_json = "1"
+# Statistical benchmark harness for the generated large-diff parser fixture.
+criterion.workspace = true
+
+[[bench]]
+name = "diff_parse"
+harness = false
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /

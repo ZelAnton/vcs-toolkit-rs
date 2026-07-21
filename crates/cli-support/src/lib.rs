@@ -334,6 +334,143 @@ macro_rules! at_forwarders {
     };
 }
 
+/// Emit the six **raw escape-hatch** helpers every CLI wrapper hand-writes on its
+/// client — `run_args` / `run_raw_args` / `run_in` / `run_raw_in` / `run_args_in`
+/// / `run_raw_args_in`.
+///
+/// These are the `&[&str]` and dir-bound twins of the object-safe `run`/`run_raw`
+/// trait methods: `run_args`/`run_raw_args` take `&[&str]` (no `Vec<String>`
+/// allocation), the `*_in` variants bind a `dir`, and the `run_raw_*` variants
+/// never error on a non-zero exit. Their bodies are byte-identical across the five
+/// backends — thin forwards into the `core: ManagedClient` field that
+/// [`managed_client!`](crate::managed_client) generates — so, like
+/// [`at_forwarders!`](crate::at_forwarders), they live here once instead of as a
+/// copied block per crate.
+///
+/// The generated methods land in a fresh `impl<R: ProcessRunner> $name<R>` block
+/// (so invoke this at module scope, next to the crate's other `impl` blocks), and
+/// forward to `self.core.run` / `self.core.output_string` (`+ command_in` for the
+/// `*_in` variants) — the same field `managed_client!` emits. All paths are fully
+/// qualified, so the expansion compiles regardless of what the caller imported.
+///
+/// The doc strings are generated to match the hand-written ones, cross-links
+/// included: `run_raw_args` → `run_args`, each `*_in` → its non-`_in` twin (and
+/// back), the object-safe `run`/`run_raw` on `$name`Api, and the bound
+/// `$name`At forwarders. The three type names — the client `$name`, its trait
+/// `$name`Api, and its bound view `$name`At — are all derived from `$name`.
+///
+/// - `$name` — the wrapper client type (e.g. `Git`). Names the `impl` target and,
+///   via `concat!`, the `…Api` / `…At` link targets (`GitApi`, `GitAt`).
+/// - `$binary` — a **string literal** naming the CLI (e.g. `"git"`, `"gh"`), used
+///   both as the program in the prose (`` `git <args>` ``) and as the example's
+///   receiver (`` `git.run_args(…)` ``).
+/// - `$args_example` — a **string literal** with the argv shown in `run_args`'
+///   example, i.e. the contents of the `&[…]` (e.g. `"\"status\", \"-s\""`
+///   renders `` `git.run_args(&["status", "-s"])` ``).
+/// - `$in_infers` — a **string literal** spliced after "as its working directory"
+///   in `run_in`'s doc, for backends that infer their target from `dir`'s remote
+///   (`", so `gh` infers the repo from `dir`'s remote"`); `""` for the rest.
+/// - `$in_flag_note` — a **string literal** for `run_in`'s trailing "Argv is
+///   forwarded verbatim (…)" parenthetical — the backend-specific note on what is
+///   (not) injected (e.g. ``"only the working directory is bound, no `-C`/extra
+///   flag is injected"``).
+///
+/// ```ignore
+/// vcs_cli_support::raw_run_forwarders! {
+///     Git, "git", "\"status\", \"-s\"", "",
+///     "the same unguarded escape hatch — only the working directory is bound, \
+///      no `-C`/extra flag is injected"
+/// }
+/// ```
+#[macro_export]
+macro_rules! raw_run_forwarders {
+    (
+        $name:ident, $binary:literal, $args_example:literal, $in_infers:literal, $in_flag_note:literal $(,)?
+    ) => {
+        impl<R: ::processkit::ProcessRunner> $name<R> {
+            #[doc = concat!(
+                "Run `", $binary, " <args>` over string slices — `", $binary, ".run_args(&[",
+                $args_example, "])` without allocating a `Vec<String>`. Inherent (not on the \
+                 object-safe trait), so it can take `&[&str]`; forwards to the same path as [`",
+                stringify!($name), "Api::run`]."
+            )]
+            pub async fn run_args(&self, args: &[&str]) -> ::processkit::Result<String> {
+                self.core.run(args).await
+            }
+
+            #[doc = concat!(
+                "Like [`run_args`](", stringify!($name), "::run_args) but never errors on a \
+                 non-zero exit (mirrors [`", stringify!($name), "Api::run_raw`])."
+            )]
+            pub async fn run_raw_args(
+                &self,
+                args: &[&str],
+            ) -> ::processkit::Result<::processkit::ProcessResult<String>> {
+                self.core.output_string(args).await
+            }
+
+            #[doc = concat!(
+                "Run `", $binary, " <args>` **in `dir`** (the process is spawned with `dir` as \
+                 its working directory", $in_infers, "), returning trimmed stdout — the dir-bound \
+                 twin of the process-cwd [`run`](", stringify!($name), "Api::run). This is what [`",
+                stringify!($name), "At::run`] forwards to; call [`run`](", stringify!($name),
+                "Api::run) on the client for the process-cwd escape hatch. Argv is forwarded \
+                 verbatim (", $in_flag_note, ")."
+            )]
+            pub async fn run_in(
+                &self,
+                dir: &::std::path::Path,
+                args: &[String],
+            ) -> ::processkit::Result<String> {
+                self.core.run(self.core.command_in(dir, args)).await
+            }
+
+            #[doc = concat!(
+                "Like [`run_in`](", stringify!($name), "::run_in) but never errors on a non-zero \
+                 exit — the dir-bound twin of [`run_raw`](", stringify!($name), "Api::run_raw). \
+                 What [`", stringify!($name), "At::run_raw`] forwards to."
+            )]
+            pub async fn run_raw_in(
+                &self,
+                dir: &::std::path::Path,
+                args: &[String],
+            ) -> ::processkit::Result<::processkit::ProcessResult<String>> {
+                self.core
+                    .output_string(self.core.command_in(dir, args))
+                    .await
+            }
+
+            #[doc = concat!(
+                "Like [`run_args`](", stringify!($name), "::run_args) but **bound to `dir`** — the \
+                 `&[&str]` twin of [`run_in`](", stringify!($name), "::run_in). What [`",
+                stringify!($name), "At::run_args`] forwards to."
+            )]
+            pub async fn run_args_in(
+                &self,
+                dir: &::std::path::Path,
+                args: &[&str],
+            ) -> ::processkit::Result<String> {
+                self.core.run(self.core.command_in(dir, args)).await
+            }
+
+            #[doc = concat!(
+                "Like [`run_raw_args`](", stringify!($name), "::run_raw_args) but **bound to \
+                 `dir`** — the `&[&str]` twin of [`run_raw_in`](", stringify!($name),
+                "::run_raw_in). What [`", stringify!($name), "At::run_raw_args`] forwards to."
+            )]
+            pub async fn run_raw_args_in(
+                &self,
+                dir: &::std::path::Path,
+                args: &[&str],
+            ) -> ::processkit::Result<::processkit::ProcessResult<String>> {
+                self.core
+                    .output_string(self.core.command_in(dir, args))
+                    .await
+            }
+        }
+    };
+}
+
 /// Emit the common client scaffold every CLI wrapper hand-writes around a
 /// [`ManagedClient`].
 ///
