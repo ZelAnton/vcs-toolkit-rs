@@ -6,12 +6,12 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_gitlab::{
     CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MrCreate, MrEdit as GlMrEdit,
-    MrMerge, Release, RepoView,
+    MrMerge, Release, ReleaseCreate as GlReleaseCreate, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit, PrMerge,
+    MergeStrategy, PrCreate, PrEdit, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -243,6 +243,39 @@ pub(crate) async fn release_view<R: ProcessRunner>(
     tag: &str,
 ) -> Result<ForgeRelease> {
     Ok(map_release(glab.release_view(dir, tag).await?))
+}
+
+pub(crate) async fn release_create<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    spec: ReleaseCreate,
+) -> Result<String> {
+    // Map the unified spec onto glab's `ReleaseCreate`. `draft`/`prerelease` pass
+    // through verbatim — glab's wrapper reports them `Unsupported` (GitLab has no
+    // such concept) rather than silently dropping them (see `vcs_gitlab::ReleaseCreate`).
+    let mut create = GlReleaseCreate::new(spec.tag);
+    if let Some(title) = spec.title {
+        create = create.title(title);
+    }
+    if let Some(notes) = spec.notes {
+        create = create.notes(notes);
+    }
+    if spec.draft {
+        create = create.draft();
+    }
+    if spec.prerelease {
+        create = create.prerelease();
+    }
+    Ok(glab.release_create(dir, create).await?)
+}
+
+pub(crate) async fn release_delete<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    tag: &str,
+) -> Result<()> {
+    glab.release_delete(dir, tag).await?;
+    Ok(())
 }
 
 fn map_issue(i: Issue) -> ForgeIssue {

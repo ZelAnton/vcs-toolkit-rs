@@ -239,11 +239,12 @@ impl Default for MrEdit {
 /// title/body/branch arguments ride in flag-VALUE positions (`--title <t>`,
 /// `--source-branch <b>`) where glab consumes the next token verbatim, and
 /// `run`/`run_args` are the caller-owns-the-argv escape hatch. The one exception
-/// is [`release_view`](GitLabApi::release_view)'s bare `<tag>` positional, which
+/// is [`release_view`](GitLabApi::release_view)'s / [`release_create`](GitLabApi::release_create)'s /
+/// [`release_delete`](GitLabApi::release_delete)'s bare `<tag>` positional, which
 /// is guarded with `reject_flag_like` (mirroring `vcs-github`'s
 /// `api`/`release_view`); guard any future bare positional the same way.
-/// Separately, the description/body/comment flag-VALUE fields (`mr_create`,
-/// `mr_edit`, `issue_create`, `mr_comment`) are guarded with
+/// Separately, the description/body/comment/notes flag-VALUE fields (`mr_create`,
+/// `mr_edit`, `issue_create`, `mr_comment`, `release_create`) are guarded with
 /// `reject_dash_sentinel` against glab's *own* `"-"` stdin/editor sentinel —
 /// unrelated to argv injection, but the same "refuse before spawning" shape.
 pub const BINARY: &str = "glab";
@@ -383,6 +384,80 @@ impl MrMerge {
     /// `Error::Unsupported`.
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
+        self
+    }
+}
+
+/// Options for [`GitLabApi::release_create`] (`glab release create`).
+///
+/// `#[non_exhaustive]`, so build it through [`ReleaseCreate::new`] (the tag) and
+/// the chained setters rather than a struct literal. The shape mirrors
+/// `vcs-github`'s and `vcs-gitea`'s `ReleaseCreate` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one create spec
+/// across all three backends. Asset uploads are deliberately **out of scope** —
+/// attach files with [`run`](GitLabApi::run) if you need them.
+///
+/// **Backend capability.** A GitLab release has **no draft or pre-release concept**,
+/// so `glab release create` has no such flag. When either [`draft`](ReleaseCreate::draft)
+/// or [`prerelease`](ReleaseCreate::prerelease) is set, [`release_create`](GitLabApi::release_create)
+/// returns a structured `Error::Unsupported` rather than *silently* ignoring the
+/// request — the fields exist only to keep the spec uniform across the three
+/// wrappers (like [`MrMerge`]'s `auto`/`delete_branch`).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ReleaseCreate {
+    /// The Git tag the release is attached to (glab's bare `<tag>` positional).
+    pub tag: String,
+    /// The release title (`--name`); `None` lets GitLab default it (to the tag).
+    pub title: Option<String>,
+    /// The release notes / description (`--notes`); `None` leaves it unset. A body
+    /// that is *exactly* `"-"` is glab's stdin/editor sentinel (not the literal
+    /// string) — refused before spawning, like [`mr_create`](GitLabApi::mr_create).
+    pub notes: Option<String>,
+    /// Save as a draft. **Unsupported on GitLab** — setting this makes
+    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    pub draft: bool,
+    /// Mark as a prerelease. **Unsupported on GitLab** — setting this makes
+    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    pub prerelease: bool,
+}
+
+impl ReleaseCreate {
+    /// A release on `tag`, with GitLab's default title/notes and neither
+    /// draft nor prerelease. Chain the setters to change any of those.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            title: None,
+            notes: None,
+            draft: false,
+            prerelease: false,
+        }
+    }
+
+    /// Set the release title (`--name`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the release notes / description (`--notes`).
+    pub fn notes(mut self, notes: impl Into<String>) -> Self {
+        self.notes = Some(notes.into());
+        self
+    }
+
+    /// Request a draft. **Unsupported on `glab`**: setting this makes
+    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+
+    /// Request a prerelease. **Unsupported on `glab`**: setting this makes
+    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    pub fn prerelease(mut self) -> Self {
+        self.prerelease = true;
         self
     }
 }
@@ -617,6 +692,30 @@ pub trait GitLabApi: Send + Sync {
     /// `reject_flag_like` (a leading `-` or empty value is rejected before any
     /// process spawns).
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
+    /// Create a release, returning glab's output (`glab release create <tag>
+    /// [--name <title>] [--notes <notes>]`) — see [`ReleaseCreate`]. GitLab has no
+    /// draft/pre-release concept, so setting either returns `Error::Unsupported`.
+    /// The `<tag>` bare positional is guarded with `reject_flag_like`, and a notes
+    /// body of exactly `"-"` is refused (glab's stdin/editor sentinel). Asset
+    /// uploads are out of scope (attach files via [`run`](GitLabApi::run)).
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps.
+    #[allow(unused_variables)]
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "release_create".into(),
+        })
+    }
+    /// Delete a release by tag (`glab release delete <tag> --yes`). `--yes` skips
+    /// glab's confirmation prompt so a headless caller never hangs. Deletes the
+    /// release only, not the underlying git tag. The `<tag>` bare positional is
+    /// guarded with `reject_flag_like`. **Defaulted** to `Error::Unsupported`.
+    #[allow(unused_variables)]
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "release_delete".into(),
+        })
+    }
 }
 
 vcs_cli_support::managed_client! {
@@ -969,6 +1068,50 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             )
             .await
     }
+
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        // GitLab has no draft/pre-release concept, so `glab release create` can
+        // express neither. Rather than silently drop a requested option, report it
+        // `Unsupported` (mirroring `mr_merge`'s handling of `auto`/`delete_branch`).
+        if spec.draft {
+            return Err(Error::Unsupported {
+                operation: "release_create(draft)".into(),
+            });
+        }
+        if spec.prerelease {
+            return Err(Error::Unsupported {
+                operation: "release_create(prerelease)".into(),
+            });
+        }
+        // `<tag>` is a bare positional — guard it against flag-injection/empty like
+        // `release_view`. `--name` is a flag-VALUE slot (no guard). A literal `-`
+        // notes body is glab's stdin/editor sentinel, not the string itself —
+        // refuse it before spawning (see `reject_dash_sentinel`).
+        reject_flag_like("tag", spec.tag.as_str())?;
+        let mut args = vec!["release", "create", spec.tag.as_str()];
+        if let Some(title) = spec.title.as_deref() {
+            args.push("--name");
+            args.push(title);
+        }
+        if let Some(notes) = spec.notes.as_deref() {
+            reject_dash_sentinel("notes", notes)?;
+            args.push("--notes");
+            args.push(notes);
+        }
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        // `<tag>` is a bare positional — guarded like `release_view`. `--yes` skips
+        // glab's interactive confirmation so a headless delete never hangs.
+        reject_flag_like("tag", tag)?;
+        self.core
+            .run_unit(
+                self.core
+                    .command_in(dir, ["release", "delete", tag, "--yes"]),
+            )
+            .await
+    }
 }
 
 impl<R: ProcessRunner> GitLab<R> {
@@ -1109,6 +1252,8 @@ vcs_cli_support::at_forwarders! {
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
+        fn release_create(spec: ReleaseCreate) -> Result<String>;
+        fn release_delete(tag: &str) -> Result<()>;
     }
     // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
     // twins) so `glab.at(dir).run(…)` targets the bound project's cwd, not the
@@ -1855,6 +2000,117 @@ mod tests {
         let glab = GitLab::with_runner(ScriptedRunner::new());
         assert!(glab.release_view(Path::new("."), "-evil").await.is_err());
         assert!(glab.release_view(Path::new("."), "").await.is_err());
+    }
+
+    // release_create builds `release create <tag> --name <title> --notes <notes>`
+    // (GitLab titles ride under `--name`) and returns glab's output.
+    #[tokio::test]
+    async fn release_create_builds_argv_and_returns_output() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/-/releases/v1.0\n"));
+        let glab = GitLab::with_runner(&rec);
+        let out = glab
+            .release_create(
+                Path::new("/repo"),
+                ReleaseCreate::new("v1.0")
+                    .title("Release 1.0")
+                    .notes("Notes"),
+            )
+            .await
+            .expect("release_create");
+        assert_eq!(out, "https://gl/-/releases/v1.0");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "release",
+                "create",
+                "v1.0",
+                "--name",
+                "Release 1.0",
+                "--notes",
+                "Notes"
+            ]
+        );
+    }
+
+    // With only the tag, release_create emits neither optional flag — a minimal
+    // `glab release create <tag>`.
+    #[tokio::test]
+    async fn release_create_omits_unset_options() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/-/releases/v2\n"));
+        let glab = GitLab::with_runner(&rec);
+        glab.release_create(Path::new("/r"), ReleaseCreate::new("v2"))
+            .await
+            .expect("release_create");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["release", "create", "v2"]);
+        assert!(!call.has_flag("--name"));
+        assert!(!call.has_flag("--notes"));
+    }
+
+    // GitLab has no draft/pre-release concept, so requesting either is a
+    // structured `Unsupported`, not a silent drop — and nothing spawns.
+    #[tokio::test]
+    async fn release_create_draft_or_prerelease_is_unsupported() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        assert!(matches!(
+            glab.release_create(Path::new("/r"), ReleaseCreate::new("v1").draft())
+                .await
+                .unwrap_err(),
+            Error::Unsupported { .. }
+        ));
+        assert!(matches!(
+            glab.release_create(Path::new("/r"), ReleaseCreate::new("v1").prerelease())
+                .await
+                .unwrap_err(),
+            Error::Unsupported { .. }
+        ));
+        assert!(
+            rec.calls().is_empty(),
+            "an unsupported option must not spawn"
+        );
+    }
+
+    // release_delete pins `release delete <tag> --yes` (--yes so a headless delete
+    // never hangs on glab's confirmation prompt).
+    #[tokio::test]
+    async fn release_delete_builds_argv_with_yes() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        glab.release_delete(Path::new("/r"), "v1.0")
+            .await
+            .expect("release_delete");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "delete", "v1.0", "--yes"]
+        );
+    }
+
+    // Both release mutators guard their bare `<tag>` positional (flag-like/empty),
+    // and release_create refuses a literal `-` notes body (glab's stdin sentinel).
+    #[tokio::test]
+    async fn release_mutators_reject_flag_like_tag_and_dash_notes() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let glab = GitLab::with_runner(&rec);
+        assert!(
+            glab.release_create(Path::new("."), ReleaseCreate::new("-evil"))
+                .await
+                .is_err()
+        );
+        assert!(
+            glab.release_create(Path::new("."), ReleaseCreate::new(""))
+                .await
+                .is_err()
+        );
+        assert!(
+            glab.release_create(Path::new("."), ReleaseCreate::new("v1").notes("-"))
+                .await
+                .is_err(),
+            "a literal `-` notes body is glab's stdin sentinel — refused"
+        );
+        assert!(glab.release_delete(Path::new("."), "-evil").await.is_err());
+        assert!(glab.release_delete(Path::new("."), "").await.is_err());
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     // mr_comment builds `mr note <id> -m <body>` and returns the trimmed

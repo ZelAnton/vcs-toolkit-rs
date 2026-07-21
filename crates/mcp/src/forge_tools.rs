@@ -347,7 +347,61 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "Create a release, returning the CLI's output (the URL on success). `draft` and `prerelease` are GitHub/Gitea-only — GitLab rejects them as unsupported (`invalid_params`) rather than creating without them. Asset uploads are not supported here. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_release_create(
+        &self,
+        Parameters(p): Parameters<ReleaseCreateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_release_create")?;
+        // A remote mutation (creates a release on the forge), not a local
+        // working-copy change, so `require_write` rather than the repo write lock —
+        // uniform with `forge_issue_create`/`forge_pr_create`. No MCP-layer argv
+        // guard on `tag`/`title`/`notes`: the bare-positional `<tag>` is guarded in
+        // each wrapper (gh/glab `reject_flag_like`, tea takes it as a `--tag` flag),
+        // and title/notes ride in flag-VALUE slots.
+        let mut spec = vcs_forge::ReleaseCreate::new(p.tag);
+        if let Some(title) = p.title {
+            spec = spec.title(title);
+        }
+        if let Some(notes) = p.notes {
+            spec = spec.notes(notes);
+        }
+        if p.draft {
+            spec = spec.draft();
+        }
+        if p.prerelease {
+            spec = spec.prerelease();
+        }
+        let out = self
+            .forge()?
+            .release_create(spec)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "output": out }))
+    }
+
+    #[tool(
+        description = "Delete a release by its Git tag (gh release delete / glab release delete / tea releases delete). Deletes the release only, not the underlying git tag. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_release_delete(
+        &self,
+        Parameters(p): Parameters<ReleaseTagParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_release_delete")?;
+        // A remote mutation, so `require_write` rather than the repo write lock. The
+        // bare-positional `<tag>` is guarded in each wrapper (`reject_flag_like`).
+        self.forge()?
+            .release_delete(&p.tag)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "deleted": p.tag }))
+    }
+
+    #[tool(
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {

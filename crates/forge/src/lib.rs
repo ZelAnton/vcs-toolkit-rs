@@ -14,7 +14,8 @@
 //! From one [`Forge`] handle: check auth · view the repo/project · the PR/MR
 //! lifecycle (list / view / create / comment / edit / merge / mark-ready /
 //! close / checkout / approve / request-changes, CI checks) · the flat capability
-//! map · issues (list / view / create) · releases (list / view). One tiny call:
+//! map · issues (list / view / create) · releases (list / view / create / delete).
+//! One tiny call:
 //!
 //! ```no_run
 //! use vcs_forge::{Forge, ForgeApi};
@@ -79,7 +80,8 @@
 //!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create));
 //!   releases ([`release_list`](Forge::release_list) /
-//!   [`release_view`](Forge::release_view)). List ops cap at 100 — drop to the
+//!   [`release_view`](Forge::release_view) / [`release_create`](Forge::release_create) /
+//!   [`release_delete`](Forge::release_delete)). List ops cap at 100 — drop to the
 //!   wrapped client for more.
 //! - **Capability gaps** — `tea` has no current-repo view, draft toggle, checks
 //!   command, single-release view, or diff view, so on a Gitea handle
@@ -149,7 +151,7 @@ mod gitlab_forge;
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
     ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeStrategy, PrClose, PrCreate, PrEdit,
-    PrMerge,
+    PrMerge, ReleaseCreate,
 };
 pub use error::{Error, Result};
 
@@ -349,11 +351,14 @@ impl<R: ProcessRunner> Forge<R> {
     /// in [`ForgeOp`]; GitLab supports all but [`PrRequestChanges`](ForgeOp::PrRequestChanges)
     /// (its review model is approve/revoke, with no request-changes action); Gitea
     /// (`tea`) supports [`PrCheckout`](ForgeOp::PrCheckout),
-    /// [`PrApprove`](ForgeOp::PrApprove), and [`PrRequestChanges`](ForgeOp::PrRequestChanges)
+    /// [`PrApprove`](ForgeOp::PrApprove), [`PrRequestChanges`](ForgeOp::PrRequestChanges),
+    /// [`ReleaseCreate`](ForgeOp::ReleaseCreate), and [`ReleaseDelete`](ForgeOp::ReleaseDelete)
     /// but has no current-repo view, draft toggle, PR-checks command, single-release
     /// view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
     /// classified CLI) supports nothing at all (every operation returns
     /// `Unsupported`). Every other facade operation works on all three real backends.
+    /// (`release_create` is supported on all three even though its `draft`/`prerelease`
+    /// options are a GitLab gap — that per-option gap surfaces at call time, not here.)
     /// Branch on this to hide an unavailable operation up front instead of calling it
     /// and handling [`Unsupported`](Error::Unsupported).
     pub fn supports(&self, op: ForgeOp) -> bool {
@@ -741,6 +746,35 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "release_view")),
         }
     }
+
+    /// Create a release (see [`ReleaseCreate`]), returning the CLI's success output
+    /// — a URL on GitHub/GitLab; `tea` prints a textual summary. Supported on all
+    /// three real backends. The spec's `draft`/`prerelease` options are
+    /// **GitHub/Gitea only**: on GitLab (which has no such concept) requesting either
+    /// returns [`Unsupported`](Error::Unsupported) rather than silently ignoring it
+    /// (see [`ReleaseCreate`]). Asset uploads are out of scope — drop to the wrapped
+    /// client for those.
+    pub async fn release_create(&self, spec: ReleaseCreate) -> Result<String> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::release_create(c, &self.cwd, spec).await,
+            Backend::GitLab(c) => gitlab_forge::release_create(c, &self.cwd, spec).await,
+            Backend::Gitea(c) => gitea_forge::release_create(c, &self.cwd, spec).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "release_create")),
+        }
+    }
+
+    /// Delete a release by its tag (`gh release delete` / `glab release delete` /
+    /// `tea releases delete`). Deletes the release only, not the underlying git tag.
+    /// Supported on all three real backends; an [`Unknown`](ForgeKind::Unknown)
+    /// handle returns [`Unsupported`](Error::Unsupported).
+    pub async fn release_delete(&self, tag: &str) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::release_delete(c, &self.cwd, tag).await,
+            Backend::GitLab(c) => gitlab_forge::release_delete(c, &self.cwd, tag).await,
+            Backend::Gitea(c) => gitea_forge::release_delete(c, &self.cwd, tag).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "release_delete")),
+        }
+    }
 }
 
 fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
@@ -760,6 +794,8 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_approve: true,
         pr_request_changes: true,
         issue_create: true,
+        release_create: true,
+        release_delete: true,
         version: None,
         supported: false,
         authed: false,
@@ -781,6 +817,11 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         // this stays `false` even for an authed, modern `glab`.
         pr_request_changes: false,
         issue_create: true,
+        // `glab` ships `release create`/`release delete`. The `draft`/`prerelease`
+        // create *options* are unsupported on GitLab, but the create command itself
+        // is available — that per-option gap is enforced at call time, not here.
+        release_create: true,
+        release_delete: true,
         version: None,
         supported: false,
         authed: false,
@@ -805,6 +846,9 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_approve: true,
         pr_request_changes: true,
         issue_create: true,
+        // `tea` ships `releases create` (with draft/prerelease) and `releases delete`.
+        release_create: true,
+        release_delete: true,
         version: None,
         supported: false,
         authed: false,
@@ -825,6 +869,8 @@ fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_approve = false;
     caps.pr_request_changes = false;
     caps.issue_create = false;
+    caps.release_create = false;
+    caps.release_delete = false;
 }
 
 // Macro `facade_trait!` removed in v0.1.1 — the v0.1.0 macro generated a
@@ -925,6 +971,20 @@ pub trait ForgeApi: Send + Sync {
     async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
     /// See [`Forge::release_view`](crate::Forge::release_view).
     async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
+    /// See [`Forge::release_create`](crate::Forge::release_create). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn release_create(&self, spec: ReleaseCreate) -> Result<String> {
+        Err(Error::unsupported(self.kind(), "release_create"))
+    }
+    /// See [`Forge::release_delete`](crate::Forge::release_delete). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn release_delete(&self, tag: &str) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "release_delete"))
+    }
 }
 
 // Concrete-type impl. The v0.1.0 macro generated this; the additive
@@ -1003,6 +1063,12 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn release_view(&self, tag: &str) -> Result<ForgeRelease> {
         self.release_view(tag).await
+    }
+    async fn release_create(&self, spec: ReleaseCreate) -> Result<String> {
+        self.release_create(spec).await
+    }
+    async fn release_delete(&self, tag: &str) -> Result<()> {
+        self.release_delete(tag).await
     }
 }
 
@@ -1255,6 +1321,11 @@ mod tests {
                 .unwrap_err(),
             forge.release_list().await.unwrap_err(),
             forge.release_view("v1").await.unwrap_err(),
+            forge
+                .release_create(ReleaseCreate::new("v1"))
+                .await
+                .unwrap_err(),
+            forge.release_delete("v1").await.unwrap_err(),
             forge.pr_comment(1, "x").await.unwrap_err(),
             forge
                 .pr_edit(1, PrEdit::new().title("T"))
@@ -1327,6 +1398,8 @@ mod tests {
         assert!(caps.pr_approve);
         assert!(caps.pr_request_changes, "gh has a request-changes review");
         assert!(caps.issue_create);
+        assert!(caps.release_create, "gh ships `release create`");
+        assert!(caps.release_delete, "gh ships `release delete`");
         assert!(caps.authed);
         // The version probe fills a confirmed version and clears the floor.
         assert!(caps.supported, "modern gh meets the 2.0 floor");
@@ -1452,6 +1525,8 @@ mod tests {
         assert!(caps.pr_approve, "tea ships `pr approve`");
         assert!(caps.pr_request_changes, "tea ships `pr reject`");
         assert!(caps.issue_create);
+        assert!(caps.release_create, "tea ships `releases create`");
+        assert!(caps.release_delete, "tea ships `releases delete`");
     }
 
     // GitLab's static map lights every action EXCEPT `pr_request_changes` when
@@ -1478,6 +1553,11 @@ mod tests {
             "GitLab has no request-changes review action"
         );
         assert!(caps.issue_create);
+        assert!(
+            caps.release_create,
+            "glab ships `release create` (the draft/prerelease options are a separate gap)"
+        );
+        assert!(caps.release_delete, "glab ships `release delete`");
     }
 
     // `supports` must agree exactly with the runtime `Unsupported` behaviour
@@ -1488,11 +1568,16 @@ mod tests {
     fn supports_matches_unsupported_ops() {
         let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
         for &op in ForgeOp::ALL {
-            // Gitea ships `tea pr checkout`, `pr approve`, and `pr reject`
-            // (request-changes); the other varying ops are Unsupported.
+            // Gitea ships `tea pr checkout`, `pr approve`, `pr reject`
+            // (request-changes), and both `releases create`/`releases delete`; the
+            // other varying ops are Unsupported.
             let expected = matches!(
                 op,
-                ForgeOp::PrCheckout | ForgeOp::PrApprove | ForgeOp::PrRequestChanges
+                ForgeOp::PrCheckout
+                    | ForgeOp::PrApprove
+                    | ForgeOp::PrRequestChanges
+                    | ForgeOp::ReleaseCreate
+                    | ForgeOp::ReleaseDelete
             );
             assert_eq!(gitea.supports(op), expected, "gitea supports({op:?})");
         }
@@ -1664,6 +1749,149 @@ mod tests {
         assert_eq!(rel.body.as_deref(), Some("notes"));
         assert_eq!(rel.draft, Some(false));
         assert_eq!(rel.prerelease, Some(true));
+    }
+
+    // `release_create` maps the unified spec onto each CLI's own create verb: gh
+    // `release create <tag> --title --notes --draft --prerelease`, glab `release
+    // create <tag> --name --notes`, tea `releases create --tag --title --note
+    // --draft --prerelease`. The title lands under gh/tea `--title` but glab `--name`,
+    // and tea's notes flag is the singular `--note`.
+    #[tokio::test]
+    async fn release_create_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/r/v1\n"));
+        let out = Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .release_create(
+                ReleaseCreate::new("v1")
+                    .title("One")
+                    .notes("N")
+                    .draft()
+                    .prerelease(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "https://gh/r/v1");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "release",
+                "create",
+                "v1",
+                "--title",
+                "One",
+                "--notes",
+                "N",
+                "--draft",
+                "--prerelease"
+            ]
+        );
+
+        // GitLab: title → `--name`; no draft/prerelease requested here.
+        let rec = RecordingRunner::replying(Reply::ok("https://gl/-/releases/v1\n"));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .release_create(ReleaseCreate::new("v1").title("One").notes("N"))
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "create", "v1", "--name", "One", "--notes", "N"]
+        );
+
+        // Gitea: tag is a `--tag` flag; notes flag is the singular `--note`.
+        let rec = RecordingRunner::replying(Reply::ok("created\n"));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .release_create(ReleaseCreate::new("v1").title("One").notes("N").draft())
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "releases", "create", "--tag", "v1", "--title", "One", "--note", "N", "--draft"
+            ]
+        );
+    }
+
+    // GitLab has no draft/pre-release concept, so requesting either through the
+    // facade is Unsupported (and spawns nothing); GitHub/Gitea accept both.
+    #[tokio::test]
+    async fn release_create_draft_prerelease_unsupported_on_gitlab_only() {
+        for spec in [
+            ReleaseCreate::new("v1").draft(),
+            ReleaseCreate::new("v1").prerelease(),
+        ] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let err = Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+                .release_create(spec)
+                .await
+                .unwrap_err();
+            assert!(
+                err.is_unsupported(),
+                "expected Unsupported on GitLab, got {err:?}"
+            );
+            assert!(
+                rec.calls().is_empty(),
+                "an unsupported option must not spawn"
+            );
+        }
+
+        // The same draft/prerelease spec is accepted on GitHub and Gitea.
+        let rec = RecordingRunner::replying(Reply::ok("ok"));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .release_create(ReleaseCreate::new("v1").draft().prerelease())
+            .await
+            .expect("github accepts draft/prerelease");
+        let rec = RecordingRunner::replying(Reply::ok("ok"));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .release_create(ReleaseCreate::new("v1").draft().prerelease())
+            .await
+            .expect("gitea accepts draft/prerelease");
+    }
+
+    // `release_delete` maps to each CLI's own delete verb: gh/glab `release delete
+    // <tag> --yes` (--yes skips the confirm prompt), tea `releases delete <tag>`
+    // (no confirm flag, matching tea's other mutators).
+    #[tokio::test]
+    async fn release_delete_dispatches_per_backend() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .release_delete("v1")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "delete", "v1", "--yes"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .release_delete("v1")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "delete", "v1", "--yes"]
+        );
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .release_delete("v1")
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["releases", "delete", "v1"]);
+    }
+
+    // `supports` reports the two new release mutators available on every real
+    // backend and absent on an Unknown handle (matching the ForgeOp::ALL contract).
+    #[tokio::test]
+    async fn supports_reports_release_mutators_per_backend() {
+        for op in [ForgeOp::ReleaseCreate, ForgeOp::ReleaseDelete] {
+            assert!(github(ScriptedRunner::new()).supports(op), "github {op:?}");
+            assert!(gitlab(ScriptedRunner::new()).supports(op), "gitlab {op:?}");
+            assert!(gitea(ScriptedRunner::new()).supports(op), "gitea {op:?}");
+            assert!(
+                !Forge::<ScriptedRunner>::from_unknown("/repo").supports(op),
+                "unknown {op:?}"
+            );
+        }
     }
 
     // The unified PrMerge spec maps its strategy to each CLI's own flag.

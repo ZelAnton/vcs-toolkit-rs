@@ -373,6 +373,8 @@ match run.conclusion.as_str() {
 ```rust,ignore
 async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
 async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
+async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String>; // returns the URL
+async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()>;
 ```
 
 `release_list` returns releases newest first; it does **not** request
@@ -380,6 +382,19 @@ async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
 that reports [`is_latest`](#release). `release_view` fills `body`/`url` (as `Some`)
 for one tag but has no `isLatest` field, so `is_latest` defaults to `false` there.
 The `tag` is flag-injection guarded like `api`'s endpoint.
+
+`release_create` (`gh release create <tag> [--title] [--notes] [--draft]
+[--prerelease]`) takes the [`ReleaseCreate`] spec — a constructor `new(tag)` plus
+chained `title` / `notes` / `draft` / `prerelease` setters (`#[non_exhaustive]`,
+built by the `≥2 options → builder` rule) — and returns the new release's URL. gh
+creates the git tag from the default branch's latest state if it doesn't yet exist,
+and **requires notes when run non-interactively**, so set `notes` (or drive
+`--notes-file`/`--generate-notes` through `run`) for a headless create. Asset
+uploads are **out of scope** — attach files with `run` if you need them.
+`release_delete` (`gh release delete <tag> --yes`) deletes the release only, not the
+underlying git tag (`--yes` skips gh's confirmation prompt so a headless delete never
+hangs). Both mutators flag-injection-guard the bare `<tag>` positional like
+`release_view`.
 
 ## Raw escape hatches
 

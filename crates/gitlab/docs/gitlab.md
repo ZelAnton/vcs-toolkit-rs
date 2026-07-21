@@ -147,12 +147,25 @@ for GitLab (withdraw an approval with `mr_revoke` instead).
 | `issue_create(dir, title, body)` | `glab issue create --title … --description … --yes` | `String` (the issue URL) |
 | `release_list(dir)` | `glab release list --per-page 100 --output json` | `Vec<Release>` |
 | `release_view(dir, tag)` | `glab release view <tag> --output json` | [`Release`] |
+| `release_create(dir, spec)` | `glab release create <tag> [--name …] [--notes …]` | `String` (glab's output) |
+| `release_delete(dir, tag)` | `glab release delete <tag> --yes` | `()` |
 
 The list methods pin `--per-page 100` (the GitLab API per-page max) so glab's
 default page size of 30 can't silently truncate them; reach beyond 100 through
 `run`. `issue_create` passes `--yes` to skip glab's interactive submission prompt,
-mirroring `mr_create`. `release_view`'s bare `<tag>` positional is flag-injection
-guarded (a leading `-` or empty value is refused before any process spawns).
+mirroring `mr_create`. `release_view`'s / `release_create`'s / `release_delete`'s
+bare `<tag>` positional is flag-injection guarded (a leading `-` or empty value is
+refused before any process spawns).
+
+`release_create` takes the [`ReleaseCreate`] spec (`new(tag)` plus chained `title`
+/ `notes` / `draft` / `prerelease` setters). The title lands under glab's `--name`,
+and the notes body is refused when it is *exactly* `"-"` (glab's stdin/editor
+sentinel, like `mr_create`'s description). A **GitLab release has no draft or
+pre-release concept**, so requesting either `draft` or `prerelease` returns a
+structured `Error::Unsupported` rather than silently ignoring it — the fields exist
+only to keep the spec uniform across the three wrappers. Asset uploads are **out of
+scope** (attach files with `run`). `release_delete` passes `--yes` to skip glab's
+confirmation prompt and deletes the release only, not the underlying git tag.
 
 `Issue` carries `number` (the project-scoped `iid` GitLab's `issue` commands take,
 surfaced as `number` for cross-forge consistency with `vcs-github`), `title`,

@@ -159,13 +159,26 @@ pub enum ForgeOp {
     /// approve/revoke, with no request-changes action); available on GitHub
     /// (`gh pr review --request-changes`) and Gitea (`tea pr reject`).
     PrRequestChanges,
+    /// [`release_create`](crate::Forge::release_create) — create a release. Supported
+    /// on all three real backends (`gh release create` / `glab release create` /
+    /// `tea releases create`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
+    /// (The `draft`/`prerelease` *options* are a separate GitLab gap — see
+    /// [`ReleaseCreate`] — but creating a release itself is available everywhere.)
+    ReleaseCreate,
+    /// [`release_delete`](crate::Forge::release_delete) — delete a release by tag.
+    /// Supported on all three real backends (`gh release delete` / `glab release
+    /// delete` / `tea releases delete`); only an [`Unknown`](ForgeKind::Unknown)
+    /// handle lacks it.
+    ReleaseDelete,
 }
 
 impl ForgeOp {
     /// Every operation a consumer may probe with
     /// [`supports`](crate::Forge::supports) — iterate it to build a full support
     /// matrix (e.g. to render an availability list). Most vary by backend;
-    /// [`PrCheckout`](ForgeOp::PrCheckout) is available on every real backend.
+    /// [`PrCheckout`](ForgeOp::PrCheckout) / [`PrApprove`](ForgeOp::PrApprove) /
+    /// [`ReleaseCreate`](ForgeOp::ReleaseCreate) / [`ReleaseDelete`](ForgeOp::ReleaseDelete)
+    /// are available on every real backend.
     pub const ALL: &'static [ForgeOp] = &[
         ForgeOp::RepoView,
         ForgeOp::PrMarkReady,
@@ -175,6 +188,8 @@ impl ForgeOp {
         ForgeOp::PrCheckout,
         ForgeOp::PrApprove,
         ForgeOp::PrRequestChanges,
+        ForgeOp::ReleaseCreate,
+        ForgeOp::ReleaseDelete,
     ];
 }
 
@@ -653,6 +668,79 @@ impl IssueCreate {
     }
 }
 
+/// Options for [`release_create`](crate::Forge::release_create) — the unified
+/// create-a-release spec, mapped to each CLI's own flags (gh `--title`/`--notes`,
+/// glab `--name`/`--notes`, tea `--title`/`--note`).
+///
+/// `#[non_exhaustive]`, so build it through [`ReleaseCreate::new`] (the tag) and
+/// the chained setters rather than a struct literal. Asset uploads are deliberately
+/// **out of scope** — reach for the wrapper client (`gh release create` via
+/// [`vcs_github`](crate::vcs_github), etc.) to attach files.
+///
+/// **Backend capability.** GitHub and Gitea support `draft`/`prerelease`; **GitLab
+/// has no draft or pre-release concept**, so setting either returns
+/// [`Unsupported`](crate::Error::Unsupported) on a GitLab handle rather than
+/// silently ignoring it (mirroring [`PrMerge`]'s `auto`/`delete_branch`). The
+/// default (neither set) creates a published release on every backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ReleaseCreate {
+    /// The Git tag the release is attached to. GitHub creates the tag from the
+    /// default branch if it doesn't yet exist; GitLab/Gitea expect it to exist.
+    pub tag: String,
+    /// The release title; `None` lets the forge default it (commonly to the tag).
+    pub title: Option<String>,
+    /// The release notes / description (markdown); `None` leaves it unset.
+    pub notes: Option<String>,
+    /// Save as a draft instead of publishing. **GitHub/Gitea only**; GitLab returns
+    /// [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub draft: bool,
+    /// Mark as a prerelease. **GitHub/Gitea only**; GitLab returns
+    /// [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub prerelease: bool,
+}
+
+impl ReleaseCreate {
+    /// A published release on `tag`, with the forge's default title/notes and
+    /// neither draft nor prerelease. Chain the setters to change any of those.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            title: None,
+            notes: None,
+            draft: false,
+            prerelease: false,
+        }
+    }
+
+    /// Set the release title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the release notes / description.
+    pub fn notes(mut self, notes: impl Into<String>) -> Self {
+        self.notes = Some(notes.into());
+        self
+    }
+
+    /// Save as a draft. **GitHub/Gitea only** — GitLab returns
+    /// [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+
+    /// Mark as a prerelease. **GitHub/Gitea only** — GitLab returns
+    /// [`Unsupported`](crate::Error::Unsupported) when it is set.
+    pub fn prerelease(mut self) -> Self {
+        self.prerelease = true;
+        self
+    }
+}
+
 /// How [`pr_merge`](crate::ForgeApi::pr_merge) merges — mapped to each CLI's own
 /// merge-strategy flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -847,6 +935,14 @@ pub struct ForgeCapabilities {
     pub pr_request_changes: bool,
     /// The CLI can open an issue.
     pub issue_create: bool,
+    /// The CLI can create a release (`gh release create` / `glab release create` /
+    /// `tea releases create`). The `draft`/`prerelease` *options* are a separate
+    /// GitLab gap (see [`ReleaseCreate`]); this flag only reports that the CLI ships
+    /// the create command at all — `true` for every authed, modern backend.
+    pub release_create: bool,
+    /// The CLI can delete a release by tag (`gh release delete` / `glab release
+    /// delete` / `tea releases delete`).
+    pub release_delete: bool,
     /// The installed CLI's parsed version (`gh`/`glab`/`tea --version`), or `None`
     /// when the backend is [`Unknown`](ForgeKind::Unknown) (no CLI) or the
     /// `--version` banner was unrecognisable. Read it to report the concrete
@@ -884,6 +980,8 @@ impl ForgeCapabilities {
             pr_approve: false,
             pr_request_changes: false,
             issue_create: false,
+            release_create: false,
+            release_delete: false,
             version: None,
             supported: false,
             authed: false,
@@ -938,6 +1036,18 @@ impl ForgeCapabilities {
     /// Mark `issue_create` available.
     pub fn issue_create(mut self) -> Self {
         self.issue_create = true;
+        self
+    }
+
+    /// Mark `release_create` available.
+    pub fn release_create(mut self) -> Self {
+        self.release_create = true;
+        self
+    }
+
+    /// Mark `release_delete` available.
+    pub fn release_delete(mut self) -> Self {
+        self.release_delete = true;
         self
     }
 

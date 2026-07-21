@@ -632,6 +632,70 @@ impl ReviewAction {
     }
 }
 
+/// Options for [`GitHubApi::release_create`] (`gh release create`).
+///
+/// `#[non_exhaustive]`, so build it through [`ReleaseCreate::new`] (the tag) and
+/// the chained [`title`](ReleaseCreate::title) / [`notes`](ReleaseCreate::notes) /
+/// [`draft`](ReleaseCreate::draft) / [`prerelease`](ReleaseCreate::prerelease)
+/// setters rather than a struct literal. Asset uploads are deliberately **out of
+/// scope** — attach files with [`run`](GitHubApi::run) if you need them.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ReleaseCreate {
+    /// The Git tag the release is attached to (gh's bare `<tag>` positional). If no
+    /// such tag exists, `gh` creates one from the default branch's latest state.
+    pub tag: String,
+    /// The release title (`--title`); `None` lets gh default it (to the tag).
+    pub title: Option<String>,
+    /// The release notes / body (`--notes`); `None` leaves notes unset. Note that
+    /// `gh` **requires** notes when run non-interactively, so a headless create
+    /// should set this (or drive `--notes-file`/`--generate-notes` via
+    /// [`run`](GitHubApi::run)) — otherwise gh errors asking for notes.
+    pub notes: Option<String>,
+    /// Save the release as a draft instead of publishing it (`--draft`).
+    pub draft: bool,
+    /// Mark the release as a prerelease (`--prerelease`).
+    pub prerelease: bool,
+}
+
+impl ReleaseCreate {
+    /// A published release on `tag`, with gh's default title/notes and neither
+    /// draft nor prerelease set. Chain the setters to change any of those.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            title: None,
+            notes: None,
+            draft: false,
+            prerelease: false,
+        }
+    }
+
+    /// Set the release title (`--title`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the release notes / body (`--notes`).
+    pub fn notes(mut self, notes: impl Into<String>) -> Self {
+        self.notes = Some(notes.into());
+        self
+    }
+
+    /// Save as a draft instead of publishing (`--draft`).
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+
+    /// Mark the release as a prerelease (`--prerelease`).
+    pub fn prerelease(mut self) -> Self {
+        self.prerelease = true;
+        self
+    }
+}
+
 /// What the installed `gh` binary supports, probed via
 /// [`GitHubApi::capabilities`]. A value type — the client holds no state, so
 /// probe once and keep the result (callers cache it). Mirrors
@@ -862,6 +926,30 @@ pub trait GitHubApi: Send + Sync {
     /// (`gh release view <tag> --json …`). gh reports `is_latest` only from
     /// [`release_list`](GitHubApi::release_list); here it defaults to `false`.
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
+    /// Create a release, returning its URL (`gh release create <tag> [--title
+    /// <title>] [--notes <notes>] [--draft] [--prerelease]`) — see [`ReleaseCreate`].
+    /// gh creates the git tag from the default branch's latest state if it doesn't
+    /// yet exist. Asset uploads are out of scope (attach files with
+    /// [`run`](GitHubApi::run)). **Defaulted** to `Error::Unsupported` so external
+    /// implementers of the trait keep compiling when the crate bumps (only the
+    /// `GitHub` concrete impl and the regenerated `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "release_create".into(),
+        })
+    }
+    /// Delete a release by tag (`gh release delete <tag> --yes`). `--yes` skips gh's
+    /// confirmation prompt so a headless caller never hangs. Deletes the release
+    /// only, not the underlying git tag (use `gh release delete --cleanup-tag` via
+    /// [`run`](GitHubApi::run) for that). **Defaulted** to `Error::Unsupported` so
+    /// external implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "release_delete".into(),
+        })
+    }
 }
 
 vcs_cli_support::managed_client! {
@@ -1354,6 +1442,42 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             )
             .await
     }
+
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        // `<tag>` is a bare positional — guard it against flag-injection/empty the
+        // same way `release_view` does. `--title`/`--notes` are flag-VALUE slots (gh
+        // consumes the next token verbatim), so they need no guard; `--draft`/
+        // `--prerelease` are presence-only. gh prints the new release's URL.
+        reject_flag_like("tag", spec.tag.as_str())?;
+        let mut args = vec!["release", "create", spec.tag.as_str()];
+        if let Some(title) = spec.title.as_deref() {
+            args.push("--title");
+            args.push(title);
+        }
+        if let Some(notes) = spec.notes.as_deref() {
+            args.push("--notes");
+            args.push(notes);
+        }
+        if spec.draft {
+            args.push("--draft");
+        }
+        if spec.prerelease {
+            args.push("--prerelease");
+        }
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        // `<tag>` is a bare positional — guarded like `release_view`. `--yes` skips
+        // gh's interactive confirmation so a headless delete never hangs on a prompt.
+        reject_flag_like("tag", tag)?;
+        self.core
+            .run_unit(
+                self.core
+                    .command_in(dir, ["release", "delete", tag, "--yes"]),
+            )
+            .await
+    }
 }
 
 impl<R: ProcessRunner> GitHub<R> {
@@ -1499,6 +1623,8 @@ vcs_cli_support::at_forwarders! {
         fn issue_view(number: u64) -> Result<Issue>;
         fn release_list() -> Result<Vec<Release>>;
         fn release_view(tag: &str) -> Result<Release>;
+        fn release_create(spec: ReleaseCreate) -> Result<String>;
+        fn release_delete(tag: &str) -> Result<()>;
     }
     // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
     // twins) so `gh.at(dir).run(…)` targets the bound repo's cwd, not the process
@@ -1845,6 +1971,96 @@ mod tests {
             gh.api(Path::new("."), "").await.is_err(),
             "empty refused too"
         );
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // release_create pins the empirically-verified `gh release create` argv
+    // (gh 2.95.0): the bare `<tag>` positional plus the flag-VALUE title/notes
+    // and presence-only --draft/--prerelease, in that order; gh prints the URL.
+    #[tokio::test]
+    async fn release_create_builds_argv_and_returns_url() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/releases/v1.2.0\n"));
+        let gh = GitHub::with_runner(&rec);
+        let url = gh
+            .release_create(
+                Path::new("/repo"),
+                ReleaseCreate::new("v1.2.0")
+                    .title("v1.2.0")
+                    .notes("Notes")
+                    .draft()
+                    .prerelease(),
+            )
+            .await
+            .expect("release_create");
+        assert_eq!(url, "https://gh/releases/v1.2.0");
+        let call = rec.only_call();
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(
+            call.args_str(),
+            [
+                "release",
+                "create",
+                "v1.2.0",
+                "--title",
+                "v1.2.0",
+                "--notes",
+                "Notes",
+                "--draft",
+                "--prerelease"
+            ]
+        );
+    }
+
+    // With only the tag, release_create emits neither the optional flags nor the
+    // presence-only booleans — a minimal `gh release create <tag>`.
+    #[tokio::test]
+    async fn release_create_omits_unset_options() {
+        let rec = RecordingRunner::replying(Reply::ok("https://gh/releases/v2\n"));
+        let gh = GitHub::with_runner(&rec);
+        gh.release_create(Path::new("/r"), ReleaseCreate::new("v2"))
+            .await
+            .expect("release_create");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["release", "create", "v2"]);
+        assert!(!call.has_flag("--title"));
+        assert!(!call.has_flag("--notes"));
+        assert!(!call.has_flag("--draft"));
+        assert!(!call.has_flag("--prerelease"));
+    }
+
+    // release_delete pins `gh release delete <tag> --yes` (--yes so a headless
+    // delete never hangs on gh's confirmation prompt).
+    #[tokio::test]
+    async fn release_delete_builds_argv_with_yes() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.release_delete(Path::new("/r"), "v1.2.0")
+            .await
+            .expect("release_delete");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["release", "delete", "v1.2.0", "--yes"]
+        );
+    }
+
+    // Both release mutators guard their bare `<tag>` positional against flag-like
+    // or empty input before anything spawns (same guard as `release_view`/`api`).
+    #[tokio::test]
+    async fn release_mutators_reject_flag_like_tag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        assert!(
+            gh.release_create(Path::new("."), ReleaseCreate::new("-evil"))
+                .await
+                .is_err()
+        );
+        assert!(
+            gh.release_create(Path::new("."), ReleaseCreate::new(""))
+                .await
+                .is_err()
+        );
+        assert!(gh.release_delete(Path::new("."), "-evil").await.is_err());
+        assert!(gh.release_delete(Path::new("."), "").await.is_err());
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 

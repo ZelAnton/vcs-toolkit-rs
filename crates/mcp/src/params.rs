@@ -238,6 +238,29 @@ pub struct ReleaseTagParams {
     pub tag: String,
 }
 
+/// Create a release.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReleaseCreateParams {
+    /// The release's Git tag. GitHub creates the tag from the default branch if it
+    /// doesn't exist yet; GitLab/Gitea expect it to exist.
+    pub tag: String,
+    /// The release title; omit for the forge's default (commonly the tag).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The release notes / description (markdown); omit to leave it unset.
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Save as a draft instead of publishing. **GitHub/Gitea only** — GitLab rejects
+    /// it as unsupported (`invalid_params`) rather than ignoring it. Defaults to
+    /// `false`.
+    #[serde(default)]
+    pub draft: bool,
+    /// Mark as a prerelease. **GitHub/Gitea only** — GitLab rejects it as
+    /// unsupported (`invalid_params`). Defaults to `false`.
+    #[serde(default)]
+    pub prerelease: bool,
+}
+
 /// How [`forge_pr_merge`](crate::VcsMcpServer::forge_pr_merge) merges.
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]

@@ -74,6 +74,8 @@ pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
 pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
 pub async fn release_list(&self) -> Result<Vec<ForgeRelease>>;
 pub async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
+pub async fn release_create(&self, spec: ReleaseCreate) -> Result<String>; // ReleaseCreate::new(tag)[.title(…)][.notes(…)][.draft()][.prerelease()] — draft/prerelease are GitHub/Gitea-only
+pub async fn release_delete(&self, tag: &str) -> Result<()>;
 ```
 
 [`PrCreate`] is the unified open-a-PR/MR spec —
@@ -162,6 +164,18 @@ surfaced), and `tea` has no `release_view`. `body` (release notes) is likewise
 `prerelease` are reported as `Some(..)` by GitHub and Gitea, but GitLab has no such
 concept, so both are `None` there — *unknown*, never a false `Some(false)`.
 
+[`ReleaseCreate`] is the unified create-a-release spec —
+`ReleaseCreate::new(tag).title(t).notes(n).draft().prerelease()`, where
+`title`/`notes` are optional and the facade maps them to each CLI's own flags
+(gh/tea `--title`, glab `--name`; gh/glab `--notes`, tea's singular `--note`).
+`release_create` returns the CLI's success output — a URL on GitHub/GitLab, a
+textual summary on Gitea — and `release_delete` deletes the release only, not the
+underlying git tag. The `draft`/`prerelease` options are **GitHub/Gitea only**: on
+GitLab (which has no draft/pre-release concept) requesting either returns
+`Error::Unsupported` rather than silently ignoring it, mirroring [`PrMerge`]'s
+`auto`/`delete_branch`. Asset uploads are out of scope — drop to the wrapped client
+(`gh release create` via [`vcs_github`], etc.) to attach files.
+
 ## Capability matrix
 
 The CLIs differ in coverage. Gitea's `tea` lacks five operations and GitLab lacks
@@ -174,6 +188,8 @@ the request-changes review action; these return
 | `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` / `pr_checkout` | ✅ | ✅ | ✅ |
 | `pr_approve` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
+| `release_create` / `release_delete` | ✅ | ✅ | ✅ |
+| `release_create` honours `draft` / `prerelease` | ✅ | ❌ Unsupported (GitLab has no draft/pre-release concept) | ✅ |
 | `pr_request_changes` | ✅ | ❌ Unsupported (GitLab review is approve/revoke — use `mr_revoke` on the wrapper) | ✅ (`tea pr reject`) |
 | `repo_view` | ✅ | ✅ | ❌ Unsupported |
 | `pr_mark_ready` | ✅ | ✅ | ❌ Unsupported |

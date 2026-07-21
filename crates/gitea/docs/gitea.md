@@ -1,9 +1,9 @@
 # vcs-gitea — Gitea CLI guide
 
 **What you can do:** check auth, the lean pull-request lifecycle (list/view/create/
-merge/close, review approve/reject), issues (list/view/create), and release
-listing — deliberately narrower than `gh`/`glab` (see the capability note below).
-This guide is the full reference — every command by theme, with examples.
+merge/close, review approve/reject), issues (list/view/create), and releases
+(list/create/delete) — deliberately narrower than `gh`/`glab` (see the capability
+note below). This guide is the full reference — every command by theme, with examples.
 
 `vcs-gitea` drives the Gitea (and Forgejo) CLI (`tea`) from Rust. Every operation
 is `async`, runs inside an OS job (via [`processkit`]) so a `tea` subprocess is
@@ -152,6 +152,8 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 | `issue_view(dir, number)` | `tea issues <number> --output json` | [`Issue`] |
 | `issue_create(dir, title, body)` | `tea issues create --title … --description …` | `String` |
 | `release_list(dir)` | `tea releases list --limit 100 --output json` | `Vec<Release>` |
+| `release_create(dir, spec)` | `tea releases create --tag <tag> [--title …] [--note …] [--draft] [--prerelease]` | `String` (tea's output) |
+| `release_delete(dir, tag)` | `tea releases delete <tag>` | `()` |
 
 The list methods pass `--limit 100`, but the Gitea **server** caps a page at
 `MAX_RESPONSE_ITEMS` (default 50), so each returns **at most ~50** rows in one call —
@@ -177,6 +179,16 @@ doesn't exist in `tea` (the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_f
 (derived from tea's `Status` column). **`url` is always empty**: `tea releases
 list` exposes no release-page URL (only a tar/zip download URL, which is
 deliberately not surfaced).
+
+`release_create` takes the [`ReleaseCreate`] spec (`new(tag)` plus chained `title`
+/ `notes` / `draft` / `prerelease` setters) and returns tea's textual summary
+verbatim (like `pr_create`/`issue_create`). Note the per-CLI shape: unlike gh/glab,
+`tea` takes the tag as a **flag** (`--tag`, not a bare positional) and its notes flag
+is the singular `--note`; `tea` *does* support `--draft`/`--prerelease`. Asset
+uploads are **out of scope** (attach files with `run`). `release_delete`
+(`tea releases delete <tag>`) takes the tag as a bare positional — flag-injection
+guarded like `pr_comment`'s body — and, like tea's other mutators (`pr close`/`pr
+merge`), passes no confirmation flag.
 
 ```rust,ignore
 # use std::path::Path;

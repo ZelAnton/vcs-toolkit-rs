@@ -12,12 +12,12 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_gitea::{
     Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrEdit as GtPrEdit, PrMerge as GtPrMerge,
-    PullRequest, Release,
+    PullRequest, Release, ReleaseCreate as GtReleaseCreate,
 };
 
 use crate::dto::{
     ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
-    PrEdit, PrMerge,
+    PrEdit, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -201,6 +201,38 @@ pub(crate) async fn release_list<R: ProcessRunner>(
         .into_iter()
         .map(map_release)
         .collect())
+}
+
+pub(crate) async fn release_create<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    spec: ReleaseCreate,
+) -> Result<String> {
+    // The unified spec maps 1:1 onto tea's `ReleaseCreate`; `tea` supports the full
+    // title/notes/draft/prerelease surface, so every field carries over.
+    let mut create = GtReleaseCreate::new(spec.tag);
+    if let Some(title) = spec.title {
+        create = create.title(title);
+    }
+    if let Some(notes) = spec.notes {
+        create = create.notes(notes);
+    }
+    if spec.draft {
+        create = create.draft();
+    }
+    if spec.prerelease {
+        create = create.prerelease();
+    }
+    Ok(tea.release_create(dir, create).await?)
+}
+
+pub(crate) async fn release_delete<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    tag: &str,
+) -> Result<()> {
+    tea.release_delete(dir, tag).await?;
+    Ok(())
 }
 
 fn map_issue(i: Issue) -> ForgeIssue {

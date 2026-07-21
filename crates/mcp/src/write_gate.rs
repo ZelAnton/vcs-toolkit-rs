@@ -34,6 +34,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "forge_pr_approve",
     "forge_pr_request_changes",
     "forge_pr_checkout",
+    "forge_release_create",
+    "forge_release_delete",
 ];
 
 /// Which mutating tools are callable — the server's write policy.

@@ -352,6 +352,71 @@ impl PrMerge {
     }
 }
 
+/// Options for [`GiteaApi::release_create`] (`tea releases create`).
+///
+/// `#[non_exhaustive]`, so build it through [`ReleaseCreate::new`] (the tag) and
+/// the chained setters rather than a struct literal. The shape mirrors
+/// `vcs-github`'s and `vcs-gitlab`'s `ReleaseCreate` so the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade drives one create spec
+/// across all three backends. Asset uploads are deliberately **out of scope** —
+/// attach files with [`run`](GiteaApi::run) if you need them.
+///
+/// Unlike the other two CLIs, `tea` takes the tag as a **flag** value
+/// (`--tag <tag>`, not a bare positional), and its notes flag is the singular
+/// `--note`. Unlike GitLab, `tea` *does* support draft/prerelease.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ReleaseCreate {
+    /// The Git tag the release is attached to (tea's `--tag` flag value).
+    pub tag: String,
+    /// The release title (`--title`); `None` lets Gitea default it (to the tag).
+    pub title: Option<String>,
+    /// The release notes / body (tea's singular `--note`); `None` leaves it unset.
+    pub notes: Option<String>,
+    /// Save the release as a draft (`--draft`).
+    pub draft: bool,
+    /// Mark the release as a prerelease (`--prerelease`).
+    pub prerelease: bool,
+}
+
+impl ReleaseCreate {
+    /// A published release on `tag`, with Gitea's default title/notes and neither
+    /// draft nor prerelease set. Chain the setters to change any of those.
+    pub fn new(tag: impl Into<String>) -> Self {
+        Self {
+            tag: tag.into(),
+            title: None,
+            notes: None,
+            draft: false,
+            prerelease: false,
+        }
+    }
+
+    /// Set the release title (`--title`).
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the release notes / body (tea's singular `--note`).
+    pub fn notes(mut self, notes: impl Into<String>) -> Self {
+        self.notes = Some(notes.into());
+        self
+    }
+
+    /// Save as a draft instead of publishing (`--draft`).
+    pub fn draft(mut self) -> Self {
+        self.draft = true;
+        self
+    }
+
+    /// Mark the release as a prerelease (`--prerelease`).
+    pub fn prerelease(mut self) -> Self {
+        self.prerelease = true;
+        self
+    }
+}
+
 /// Injection guard for bare positional argv slots: a caller-supplied value
 /// with a leading `-` would be parsed by tea's CLI as a *flag* (verified:
 /// `tea … -evil` → "unknown switch"), and an empty value changes a command's
@@ -560,6 +625,30 @@ pub trait GiteaApi: Send + Sync {
     /// exist in `tea` (the [`vcs-forge`](https://crates.io/crates/vcs-forge)
     /// facade reports it `Unsupported`).
     async fn release_list(&self, dir: &Path) -> Result<Vec<Release>>;
+    /// Create a release, returning tea's textual output (`tea releases create
+    /// --tag <tag> [--title <title>] [--note <notes>] [--draft] [--prerelease]`) —
+    /// see [`ReleaseCreate`]. tea takes the tag as a `--tag` flag value (not a
+    /// positional) and its notes flag is the singular `--note`. Asset uploads are
+    /// out of scope (attach files via [`run`](GiteaApi::run)). **Defaulted** to
+    /// `Error::Unsupported` so external implementers keep compiling when the crate
+    /// bumps.
+    #[allow(unused_variables)]
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        Err(Error::Unsupported {
+            operation: "release_create".into(),
+        })
+    }
+    /// Delete a release by its tag (`tea releases delete <tag>`). The `<tag>` is a
+    /// bare positional, so it is guarded with `reject_flag_like` (a leading `-` or
+    /// empty value is rejected before spawning). Like `tea`'s other mutators
+    /// (`pr_close`/`pr_merge`), this passes no confirmation flag. **Defaulted** to
+    /// `Error::Unsupported`.
+    #[allow(unused_variables)]
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "release_delete".into(),
+        })
+    }
 }
 
 vcs_cli_support::managed_client! {
@@ -898,6 +987,40 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             )
             .await
     }
+
+    async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
+        // tea takes the tag as a `--tag` flag value (not a bare positional), and
+        // title/note are flag-VALUE slots too — tea consumes the next token verbatim
+        // in all three, so none needs a `reject_flag_like` guard. Its notes flag is
+        // the singular `--note`. `--draft`/`--prerelease` are presence-only. tea
+        // prints a textual summary of the new release.
+        let mut args = vec!["releases", "create", "--tag", spec.tag.as_str()];
+        if let Some(title) = spec.title.as_deref() {
+            args.push("--title");
+            args.push(title);
+        }
+        if let Some(notes) = spec.notes.as_deref() {
+            args.push("--note");
+            args.push(notes);
+        }
+        if spec.draft {
+            args.push("--draft");
+        }
+        if spec.prerelease {
+            args.push("--prerelease");
+        }
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
+        // `tea releases delete <tag>` — the tag is a bare positional, so guard it the
+        // way `pr_comment`/`pr_reject` guard theirs. Like tea's other mutators
+        // (`pr close`/`pr merge`), no confirmation flag is passed.
+        reject_flag_like("tag", tag)?;
+        self.core
+            .run_unit(self.core.command_in(dir, ["releases", "delete", tag]))
+            .await
+    }
 }
 
 impl<R: ProcessRunner> Gitea<R> {
@@ -1003,6 +1126,8 @@ vcs_cli_support::at_forwarders! {
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn release_list() -> Result<Vec<Release>>;
+        fn release_create(spec: ReleaseCreate) -> Result<String>;
+        fn release_delete(tag: &str) -> Result<()>;
     }
     // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
     // twins) so `tea.at(dir).run(…)` runs in the bound repo, not the process cwd.
@@ -1647,6 +1772,83 @@ mod tests {
             rec.only_call().args_str(),
             ["releases", "list", "--limit", "100", "--output", "json"]
         );
+    }
+
+    // release_create pins `tea releases create --tag <tag> --title <t> --note <n>
+    // --draft --prerelease` — tea carries the tag as a `--tag` flag (not a
+    // positional) and its notes flag is the singular `--note`.
+    #[tokio::test]
+    async fn release_create_builds_argv_and_returns_output() {
+        let rec = RecordingRunner::replying(Reply::ok("Release created: v1.0\n"));
+        let tea = Gitea::with_runner(&rec);
+        let out = tea
+            .release_create(
+                Path::new("/repo"),
+                ReleaseCreate::new("v1.0")
+                    .title("First")
+                    .notes("Notes")
+                    .draft()
+                    .prerelease(),
+            )
+            .await
+            .expect("release_create");
+        assert_eq!(out, "Release created: v1.0");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "releases",
+                "create",
+                "--tag",
+                "v1.0",
+                "--title",
+                "First",
+                "--note",
+                "Notes",
+                "--draft",
+                "--prerelease"
+            ]
+        );
+    }
+
+    // With only the tag, release_create emits neither optional flag nor the
+    // presence-only booleans — a minimal `tea releases create --tag <tag>`.
+    #[tokio::test]
+    async fn release_create_omits_unset_options() {
+        let rec = RecordingRunner::replying(Reply::ok("ok"));
+        let tea = Gitea::with_runner(&rec);
+        tea.release_create(Path::new("/r"), ReleaseCreate::new("v2"))
+            .await
+            .expect("release_create");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["releases", "create", "--tag", "v2"]);
+        assert!(!call.has_flag("--title"));
+        assert!(!call.has_flag("--note"));
+        assert!(!call.has_flag("--draft"));
+        assert!(!call.has_flag("--prerelease"));
+    }
+
+    // release_delete builds `releases delete <tag>` (tag is a bare positional here,
+    // unlike create's `--tag` flag); no confirmation flag, matching tea's other
+    // mutators (`pr close`/`pr merge`).
+    #[tokio::test]
+    async fn release_delete_builds_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.release_delete(Path::new("/r"), "v1.0")
+            .await
+            .expect("release_delete");
+        assert_eq!(rec.only_call().args_str(), ["releases", "delete", "v1.0"]);
+    }
+
+    // release_delete guards its bare `<tag>` positional: a flag-like or empty tag
+    // is rejected before any process spawns.
+    #[tokio::test]
+    async fn release_delete_rejects_flag_like_tag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        assert!(tea.release_delete(Path::new("."), "-evil").await.is_err());
+        assert!(tea.release_delete(Path::new("."), "").await.is_err());
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     #[cfg(feature = "mock")]

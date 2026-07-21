@@ -110,7 +110,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `forge_issue_view` | `{ number }` | A single issue by number, with body and URL filled. |
 | `forge_release_list` | — | Releases, newest first (up to 100; ~50 on Gitea), as unified [`ForgeRelease`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)s. |
 | `forge_release_view` | `{ tag }` | A single release by tag (`Unsupported` on Gitea — filter `forge_release_list` instead). |
-| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, version, supported, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `version` is the installed CLI's `{major,minor,patch}` (or `null` when unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; `authed` is the auth probe result; the per-op flags are the intersection of "the CLI ships the command", `supported`, and "the CLI is authenticated". `pr_request_changes` is always `false` for GitLab (its review model is approve/revoke). |
+| `forge_info` | — | The forge identity + flat capability map: `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, release_create, release_delete, version, supported, authed } }`. `kind` is `"github"` / `"gitlab"` / `"gitea"`; `version` is the installed CLI's `{major,minor,patch}` (or `null` when unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; `authed` is the auth probe result; the per-op flags are the intersection of "the CLI ships the command", `supported`, and "the CLI is authenticated". `pr_request_changes` is always `false` for GitLab (its review model is approve/revoke). |
 
 ### Mutating tools (gated behind the write gate, `destructiveHint`)
 
@@ -140,6 +140,8 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `forge_pr_request_changes` | `{ number, body }` | Submit a request-changes review with a required `body`/reason (`gh pr review --request-changes` / `tea pr reject`). `Unsupported` on **GitLab** (its review model is approve/revoke); an empty body is rejected up front as `invalid_params`. |
 | `forge_pr_checkout` | `{ number }` | Check out a PR/MR's branch into the local working copy (`gh pr checkout` / `glab mr checkout` / `tea pr checkout`). Mutates the working copy. |
 | `forge_issue_create` | `{ title, body }` | Open an issue; returns the CLI output (the URL on success). |
+| `forge_release_create` | `{ tag, title?, notes?, draft?, prerelease? }` | Create a release; returns the CLI output (the URL on success). `draft`/`prerelease` default to `false` and are **GitHub/Gitea-only** — GitLab returns `invalid_params` rather than creating without them. Asset uploads are not supported. |
+| `forge_release_delete` | `{ tag }` | Delete a release by its Git tag (deletes the release only, not the underlying git tag). |
 
 A gated call outside the write gate returns a clear error naming the tool
 (`write tool "repo_push" is disabled; restart the server with --allow-write (all

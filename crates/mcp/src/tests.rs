@@ -644,6 +644,128 @@ async fn forge_pr_mark_ready_is_gated() {
     assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
 }
 
+// `forge_release_create` is write-gated: refused under `WriteGate::None`, routed to
+// `gh release create` when allowed (the runner rule matches only
+// `["gh","release","create"]`, so reaching the reply proves the routing) and
+// returns the CLI's output.
+#[tokio::test]
+async fn forge_release_create_gates_and_routes() {
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+        "/repo",
+        vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+    ));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+    let err = server
+        .forge_release_create(Parameters(ReleaseCreateParams {
+            tag: "v1".into(),
+            title: Some("One".into()),
+            notes: Some("N".into()),
+            draft: false,
+            prerelease: false,
+        }))
+        .await
+        .expect_err("gated");
+    assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new().on(["gh", "release", "create"], Reply::ok("https://gh/r/v1\n")),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+    let out = server
+        .forge_release_create(Parameters(ReleaseCreateParams {
+            tag: "v1".into(),
+            title: Some("One".into()),
+            notes: Some("N".into()),
+            draft: true,
+            prerelease: false,
+        }))
+        .await
+        .expect("release_create ok");
+    assert!(
+        result_json(&out).contains("https://gh/r/v1"),
+        "{}",
+        result_json(&out)
+    );
+}
+
+// On GitLab, `draft`/`prerelease` are unsupported — the facade surfaces
+// `Unsupported`, which the MCP layer maps to INVALID_PARAMS, without spawning.
+#[tokio::test]
+async fn forge_release_create_draft_unsupported_on_gitlab_maps_to_invalid_params() {
+    let glab = vcs_forge::vcs_gitlab::GitLab::with_runner(ScriptedRunner::new());
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitlab("/repo", glab));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+    let err = server
+        .forge_release_create(Parameters(ReleaseCreateParams {
+            tag: "v1".into(),
+            title: None,
+            notes: None,
+            draft: true,
+            prerelease: false,
+        }))
+        .await
+        .expect_err("draft unsupported on gitlab");
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("release_create"), "{}", err.message);
+}
+
+// `forge_release_delete` is write-gated: refused under `WriteGate::None`, routed to
+// `gh release delete` when allowed.
+#[tokio::test]
+async fn forge_release_delete_gates_and_routes() {
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github(
+        "/repo",
+        vcs_forge::vcs_github::GitHub::with_runner(ScriptedRunner::new()),
+    ));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+    let err = server
+        .forge_release_delete(Parameters(ReleaseTagParams { tag: "v1".into() }))
+        .await
+        .expect_err("gated");
+    assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new().on(["gh", "release", "delete"], Reply::ok("")),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+    let out = server
+        .forge_release_delete(Parameters(ReleaseTagParams { tag: "v1".into() }))
+        .await
+        .expect("release_delete ok");
+    assert!(
+        result_json(&out).contains("deleted"),
+        "{}",
+        result_json(&out)
+    );
+}
+
 // `forge_pr_approve` is write-gated: refused under `WriteGate::None`, routed to
 // `gh pr review --approve` when allowed (the runner rule matches only
 // `["gh","pr","review"]`, so reaching the reply proves the routing).

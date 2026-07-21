@@ -6,12 +6,13 @@ use std::path::Path;
 use processkit::ProcessRunner;
 use vcs_github::{
     CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
-    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release, RepoView, ReviewAction,
+    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release,
+    ReleaseCreate as GhReleaseCreate, RepoView, ReviewAction,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit, PrMerge,
+    MergeStrategy, PrCreate, PrEdit, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -249,6 +250,42 @@ pub(crate) async fn release_view<R: ProcessRunner>(
     tag: &str,
 ) -> Result<ForgeRelease> {
     Ok(map_release(gh.release_view(dir, tag).await?))
+}
+
+pub(crate) async fn release_create<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    spec: ReleaseCreate,
+) -> Result<String> {
+    // The unified spec maps 1:1 onto gh's `ReleaseCreate`; gh supports the full
+    // title/notes/draft/prerelease surface, so every field carries over.
+    Ok(gh.release_create(dir, map_release_create(spec)).await?)
+}
+
+pub(crate) async fn release_delete<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    tag: &str,
+) -> Result<()> {
+    gh.release_delete(dir, tag).await?;
+    Ok(())
+}
+
+fn map_release_create(spec: ReleaseCreate) -> GhReleaseCreate {
+    let mut create = GhReleaseCreate::new(spec.tag);
+    if let Some(title) = spec.title {
+        create = create.title(title);
+    }
+    if let Some(notes) = spec.notes {
+        create = create.notes(notes);
+    }
+    if spec.draft {
+        create = create.draft();
+    }
+    if spec.prerelease {
+        create = create.prerelease();
+    }
+    create
 }
 
 fn map_pr(pr: PullRequest) -> ForgePr {
