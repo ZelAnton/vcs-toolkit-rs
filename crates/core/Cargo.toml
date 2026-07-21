@@ -4,9 +4,12 @@ version = "0.9.0"
 description = "One async Rust API over Git and Jujutsu: repo auto-detection plus a unified, backend-agnostic VCS handle (status, branches, worktrees, snapshots)."
 edition.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
 license.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
+
+documentation.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["git","jujutsu","vcs","version-control","async"]

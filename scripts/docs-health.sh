@@ -4,8 +4,8 @@
 # crate with a `Cargo.toml` is listed in the matrix. Also check that every
 # publish-eligible crate carries the manifest fields its crates.io/docs.rs
 # listing depends on (`description`, `readme` pointing at a real file,
-# `keywords`, `categories`), so the published-crate showcase can't silently
-# regress when a new crate is added.
+# `keywords`, `categories`, `homepage`, `documentation`, `repository`), so the
+# published-crate showcase can't silently regress when a new crate is added.
 #
 # Local Markdown link rot and external-link liveness are already covered by
 # the `typos`/`lychee` steps in the `docs-health` CI job (see `ci.yml` and
@@ -18,6 +18,7 @@ set -u
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status=0
 matrix="$repo_root/crates/core/docs/stability.md"
+workspace_manifest="$repo_root/Cargo.toml"
 
 # Matrix -> manifest: every `| `crate` | version | ... |` row must match the
 # crate's actual Cargo.toml version.
@@ -106,6 +107,20 @@ while IFS= read -r manifest; do
     printf '%s: missing or empty `categories`\n' "$manifest" >&2
     status=1
   fi
+
+  for field in homepage documentation repository; do
+    if grep -qE "^${field}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$manifest"; then
+      continue
+    fi
+
+    if grep -qE "^${field}\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$" "$manifest" \
+      && grep -qE "^${field}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$workspace_manifest"; then
+      continue
+    fi
+
+    printf '%s: missing or empty `%s`\n' "$manifest" "$field" >&2
+    status=1
+  done
 done < <(printf '%s\n' "$repo_root"/crates/*/Cargo.toml)
 
 if (( status == 0 )); then
