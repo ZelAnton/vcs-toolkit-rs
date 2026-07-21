@@ -1143,64 +1143,20 @@ impl<R: ProcessRunner> GitLab<R> {
         Ok(vcs_diff::parse_diff(&text))
     }
 
-    /// Run `glab <args>` over string slices — `glab.run_args(&["mr", "list"])`
-    /// without allocating a `Vec<String>`. Inherent (not on the object-safe
-    /// trait), so it can take `&[&str]`; forwards to the same path as
-    /// [`GitLabApi::run`].
-    pub async fn run_args(&self, args: &[&str]) -> Result<String> {
-        self.core.run(args).await
-    }
-
-    /// Like [`run_args`](GitLab::run_args) but never errors on a non-zero exit
-    /// (mirrors [`GitLabApi::run_raw`]).
-    pub async fn run_raw_args(&self, args: &[&str]) -> Result<ProcessResult<String>> {
-        self.core.output_string(args).await
-    }
-
-    /// Run `glab <args>` **in `dir`** (the process is spawned with `dir` as its
-    /// working directory, so `glab` infers the project from `dir`'s remote),
-    /// returning trimmed stdout — the dir-bound twin of the process-cwd
-    /// [`run`](GitLabApi::run). This is what [`GitLabAt::run`] forwards to; call
-    /// [`run`](GitLabApi::run) on the client for the process-cwd escape hatch. Argv
-    /// is forwarded verbatim (only the working directory is bound, no `-R`/extra
-    /// flag is injected).
-    pub async fn run_in(&self, dir: &Path, args: &[String]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_in`](GitLab::run_in) but never errors on a non-zero exit — the
-    /// dir-bound twin of [`run_raw`](GitLabApi::run_raw). What [`GitLabAt::run_raw`]
-    /// forwards to.
-    pub async fn run_raw_in(&self, dir: &Path, args: &[String]) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
-    /// Like [`run_args`](GitLab::run_args) but **bound to `dir`** — the `&[&str]`
-    /// twin of [`run_in`](GitLab::run_in). What [`GitLabAt::run_args`] forwards to.
-    pub async fn run_args_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
-        self.core.run(self.core.command_in(dir, args)).await
-    }
-
-    /// Like [`run_raw_args`](GitLab::run_raw_args) but **bound to `dir`** — the
-    /// `&[&str]` twin of [`run_raw_in`](GitLab::run_raw_in). What
-    /// [`GitLabAt::run_raw_args`] forwards to.
-    pub async fn run_raw_args_in(
-        &self,
-        dir: &Path,
-        args: &[&str],
-    ) -> Result<ProcessResult<String>> {
-        self.core
-            .output_string(self.core.command_in(dir, args))
-            .await
-    }
-
     /// Bind a working directory, so the project-scoped methods omit that argument:
     /// `glab.at(dir).mr_list()` runs [`mr_list`](GitLabApi::mr_list) against `dir`.
     pub fn at<'a>(&'a self, dir: &'a Path) -> GitLabAt<'a, R> {
         GitLabAt { glab: self, dir }
     }
+}
+
+// The six raw escape-hatch helpers (`run_args`/`run_raw_args`/`run_in`/… and the
+// `*_in` twins) are byte-identical forwards into `core` across all five CLI
+// wrappers, so the shared macro in `vcs-cli-support` generates them (see
+// `vcs_cli_support::raw_run_forwarders!`).
+vcs_cli_support::raw_run_forwarders! {
+    GitLab, "glab", "\"mr\", \"list\"", ", so `glab` infers the project from `dir`'s remote",
+    "only the working directory is bound, no `-R`/extra flag is injected"
 }
 
 /// A [`GitLab`] client with a working directory bound, so its project-scoped
