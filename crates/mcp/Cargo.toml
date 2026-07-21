@@ -39,8 +39,18 @@ path = "src/main.rs"
 
 [dev-dependencies]
 # Drive the server with an in-process MCP client for hermetic wiring tests
-# (`client` + an in-memory duplex transport for the round-trip).
-rmcp = { version = "2", features = ["server", "client", "macros", "transport-io"] }
+# (`client` + an in-memory duplex transport for the round-trip), and with a
+# real child-process/stdio client for the `#[ignore]` binary e2e test
+# (`transport-child-process` — `TokioChildProcess` spawns the compiled
+# `vcs-mcp` binary and speaks the same stdio transport a real agent harness
+# would).
+rmcp = { version = "2", features = [
+    "server",
+    "client",
+    "macros",
+    "transport-io",
+    "transport-child-process",
+] }
 # `time` backs the write-lock regression tests' `tokio::time::timeout`.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time"] }
 # The `ScriptedRunner` test seam to back a `Repo` with canned output (hermetic
