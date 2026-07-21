@@ -4,8 +4,10 @@
 # crate with a `Cargo.toml` is listed in the matrix. Also check that every
 # publish-eligible crate carries the manifest fields its crates.io/docs.rs
 # listing depends on (`description`, `readme` pointing at a real file,
-# `keywords`, `categories`, `homepage`, `documentation`, `repository`), so the
+# `keywords`, `categories`, `homepage`, `repository`), so the
 # published-crate showcase can't silently regress when a new crate is added.
+# Note: `documentation` is intentionally NOT validated — each crate relies on
+# crates.io/docs.rs auto-linking to its own per-crate documentation page.
 #
 # Local Markdown link rot and external-link liveness are already covered by
 # the `typos`/`lychee` steps in the `docs-health` CI job (see `ci.yml` and
@@ -108,7 +110,7 @@ while IFS= read -r manifest; do
     status=1
   fi
 
-  for field in homepage documentation repository; do
+  for field in homepage repository; do
     if grep -qE "^${field}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$manifest"; then
       continue
     fi

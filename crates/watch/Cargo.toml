@@ -8,7 +8,6 @@ license.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["git","jujutsu","watch","events","async"]

@@ -33,7 +33,10 @@ rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/ZelAnton/vcs-toolkit-rs"
 homepage = "https://github.com/ZelAnton/vcs-toolkit-rs"
-documentation = "https://docs.rs/vcs-core"
+# Note: `documentation` is intentionally NOT set at workspace level. Each published crate
+# relies on crates.io/docs.rs auto-linking to its own per-crate documentation page,
+# avoiding the fragility of maintaining explicit per-crate documentation URLs that could
+# drift from the crate's actual published name.
 authors = ["Anton Zhelezniakou"]
 
 # ---------------------------------------------------------------------------
