@@ -2693,10 +2693,12 @@ pub fn normalize_workspace_root(p: &Path) -> PathBuf {
     let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     #[cfg(windows)]
     {
-        return strip_windows_verbatim_prefix(canonical);
+        strip_windows_verbatim_prefix(canonical)
     }
     #[cfg(not(windows))]
-    canonical
+    {
+        canonical
+    }
 }
 
 /// Convert Windows' verbatim path spelling into the spelling emitted by jj.
@@ -2929,27 +2931,42 @@ mod tests {
     // still compare as one root when canonicalisation is unavailable.
     #[cfg(windows)]
     #[test]
-    fn verbatim_unc_paths_normalize_and_match_ordinary_unc_paths() {
-        let ordinary = Path::new(r"\\server\share\workspace");
-        let verbatim = Path::new(r"\\?\UNC\server\share\workspace");
+    fn verbatim_drive_and_unc_paths_normalize_without_changing_ordinary_paths() {
+        let cases = [
+            (r"\\?\C:\workspace", r"C:\workspace", "drive"),
+            (
+                r"\\?\UNC\server\share\workspace",
+                r"\\server\share\workspace",
+                "UNC",
+            ),
+        ];
 
-        assert_eq!(
-            strip_windows_verbatim_prefix(verbatim.to_path_buf()),
-            ordinary,
-            "a verbatim UNC path must become its ordinary UNC spelling"
-        );
-        assert_eq!(
-            normalize_workspace_root(verbatim),
-            normalize_workspace_root(ordinary)
-        );
-        assert!(
-            workspace_root_matches(verbatim, ordinary),
-            "a verbatim workspace root must match an ordinary requested path"
-        );
-        assert!(
-            workspace_root_matches(ordinary, verbatim),
-            "an ordinary workspace root must match a verbatim requested path"
-        );
+        for (verbatim, ordinary, kind) in cases {
+            let verbatim = Path::new(verbatim);
+            let ordinary = Path::new(ordinary);
+            assert_eq!(
+                strip_windows_verbatim_prefix(verbatim.to_path_buf()),
+                ordinary,
+                "a verbatim {kind} path must become its ordinary spelling"
+            );
+            assert_eq!(
+                strip_windows_verbatim_prefix(ordinary.to_path_buf()),
+                ordinary,
+                "an ordinary {kind} path must stay byte-for-byte unchanged"
+            );
+            assert_eq!(
+                normalize_workspace_root(verbatim),
+                normalize_workspace_root(ordinary)
+            );
+            assert!(
+                workspace_root_matches(verbatim, ordinary),
+                "a verbatim {kind} workspace root must match an ordinary requested path"
+            );
+            assert!(
+                workspace_root_matches(ordinary, verbatim),
+                "an ordinary {kind} workspace root must match a verbatim requested path"
+            );
+        }
     }
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
     #[allow(dead_code)]

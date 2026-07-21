@@ -56,8 +56,14 @@ jobs:
       - run: bash scripts/release/lib.test.sh
 
   clippy:
-    name: clippy
-    runs-on: ubuntu-latest
+    name: clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows-only cfg branches must be linted, not merely compiled by the
+        # test lane; otherwise warnings hidden from Ubuntu can block local gates.
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - run: rustup component add clippy
@@ -65,10 +71,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --locked -- -D warnings
       # Lint every optional feature too: `mock` (mockall + generated mocks) and
       # `tracing` (the per-command observability events).
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   # Build the rustdoc the way docs.rs will, and keep it from rotting. `-D warnings`
   # turns a broken intra-doc link — which doctests do NOT catch but which silently

@@ -182,8 +182,8 @@ step "Cargo.lock in sync" lockfile_check
 step "release lib fixtures" bash "$REPO_ROOT/scripts/release/lib.test.sh"
 
 # --- clippy (two configurations, same as the `clippy` CI job) ---------
-step "clippy (default features)" cargo clippy --all-targets -- -D warnings
-step "clippy (all features)" cargo clippy --workspace --all-targets --all-features -- -D warnings
+step "clippy (default features)" cargo clippy --all-targets --locked -- -D warnings
+step "clippy (all features)" cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
 # --- doc ----------------------------------------------------------------
 if [ "$FAST" -eq 1 ]; then
