@@ -16,6 +16,18 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **`JjApi::root` (and the `root_wc` helper feeding `status`/
+  `status_ignoring_working_copy`/`diff_summary`) now decodes `jj root`'s stdout
+  byte-losslessly**, via `ManagedClient::parse_bytes` +
+  `parse::workspace_root_from_bytes` — the same path `workspace_root` already
+  used — instead of `PathBuf::from(self.core.run(..))`, which decoded through
+  `String::from_utf8_lossy` and trimmed *all* trailing whitespace
+  (`str::trim_end`). A non-UTF-8 workspace root (legal on Unix) no longer
+  collapses to `U+FFFD`, and a root that legitimately ends in a space/tab is no
+  longer truncated. This also fixes `status`/`status_ignoring_working_copy`/
+  `diff_summary`, which resolve their machine query's cwd through `root_wc`/
+  `root`: on a repo with such a root they previously risked spawning `jj diff`
+  against a corrupted, non-existent path. (T-090.)
 - **`bookmark_track`'s `remote` is now validated before spawning, closing a
   silent-no-op gap.** An empty or whitespace-only `remote` previously slipped
   past the existing glob-metacharacter guard into `exact:<name>@`, which jj

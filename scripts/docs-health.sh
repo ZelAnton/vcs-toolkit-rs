@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Check that the stability matrix in crates/core/docs/stability.md matches
 # every crate's actual `version = "..."` in its `Cargo.toml`, and that every
-# crate with a `Cargo.toml` is listed in the matrix.
+# crate with a `Cargo.toml` is listed in the matrix. Also check that every
+# publish-eligible crate carries the manifest fields its crates.io/docs.rs
+# listing depends on (`description`, `readme` pointing at a real file,
+# `keywords`, `categories`, `homepage`, `repository`), so the
+# published-crate showcase can't silently regress when a new crate is added.
+# Note: `documentation` is intentionally NOT validated — each crate relies on
+# crates.io/docs.rs auto-linking to its own per-crate documentation page.
 #
 # Local Markdown link rot and external-link liveness are already covered by
 # the `typos`/`lychee` steps in the `docs-health` CI job (see `ci.yml` and
@@ -14,6 +20,7 @@ set -u
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 status=0
 matrix="$repo_root/crates/core/docs/stability.md"
+workspace_manifest="$repo_root/Cargo.toml"
 
 # Matrix -> manifest: every `| `crate` | version | ... |` row must match the
 # crate's actual Cargo.toml version.
@@ -66,8 +73,60 @@ while IFS= read -r manifest; do
   fi
 done < <(printf '%s\n' "$repo_root"/crates/*/Cargo.toml)
 
+# Publish-crate manifest fields: every crate.io-published crate must carry the
+# fields that make its crates.io/docs.rs listing usable — a missing one is easy
+# to overlook when adding a new crate. Skip `publish = false` crates (none
+# today, but this keeps the check honest if one is added later).
+while IFS= read -r manifest; do
+  crate_dir="$(dirname "$manifest")"
+  name="$(grep -m1 -E '^name[[:space:]]*=' "$manifest" | sed -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+  [[ -n "$name" ]] || continue
+
+  if grep -qE '^publish[[:space:]]*=[[:space:]]*false' "$manifest"; then
+    continue
+  fi
+
+  if ! grep -qE '^description[[:space:]]*=[[:space:]]*"[^"]+"' "$manifest"; then
+    printf '%s: missing or empty `description`\n' "$manifest" >&2
+    status=1
+  fi
+
+  readme_rel="$(grep -m1 -E '^readme[[:space:]]*=' "$manifest" | sed -E 's/^readme[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+  if [[ -z "$readme_rel" ]]; then
+    printf '%s: missing `readme`\n' "$manifest" >&2
+    status=1
+  elif [[ ! -f "$crate_dir/$readme_rel" ]]; then
+    printf '%s: `readme = "%s"` does not exist\n' "$manifest" "$readme_rel" >&2
+    status=1
+  fi
+
+  if ! grep -qE '^keywords[[:space:]]*=[[:space:]]*\[[[:space:]]*"' "$manifest"; then
+    printf '%s: missing or empty `keywords`\n' "$manifest" >&2
+    status=1
+  fi
+
+  if ! grep -qE '^categories[[:space:]]*=[[:space:]]*\[[[:space:]]*"' "$manifest"; then
+    printf '%s: missing or empty `categories`\n' "$manifest" >&2
+    status=1
+  fi
+
+  for field in homepage repository; do
+    if grep -qE "^${field}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$manifest"; then
+      continue
+    fi
+
+    if grep -qE "^${field}\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$" "$manifest" \
+      && grep -qE "^${field}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$workspace_manifest"; then
+      continue
+    fi
+
+    printf '%s: missing or empty `%s`\n' "$manifest" "$field" >&2
+    status=1
+  done
+done < <(printf '%s\n' "$repo_root"/crates/*/Cargo.toml)
+
 if (( status == 0 )); then
-  echo "docs-health: stability matrix matches every crate manifest"
+  echo "docs-health: stability matrix matches every crate manifest, and every crate carries the required publish-listing fields"
 fi
 
 exit "$status"

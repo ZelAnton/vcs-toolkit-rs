@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme = "README.md"
 keywords = ["git","diff","parser","unified-diff","vcs"]
