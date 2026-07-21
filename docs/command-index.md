@@ -191,6 +191,8 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `log` | `log` | up to `max`, newest first |
 | `log_paths` | `log -r <revset> <filesets>` | non-empty filesets required |
 | `current_change` | `log -r @` | reduced to one `Change` |
+| `current_bookmark` | `log -r @ --no-graph --limit 1 -T <bookmarks-template>` | local bookmark on `@`, if exactly one; `None` when no bookmark |
+| `trunk` | `log -r trunk() --no-graph --limit 1 -T <bookmarks-template>` | trunk bookmark; `None` when unresolved |
 | `describe` | `describe -m` | on `@` |
 | `describe_rev` | `describe -r <revset> -m` | arbitrary revision |
 | `new_change` | `new -m` | on top of the WC |
