@@ -109,6 +109,26 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     assert!(props.get("paths").is_some(), "{props}");
     assert!(props.get("message").is_some(), "{props}");
 
+    // A genuinely idempotent tool: on jj it snapshots the working copy (a
+    // reversible, append-only op-log operation), so per crates/mcp/docs/mcp.md
+    // it is annotated `destructiveHint = false` + `idempotentHint = true`
+    // rather than `readOnlyHint` — verified here on the wire, then exercised
+    // for real via the read-tool round trip in step 3 below.
+    let idempotent = tools
+        .iter()
+        .find(|t| t.name == "repo_current_branch")
+        .expect("repo_current_branch is in the catalogue");
+    let idempotent_annotations = idempotent
+        .annotations
+        .as_ref()
+        .expect("repo_current_branch carries MCP annotations");
+    assert_eq!(
+        idempotent_annotations.idempotent_hint,
+        Some(true),
+        "repo_current_branch must be annotated idempotentHint"
+    );
+    assert_eq!(idempotent_annotations.destructive_hint, Some(false));
+
     // 3. A real read-tool round trip through the full protocol.
     let branch = inner(
         &client
