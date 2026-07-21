@@ -5,7 +5,6 @@ description = "Parse and model Git-format unified diffs in pure Rust (no git bin
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-license-file = "LICENSE"
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
