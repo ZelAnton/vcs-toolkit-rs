@@ -16,6 +16,18 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
+- **`bookmark_track`'s `remote` is now validated before spawning, closing a
+  silent-no-op gap.** An empty or whitespace-only `remote` previously slipped
+  past the existing glob-metacharacter guard into `exact:<name>@`, which jj
+  parses as an empty remote name and answers with a warning and a **successful
+  no-op** — the call returned `Ok(())` without tracking anything. A `remote`
+  containing `@` similarly exploited jj's legacy last-`@`-split parsing of the
+  positional `name@remote` form, silently retargeting which segment is the
+  remote. Both are now rejected up front with a classifiable
+  (`vcs_cli_support::is_invalid_input`) error, matching the metacharacter
+  guard's existing behaviour. **Breaking for a caller that passed an empty/
+  blank or `@`-containing `remote` and relied on the silent `Ok(())`:** it now
+  gets an `Err`. (T-086.)
 - **`status`/`diff_summary`/`resolve --list` no longer corrupt or reject a Unix
   filename containing a literal backslash or colon.** `parse::normalize_slashes`
   (used by `parse_diff_summary`/`parse_resolve_list`) and
