@@ -145,7 +145,10 @@ pub mod conflict;
 mod parse;
 #[doc(hidden)]
 pub use parse::parse_porcelain_v2;
-pub use parse::{BlameLine, Branch, BranchStatus, Commit, StatusEntry, Worktree};
+pub use parse::{
+    BlameLine, Branch, BranchStatus, Commit, StatusEntry, Submodule, SubmoduleState,
+    SubmoduleStatus, Worktree,
+};
 // The git-format diff model + parser and the version type are shared with
 // `vcs-jj` (identical output) — re-exported so `vcs_git::FileDiff`,
 // `vcs_git::parse_diff`, `vcs_git::GitVersion`, … still resolve.
@@ -576,6 +579,70 @@ impl WorktreeRemove {
     /// Remove even when the worktree has uncommitted changes (`--force`).
     pub fn force(mut self) -> Self {
         self.force = true;
+        self
+    }
+}
+
+/// A `git submodule update` specification — checks out the submodules recorded
+/// in the superproject's index to the commits it pins, optionally initializing
+/// (`--init`) and recursing (`--recursive`) first, and optionally scoped to
+/// specific paths. Built fluently; see [`GitApi::submodule_update`].
+///
+/// **This is the one submodule verb that materializes and executes a *different*
+/// (nested) repository's content** — with `init`, it clones/fetches each
+/// submodule from the URL its `.gitmodules` records and checks out its working
+/// tree. Treat those nested repos with the same untrusted-repo caution as the
+/// superproject; see the submodules section of the security guide.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct SubmoduleUpdate {
+    /// Initialize (register + clone) submodules not yet set up (`--init`).
+    pub init: bool,
+    /// Recurse into nested submodules (`--recursive`).
+    pub recursive: bool,
+    /// Create a shallow clone with this history depth (`--depth <n>`); `None`
+    /// leaves the depth unset (full history).
+    pub depth: Option<u32>,
+    /// Restrict the update to these repo-relative submodule paths; empty means
+    /// every submodule. Passed after a `--` terminator so a path can never be
+    /// parsed as a flag.
+    pub paths: Vec<String>,
+}
+
+impl SubmoduleUpdate {
+    /// A plain update (no `--init`/`--recursive`/`--depth`, all submodules).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register and clone submodules that are not yet initialized (`--init`).
+    pub fn init(mut self) -> Self {
+        self.init = true;
+        self
+    }
+
+    /// Recurse into nested submodules (`--recursive`).
+    pub fn recursive(mut self) -> Self {
+        self.recursive = true;
+        self
+    }
+
+    /// Make a shallow checkout with history `depth` (`--depth <n>`).
+    pub fn depth(mut self, depth: u32) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Scope the update to one submodule `path` (repeatable). With no path set,
+    /// the update covers every submodule.
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.paths.push(path.into());
+        self
+    }
+
+    /// Scope the update to several submodule `paths` (appended to any already set).
+    pub fn paths(mut self, paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.paths.extend(paths.into_iter().map(Into::into));
         self
     }
 }
@@ -1110,6 +1177,55 @@ pub trait GitApi: Send + Sync {
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
     /// Prune stale worktree admin entries (`worktree prune`).
     async fn worktree_prune(&self, dir: &Path) -> Result<()>;
+
+    // --- Submodules ----------------------------------------------------------
+
+    /// The submodules declared in `<dir>/.gitmodules`, parsed from the
+    /// machine-unambiguous `git config --file .gitmodules --list -z` source
+    /// (**not** a hand-rolled scan of the ini-style file). `dir` must be the
+    /// repository's top-level working directory, where `.gitmodules` lives.
+    ///
+    /// A repository with no submodules has no `.gitmodules` file; that is
+    /// reported as an **empty list**, not an error — the absent file is probed
+    /// before spawning, so the common no-submodule case does not even run git.
+    /// See [`Submodule`]. This is a pure read: `git config --file` only parses
+    /// the file, so it neither clones, fetches, nor executes any submodule's
+    /// config — the safe way to inspect what a (possibly untrusted)
+    /// `.gitmodules` declares before deciding whether to
+    /// [`submodule_update`](GitApi::submodule_update).
+    async fn submodule_list(&self, dir: &Path) -> Result<Vec<Submodule>>;
+
+    /// The sync state of the superproject's submodules (`git submodule status`):
+    /// the checked-out commit, path, and a typed [`SubmoduleState`] from the
+    /// line's leading `-`/`+`/`U`/space prefix. See [`SubmoduleStatus`].
+    ///
+    /// A read: it inspects the recorded gitlink and each initialized submodule's
+    /// HEAD (briefly running `git` inside each to compute the trailing
+    /// `describe`), but performs no checkout, fetch, or working-tree
+    /// materialization.
+    async fn submodule_status(&self, dir: &Path) -> Result<Vec<SubmoduleStatus>>;
+
+    /// Check out the submodules to the commits the superproject records
+    /// (`git submodule update [--init] [--recursive] [--depth <n>] [-- <paths>]`);
+    /// see [`SubmoduleUpdate`].
+    ///
+    /// **Security boundary — executes a nested repository's content.** Unlike
+    /// [`submodule_list`](GitApi::submodule_list) /
+    /// [`submodule_status`](GitApi::submodule_status), this **fetches from the
+    /// URLs `.gitmodules` records and materializes each submodule's working
+    /// tree**, so it runs that nested repo's checkout-time config (filter/smudge
+    /// drivers) and network transport. On a [`hardened`](Git::hardened) client
+    /// the hardened environment is inherited by the `git` subprocesses this
+    /// spawns, but the residual repo-local-config vectors apply per nested repo
+    /// too — for a fully untrusted superproject, run this only inside an OS-level
+    /// sandbox, or vet `.gitmodules` via `submodule_list` first. Terminal
+    /// prompts are pinned off (`GIT_TERMINAL_PROMPT=0`) so a submodule needing
+    /// credentials fails fast rather than hanging. See the submodules section of
+    /// the security guide.
+    ///
+    /// Positional submodule paths are flag-guarded and passed after a `--`
+    /// terminator, so a caller-supplied path can never be parsed as an option.
+    async fn submodule_update(&self, dir: &Path, spec: SubmoduleUpdate) -> Result<()>;
 
     // --- Clone / tags / inspection --------------------------------------------
 
@@ -2528,6 +2644,76 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn submodule_list(&self, dir: &Path) -> Result<Vec<Submodule>> {
+        // `.gitmodules` at the repo top is the registry of declared submodules; a
+        // repo with none simply has no such file. Probe for it (relative to `dir`,
+        // exactly where `git config --file .gitmodules` resolves it) first: an
+        // absent file means "no submodules" — an empty list, not git's exit-128
+        // "unable to read config file" error — and no process is spawned in the
+        // common no-submodule case. A present-but-malformed file still surfaces as
+        // a real error from the parse below.
+        if !dir.join(".gitmodules").exists() {
+            return Ok(Vec::new());
+        }
+        // `parse_bytes`: a submodule `path` value may not be valid UTF-8 on Unix,
+        // so parse from raw stdout bytes (a lossy `String` decode would corrupt it
+        // to `U+FFFD`). `-z` frames each `key\nvalue` record with a NUL, robust
+        // against a value that contains `=` or whitespace.
+        self.core
+            .parse_bytes(
+                self.core
+                    .command_in(dir, ["config", "--file", ".gitmodules", "--list", "-z"]),
+                parse::parse_gitmodules_config,
+            )
+            .await
+    }
+
+    async fn submodule_status(&self, dir: &Path) -> Result<Vec<SubmoduleStatus>> {
+        // `parse_bytes`: the reported submodule path may not be valid UTF-8 on
+        // Unix. `git submodule status` has no `-z` option (it is not a plumbing
+        // command), so the parser splits the optional trailing ` (describe)` from
+        // the path heuristically — see `parse_submodule_status`.
+        self.core
+            .parse_bytes(
+                self.core.command_in(dir, ["submodule", "status"]),
+                parse::parse_submodule_status,
+            )
+            .await
+    }
+
+    async fn submodule_update(&self, dir: &Path, spec: SubmoduleUpdate) -> Result<()> {
+        // Guard each positional submodule path: a leading-`-` value after the
+        // `--` terminator is already inert as a flag, but reject it up front for
+        // a clear, uniform error (matching the other bare-positional slots).
+        for path in &spec.paths {
+            reject_flag_like("submodule path", path)?;
+        }
+        let mut command = self.core.command_in(dir, ["submodule", "update"]);
+        if spec.init {
+            command = command.arg("--init");
+        }
+        if spec.recursive {
+            command = command.arg("--recursive");
+        }
+        if let Some(depth) = spec.depth {
+            command = command.arg("--depth").arg(depth.to_string());
+        }
+        if !spec.paths.is_empty() {
+            // `--` closes git's option grammar so every following path is a bare
+            // positional, never reparsed as a flag.
+            command = command.arg("--");
+            for path in &spec.paths {
+                command = command.arg(path);
+            }
+        }
+        // `GIT_TERMINAL_PROMPT=0`: `update` fetches each submodule, so a missing
+        // credential must fail fast rather than block on an interactive prompt —
+        // matching `fetch`/`clone`.
+        self.core
+            .run_unit(command.env("GIT_TERMINAL_PROMPT", "0"))
+            .await
+    }
+
     async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()> {
         // A leading-`-` url is a bare positional — `git clone --upload-pack=<cmd>`
         // would run an arbitrary local program. A real URL never leads with `-`,
@@ -3439,6 +3625,9 @@ vcs_cli_support::at_forwarders! {
         fn worktree_remove(spec: WorktreeRemove) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
+        fn submodule_list() -> Result<Vec<Submodule>>;
+        fn submodule_status() -> Result<Vec<SubmoduleStatus>>;
+        fn submodule_update(spec: SubmoduleUpdate) -> Result<()>;
         fn tag_create(name: &RefName, rev: Option<RevSpec>) -> Result<()>;
         fn tag_create_annotated(spec: AnnotatedTag) -> Result<()>;
         fn tag_list() -> Result<Vec<String>>;
@@ -3890,6 +4079,134 @@ mod tests {
         assert_eq!(wts.len(), 1);
         assert_eq!(wts[0].branch.as_deref(), Some("main"));
         assert_eq!(wts[0].head.as_deref(), Some("abc"));
+    }
+
+    // `submodule_list` builds the machine-unambiguous `config --file .gitmodules
+    // --list -z` argv and parses the `-z` records — but only after the on-disk
+    // `.gitmodules` probe passes, so this test writes a real file into the bound
+    // dir before scripting the runner.
+    #[tokio::test]
+    async fn submodule_list_builds_config_argv_and_parses() {
+        use vcs_testkit::TempDir;
+        let tmp = TempDir::new("t096-list");
+        std::fs::write(
+            tmp.path().join(".gitmodules"),
+            "[submodule \"libs/sub\"]\n\tpath = libs/sub\n\turl = ../sub\n",
+        )
+        .unwrap();
+        let rec = RecordingRunner::replying(Reply::ok(
+            "submodule.libs/sub.path\nlibs/sub\0submodule.libs/sub.url\n../sub\0",
+        ));
+        let git = Git::with_runner(&rec);
+        let subs = git.submodule_list(tmp.path()).await.expect("list");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["config", "--file", ".gitmodules", "--list", "-z"]
+        );
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].name, "libs/sub");
+        assert_eq!(subs[0].path, PathBuf::from("libs/sub"));
+        assert_eq!(subs[0].url, "../sub");
+    }
+
+    // No `.gitmodules` on disk ⇒ an empty list, and git is never spawned (the
+    // absent-file probe short-circuits before the runner).
+    #[tokio::test]
+    async fn submodule_list_without_gitmodules_is_empty_without_spawning() {
+        use vcs_testkit::TempDir;
+        let tmp = TempDir::new("t096-nolist");
+        let rec = RecordingRunner::replying(Reply::ok("unused"));
+        let git = Git::with_runner(&rec);
+        let subs = git.submodule_list(tmp.path()).await.expect("list");
+        assert!(subs.is_empty());
+        assert!(
+            rec.calls().is_empty(),
+            "no `.gitmodules` must not spawn git"
+        );
+    }
+
+    // `submodule_status` builds `submodule status` and parses the prefix states.
+    #[tokio::test]
+    async fn submodule_status_builds_argv_and_parses() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            " 833caa0 libs/sub (heads/main)\n-deadbee other/sub\n",
+        ));
+        let git = Git::with_runner(&rec);
+        let got = git
+            .submodule_status(Path::new("/repo"))
+            .await
+            .expect("status");
+        assert_eq!(rec.only_call().args_str(), ["submodule", "status"]);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].state, SubmoduleState::Current);
+        assert_eq!(got[0].path, PathBuf::from("libs/sub"));
+        assert_eq!(got[0].describe.as_deref(), Some("heads/main"));
+        assert_eq!(got[1].state, SubmoduleState::Uninitialized);
+        assert_eq!(got[1].sha, "deadbee");
+    }
+
+    // The full `submodule update` builder emits its flags in a fixed order, ends
+    // the paths behind `--`, and pins terminal prompts off.
+    #[tokio::test]
+    async fn submodule_update_builds_all_flags_in_order() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.submodule_update(
+            Path::new("/repo"),
+            SubmoduleUpdate::new()
+                .init()
+                .recursive()
+                .depth(1)
+                .path("libs/sub"),
+        )
+        .await
+        .expect("update");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                "--depth",
+                "1",
+                "--",
+                "libs/sub"
+            ]
+        );
+        assert!(
+            call.env_is("GIT_TERMINAL_PROMPT", "0"),
+            "a fetching update must not block on a credential prompt"
+        );
+    }
+
+    // A default spec is a bare `submodule update` — no flags, no `--`.
+    #[tokio::test]
+    async fn submodule_update_default_is_bare() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.submodule_update(Path::new("/repo"), SubmoduleUpdate::new())
+            .await
+            .expect("update");
+        assert_eq!(rec.only_call().args_str(), ["submodule", "update"]);
+    }
+
+    // A flag-shaped positional path is refused before spawning — the `--`
+    // terminator already makes it inert, but the guard gives a clean error.
+    #[tokio::test]
+    async fn submodule_update_rejects_flag_like_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .submodule_update(
+                Path::new("/repo"),
+                SubmoduleUpdate::new().path("--upload-pack=/bin/evil"),
+            )
+            .await
+            .expect_err("a flag-like submodule path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     // The new-branch worktree must build `worktree add -b <name> <path> <base>`,

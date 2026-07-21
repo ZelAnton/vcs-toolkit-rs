@@ -343,6 +343,52 @@ git.worktree_remove(repo, WorktreeRemove::new("/tmp/feature")).await?;
 For a synchronous best-effort removal in a `Drop` guard, see
 [`blocking::worktree_remove`](#blocking-helpers).
 
+## Submodules
+
+```rust,ignore
+async fn submodule_list(&self, dir: &Path) -> Result<Vec<Submodule>>;
+async fn submodule_status(&self, dir: &Path) -> Result<Vec<SubmoduleStatus>>;
+async fn submodule_update(&self, dir: &Path, spec: SubmoduleUpdate) -> Result<()>;
+```
+
+- **`submodule_list`** — the submodules declared in `<dir>/.gitmodules`, parsed
+  from the machine-unambiguous `git config --file .gitmodules --list -z` source
+  (not a text scan of the ini file). A repo with no submodules has no
+  `.gitmodules`; that is an **empty list**, not an error, and no process is
+  spawned. Each [`Submodule`] carries `name`, `path`, `url`, and an optional
+  `branch`. A **pure read** — it never clones, fetches, or executes submodule
+  config.
+- **`submodule_status`** — `git submodule status`, parsed into typed
+  [`SubmoduleStatus`] entries: the checked-out `sha`, the `path`, an optional
+  `describe`, and a [`SubmoduleState`] from the line's leading prefix
+  (`Current` / `Uninitialized` `-` / `RevisionMismatch` `+` / `Conflict` `U`).
+  Also a read.
+- **`submodule_update`** — `git submodule update [--init] [--recursive] [--depth
+  <n>] [-- <paths>]`, built through [`SubmoduleUpdate`]. **This one executes a
+  nested repository's content**: with `init` it fetches from the URLs
+  `.gitmodules` records and checks out each submodule's working tree. Terminal
+  prompts are pinned off; positional paths are flag-guarded behind `--`. See the
+  [security guide](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) for the
+  untrusted-nested-config boundary — vet `.gitmodules` with `submodule_list`
+  before updating an untrusted superproject.
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_git::{Git, GitApi, SubmoduleState, SubmoduleUpdate};
+# async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
+for sub in git.submodule_list(repo).await? {                 // Vec<Submodule>
+    println!("{} <- {}", sub.path.display(), sub.url);
+}
+for st in git.submodule_status(repo).await? {                // Vec<SubmoduleStatus>
+    if st.state == SubmoduleState::Uninitialized {
+        println!("{} is not initialized", st.path.display());
+    }
+}
+git.submodule_update(repo, SubmoduleUpdate::new().init().recursive())
+    .await?;                                                 // `submodule update --init --recursive`
+# Ok(()) }
+```
+
 ## Diff
 
 ```rust,ignore

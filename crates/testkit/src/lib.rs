@@ -358,6 +358,32 @@ impl GitSandbox {
     pub fn rev_parse(&self, rev: &str) -> String {
         run_capture("git", self.path(), &["rev-parse", rev])
     }
+
+    /// Add a submodule cloned from `source` (a local path acting as the
+    /// submodule's upstream) at the source's current HEAD, mounted at
+    /// repo-relative `path`, and commit the resulting `.gitmodules` + gitlink.
+    /// The full source history is cloned, so any commit already on `source` is
+    /// present in the submodule's object store afterwards — a later
+    /// `git submodule update` that re-checks-out a recorded commit needs no
+    /// fetch.
+    ///
+    /// git ≥ 2.38 blocks the `file://`/local-path transport for submodules by
+    /// default (CVE-2022-39253). Only a command-line `-c protocol.file.allow=
+    /// always` re-enables it (a config-file value is deliberately ignored for
+    /// submodule clones), so it is passed here on the `add` itself; git propagates
+    /// it to the child clone via `GIT_CONFIG_PARAMETERS`.
+    pub fn add_submodule(&self, source: &Path, path: &str) {
+        let src = source.to_str().expect("utf8 source path");
+        self.git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            src,
+            path,
+        ]);
+        self.commit(&format!("add submodule at {path}"));
+    }
 }
 
 /// A populated **bare** git repository — a local clone/fetch/push source for

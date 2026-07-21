@@ -454,6 +454,186 @@ pub(crate) fn parse_ls_remote_heads(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// One submodule declared in the superproject's `.gitmodules`, parsed from the
+/// machine-unambiguous `git config --file .gitmodules --list -z` source rather
+/// than a hand-rolled text scan of the ini-style file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Submodule {
+    /// The subsection name — the quoted key in `[submodule "<name>"]`. Usually
+    /// equal to [`path`](Self::path), but git allows the two to differ (a
+    /// renamed submodule keeps its original section name), so it is captured
+    /// separately.
+    pub name: String,
+    /// `submodule.<name>.path` — the repo-relative mount point of the submodule.
+    /// A [`PathBuf`] built from the raw config bytes (via
+    /// [`vcs_diff::path_from_bytes`]), so a path that is not valid UTF-8 (legal
+    /// on Unix) is carried losslessly, matching [`StatusEntry::path`].
+    pub path: PathBuf,
+    /// `submodule.<name>.url` — the upstream the submodule is fetched from.
+    /// Empty when the entry declares no `url` (a malformed `.gitmodules`).
+    pub url: String,
+    /// `submodule.<name>.branch`, the tracked branch for
+    /// `git submodule update --remote`; `None` when unset.
+    pub branch: Option<String>,
+}
+
+/// The sync state of a submodule, from the one-character prefix in the
+/// `git submodule status` output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SubmoduleState {
+    /// Initialized, and the checked-out commit matches the commit the
+    /// superproject records for it — no prefix (a leading space) in
+    /// `git submodule status`.
+    Current,
+    /// Not initialized (`-` prefix): the working tree is absent, so
+    /// `git submodule update --init` is needed before the submodule can be used.
+    Uninitialized,
+    /// The currently checked-out submodule commit does **not** match the commit
+    /// recorded in the superproject's index (`+` prefix) — the working submodule
+    /// is out of sync with the recorded gitlink.
+    RevisionMismatch,
+    /// The submodule has unresolved merge conflicts (`U` prefix).
+    Conflict,
+}
+
+/// One entry from `git submodule status`: the checked-out commit, the mount
+/// path, and the sync [`state`](Self::state) derived from the line's leading
+/// prefix character.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SubmoduleStatus {
+    /// The repo-relative mount path of the submodule. A [`PathBuf`] built from
+    /// the raw bytes (via [`vcs_diff::path_from_bytes`]), lossless on Unix.
+    pub path: PathBuf,
+    /// The submodule commit `git submodule status` reports: the checked-out
+    /// commit when initialized, or the commit the superproject records (the
+    /// gitlink) when uninitialized. Full object id (40-hex SHA-1 or 64-hex
+    /// SHA-256).
+    pub sha: String,
+    /// The sync state from the line's prefix character.
+    pub state: SubmoduleState,
+    /// The trailing `git describe` of the submodule HEAD (the `(…)` suffix) —
+    /// e.g. `heads/main`, a tag, or an abbreviated sha; `None` for an
+    /// uninitialized submodule, which has no such suffix.
+    pub describe: Option<String>,
+}
+
+/// Parse `git config --file .gitmodules --list -z` output into the declared
+/// submodules, preserving `.gitmodules` file order.
+///
+/// The `-z` framing makes each record `key\nvalue`, records separated by NUL —
+/// robust against a value containing `=` (which the non-`-z` `key=value` form
+/// would mis-split) or whitespace. Only `submodule.<name>.<attr>` keys are
+/// consumed; `<name>` is everything between `submodule.` and the final `.`
+/// (`rsplit_once`), so a subsection name that itself contains dots or slashes
+/// (e.g. `libs/sub`) is recovered intact while the trailing `<attr>`
+/// (`path`/`url`/`branch`, lowercased by git) is read off the end.
+pub(crate) fn parse_gitmodules_config(output: &[u8]) -> Vec<Submodule> {
+    let mut subs: Vec<Submodule> = Vec::new();
+    for record in output.split(|&b| b == 0).filter(|r| !r.is_empty()) {
+        // `key\nvalue`: split on the FIRST newline (the value may itself contain
+        // newlines under `-z`, though path/url/branch never do). A record with no
+        // newline is a bare valueless key → empty value.
+        let (key_bytes, value_bytes) = match record.iter().position(|&b| b == b'\n') {
+            Some(i) => (&record[..i], &record[i + 1..]),
+            None => (record, &b""[..]),
+        };
+        // Keys are ASCII config identifiers; a lossy decode is exact for them.
+        let key = String::from_utf8_lossy(key_bytes);
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+        // `<name>.<attr>` — the attr is the final dot-component; the name is
+        // everything before it (and may contain dots/slashes itself).
+        let Some((name, attr)) = rest.rsplit_once('.') else {
+            continue;
+        };
+        // Find-or-insert by name, preserving first-seen (file) order.
+        let sub = match subs.iter_mut().find(|s| s.name == name) {
+            Some(existing) => existing,
+            None => {
+                subs.push(Submodule {
+                    name: name.to_string(),
+                    path: PathBuf::new(),
+                    url: String::new(),
+                    branch: None,
+                });
+                subs.last_mut().expect("just pushed")
+            }
+        };
+        match attr {
+            "path" => sub.path = vcs_diff::path_from_bytes(value_bytes),
+            "url" => sub.url = String::from_utf8_lossy(value_bytes).into_owned(),
+            "branch" => sub.branch = Some(String::from_utf8_lossy(value_bytes).into_owned()),
+            // Other keys (update/ignore/shallow/…) intentionally not captured;
+            // `#[non_exhaustive]` leaves room to add them later.
+            _ => {}
+        }
+    }
+    subs
+}
+
+/// Parse `git submodule status` output into typed entries.
+///
+/// Each line is `<prefix><sha> <path>[ (<describe>)]`, where `<prefix>` is a
+/// single status character (a space, `-`, `+`, or `U`; see [`SubmoduleState`]).
+/// `git submodule status` has no `-z`/NUL framing, so the path is separated
+/// from the optional trailing ` (<describe>)` heuristically: when the line ends
+/// in `)`, the last ` (` opens the describe suffix and everything before it is
+/// the path; otherwise the whole remainder after the sha is the path. A line
+/// whose leading byte is not one of the four known status characters is skipped
+/// as unrecognized rather than mis-parsed.
+pub(crate) fn parse_submodule_status(output: &[u8]) -> Vec<SubmoduleStatus> {
+    let mut entries = Vec::new();
+    for line in output.split(|&b| b == b'\n') {
+        // Trim a trailing CR so CRLF-framed output (Windows) parses identically.
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        let state = match line[0] {
+            b' ' => SubmoduleState::Current,
+            b'-' => SubmoduleState::Uninitialized,
+            b'+' => SubmoduleState::RevisionMismatch,
+            b'U' => SubmoduleState::Conflict,
+            // No recognized prefix — skip rather than fold the first byte into
+            // the sha and emit a corrupt entry.
+            _ => continue,
+        };
+        let rest = &line[1..];
+        // `<sha> <path>…`: the sha runs up to the first space.
+        let Some(sp) = rest.iter().position(|&b| b == b' ') else {
+            continue;
+        };
+        let sha = String::from_utf8_lossy(&rest[..sp]).into_owned();
+        let tail = &rest[sp + 1..];
+        // Split off a trailing ` (<describe>)` suffix, if present.
+        let (path_bytes, describe) = match tail.last() {
+            Some(b')') => match tail
+                .windows(2)
+                .rposition(|w| w == b" (")
+                .filter(|&i| i + 2 < tail.len())
+            {
+                Some(i) => (
+                    &tail[..i],
+                    Some(String::from_utf8_lossy(&tail[i + 2..tail.len() - 1]).into_owned()),
+                ),
+                None => (tail, None),
+            },
+            _ => (tail, None),
+        };
+        entries.push(SubmoduleStatus {
+            path: vcs_diff::path_from_bytes(path_bytes),
+            sha,
+            state,
+            describe,
+        });
+    }
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,6 +966,118 @@ mod tests {
         assert_eq!(only_ins.deletions, 0);
         assert_eq!(parse_shortstat(""), DiffStat::default());
     }
+
+    #[test]
+    fn gitmodules_config_parses_z_framed_records() {
+        // `-z` layout: `key\nvalue\0` per record. Two attributes per submodule,
+        // in `.gitmodules` order, and a subsection name containing a slash.
+        let out = b"submodule.libs/sub.path\nlibs/sub\0\
+                    submodule.libs/sub.url\n../sub\0\
+                    submodule.libs/sub.branch\nmain\0\
+                    submodule.second.path\nsecond\0\
+                    submodule.second.url\n../sub\0";
+        let got = parse_gitmodules_config(out);
+        assert_eq!(
+            got,
+            vec![
+                Submodule {
+                    name: "libs/sub".into(),
+                    path: "libs/sub".into(),
+                    url: "../sub".into(),
+                    branch: Some("main".into()),
+                },
+                Submodule {
+                    name: "second".into(),
+                    path: "second".into(),
+                    url: "../sub".into(),
+                    branch: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn gitmodules_config_keeps_value_with_equals_and_ignores_non_submodule_keys() {
+        // A value containing `=` survives (the non-`-z` `key=value` split would
+        // corrupt it); a non-`submodule.*` key is ignored.
+        let out = b"submodule.x.url\nhttps://h/r?a=b\0\
+                    core.autocrlf\nfalse\0\
+                    submodule.x.path\nx\0";
+        let got = parse_gitmodules_config(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].url, "https://h/r?a=b");
+        assert_eq!(got[0].path, PathBuf::from("x"));
+    }
+
+    #[test]
+    fn gitmodules_config_empty_is_no_submodules() {
+        assert!(parse_gitmodules_config(b"").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gitmodules_config_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let out = b"submodule.s.path\ncaf\xff/sub\0submodule.s.url\n../sub\0";
+        let got = parse_gitmodules_config(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"caf\xff/sub");
+    }
+
+    #[test]
+    fn submodule_status_parses_all_prefix_states() {
+        // One line per state: current (space), revision-mismatch (+), conflict
+        // (U), uninitialized (-, no describe suffix).
+        let out = b" 833caa0 libs/sub (heads/main)\n\
+                    +530fd06 plus/mod (530fd06)\n\
+                    U000aaaa conf/mod (heads/topic)\n\
+                    -deadbee minus/mod\n";
+        let got = parse_submodule_status(out);
+        assert_eq!(got.len(), 4);
+
+        assert_eq!(got[0].state, SubmoduleState::Current);
+        assert_eq!(got[0].sha, "833caa0");
+        assert_eq!(got[0].path, PathBuf::from("libs/sub"));
+        assert_eq!(got[0].describe.as_deref(), Some("heads/main"));
+
+        assert_eq!(got[1].state, SubmoduleState::RevisionMismatch);
+        assert_eq!(got[1].path, PathBuf::from("plus/mod"));
+        assert_eq!(got[1].describe.as_deref(), Some("530fd06"));
+
+        assert_eq!(got[2].state, SubmoduleState::Conflict);
+        assert_eq!(got[2].path, PathBuf::from("conf/mod"));
+
+        assert_eq!(got[3].state, SubmoduleState::Uninitialized);
+        assert_eq!(got[3].sha, "deadbee");
+        assert_eq!(got[3].path, PathBuf::from("minus/mod"));
+        assert_eq!(got[3].describe, None);
+    }
+
+    #[test]
+    fn submodule_status_handles_spaced_path_and_crlf() {
+        // A path containing a space is kept whole (the ` (describe)` suffix is
+        // split off from the END), and a CRLF line terminator parses identically.
+        let out = b" abc123 dir with space/sub (v1.0)\r\n";
+        let got = parse_submodule_status(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, PathBuf::from("dir with space/sub"));
+        assert_eq!(got[0].describe.as_deref(), Some("v1.0"));
+    }
+
+    #[test]
+    fn submodule_status_without_describe_keeps_full_path() {
+        // No trailing `(...)`: the whole remainder after the sha is the path.
+        let out = b" abc123 libs/no-describe\n";
+        let got = parse_submodule_status(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, PathBuf::from("libs/no-describe"));
+        assert_eq!(got[0].describe, None);
+    }
+
+    #[test]
+    fn submodule_status_empty_is_no_entries() {
+        assert!(parse_submodule_status(b"").is_empty());
+    }
 }
 
 // Property-based fuzzing: the parsers are pure functions over *arbitrary* CLI
@@ -853,6 +1145,8 @@ mod proptests {
             let _ = parse_porcelain_v2(&s);
             let _ = parse_log(&s);
             let _ = parse_blame_porcelain(&s);
+            let _ = parse_gitmodules_config(s.as_bytes());
+            let _ = parse_submodule_status(s.as_bytes());
         }
 
         // porcelain v2 header/entry lines (with the `2`-consumes-next-record path)
