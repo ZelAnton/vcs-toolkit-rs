@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#
+# scripts/bench — run the generated Criterion parser benchmarks locally.
+#
+# The fixtures are built in the benchmark sources, so this leaves no large static
+# test data in the repository. CI compiles these targets with `--no-run`; timing
+# measurements intentionally stay local because shared runners are noisy.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/bench [--help]
+
+Runs the Criterion parser benchmarks in release mode for vcs-diff, vcs-git, and
+vcs-jj. Reports are written below target/criterion/. Open
+target/criterion/report/index.html (or an individual benchmark's index.html) in
+a browser to compare the current run with Criterion's saved baseline.
+
+CI only compiles these targets with `cargo bench --no-run --locked`; it never
+runs timing measurements or applies performance thresholds.
+EOF
+}
+
+case "${1:-}" in
+  "")
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "bench: unknown option: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+for crate in vcs-diff vcs-git vcs-jj; do
+  echo
+  echo "==> cargo bench --release -p $crate"
+  cargo bench --release -p "$crate"
+done
+
+echo
+echo "Benchmark reports: $REPO_ROOT/target/criterion/report/index.html"
+echo "Open that file in a browser to inspect Criterion's charts and comparisons."

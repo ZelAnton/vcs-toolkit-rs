@@ -68,6 +68,10 @@ processkit = "2.1"
 # Unified version: 0.15 satisfies both wrapper crate requirements (was 0.13) and processkit/mock needs.
 mockall = "0.15"
 
+# Statistical benchmarking harness for the large, pure parser fixtures in vcs-diff,
+# vcs-git, and vcs-jj. Dev-only: benchmark binaries are never published dependencies.
+criterion = "0.5"
+
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.
 # ---------------------------------------------------------------------------

@@ -45,6 +45,30 @@ of failing a PR. The test seams (the interface trait, the `mock` feature, and in
 **[testing guide](crates/testkit/docs/testing.md)** — production code depends on the
 trait, so tests need no real binary, temp repo, or network.
 
+## Benchmarks
+
+Run the parser benchmarks locally with a POSIX shell:
+
+```bash
+bash scripts/bench
+# or a single crate while iterating:
+cargo bench --release -p vcs-git
+```
+
+The fixtures are generated in each benchmark source, rather than stored as large
+repository files. `vcs-diff` measures parsing a 1,200-file unified diff with
+additions, deletions, and modifications; `vcs-git` measures a 2,500-record
+porcelain-v2 status plus mixed merge/diff3 conflict parsing and exact rendering;
+`vcs-jj` covers the equivalent native snapshot-style conflict path. Criterion writes
+the HTML report to `target/criterion/report/index.html` (with per-benchmark reports
+beneath `target/criterion/`); open it in a browser to compare the current sample with
+the saved baseline and inspect the distributions/charts.
+
+CI deliberately runs only `cargo bench --no-run --locked`, which compiles every
+benchmark and fails on a compile error without collecting timing data or enforcing a
+performance threshold. Run the benchmarks locally for numbers: shared CI runners are
+too noisy for performance conclusions.
+
 ## Conventions
 
 ### Dependency management
