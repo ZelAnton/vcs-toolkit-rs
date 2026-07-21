@@ -455,19 +455,50 @@ fn exact(name: &str) -> String {
     format!("exact:{name}")
 }
 
-/// Injection guard for the remote segment of jj's positional `<name>@<remote>`
-/// bookmark-tracking pattern. Unlike a bare `<NAMES>`/`--remote` slot, the
-/// remote segment of this composite form is **not** itself parsed as a
-/// string-pattern: a `exact:`/`glob:` prefix on it is taken as part of the
-/// *literal* remote name instead of being interpreted (verified on jj 0.42:
-/// `bookmark track exact:main@exact:origin` warns "No matching remote
-/// bookmarks for names: main@\"exact:origin\"" and tracks nothing — a silent
-/// no-op, not an error — and `main@glob:origin` is rejected outright with
-/// "remote bookmark must be specified in bookmark@remote form"). The segment
-/// is, however, still glob-matched positionally (`main@ori?in` tracks
-/// `origin`), so a hostile/glob-bearing remote name must be rejected before
-/// spawn rather than wrapped in `exact:`.
-fn reject_glob_like(what: &str, value: &str) -> Result<()> {
+/// Validation guard for the remote segment of jj's positional
+/// `<name>@<remote>` bookmark-tracking pattern. jj 0.42 parses an empty remote
+/// in `exact:main@` as the empty remote name, warns `No matching remote
+/// bookmarks`, and exits successfully without changing anything; whitespace
+/// behaves equivalently for that whitespace-only remote name. The legacy parser
+/// also splits on the **last** `@`, so `exact:main@origin@backup` is interpreted
+/// as bookmark `exact:main@origin` on remote `backup`, not remote
+/// `origin@backup`. Refuse both ambiguous forms before spawning.
+///
+/// Unlike a bare `<NAMES>`/`--remote` slot, the remote segment of this composite
+/// form is **not** itself parsed as a string-pattern: an `exact:`/`glob:` prefix
+/// on it is taken as part of the *literal* remote name instead of being
+/// interpreted (verified on jj 0.42: `bookmark track exact:main@exact:origin`
+/// warns "No matching remote bookmarks for names: main@\"exact:origin\"" and
+/// tracks nothing — a silent no-op, not an error — and `main@glob:origin` is
+/// rejected outright with "remote bookmark must be specified in bookmark@remote
+/// form"). The segment is, however, still glob-matched positionally
+/// (`main@ori?in` tracks `origin`), so a hostile/glob-bearing remote name must
+/// be rejected before spawn rather than wrapped in `exact:`.
+fn reject_bookmark_track_remote(what: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} must not be empty or whitespace-only — jj would silently match no \
+                     remote bookmarks"
+                ),
+            ),
+        ));
+    }
+    if value.contains('@') {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {value:?} contains `@`, which jj's legacy bookmark@remote parser \
+                     would split ambiguously"
+                ),
+            ),
+        ));
+    }
     if value.contains(['*', '?', '[', ']']) {
         return Err(Error::spawn(
             BINARY,
@@ -723,6 +754,13 @@ pub trait JjApi: Send + Sync {
     /// operation's working-copy commit and no new operation is recorded.
     async fn reachable_bookmarks_ignoring_working_copy(&self, dir: &Path) -> Result<Vec<Bookmark>>;
     /// Track a remote bookmark (`jj bookmark track <name>@<remote>`).
+    ///
+    /// jj 0.42 accepts `exact:<name>@` as an empty remote, prints a `No matching
+    /// remote bookmarks` warning, and exits successfully without changing
+    /// anything. It also splits the deprecated composite form at the last `@`,
+    /// so `@` in `remote` changes which bookmark and remote jj sees. Therefore
+    /// `remote` must be non-empty after trimming and must not contain `@` or glob
+    /// metacharacters; invalid values are rejected before jj is spawned.
     async fn bookmark_track(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
     /// Point a bookmark at `revision` (`jj bookmark set <name> -r <revision>`).
     async fn bookmark_set(
@@ -1456,9 +1494,10 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // the remote segment of this `<name>@<remote>` positional form is
         // *not* itself pattern-syntax — a `exact:` prefix on it is taken as
         // part of the literal remote name and silently matches nothing
-        // (verified on jj 0.42: see `reject_glob_like`'s doc comment) — so the
-        // remote is validated against glob metacharacters instead of wrapped.
-        reject_glob_like("remote", remote)?;
+        // (verified on jj 0.42: see `reject_bookmark_track_remote`'s doc
+        // comment) — so validate the composite remote segment instead of
+        // trying to wrap it in `exact:`.
+        reject_bookmark_track_remote("remote", remote)?;
         let target = format!("exact:{}@{remote}", name.as_str());
         self.core
             .run_unit(self.cmd_in(dir, ["bookmark", "track", target.as_str()]))
@@ -3426,17 +3465,39 @@ mod tests {
     async fn bookmark_track_rejects_glob_like_remote() {
         // Unlike the bookmark segment, the remote segment of jj's positional
         // `<name>@<remote>` pattern isn't itself pattern-syntax — wrapping it
-        // in `exact:` would silently no-op (see `reject_glob_like`'s doc
+        // in `exact:` would silently no-op (see `reject_bookmark_track_remote`'s doc
         // comment) rather than exact-match, so a glob-bearing remote must be
         // rejected before spawn instead.
         for remote in ["*", "o?igin", "[origin]"] {
             let rec = RecordingRunner::replying(Reply::ok(""));
             let jj = Jj::with_runner(&rec);
+            let err = jj
+                .bookmark_track(Path::new("."), &bn("main"), remote)
+                .await
+                .expect_err("glob-like remote must be rejected before spawn");
             assert!(
-                jj.bookmark_track(Path::new("."), &bn("main"), remote)
-                    .await
-                    .is_err(),
-                "remote {remote:?} should be rejected before spawn"
+                vcs_cli_support::is_invalid_input(&err),
+                "remote {remote:?} should have an invalid-input error: {err:?}"
+            );
+            assert!(
+                rec.calls().is_empty(),
+                "must not spawn for remote {remote:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bookmark_track_rejects_blank_and_ambiguous_remotes_before_spawning() {
+        for remote in ["", " ", "\t", "origin@backup"] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+            let err = jj
+                .bookmark_track(Path::new("."), &bn("main"), remote)
+                .await
+                .expect_err("blank or `@`-containing remote must be rejected before spawn");
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "remote {remote:?} should have an invalid-input error: {err:?}"
             );
             assert!(
                 rec.calls().is_empty(),
