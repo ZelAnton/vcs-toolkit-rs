@@ -81,6 +81,9 @@ These apply across the wrapper crates:
   tiers, the SemVer + MSRV policy, and the public-API review gate.
 - **[Extending vcs-toolkit-rs](extending.md)** — the contributor workflow for adding new
   capabilities: CLI methods, facade operations, MCP tools, and decision documentation.
+- **[CLI command coverage index](command-index.md)** — the reverse lookup, "I
+  know the CLI command — what's the typed method?" (or "→ escape hatch"), for
+  git/jj/gh/glab/tea; also a map of the untyped surface.
 
 ## How the guides relate
 

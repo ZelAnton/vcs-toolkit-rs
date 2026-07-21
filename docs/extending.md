@@ -107,7 +107,11 @@ for a behavior the hermetic seam cannot prove.
 
 Finish by updating the wrapper trait and implementation, its per-crate guide,
 and that crate's `CHANGELOG.md`. Crates publish independently, so a
-user-visible method needs the owning crate's release note.
+user-visible method needs the owning crate's release note. Also update the
+[CLI command coverage index](command-index.md) — add (or correct) the row for
+the new method under its wrapper's table, and drop it from that wrapper's "not
+modeled" list if it was mentioned there; the index goes stale silently
+otherwise.
 
 ## 2. Adding a facade operation
 
