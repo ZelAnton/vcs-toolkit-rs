@@ -22,6 +22,16 @@ crates; tag releases as `vcs-forge-v<version>`.
   map gains `issue_close` / `issue_reopen` / `issue_comment` fields. The three
   `ForgeApi` trait methods have defaulted `Error::Unsupported` bodies so external
   implementers keep compiling.
+- **Deferred metadata fields on `ForgePr`/`ForgeIssue`/`ForgeRelease`.** `ForgePr`
+  and `ForgeIssue` each gain `author: Option<String>`, `created_at: Option<String>`
+  / `updated_at: Option<String>` (RFC 3339), and `milestone: Option<String>`;
+  `ForgeRelease` gains `author: Option<String>`. All are additive on the
+  `#[non_exhaustive]` DTOs. GitHub and GitLab populate them as confirmed
+  `Some(..)` (an empty author string is a *confirmed* deleted/anonymised account,
+  distinct from `None`); Gitea always reports them `None` — `tea` has no such
+  columns. New chained setters (`.author(..)`, `.created_at(..)`,
+  `.updated_at(..)`, `.milestone(..)`) build them on `ForgePr::new`/
+  `ForgeIssue::new`/`ForgeRelease::new`.
 
 ### Changed
 -

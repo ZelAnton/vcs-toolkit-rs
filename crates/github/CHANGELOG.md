@@ -18,6 +18,14 @@ crates; tag releases as `vcs-github-v<version>`.
   guard needed). All three are `at`-forwarded and have defaulted
   `Error::Unsupported` trait bodies so external implementers keep compiling; the
   exact argv is pinned by hermetic tests.
+- **`PullRequest`/`Issue`/`Release` gain `author`/timestamp/`milestone` fields.**
+  `PullRequest` and `Issue` gain `author: String`, `created_at: String`,
+  `updated_at: String` (all `gh --json` RFC 3339/login fields), and
+  `milestone: Option<String>`; `Release` gains `author: String`. `author` and
+  `milestone` flatten gh's nested `{"login": …}`/`{"title": …}` objects (a `null`
+  author — a deleted account — becomes an empty string; a `null` milestone
+  becomes `None`). `PR_FIELDS`/`ISSUE_LIST_FIELDS`/`ISSUE_VIEW_FIELDS`/
+  `RELEASE_LIST_FIELDS`/`RELEASE_VIEW_FIELDS` are widened accordingly.
 
 ### Changed
 -

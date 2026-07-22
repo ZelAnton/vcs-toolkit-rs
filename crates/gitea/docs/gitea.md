@@ -56,6 +56,14 @@ positional and always lists). Consequences:
 - **`repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are simply
   absent** from `GiteaApi`. Through the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade they return
   `Error::Unsupported` for the Gitea backend (`err.is_unsupported()`).
+- **No labels/assignees/author/timestamp/milestone columns.** `tea`'s PR/issue
+  table output (and the issue detail view) carries none of these, so this crate's
+  `PullRequest`/`Issue`/`Release` types don't model them either — through the
+  [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade a
+  Gitea-backed `ForgePr`/`ForgeIssue`/`ForgeRelease` reports `labels`,
+  `assignees`, `author`, `created_at`, `updated_at`, and `milestone` as `None` —
+  *unknown*, never a false empty/confirmed value (GitHub/GitLab report `Some(..)`
+  for all of these).
 
 ## Construction
 

@@ -63,10 +63,11 @@
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
 //!   `OPEN` / `opened` / `open` all read as one state. Fields a backend can't
 //!   report follow a **per-field support contract** — they are `Option` (a PR's
-//!   `draft`/`labels`/`assignees`, a repo's `private`, a release's
-//!   `url`/`draft`/`prerelease`), so `None` ("backend can't/didn't report it") is
-//!   distinct from a *confirmed* `Some(false)`/empty list, never a false sentinel
-//!   (see each DTO's field docs).
+//!   `draft`/`labels`/`assignees`/`author`/`created_at`/`updated_at`/`milestone`,
+//!   an issue's identical set, a repo's `private`, a release's
+//!   `url`/`draft`/`prerelease`/`author`), so `None` ("backend can't/didn't report
+//!   it") is distinct from a *confirmed* `Some(false)`/empty list, never a false
+//!   sentinel (see each DTO's field docs).
 //! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
@@ -1846,6 +1847,100 @@ mod tests {
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].labels, Some(vec!["bug".to_string()]));
         assert_eq!(issues[0].assignees, Some(vec!["steiza".to_string()]));
+    }
+
+    // T-094: the deferred `author`/`created_at`/`updated_at`/`milestone` fields,
+    // per backend — GitHub/GitLab confirm them (flattening nested author/milestone
+    // objects, including the `null` cases), Gitea always reports them unknown.
+    #[tokio::test]
+    async fn author_timestamps_and_milestone_mapping_per_backend() {
+        // GitHub PR: author/milestone flatten from nested objects; timestamps
+        // pass through directly.
+        let json = r#"[{"number":7,"title":"X","state":"OPEN","isDraft":false,
+            "headRefName":"feat","baseRefName":"main","url":"u",
+            "author":{"login":"octocat"},
+            "createdAt":"2026-07-01T00:00:00Z","updatedAt":"2026-07-02T00:00:00Z",
+            "milestone":{"title":"v1.0"}}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(prs[0].author.as_deref(), Some("octocat"));
+        assert_eq!(prs[0].created_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(prs[0].updated_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(prs[0].milestone.as_deref(), Some("v1.0"));
+
+        // GitHub PR: a `null` author (deleted account) is a *confirmed* empty
+        // string, and a `null` milestone (none attached) is `None` — neither is
+        // the "backend can't report it" `None` Gitea uses below.
+        let json = r#"[{"number":8,"title":"Y","state":"OPEN","isDraft":false,
+            "headRefName":"f","baseRefName":"main","url":"u",
+            "author":null,"milestone":null}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(
+            prs[0].author.as_deref(),
+            Some(""),
+            "confirmed deleted account"
+        );
+        assert_eq!(prs[0].milestone, None, "no milestone attached");
+
+        // GitLab MR: author/milestone flatten from nested objects too.
+        let json = r#"[{"iid":12,"title":"X","state":"opened","source_branch":"feat",
+            "target_branch":"main","web_url":"u","draft":false,
+            "author":{"username":"steiza"},
+            "created_at":"2026-07-01T00:00:00Z","updated_at":"2026-07-02T00:00:00Z",
+            "milestone":{"title":"v2.0"}}]"#;
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(prs[0].author.as_deref(), Some("steiza"));
+        assert_eq!(prs[0].created_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(prs[0].updated_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(prs[0].milestone.as_deref(), Some("v2.0"));
+
+        // GitHub issue: same flatten/null contract as the PR mapper.
+        let json = r#"{"number":3,"title":"Docs","state":"OPEN","body":"b","url":"u",
+            "author":{"login":"andyfeller"},
+            "createdAt":"2026-07-01T00:00:00Z","updatedAt":"2026-07-02T00:00:00Z",
+            "milestone":{"title":"v1.0"}}"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "issue", "view"], Reply::ok(json)));
+        let issue = forge.issue_view(3).await.unwrap();
+        assert_eq!(issue.author.as_deref(), Some("andyfeller"));
+        assert_eq!(issue.milestone.as_deref(), Some("v1.0"));
+
+        // GitHub release: author flattens from the nested object.
+        let json = r#"[{"tagName":"v1","name":"One","isLatest":true,"isDraft":false,
+            "isPrerelease":false,"publishedAt":"2026-07-01T00:00:00Z",
+            "author":{"login":"octocat"}}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "release", "list"], Reply::ok(json)));
+        let rels = forge.release_list().await.unwrap();
+        assert_eq!(rels[0].author.as_deref(), Some("octocat"));
+
+        // Gitea PR/issue/release: author/timestamps/milestone are all unknown
+        // (`None`) — `tea` has no such columns.
+        let json =
+            r#"[{"index":"3","title":"T","state":"open","head":"f","base":"main","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(
+            (
+                prs[0].author.clone(),
+                prs[0].created_at.clone(),
+                prs[0].updated_at.clone(),
+                prs[0].milestone.clone()
+            ),
+            (None, None, None, None)
+        );
+
+        let json = r#"[{"index":"5","title":"I","state":"open","body":"b","url":"u"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(json)));
+        let issues = forge.issue_list().await.unwrap();
+        assert_eq!(issues[0].author, None);
+        assert_eq!(issues[0].milestone, None);
+
+        let json = r#"[{"tag-_name":"v1","title":"One","status":"released",
+            "published _at":"2026-07-01T00:00:00Z"}]"#;
+        let forge = gitea(ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)));
+        let rels = forge.release_list().await.unwrap();
+        assert_eq!(rels[0].author, None, "tea releases have no author column");
     }
 
     // A GitHub release *view* fills url/body as `Some`, while the lean list leaves

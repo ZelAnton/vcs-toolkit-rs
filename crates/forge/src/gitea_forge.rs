@@ -283,6 +283,12 @@ fn map_issue(i: Issue) -> ForgeIssue {
         // confirmed "no labels / unassigned" (see `ForgeIssue::labels`/`assignees`).
         labels: None,
         assignees: None,
+        // `tea`'s issue list/view has no author/timestamp/milestone columns either
+        // — all four are *unknown* (`None`), never a false confirmed value.
+        author: None,
+        created_at: None,
+        updated_at: None,
+        milestone: None,
     }
 }
 
@@ -301,6 +307,8 @@ fn map_release(r: Release) -> ForgeRelease {
         // confirmed values.
         draft: Some(r.draft),
         prerelease: Some(r.prerelease),
+        // `tea releases` has no author column, so this is *unknown* (`None`).
+        author: None,
     }
 }
 
@@ -328,5 +336,11 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         draft: None,
         labels: None,
         assignees: None,
+        // `tea`'s PR list/view has no author/timestamp/milestone columns either
+        // — all four are *unknown* (`None`), never a false confirmed value.
+        author: None,
+        created_at: None,
+        updated_at: None,
+        milestone: None,
     }
 }
