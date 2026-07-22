@@ -637,6 +637,8 @@ pub fn vcs_mcp::VcsMcpServer::repo_push(&self, rmcp::handler::server::wrapper::p
 pub fn vcs_mcp::VcsMcpServer::repo_push_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_rebase(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::RebaseParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_rebase_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::repo_remotes(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::repo_remotes_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_remove_worktree(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::RemoveWorktreeParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_remove_worktree_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_rename_branch(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::RenameBranchParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>

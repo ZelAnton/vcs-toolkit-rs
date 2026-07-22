@@ -105,7 +105,11 @@ submits a request-changes review on **GitHub** (`gh pr review --request-changes
 --body`) and **Gitea** (`tea pr reject <n> <reason>`), but is **`Unsupported` on
 GitLab** — GitLab's review model is approve/revoke, with no request-changes action
 (withdraw an approval via the `vcs-gitlab` wrapper's `mr_revoke`). Like `pr_comment`,
-`pr_request_changes` rejects an empty/whitespace-only body up front.
+`pr_request_changes` rejects an empty/whitespace-only body up front. Which review
+kinds a backend supports is a [`Forge::supports_review_kind`]`(`[`ReviewKind`]`)`
+probe away — `Approve` everywhere, `RequestChanges` off GitLab, and a comment-only
+`Comment` review GitHub-only (GitLab and Gitea have no comment-review verb; post an
+ordinary comment with `pr_comment`).
 
 Every method mirrors an inherent method on [`Forge`]; the object-safe `ForgeApi`
 trait adds nothing but the `&dyn` boundary.
@@ -209,8 +213,12 @@ GitLab (which has no draft/pre-release concept) requesting either returns
 
 The CLIs differ in coverage. Gitea's `tea` lacks five operations and GitLab lacks
 the request-changes review action; these return
-[`Error::Unsupported { forge, operation }`] (the call does **not** spawn);
-`delete_branch` on `pr_close` is GitHub-only.
+[`Error::Unsupported { forge, operation }`] (the call does **not** spawn). Finer
+*option*-grain gaps sit on otherwise-supported operations and return the same
+`Unsupported` **before spawning**: `pr_merge`'s `auto`/`delete_branch` and `pr_close`'s
+`delete_branch` are GitHub-only, and a comment-only review is too. Probe them up front
+with [`Forge::supports_review_kind`] / [`Forge::supports_merge_option`] /
+[`Forge::supports_pr_close_delete_branch`].
 
 | Operation | GitHub | GitLab | Gitea |
 |---|:---:|:---:|:---:|
@@ -220,13 +228,15 @@ the request-changes review action; these return
 | `issue_close` / `issue_reopen` / `issue_comment` | ✅ | ✅ | ✅ |
 | `release_create` / `release_delete` | ✅ | ✅ | ✅ |
 | `release_create` honours `draft` / `prerelease` | ✅ | ❌ Unsupported (GitLab has no draft/pre-release concept) | ✅ |
+| `pr_merge` honours `auto` / `delete_branch` | ✅ | ❌ Unsupported (rejected before spawn) | ❌ Unsupported (rejected before spawn) |
 | `pr_request_changes` | ✅ | ❌ Unsupported (GitLab review is approve/revoke — use `mr_revoke` on the wrapper) | ✅ (`tea pr reject`) |
+| comment-only review (`ReviewKind::Comment`) | ✅ (`gh pr review --comment`) | ❌ Unsupported | ❌ Unsupported |
 | `repo_view` | ✅ | ✅ | ❌ Unsupported |
 | `pr_mark_ready` | ✅ | ✅ | ❌ Unsupported |
 | `pr_checks` | ✅ | ✅ | ❌ Unsupported |
 | `pr_diff` | ✅ | ✅ | ❌ Unsupported (`tea` has no diff command) |
 | `release_view` | ✅ | ✅ | ❌ Unsupported (`tea releases` only lists — filter `release_list`) |
-| `pr_close` honours `delete_branch` | ✅ | ignored | ignored |
+| `pr_close` honours `delete_branch` | ✅ | ❌ Unsupported (rejected before spawn) | ❌ Unsupported (rejected before spawn) |
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |
 | `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | ~50 (server page cap) |
 
@@ -248,12 +258,16 @@ match on the backend) or [`Forge::capabilities`] (one auth probe, then the whole
 flat map), e.g. to hide an unavailable button:
 
 ```rust,ignore
-# use vcs_forge::{Forge, ForgeOp};
+# use vcs_forge::{Forge, ForgeOp, ReviewKind, MergeOption};
 # fn demo(forge: &Forge) {
 if forge.supports(ForgeOp::PrChecks) {
     // render the "CI checks" button
 }
 if forge.supports(ForgeOp::ReleaseView) { /* show a release detail link */ }
+// Finer, option/review-kind gaps on otherwise-supported operations:
+if forge.supports_review_kind(ReviewKind::RequestChanges) { /* show "request changes" */ }
+if forge.supports_merge_option(MergeOption::DeleteBranch) { /* offer "delete branch on merge" */ }
+if forge.supports_pr_close_delete_branch() { /* offer "delete branch on close" */ }
 # }
 ```
 

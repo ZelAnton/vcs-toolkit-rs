@@ -188,7 +188,7 @@ mod jj_backend;
 
 pub use dto::{
     AnnotationLine, BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat,
-    FileChange, FileDiff, MergeProbe, OperationState, RepoSnapshot, UpstreamTracking,
+    FileChange, FileDiff, MergeProbe, OperationState, Remote, RepoSnapshot, UpstreamTracking,
     WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
@@ -682,6 +682,20 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::local_branches(g, &self.cwd).await,
             Backend::Jj(j) => jj_backend::local_branches(j, &self.cwd).await,
+        }
+    }
+
+    /// Configured remotes and their fetch URLs.
+    ///
+    /// Git reads `git remote -v`; jj reads `jj git remote list`. The facade owns
+    /// [`Remote`] rather than exposing `vcs_jj::Remote`, so callers receive the
+    /// same backend-agnostic DTO regardless of which client drives this repo.
+    /// On jj this is a normal query and may snapshot the working copy, matching
+    /// the rest of the facade's live read methods.
+    pub async fn remotes(&self) -> Result<Vec<Remote>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::remotes(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::remotes(j, &self.cwd).await,
         }
     }
 
@@ -1384,6 +1398,7 @@ facade_trait! {
         fn current_branch() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
         fn local_branches() -> Result<Vec<String>>;
+        fn remotes() -> Result<Vec<Remote>>;
         fn local_branches_readonly() -> Result<Vec<String>>;
         fn branch_exists(name: &str) -> Result<bool>;
         fn has_uncommitted_changes() -> Result<bool>;
@@ -2516,6 +2531,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remotes_dispatches_git_to_the_common_dto() {
+        let repo = git_repo(ScriptedRunner::new().on(
+            ["git", "remote", "-v"],
+            Reply::ok("origin https://example.test/repo.git (fetch)\n"),
+        ));
+        assert_eq!(
+            repo.remotes().await.unwrap(),
+            vec![Remote::new("origin", "https://example.test/repo.git")]
+        );
+    }
+
+    #[tokio::test]
     async fn branch_exists_reads_show_ref_exit() {
         let yes = git_repo(ScriptedRunner::new().on(["git", "show-ref"], Reply::ok("")));
         assert!(yes.branch_exists("main").await.unwrap());
@@ -2603,6 +2630,18 @@ mod tests {
             Reply::ok("1\t\t\"main\"\tcmt\n1\t\t\"feat\"\tm2\n"),
         ));
         assert_eq!(repo.local_branches().await.unwrap(), ["main", "feat"]);
+    }
+
+    #[tokio::test]
+    async fn remotes_dispatches_jj_to_the_common_dto() {
+        let repo = jj_repo(ScriptedRunner::new().on(
+            ["jj", "git", "remote", "list"],
+            Reply::ok("origin https://example.test/repo.git\n"),
+        ));
+        assert_eq!(
+            repo.remotes().await.unwrap(),
+            vec![Remote::new("origin", "https://example.test/repo.git")]
+        );
     }
 
     #[tokio::test]

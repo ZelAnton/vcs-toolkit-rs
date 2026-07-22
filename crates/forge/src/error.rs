@@ -11,9 +11,18 @@ pub enum Error {
     /// An underlying `vcs-github` / `vcs-gitlab` / `vcs-gitea` (i.e. `processkit`)
     /// error.
     Forge(processkit::Error),
-    /// The operation isn't available on this forge's CLI — e.g. `repo_view`,
-    /// `pr_mark_ready`, and `pr_checks` on Gitea, whose `tea` has no command for
-    /// them. The `operation` is the [`ForgeApi`](crate::ForgeApi) method name.
+    /// The operation — or a requested **option** of it — isn't available on this
+    /// forge's CLI. Two shapes share this variant: a whole operation a backend lacks
+    /// (e.g. `repo_view`, `pr_mark_ready`, and `pr_checks` on Gitea, whose `tea` has no
+    /// command for them), and a supported operation carrying an option the backend
+    /// can't express — `pr_merge`'s `auto`/`delete_branch` and `pr_close`'s
+    /// source-branch deletion (GitHub-only), or a request-changes review on GitLab
+    /// (approve/revoke only). The facade rejects both **before spawning**. The
+    /// `operation` is the [`ForgeApi`](crate::ForgeApi) method name. Probe any of these
+    /// up front with [`Forge::supports`](crate::Forge::supports) /
+    /// [`supports_review_kind`](crate::Forge::supports_review_kind) /
+    /// [`supports_merge_option`](crate::Forge::supports_merge_option) /
+    /// [`supports_pr_close_delete_branch`](crate::Forge::supports_pr_close_delete_branch).
     #[non_exhaustive]
     Unsupported {
         /// Which forge lacks the operation.
@@ -153,12 +162,13 @@ impl Error {
 
     /// Whether this is an [`Unsupported`](Error::Unsupported) operation (rather
     /// than a forge/network failure). Covers **both** the facade's own variant
-    /// (an operation a backend's CLI lacks entirely, e.g. `pr_checks` on Gitea)
-    /// **and** a wrapper-level [`processkit::Error::Unsupported`] bubbling up
-    /// through [`Forge`](crate::Error::Forge) — the case where the operation
-    /// exists but a requested *option* can't be expressed on that backend (e.g.
-    /// `auto`/`delete_branch` for `pr_merge` on GitLab/Gitea). Both are the same
-    /// "this backend can't do that" signal a caller acts on.
+    /// (an operation — or a requested option — a backend can't do, e.g. `pr_checks`
+    /// on Gitea, or `auto`/`delete_branch` on `pr_merge` and source-branch deletion on
+    /// `pr_close` off GitHub, which the facade rejects before spawning) **and** a
+    /// wrapper-level [`processkit::Error::Unsupported`] bubbling up through
+    /// [`Forge`](crate::Error::Forge) — the same "this backend can't do that" signal,
+    /// whether the facade caught it up front or a wrapper reported it. A caller acts on
+    /// either identically.
     pub fn is_unsupported(&self) -> bool {
         matches!(
             self,

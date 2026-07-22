@@ -1589,6 +1589,32 @@ impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__remote_head_br
 impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__remote_head_branch::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__remote_head_branch::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__remote_head_branch::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__remote_list
+pub struct vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
 pub mod vcs_git::__mock_MockGitApi_GitApi::__remote_set_url
 pub struct vcs_git::__mock_MockGitApi_GitApi::__remote_set_url::Expectation
 impl vcs_git::__mock_MockGitApi_GitApi::__remote_set_url::Expectation
@@ -3058,6 +3084,7 @@ pub fn vcs_git::Git<R>::remote_add<'life0, 'life1, 'life2, 'life3, 'async_trait>
 pub fn vcs_git::Git<R>::remote_branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::remote_branches<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::remote_head_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::remote_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::remote_set_url<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::remote_url<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::rename_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -3166,6 +3193,7 @@ pub async fn vcs_git::GitAt<'a, R>::remote_add(&self, &str, &str) -> processkit:
 pub async fn vcs_git::GitAt<'a, R>::remote_branch_exists(&self, &vcs_git::RefName) -> processkit::error::Result<bool>
 pub async fn vcs_git::GitAt<'a, R>::remote_branches(&self, &str) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>>
 pub async fn vcs_git::GitAt<'a, R>::remote_head_branch(&self) -> processkit::error::Result<core::option::Option<alloc::string::String>>
+pub async fn vcs_git::GitAt<'a, R>::remote_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>
 pub async fn vcs_git::GitAt<'a, R>::remote_set_url(&self, &str, &str) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::remote_url(&self, &str) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_git::GitAt<'a, R>::rename_branch(&self, &vcs_git::RefName, &vcs_git::RefName) -> processkit::error::Result<()>
@@ -3396,6 +3424,7 @@ pub fn vcs_git::MockGitApi::expect_remote_add(&mut self) -> &mut vcs_git::__mock
 pub fn vcs_git::MockGitApi::expect_remote_branch_exists(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_branch_exists::Expectation
 pub fn vcs_git::MockGitApi::expect_remote_branches(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_branches::Expectation
 pub fn vcs_git::MockGitApi::expect_remote_head_branch(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_head_branch::Expectation
+pub fn vcs_git::MockGitApi::expect_remote_list(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_list::Expectation
 pub fn vcs_git::MockGitApi::expect_remote_set_url(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_set_url::Expectation
 pub fn vcs_git::MockGitApi::expect_remote_url(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__remote_url::Expectation
 pub fn vcs_git::MockGitApi::expect_rename_branch(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__rename_branch::Expectation
@@ -3500,6 +3529,7 @@ pub fn vcs_git::MockGitApi::remote_add<'life0, 'life1, 'life2, 'life3, 'async_tr
 pub fn vcs_git::MockGitApi::remote_branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::remote_branches<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::remote_head_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::remote_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::remote_set_url<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::MockGitApi::remote_url<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::rename_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -3572,6 +3602,24 @@ impl core::marker::Unpin for vcs_git::RefName
 impl core::marker::UnsafeUnpin for vcs_git::RefName
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::RefName
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::RefName
+#[non_exhaustive] pub struct vcs_git::Remote
+pub vcs_git::Remote::name: alloc::string::String
+pub vcs_git::Remote::url: alloc::string::String
+impl core::clone::Clone for vcs_git::Remote
+pub fn vcs_git::Remote::clone(&self) -> vcs_git::Remote
+impl core::cmp::Eq for vcs_git::Remote
+impl core::cmp::PartialEq for vcs_git::Remote
+pub fn vcs_git::Remote::eq(&self, &vcs_git::Remote) -> bool
+impl core::fmt::Debug for vcs_git::Remote
+pub fn vcs_git::Remote::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_git::Remote
+impl core::marker::Freeze for vcs_git::Remote
+impl core::marker::Send for vcs_git::Remote
+impl core::marker::Sync for vcs_git::Remote
+impl core::marker::Unpin for vcs_git::Remote
+impl core::marker::UnsafeUnpin for vcs_git::Remote
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::Remote
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::Remote
 pub struct vcs_git::RevSpec(_)
 impl vcs_git::RevSpec
 pub fn vcs_git::RevSpec::as_str(&self) -> &str
@@ -3856,6 +3904,7 @@ pub fn vcs_git::GitApi::remote_add<'life0, 'life1, 'life2, 'life3, 'async_trait>
 pub fn vcs_git::GitApi::remote_branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::remote_branches<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::remote_head_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::remote_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::remote_set_url<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::GitApi::remote_url<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::rename_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -3956,6 +4005,7 @@ pub fn vcs_git::MockGitApi::remote_add<'life0, 'life1, 'life2, 'life3, 'async_tr
 pub fn vcs_git::MockGitApi::remote_branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::remote_branches<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::remote_head_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::remote_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::remote_set_url<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::MockGitApi::remote_url<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::rename_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -4056,6 +4106,7 @@ pub fn vcs_git::Git<R>::remote_add<'life0, 'life1, 'life2, 'life3, 'async_trait>
 pub fn vcs_git::Git<R>::remote_branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::remote_branches<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::remote_head_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::remote_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::remote_set_url<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::remote_url<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::rename_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait

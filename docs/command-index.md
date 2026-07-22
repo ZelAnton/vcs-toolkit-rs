@@ -62,6 +62,7 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 | `remote_branch_exists` | `ls-remote origin refs/heads/<name>` | fully-qualified ref, 10s timeout |
 | `remote_head_branch` | `symbolic-ref refs/remotes/origin/HEAD` | `None` when unset |
 | `remote_url` | `remote get-url <remote>` | |
+| `remote_list` | `remote -v` | parsed `Vec<Remote>`; one fetch-URL row per remote |
 | `upstream` | `symbolic-ref --quiet --short HEAD` then `rev-parse --abbrev-ref --symbolic-full-name @{u}` | `None` on no upstream; error on detached |
 | `remote_branches` | `ls-remote --heads <remote>` | no fetch |
 | `rev_list_count` | `rev-list --count <range>` | |
@@ -473,7 +474,9 @@ dependency:
 
 - **`vcs-core`** — `Repo::git()` / `Repo::jj()` (the raw client, still
   `dir`-taking) and `Repo::git_at()` / `Repo::jj_at()` (the cwd-bound view,
-  `None` for the other backend). See [Escape hatches to the underlying
+  `None` for the other backend). Its portable `Repo::remotes()` wraps either
+  `GitApi::remote_list` or `JjApi::remote_list` and returns a facade-owned
+  name/URL DTO. See [Escape hatches to the underlying
   client](../crates/core/docs/core.md#escape-hatches-to-the-underlying-client).
 - **`vcs-forge`** — the wrapper client directly (`GitHub::new().run_list(dir)…`),
   or the wrapper's `api`/`run` for anything beyond that. See [When to drop to

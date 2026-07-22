@@ -11,7 +11,7 @@ use vcs_git::{
 
 use crate::dto::{
     AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, RepoSnapshot, UpstreamTracking, WorktreeInfo,
+    OperationState, Remote, RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -37,6 +37,15 @@ pub(crate) async fn local_branches<R: ProcessRunner>(
         .await?
         .into_iter()
         .map(|b| b.name)
+        .collect())
+}
+
+pub(crate) async fn remotes<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<Vec<Remote>> {
+    Ok(git
+        .remote_list(dir)
+        .await?
+        .into_iter()
+        .map(|remote| Remote::new(remote.name, remote.url))
         .collect())
 }
 

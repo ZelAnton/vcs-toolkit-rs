@@ -94,12 +94,21 @@
 //!   spawning**. GitLab's review model is approve/revoke, so
 //!   [`pr_request_changes`](Forge::pr_request_changes) is
 //!   [`Unsupported`](Error::Unsupported) on a GitLab handle (approve and
-//!   request-changes are otherwise available on the other backends). Classify any of
-//!   these with [`Error::is_unsupported`].
+//!   request-changes are otherwise available on the other backends). Finer,
+//!   *option*-grain gaps live on otherwise-supported operations:
+//!   [`pr_merge`](Forge::pr_merge)'s `auto`/`delete_branch` and
+//!   [`pr_close`](Forge::pr_close)'s branch deletion are GitHub-only, and a
+//!   comment-only review is GitHub-only too — each returns
+//!   [`Unsupported`](Error::Unsupported) before spawning when requested elsewhere.
+//!   Classify any of these with [`Error::is_unsupported`].
 //! - **Capability introspection** — to branch *before* calling rather than
 //!   handling the error, [`Forge::supports`]`(`[`ForgeOp`]`)` answers whether a
-//!   varying operation is available, and [`ForgeOp::ALL`] enumerates those
-//!   varying ops.
+//!   varying *operation* is available ([`ForgeOp::ALL`] enumerates those), and the
+//!   finer variant-grain probes [`Forge::supports_review_kind`]`(`[`ReviewKind`]`)`,
+//!   [`Forge::supports_merge_option`]`(`[`MergeOption`]`)`, and
+//!   [`Forge::supports_pr_close_delete_branch`] answer whether a specific review kind
+//!   or `pr_merge`/`pr_close` option is expressible — so the whole set of
+//!   [`Unsupported`](Error::Unsupported) outcomes is predictable up front.
 //!
 //! The wrappers are re-exported (`vcs_forge::vcs_github` / `vcs_gitlab` /
 //! `vcs_gitea`) so anything beyond the portable intersection — a forge-specific op,
@@ -153,8 +162,8 @@ mod gitlab_forge;
 
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeStrategy, PrClose, PrCreate, PrEdit,
-    PrMerge, ReleaseCreate,
+    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeOption, MergeStrategy, PrClose,
+    PrCreate, PrEdit, PrMerge, ReleaseCreate, ReviewKind,
 };
 pub use error::{Error, Result};
 
@@ -365,9 +374,15 @@ impl<R: ProcessRunner> Forge<R> {
     /// (`release_create` is supported on all three even though its `draft`/`prerelease`
     /// options are a GitLab gap — that per-option gap surfaces at call time, not here.)
     /// Branch on this to hide an unavailable operation up front instead of calling it
-    /// and handling [`Unsupported`](Error::Unsupported).
+    /// and handling [`Unsupported`](Error::Unsupported). For finer, *option*/review-kind
+    /// gaps on otherwise-supported operations — `pr_merge`'s `auto`/`delete_branch`,
+    /// branch deletion on `pr_close`, the review kind — see
+    /// [`supports_review_kind`](Forge::supports_review_kind) /
+    /// [`supports_merge_option`](Forge::supports_merge_option) /
+    /// [`supports_pr_close_delete_branch`](Forge::supports_pr_close_delete_branch).
     pub fn supports(&self, op: ForgeOp) -> bool {
-        match (self.kind(), op) {
+        let kind = self.kind();
+        match (kind, op) {
             // An `Unknown` backend (no classified CLI) supports **nothing** — every
             // operation returns `Unsupported` — so `supports` must report `false`
             // for all ops, matching `capabilities()`'s all-`false` map. (Returning
@@ -384,11 +399,45 @@ impl<R: ProcessRunner> Forge<R> {
                 | ForgeOp::ReleaseView
                 | ForgeOp::PrDiff,
             ) => false,
-            // GitLab's review model is approve/revoke — there is no request-changes
-            // action, so the facade reports it Unsupported for GitLab.
-            (ForgeKind::GitLab, ForgeOp::PrRequestChanges) => false,
+            // Route the request-changes operation through the shared review-kind table
+            // so this operation-grain answer and
+            // `supports_review_kind(ReviewKind::RequestChanges)` read one source of
+            // truth (GitLab lacks it; GitHub/Gitea have it) and can never disagree.
+            (_, ForgeOp::PrRequestChanges) => kind.supports_review_kind(ReviewKind::RequestChanges),
             _ => true,
         }
+    }
+
+    /// Whether this handle's backend can submit a review of `kind` — the review-grain
+    /// companion to [`supports`](Forge::supports). GitHub supports every
+    /// [`ReviewKind`]; GitLab lacks [`RequestChanges`](ReviewKind::RequestChanges) and
+    /// [`Comment`](ReviewKind::Comment) (its review model is approve/revoke); Gitea
+    /// lacks [`Comment`](ReviewKind::Comment) (no comment-review verb); an
+    /// [`Unknown`](ForgeKind::Unknown) handle supports none. Delegates to
+    /// [`ForgeKind::supports_review_kind`] — the same table
+    /// [`pr_approve`](Forge::pr_approve) /
+    /// [`pr_request_changes`](Forge::pr_request_changes) dispatch reads, so a probe
+    /// never disagrees with the call.
+    pub fn supports_review_kind(&self, kind: ReviewKind) -> bool {
+        self.kind().supports_review_kind(kind)
+    }
+
+    /// Whether this handle's backend can express the [`MergeOption`] `option` on
+    /// [`pr_merge`](Forge::pr_merge). `auto`/`delete_branch` are GitHub-only; on
+    /// GitLab/Gitea requesting either returns [`Unsupported`](Error::Unsupported)
+    /// before spawning. Delegates to [`ForgeKind::supports_merge_option`] — the same
+    /// table `pr_merge` gates on.
+    pub fn supports_merge_option(&self, option: MergeOption) -> bool {
+        self.kind().supports_merge_option(option)
+    }
+
+    /// Whether this handle's backend can delete the source branch when closing a PR/MR
+    /// ([`pr_close`](Forge::pr_close) with [`PrClose::delete_branch`]). GitHub only; on
+    /// GitLab/Gitea the option returns [`Unsupported`](Error::Unsupported) before
+    /// spawning. Delegates to [`ForgeKind::supports_pr_close_delete_branch`] — the same
+    /// table `pr_close` gates on.
+    pub fn supports_pr_close_delete_branch(&self) -> bool {
+        self.kind().supports_pr_close_delete_branch()
     }
 
     /// The directory operations run against.
@@ -561,8 +610,21 @@ impl<R: ProcessRunner> Forge<R> {
     /// Merge a PR/MR with the given [`PrMerge`] spec (strategy plus the optional
     /// `auto`/`delete_branch` flags). Those two options are **GitHub-only**: on
     /// GitLab/Gitea, requesting either returns [`Unsupported`](Error::Unsupported)
-    /// rather than silently merging without it (see [`PrMerge`]).
+    /// **before spawning** rather than silently merging without it (see [`PrMerge`];
+    /// probe with [`supports_merge_option`](Forge::supports_merge_option)).
     pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()> {
+        // Gate the GitHub-only options (`auto`/`delete_branch`) at the facade, reading
+        // the same per-backend table `supports_merge_option` exposes — so a
+        // requested-but-unsupported option is a predictable, pre-spawn `Unsupported`
+        // and the introspection can never disagree with the dispatch. (The wrappers
+        // reject them too, as a backstop.)
+        let kind = self.kind();
+        if merge.auto && !kind.supports_merge_option(MergeOption::Auto) {
+            return Err(unsupported(kind, "pr_merge"));
+        }
+        if merge.delete_branch && !kind.supports_merge_option(MergeOption::DeleteBranch) {
+            return Err(unsupported(kind, "pr_merge"));
+        }
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, merge).await,
             Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, merge).await,
@@ -613,20 +675,43 @@ impl<R: ProcessRunner> Forge<R> {
                 "pr_request_changes: a request-changes review requires a non-empty body".into(),
             ));
         }
+        // Gate on the shared review-kind table rather than a hardcoded per-backend arm,
+        // so this dispatch and `supports_review_kind(ReviewKind::RequestChanges)` read
+        // one source of truth. GitLab (approve/revoke only) and an Unknown handle are
+        // rejected here before spawning.
+        let kind = self.kind();
+        if !kind.supports_review_kind(ReviewKind::RequestChanges) {
+            return Err(unsupported(kind, "pr_request_changes"));
+        }
         match &self.backend {
             Backend::GitHub(c) => {
                 github_forge::pr_request_changes(c, &self.cwd, number, body).await
             }
-            Backend::GitLab(_) => Err(unsupported(ForgeKind::GitLab, "pr_request_changes")),
             Backend::Gitea(c) => gitea_forge::pr_request_changes(c, &self.cwd, number, body).await,
-            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_request_changes")),
+            // GitLab and Unknown are already rejected by the support gate above; these
+            // arms keep the `match` exhaustive and act as a defensive backstop.
+            Backend::GitLab(_) | Backend::Unknown => Err(unsupported(kind, "pr_request_changes")),
         }
     }
 
     /// Close a PR/MR without merging. The [`PrClose`] spec's
     /// [`delete_branch`](PrClose::delete_branch) applies to GitHub only
-    /// (`gh pr close --delete-branch`); GitLab and Gitea have no such flag and ignore it.
+    /// (`gh pr close --delete-branch`); on GitLab and Gitea, which have no such flag,
+    /// requesting it returns [`Unsupported`](Error::Unsupported) **before spawning** —
+    /// rather than closing without deleting the branch the caller asked to remove
+    /// (mirroring [`pr_merge`](Forge::pr_merge)'s `auto`/`delete_branch` contract; probe
+    /// with [`supports_pr_close_delete_branch`](Forge::supports_pr_close_delete_branch)).
+    /// A plain close (no branch deletion) works on all three real backends.
     pub async fn pr_close(&self, spec: PrClose) -> Result<()> {
+        // Deleting the source branch on close is GitHub-only; reject the option on a
+        // backend that can't honour it (reading the shared
+        // `supports_pr_close_delete_branch` table) rather than silently closing
+        // *without* deleting the branch the caller asked to remove — the same
+        // deliberate contract as `pr_merge`'s `auto`/`delete_branch`.
+        let kind = self.kind();
+        if spec.delete_branch && !kind.supports_pr_close_delete_branch() {
+            return Err(unsupported(kind, "pr_close"));
+        }
         match &self.backend {
             Backend::GitHub(c) => {
                 github_forge::pr_close(c, &self.cwd, spec.number, spec.delete_branch).await
@@ -1714,6 +1799,121 @@ mod tests {
         }
     }
 
+    // The review-grain probe: every real backend approves; GitLab lacks
+    // request-changes AND comment-only review; Gitea lacks comment-only review; an
+    // Unknown handle supports no review kind. And the op-grain
+    // `supports(PrRequestChanges)` reads the SAME table, so the two must agree.
+    #[test]
+    fn supports_review_kind_matrix() {
+        use ReviewKind::{Approve, Comment, RequestChanges};
+        let github = Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new()));
+        let gitlab = Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new()));
+        let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
+        let unknown: Forge<ScriptedRunner> = Forge::from_unknown("/repo");
+
+        for &kind in ReviewKind::ALL {
+            assert!(github.supports_review_kind(kind), "github {kind:?}");
+        }
+        assert!(gitlab.supports_review_kind(Approve));
+        assert!(
+            !gitlab.supports_review_kind(RequestChanges),
+            "GitLab has no request-changes review"
+        );
+        assert!(
+            !gitlab.supports_review_kind(Comment),
+            "GitLab has no comment-only review"
+        );
+        assert!(gitea.supports_review_kind(Approve));
+        assert!(
+            gitea.supports_review_kind(RequestChanges),
+            "tea pr reject is request-changes"
+        );
+        assert!(
+            !gitea.supports_review_kind(Comment),
+            "Gitea has no comment-only review"
+        );
+        for &kind in ReviewKind::ALL {
+            assert!(!unknown.supports_review_kind(kind), "unknown {kind:?}");
+        }
+
+        // Single-source-of-truth: the operation-grain and review-grain answers agree.
+        for forge in [&github, &gitlab, &gitea, &unknown] {
+            assert_eq!(
+                forge.supports(ForgeOp::PrRequestChanges),
+                forge.supports_review_kind(RequestChanges),
+                "supports(PrRequestChanges) must match supports_review_kind for {:?}",
+                forge.kind()
+            );
+        }
+    }
+
+    // The merge-option and close-branch-deletion probes: GitHub-only, `false`
+    // everywhere else, and none on an Unknown handle.
+    #[test]
+    fn supports_merge_option_and_close_delete_branch_matrix() {
+        let github = Forge::from_github("/repo", GitHub::with_runner(ScriptedRunner::new()));
+        let gitlab = Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new()));
+        let gitea = Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new()));
+        let unknown: Forge = Forge::from_unknown("/repo");
+
+        for &opt in MergeOption::ALL {
+            assert!(github.supports_merge_option(opt), "github {opt:?}");
+            assert!(!gitlab.supports_merge_option(opt), "gitlab {opt:?}");
+            assert!(!gitea.supports_merge_option(opt), "gitea {opt:?}");
+            assert!(!unknown.supports_merge_option(opt), "unknown {opt:?}");
+        }
+        assert!(github.supports_pr_close_delete_branch());
+        assert!(!gitlab.supports_pr_close_delete_branch());
+        assert!(!gitea.supports_pr_close_delete_branch());
+        assert!(!unknown.supports_pr_close_delete_branch());
+    }
+
+    // `pr_close` with `delete_branch` is GitHub-only: GitHub maps `--delete-branch`;
+    // GitLab/Gitea reject it as `Unsupported` before spawning (matching the probe),
+    // rather than silently closing without deleting the branch. A plain close (no
+    // branch deletion) still works on all three real backends.
+    #[tokio::test]
+    async fn pr_close_delete_branch_unsupported_off_github() {
+        // GitHub honours it — the option maps to gh's own `--delete-branch`.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_close(PrClose::new(5).delete_branch())
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["pr", "close", "5", "--delete-branch"]
+        );
+
+        // GitLab / Gitea: `delete_branch` is Unsupported and spawns nothing (the
+        // runner has no rule, so a leak-through would error differently).
+        for forge in [
+            Forge::from_gitlab("/repo", GitLab::with_runner(ScriptedRunner::new())),
+            Forge::from_gitea("/repo", Gitea::with_runner(ScriptedRunner::new())),
+        ] {
+            let err = forge
+                .pr_close(PrClose::new(5).delete_branch())
+                .await
+                .unwrap_err();
+            assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        }
+
+        // A plain close (no branch deletion) still works on GitLab and Gitea.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
+            .pr_close(PrClose::new(5))
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["mr", "close", "5"]);
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .pr_close(PrClose::new(5))
+            .await
+            .unwrap();
+        assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+    }
+
     // Each backend's issue states map onto the unified ForgeIssueState — note
     // the three different spellings of "open": "OPEN" (gh), "opened" (glab),
     // "open" (tea) — all must read as Open, and "closed" (any case) as Closed.
@@ -2155,9 +2355,10 @@ mod tests {
     }
 
     // `auto`/`delete_branch` are GitHub-only. On GitHub they map to gh's own
-    // `--auto`/`--delete-branch`; on GitLab/Gitea the facade surfaces a structured
-    // `Unsupported` (bubbled from the wrapper) rather than silently merging without
-    // them — so `is_unsupported()` is true and no wrong merge argv is emitted.
+    // `--auto`/`--delete-branch`; on GitLab/Gitea the facade gates them up front
+    // (reading the shared `supports_merge_option` table) and returns a structured
+    // `Unsupported` before spawning rather than silently merging without them — so
+    // `is_unsupported()` is true and no wrong merge argv is emitted.
     #[tokio::test]
     async fn pr_merge_options_map_on_github_and_are_unsupported_elsewhere() {
         // GitHub expresses both options as real flags.

@@ -16,7 +16,7 @@ use vcs_jj::{
 
 use crate::dto::{
     AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, RepoSnapshot, WorktreeInfo,
+    OperationState, Remote, RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -104,6 +104,15 @@ pub(crate) async fn local_branches<R: ProcessRunner>(
     dir: &Path,
 ) -> Result<Vec<String>> {
     local_branches_with(jj, dir, Observe::Live).await
+}
+
+pub(crate) async fn remotes<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Vec<Remote>> {
+    Ok(jj
+        .remote_list(dir)
+        .await?
+        .into_iter()
+        .map(|remote| Remote::new(remote.name, remote.url))
+        .collect())
 }
 
 /// [`local_branches`] as a **read-only** query: passes `--ignore-working-copy`,

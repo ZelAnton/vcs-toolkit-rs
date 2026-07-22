@@ -96,6 +96,9 @@ pub vcs_forge::ForgeKind::Unknown
 impl vcs_forge::ForgeKind
 pub fn vcs_forge::ForgeKind::as_str(self) -> &'static str
 pub fn vcs_forge::ForgeKind::from_remote_url(&str) -> core::option::Option<vcs_forge::ForgeKind>
+pub fn vcs_forge::ForgeKind::supports_merge_option(self, vcs_forge::MergeOption) -> bool
+pub fn vcs_forge::ForgeKind::supports_pr_close_delete_branch(self) -> bool
+pub fn vcs_forge::ForgeKind::supports_review_kind(self, vcs_forge::ReviewKind) -> bool
 impl core::clone::Clone for vcs_forge::ForgeKind
 pub fn vcs_forge::ForgeKind::clone(&self) -> vcs_forge::ForgeKind
 impl core::cmp::Eq for vcs_forge::ForgeKind
@@ -172,6 +175,31 @@ impl core::marker::Unpin for vcs_forge::ForgePrState
 impl core::marker::UnsafeUnpin for vcs_forge::ForgePrState
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ForgePrState
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgePrState
+#[non_exhaustive] pub enum vcs_forge::MergeOption
+pub vcs_forge::MergeOption::Auto
+pub vcs_forge::MergeOption::DeleteBranch
+impl vcs_forge::MergeOption
+pub const vcs_forge::MergeOption::ALL: &'static [vcs_forge::MergeOption]
+impl core::clone::Clone for vcs_forge::MergeOption
+pub fn vcs_forge::MergeOption::clone(&self) -> vcs_forge::MergeOption
+impl core::cmp::Eq for vcs_forge::MergeOption
+impl core::cmp::PartialEq for vcs_forge::MergeOption
+pub fn vcs_forge::MergeOption::eq(&self, &vcs_forge::MergeOption) -> bool
+impl core::fmt::Debug for vcs_forge::MergeOption
+pub fn vcs_forge::MergeOption::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for vcs_forge::MergeOption
+pub fn vcs_forge::MergeOption::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for vcs_forge::MergeOption
+impl core::marker::StructuralPartialEq for vcs_forge::MergeOption
+impl serde_core::ser::Serialize for vcs_forge::MergeOption
+pub fn vcs_forge::MergeOption::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::MergeOption
+impl core::marker::Send for vcs_forge::MergeOption
+impl core::marker::Sync for vcs_forge::MergeOption
+impl core::marker::Unpin for vcs_forge::MergeOption
+impl core::marker::UnsafeUnpin for vcs_forge::MergeOption
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::MergeOption
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::MergeOption
 #[non_exhaustive] pub enum vcs_forge::MergeStrategy
 pub vcs_forge::MergeStrategy::Merge
 pub vcs_forge::MergeStrategy::Rebase
@@ -194,6 +222,32 @@ impl core::marker::Unpin for vcs_forge::MergeStrategy
 impl core::marker::UnsafeUnpin for vcs_forge::MergeStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::MergeStrategy
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::MergeStrategy
+#[non_exhaustive] pub enum vcs_forge::ReviewKind
+pub vcs_forge::ReviewKind::Approve
+pub vcs_forge::ReviewKind::Comment
+pub vcs_forge::ReviewKind::RequestChanges
+impl vcs_forge::ReviewKind
+pub const vcs_forge::ReviewKind::ALL: &'static [vcs_forge::ReviewKind]
+impl core::clone::Clone for vcs_forge::ReviewKind
+pub fn vcs_forge::ReviewKind::clone(&self) -> vcs_forge::ReviewKind
+impl core::cmp::Eq for vcs_forge::ReviewKind
+impl core::cmp::PartialEq for vcs_forge::ReviewKind
+pub fn vcs_forge::ReviewKind::eq(&self, &vcs_forge::ReviewKind) -> bool
+impl core::fmt::Debug for vcs_forge::ReviewKind
+pub fn vcs_forge::ReviewKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for vcs_forge::ReviewKind
+pub fn vcs_forge::ReviewKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for vcs_forge::ReviewKind
+impl core::marker::StructuralPartialEq for vcs_forge::ReviewKind
+impl serde_core::ser::Serialize for vcs_forge::ReviewKind
+pub fn vcs_forge::ReviewKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::ReviewKind
+impl core::marker::Send for vcs_forge::ReviewKind
+impl core::marker::Sync for vcs_forge::ReviewKind
+impl core::marker::Unpin for vcs_forge::ReviewKind
+impl core::marker::UnsafeUnpin for vcs_forge::ReviewKind
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ReviewKind
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ReviewKind
 pub struct vcs_forge::Forge<R: processkit::runner::ProcessRunner>
 impl vcs_forge::Forge<processkit::runner::JobRunner>
 pub fn vcs_forge::Forge<processkit::runner::JobRunner>::gitea(impl core::convert::Into<std::path::PathBuf>) -> Self
@@ -237,6 +291,9 @@ pub async fn vcs_forge::Forge<R>::release_list(&self) -> vcs_forge::Result<alloc
 pub async fn vcs_forge::Forge<R>::release_view(&self, &str) -> vcs_forge::Result<vcs_forge::ForgeRelease>
 pub async fn vcs_forge::Forge<R>::repo_view(&self) -> vcs_forge::Result<vcs_forge::ForgeRepo>
 pub fn vcs_forge::Forge<R>::supports(&self, vcs_forge::ForgeOp) -> bool
+pub fn vcs_forge::Forge<R>::supports_merge_option(&self, vcs_forge::MergeOption) -> bool
+pub fn vcs_forge::Forge<R>::supports_pr_close_delete_branch(&self) -> bool
+pub fn vcs_forge::Forge<R>::supports_review_kind(&self, vcs_forge::ReviewKind) -> bool
 impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_forge::Forge<R>
 pub fn vcs_forge::Forge<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: processkit::runner::ProcessRunner> vcs_forge::ForgeApi for vcs_forge::Forge<R>
