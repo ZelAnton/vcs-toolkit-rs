@@ -227,7 +227,7 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `commit_count` | `log -r <revset> --no-graph` | one id per line |
 | `is_conflicted` | template query on the revset | |
 | `has_workingcopy_conflict` | `is_conflicted(dir, "@")` | |
-| `resolve_list` | `resolve --list -r <revset>` | lossless paths |
+| `resolve_list` | `file list -r <revset> -T 'if(conflict, path ++ "\0")'` | lossless paths |
 | `template_query` | `log -r <revset> --no-graph [--limit n] -T <template>` | snapshots the WC first |
 | `template_query_ignoring_working_copy` | adds `--ignore-working-copy` | read-only twin |
 | `description` | (template query) | trimmed, newest commit of a multi-commit revset |
@@ -299,7 +299,8 @@ hatches](../crates/jj/docs/jj.md#raw-escape-hatches).
 
 `config` (`list`/`edit`; only `get`/`set` are typed), `debug`, `file chmod`/
 `file track`/`file untrack`, `fix`, `git init`, `interdiff`, `next`/`prev`,
-`resolve` (interactive; only `resolve --list` via `resolve_list`),
+`resolve` (interactive; `resolve_list` reads conflicted paths via `file list`
+with a conflict template instead),
 `simplify-parents`, `util`. (`backout` was jj's older, since-removed name for
 `revert`, which is now typed — see [`revert`](#rebase-squashsplit-merging-sparse)
 above.) Reach any of these through `run`/`run_raw` — note the trait doc

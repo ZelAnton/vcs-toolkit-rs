@@ -163,7 +163,7 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
         "got {reachable:?}"
     );
 
-    // A clean working copy has no conflicts → empty list (jj exits non-zero).
+    // A clean working copy has no conflicts → the filtered NUL stream is empty.
     assert!(
         jj.resolve_list(dir, &rv("@"))
             .await
@@ -172,8 +172,8 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     );
 
     // Build a real conflict: two children of base that edit the same file,
-    // merged. `resolve_list` must return the actual conflicted path (this is the
-    // case the format parser has to get right).
+    // merged. `resolve_list` must return the actual conflicted path from jj's
+    // conflict-filtered, NUL-delimited file-list template.
     std::fs::write(dir.join("c.txt"), "base\n").expect("write base");
     jj_raw(dir, &["new", "root()", "-m", "side-a"]);
     std::fs::write(dir.join("c.txt"), "aaa\n").expect("write a");

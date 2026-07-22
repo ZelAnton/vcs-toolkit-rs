@@ -333,10 +333,15 @@ async fn resolve_list(&self, dir: &Path, revset: &str) -> Result<Vec<PathBuf>>;
 
 `is_conflicted` asks the template engine whether the commit a revset resolves to
 has a conflict (no localized-prose matching). `has_workingcopy_conflict` is
-`is_conflicted(dir, "@")`. `resolve_list` returns the paths with unresolved
-conflicts in `revset` (`resolve --list -r <revset>`), forward-slash normalised —
-empty when there are none. Parsing the *materialized* markers in a conflicted
-file is a separate, pure module: see [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
+`is_conflicted(dir, "@")`. `resolve_list` runs `jj file list -r <revset> -T
+'if(conflict, path ++ "\0")'`: the `TreeEntry`-level `conflict` filter emits
+only unresolved paths, NUL-delimited, which the crate parses as raw bytes and
+forward-slash normalises on Windows. It is empty when there are none, while any
+command failure remains an error. `file list -T` was introduced in jj 0.26, so
+this machine-readable form is available throughout the crate's jj >= 0.38
+supported range; no `resolve --list` fallback is necessary. Parsing the
+*materialized* markers in a conflicted file is a separate, pure module: see
+[Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
 
 ```rust,ignore
 # use std::path::Path;

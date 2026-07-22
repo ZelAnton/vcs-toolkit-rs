@@ -936,9 +936,10 @@ pub trait JjApi: Send + Sync {
     async fn is_conflicted(&self, dir: &Path, revset: &RevsetExpr) -> Result<bool>;
     /// Whether the working copy has unresolved conflicts (`jj status`).
     async fn has_workingcopy_conflict(&self, dir: &Path) -> Result<bool>;
-    /// Paths with unresolved conflicts in `revset` (`jj resolve --list -r <revset>`).
-    /// Empty when there are none. Returns [`PathBuf`]s built from the raw bytes, so
-    /// a non-UTF-8 conflicted path survives losslessly.
+    /// Paths with unresolved conflicts in `revset` (`jj file list -r <revset>`
+    /// with a conflict-filtering template). Empty when there are none. Returns
+    /// [`PathBuf`]s built from the raw bytes, so a non-UTF-8 conflicted path
+    /// survives losslessly.
     async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>>;
     /// Run an arbitrary templated `jj log` query and return raw stdout
     /// (`log -r <revset> --no-graph [--limit n] -T <template>`). Snapshots the
@@ -2005,28 +2006,30 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn resolve_list(&self, dir: &Path, revset: &RevsetExpr) -> Result<Vec<PathBuf>> {
-        // `output_bytes`: a conflicted path may not be valid UTF-8 on Unix, so read
-        // raw stdout (stderr stays text for the "no conflicts" probe below).
-        let res = self
-            .core
-            .output_bytes(self.cmd_in(dir, ["resolve", "--list", "-r", revset.as_str()]))
-            .await?;
-        match res.code() {
-            Some(0) => Ok(parse::parse_resolve_list(res.stdout())),
-            // jj exits non-zero with "No conflicts found …" when the revision is
-            // conflict-free — the one non-zero we read as an empty list. Any other
-            // failure (bad revset, not a repo, …) must surface, not masquerade as
-            // "no conflicts". `resolve --list` has no exit-code contract that
-            // distinguishes the two, so this matches the message; jj's output is
-            // English-only (no localization), so the risk is version *wording* drift,
-            // not locale — matched on the stable core phrase, case-insensitively, to
-            // absorb a capitalization change.
-            _ if res.stderr().to_ascii_lowercase().contains("no conflicts") => Ok(Vec::new()),
-            _ => {
-                let _ = res.ensure_success()?;
-                Ok(Vec::new()) // unreachable: a non-zero exit always errors above.
-            }
-        }
+        // `file list -T` (introduced in jj 0.26) is available across the crate's
+        // supported jj >= 0.38 range. Its TreeEntry template filters on the actual
+        // conflict flag and NUL-frames each path, avoiding `resolve --list`'s
+        // human-oriented column layout entirely. A clean revision succeeds with
+        // empty stdout; a bad revset or other command failure remains an error.
+        //
+        // `parse_bytes`: a conflicted path may not be valid UTF-8 on Unix, so read
+        // and split raw stdout rather than decoding it lossily.
+        self.core
+            .parse_bytes(
+                self.cmd_in(
+                    dir,
+                    [
+                        "file",
+                        "list",
+                        "-r",
+                        revset.as_str(),
+                        "-T",
+                        parse::CONFLICTED_FILE_LIST_TEMPLATE,
+                    ],
+                ),
+                parse::parse_conflicted_file_list,
+            )
+            .await
     }
 
     async fn template_query(
@@ -4067,11 +4070,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_list_distinguishes_no_conflicts_from_errors() {
-        // The benign "no conflicts" non-zero exit → empty list.
-        let none = Jj::with_runner(ScriptedRunner::new().on(
-            ["jj", "resolve"],
-            Reply::fail(2, "Error: No conflicts found at this revision"),
-        ));
+        // A conflict-free revision succeeds with an empty, NUL-delimited stream.
+        let none = Jj::with_runner(ScriptedRunner::new().on(["jj", "file", "list"], Reply::ok("")));
         assert!(
             none.resolve_list(Path::new("."), &rv("@"))
                 .await
@@ -4080,7 +4080,7 @@ mod tests {
         );
         // A real failure (e.g. bad revset) must surface, not read as "no conflicts".
         let bad = Jj::with_runner(ScriptedRunner::new().on(
-            ["jj", "resolve"],
+            ["jj", "file", "list"],
             Reply::fail(1, "Error: Revision `bogus` doesn't exist"),
         ));
         assert!(
@@ -4088,13 +4088,27 @@ mod tests {
                 .await
                 .is_err()
         );
-        // Success with conflicts → parsed paths.
-        let some = Jj::with_runner(
-            ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
+        // Success with conflicts → parse only the NUL-delimited path bytes.
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["jj", "file", "list"], Reply::ok("a  b.rs\0trail.rs \0")),
         );
+        let some = Jj::with_runner(&rec);
         assert_eq!(
             some.resolve_list(Path::new("."), &rv("@")).await.unwrap(),
-            [PathBuf::from("a.rs")]
+            [PathBuf::from("a  b.rs"), PathBuf::from("trail.rs ")]
+        );
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "file",
+                "list",
+                "-r",
+                "@",
+                "-T",
+                parse::CONFLICTED_FILE_LIST_TEMPLATE,
+                "--color",
+                "never",
+            ]
         );
     }
 
