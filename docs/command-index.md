@@ -255,6 +255,11 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `git_push` | `git push [-b <bookmark>]` | |
 | `git_import` | `git import` | colocated-repo sync |
 | `git_clone` | `git clone <url> <dest> --colocate\|--no-colocate` | via `GitClone`; dirless, absolute `dest` |
+| `remote_add` | `git remote add <name> <url>` | flag-injection-guarded positionals |
+| `remote_list` | `git remote list` | parsed `Vec<Remote>`; no template/JSON form, pinned display-format parser |
+| `remote_remove` | `git remote remove <name>` | also forgets the remote's bookmarks |
+| `remote_rename` | `git remote rename <old> <new>` | |
+| `remote_set_url` | `git remote set-url <name> <url>` | errors if `name` doesn't exist |
 | `workspace_list` | `workspace list` | |
 | `workspace_root` | `workspace root [--name <name>]` | |
 | `workspace_add` | `workspace add --name <name> -r <base> <path>` | via `WorkspaceAdd` |
@@ -284,12 +289,12 @@ hatches](../crates/jj/docs/jj.md#raw-escape-hatches).
 
 `backout`, `bookmark forget` (only `delete` is typed), `config` (`list`/`get`/
 `set`/`edit`), `debug`, `file chmod`/`file track`/`file untrack`, `fix`,
-`git remote` (`add`/`remove`/`rename`/`list`), `git init`, `interdiff`, `next`/
-`prev`, `resolve` (interactive; only `resolve --list` via `resolve_list`),
-`simplify-parents`, `util`. Reach any of these through `run`/`run_raw` — note
-the trait doc comment's warning that `run`/`run_raw` are **unguarded**: jj's
-`--config`/`--config-toml` and user-defined aliases can reach code execution,
-so never forward untrusted argv there.
+`git init`, `interdiff`, `next`/`prev`, `resolve` (interactive; only `resolve
+--list` via `resolve_list`), `simplify-parents`, `util`. Reach any of these
+through `run`/`run_raw` — note the trait doc comment's warning that
+`run`/`run_raw` are **unguarded**: jj's `--config`/`--config-toml` and
+user-defined aliases can reach code execution, so never forward untrusted
+argv there.
 
 ## gh (`vcs-github` — the GitHub CLI)
 
