@@ -10,6 +10,28 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **GitHub Actions run control.** Three new `GitHubApi` methods close the CI
+  automation loop alongside the existing read-only `run_list`/`run_view`/
+  `run_watch`. `workflow_dispatch(dir, WorkflowDispatch)` fires a
+  `workflow_dispatch` event (`gh workflow run <workflow> [--ref <ref>]
+  [--raw-field key=value …]`) through a new `#[non_exhaustive]` `WorkflowDispatch`
+  builder (`new(workflow)` + chained `.git_ref(..)` / `.field(k, v)`); it returns
+  `Result<()>` because GitHub's dispatch API replies `204 No Content` with no run
+  id (poll `run_list` for the started run). Inputs are emitted with `--raw-field`,
+  **not** `--field` — the latter's `@value` reads a *file*, so the raw form keeps a
+  value like `@/etc/passwd` a literal string. `run_rerun(dir, id, RerunScope)`
+  reruns a completed run (`gh run rerun <id>`), where the new `#[non_exhaustive]`
+  `Copy` enum `RerunScope::{All, FailedOnly}` selects `--failed` (a direct argument,
+  since one toggle doesn't reach the builder bar). `run_cancel(dir, id)` cancels an
+  in-progress run (`gh run cancel <id>`). The bare `<workflow>` positional is
+  flag-injection guarded (like `release_view`'s tag); the `u64` run ids can never
+  look like a flag, so they need none; `--ref`/`--raw-field` values ride in
+  flag-VALUE slots (verbatim-safe, like `--branch`). Exit codes follow gh's
+  convention (`gh help exit-codes`, empirically checked against gh 2.95.0: **0**
+  success, **1** failure such as an unknown workflow / already-completed run,
+  **4** unauthenticated). All three are `at`-forwarded and have defaulted
+  `Error::Unsupported` trait bodies so external implementers keep compiling; the
+  exact argv is pinned by hermetic tests.
 - **Issue lifecycle methods.** `GitHubApi::issue_close(dir, number)` (`gh issue
   close <n>`) and `issue_reopen(dir, number)` (`gh issue reopen <n>`) flip an
   issue's state and return `Result<()>`; `issue_comment(dir, number, body)`

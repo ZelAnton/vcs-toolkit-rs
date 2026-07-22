@@ -15,8 +15,8 @@
 //!
 //! Check auth · view the repo · the full pull-request lifecycle (list / view /
 //! create / merge / mark-ready / close, review / comment, CI checks, feedback) ·
-//! issues · releases · GitHub Actions runs (list / view / watch). One tiny call to
-//! start:
+//! issues · releases · GitHub Actions runs (list / view / watch, plus dispatch a
+//! workflow / rerun / cancel a run). One tiny call to start:
 //!
 //! ```no_run
 //! use std::path::Path;
@@ -57,7 +57,10 @@
 //!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
-//!   timeout); issues & releases ([`issue_create`](GitHubApi::issue_create),
+//!   timeout — plus the run-control verbs
+//!   [`workflow_dispatch`](GitHubApi::workflow_dispatch),
+//!   [`run_rerun`](GitHubApi::run_rerun), [`run_cancel`](GitHubApi::run_cancel));
+//!   issues & releases ([`issue_create`](GitHubApi::issue_create),
 //!   [`issue_close`](GitHubApi::issue_close), [`issue_reopen`](GitHubApi::issue_reopen),
 //!   [`issue_comment`](GitHubApi::issue_comment),
 //!   [`release_view`](GitHubApi::release_view), …); plus the escape hatches
@@ -65,10 +68,14 @@
 //! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
 //!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
 //!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
-//!   `--auto`, `--delete-branch`), [`PrClose`] (optional `--delete-branch`), and
+//!   `--auto`, `--delete-branch`), [`PrClose`] (optional `--delete-branch`),
+//!   [`WorkflowDispatch`] (a `workflow_dispatch` event's target `ref` + inputs),
+//!   [`ReleaseCreate`] (a release's title/notes/draft/prerelease), and
 //!   [`ReviewAction`] (whose private fields make
 //!   an empty-body request-changes unrepresentable) — each `#[non_exhaustive]`,
 //!   built with a constructor and chained setters, named after the flags they emit.
+//!   A single-toggle verb takes a direct argument instead ([`run_rerun`](GitHubApi::run_rerun)'s
+//!   [`RerunScope`]).
 //!
 //! # Recipes
 //!
@@ -700,6 +707,83 @@ impl ReleaseCreate {
     }
 }
 
+/// Options for [`GitHubApi::workflow_dispatch`] (`gh workflow run`), which fires a
+/// `workflow_dispatch` event for a workflow that declares an `on: workflow_dispatch`
+/// trigger.
+///
+/// `#[non_exhaustive]`, so build it through [`WorkflowDispatch::new`] (the workflow
+/// selector) and the chained [`git_ref`](WorkflowDispatch::git_ref) /
+/// [`field`](WorkflowDispatch::field) setters rather than a struct literal — the
+/// `≥2 options → builder` rule (a target `ref` **and** any number of inputs) the
+/// crate applies to its multi-option commands.
+///
+/// Inputs are emitted as `-f/--raw-field key=value` (the **raw** string form),
+/// **not** gh's `-F/--field`: the latter interprets a value beginning with `@` as a
+/// *file to read* (`gh help api`'s `@` syntax), so a caller-supplied value like
+/// `@/etc/passwd` would exfiltrate a file into the dispatch. `--raw-field` treats
+/// every value as a literal string, so an arbitrary input value (including a leading
+/// `-` or `@`) is passed verbatim and safely.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct WorkflowDispatch {
+    /// The workflow to run — its file name (`ci.yml` / `release.yml`) or its display
+    /// name (gh's `[<workflow-id> | <workflow-name>]` positional). A bare positional,
+    /// so it is flag-injection guarded (a leading `-` / empty value is refused before
+    /// spawning), like [`release_view`](GitHubApi::release_view)'s tag.
+    pub workflow: String,
+    /// The branch or tag whose version of the workflow file to run (`--ref`); `None`
+    /// runs the version on the repository's default branch. Rides in a flag-VALUE
+    /// slot (gh consumes the next token verbatim, like `--branch`), so no positional
+    /// guard applies.
+    pub git_ref: Option<String>,
+    /// `workflow_dispatch` inputs, as ordered `(key, value)` pairs. Each is emitted as
+    /// `--raw-field key=value` (see the type-level note on why `--raw-field`, not
+    /// `--field`). The value can be any string (a leading `-`/`@` is safe in this
+    /// flag-VALUE slot).
+    pub fields: Vec<(String, String)>,
+}
+
+impl WorkflowDispatch {
+    /// Dispatch `workflow` on the repository's default branch with no inputs. Chain
+    /// [`git_ref`](WorkflowDispatch::git_ref) to target a branch/tag and
+    /// [`field`](WorkflowDispatch::field) to add inputs.
+    pub fn new(workflow: impl Into<String>) -> Self {
+        Self {
+            workflow: workflow.into(),
+            git_ref: None,
+            fields: Vec::new(),
+        }
+    }
+
+    /// Set the branch or tag whose version of the workflow file to run (`--ref`).
+    /// (Named `git_ref` because `ref` is a Rust keyword.)
+    pub fn git_ref(mut self, git_ref: impl Into<String>) -> Self {
+        self.git_ref = Some(git_ref.into());
+        self
+    }
+
+    /// Add one `workflow_dispatch` input (`--raw-field key=value`). Call it once per
+    /// input; inputs are emitted in the order added.
+    pub fn field(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push((key.into(), value.into()));
+        self
+    }
+}
+
+/// Which jobs [`GitHubApi::run_rerun`] reruns (`gh run rerun`) — a direct argument
+/// rather than a builder, since a single toggle doesn't reach the crate's
+/// `≥2 options → builder` bar. `#[non_exhaustive]` so a future rerun mode is not a
+/// breaking change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RerunScope {
+    /// Rerun the **entire** run — every job (`gh run rerun <id>`).
+    All,
+    /// Rerun **only the failed jobs**, plus their dependencies
+    /// (`gh run rerun <id> --failed`).
+    FailedOnly,
+}
+
 /// What the installed `gh` binary supports, probed via
 /// [`GitHubApi::capabilities`]. A value type — the client holds no state, so
 /// probe once and keep the result (callers cache it). Mirrors
@@ -913,6 +997,73 @@ pub trait GitHubApi: Send + Sync {
     /// elapses (`Error::Timeout`) — drive this from a client with no (or a
     /// generous) timeout.
     async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
+    /// Fire a `workflow_dispatch` event for a workflow, driven by a
+    /// [`WorkflowDispatch`] spec (the workflow selector plus an optional target `ref`
+    /// and inputs) — the whole span kept on one line so rustdoc doesn't read the
+    /// angle-bracket placeholders as HTML:
+    /// `gh workflow run <workflow> [--ref <ref>] [--raw-field key=value …]`.
+    /// The workflow file must declare an `on: workflow_dispatch` trigger.
+    ///
+    /// Returns `Result<()>`, **not** a run URL: the underlying GitHub API replies
+    /// `204 No Content` with no run identifier (the dispatch is asynchronous — the
+    /// run may not exist yet), so any URL gh prints is best-effort. To find the run
+    /// this started, poll [`run_list`](GitHubApi::run_list) for the workflow/branch.
+    /// Exit codes follow gh's convention (`gh help exit-codes`): **0** dispatched,
+    /// **1** on failure — e.g. an unknown workflow (`HTTP 404: workflow … not found`),
+    /// a workflow lacking a `workflow_dispatch` trigger, or an unknown input —
+    /// surfaced as [`Error::Exit`]; **4** if `gh` is not authenticated.
+    ///
+    /// **Defaulted** to `Error::Unsupported` so external implementers of the trait
+    /// keep compiling when the crate bumps (only the `GitHub` concrete impl and the
+    /// regenerated `MockGitHubApi` override it).
+    #[allow(unused_variables)]
+    async fn workflow_dispatch(&self, dir: &Path, spec: WorkflowDispatch) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "workflow_dispatch".into(),
+        })
+    }
+    /// Rerun a completed workflow run (`gh run rerun <id> [--failed]`); pass a
+    /// [`RerunScope`] to rerun every job ([`All`](RerunScope::All)) or only the
+    /// failed jobs and their dependencies ([`FailedOnly`](RerunScope::FailedOnly)).
+    /// The id is [`WorkflowRun::database_id`]; being a `u64`, the bare positional can
+    /// never look like a flag — nothing to guard.
+    ///
+    /// gh queues the rerun and returns; the new run is a *separate*
+    /// [`WorkflowRun`] — poll [`run_list`](GitHubApi::run_list) or
+    /// [`run_watch`](GitHubApi::run_watch) for it. Exit codes follow gh's convention
+    /// (`gh help exit-codes`): **0** queued, **1** on failure — e.g. no such run
+    /// (`failed to get run: HTTP 404`), or `--failed` on a run with no failed jobs —
+    /// as [`Error::Exit`]; **4** if unauthenticated.
+    ///
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps.
+    #[allow(unused_variables)]
+    async fn run_rerun(&self, dir: &Path, id: u64, scope: RerunScope) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "run_rerun".into(),
+        })
+    }
+    /// Cancel an in-progress workflow run (`gh run cancel <id>`). The id is
+    /// [`WorkflowRun::database_id`]; being a `u64`, the bare positional can never look
+    /// like a flag — nothing to guard.
+    ///
+    /// Cancellation is a *request* — gh returns once GitHub accepts it, before jobs
+    /// actually wind down; read the run's terminal state with
+    /// [`run_view`](GitHubApi::run_view)/[`run_watch`](GitHubApi::run_watch) (a
+    /// cancelled run's [`conclusion`](WorkflowRun::conclusion) is `"cancelled"`). Exit
+    /// codes follow gh's convention (`gh help exit-codes`): **0** accepted, **1** on
+    /// failure — e.g. no such run (`Could not find any workflow run with ID …`), or a
+    /// run that is already completed (`Cannot cancel a workflow run that is
+    /// completed`) — as [`Error::Exit`]; **4** if unauthenticated.
+    ///
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// when the crate bumps.
+    #[allow(unused_variables)]
+    async fn run_cancel(&self, dir: &Path, id: u64) -> Result<()> {
+        Err(Error::Unsupported {
+            operation: "run_cancel".into(),
+        })
+    }
 
     // --- Issues / releases ---------------------------------------------------
 
@@ -1431,6 +1582,55 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         self.run_view(dir, id).await
     }
 
+    async fn workflow_dispatch(&self, dir: &Path, spec: WorkflowDispatch) -> Result<()> {
+        // `<workflow>` is a bare positional — guard it against flag-injection/empty
+        // exactly like `release_view`/`api`. `--ref <ref>` and each input
+        // `--raw-field key=value` ride in flag-VALUE slots, so gh consumes the next
+        // token verbatim (a leading `-` is safe there, same as `--branch`/`--body`)
+        // — no positional guard applies. Inputs use `--raw-field` (NOT `--field`,
+        // whose `@value` reads a FILE), so a caller value like `@/etc/passwd` stays a
+        // literal string. gh's dispatch API returns 204 No Content, so there is no
+        // run id to return — hence `run_unit` (poll `run_list` to find the run).
+        reject_flag_like("workflow", spec.workflow.as_str())?;
+        // Own the `key=value` tokens before `args` borrows them (declared first so it
+        // outlives `args`, which holds `&str` into it).
+        let fields: Vec<String> = spec
+            .fields
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        let mut args = vec!["workflow", "run", spec.workflow.as_str()];
+        if let Some(git_ref) = spec.git_ref.as_deref() {
+            args.push("--ref");
+            args.push(git_ref);
+        }
+        for field in &fields {
+            args.push("--raw-field");
+            args.push(field.as_str());
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn run_rerun(&self, dir: &Path, id: u64, scope: RerunScope) -> Result<()> {
+        // `<run-id>` is a `u64`, so the bare positional can never look like a flag —
+        // nothing to guard (same as `issue_close`). `--failed` is presence-only.
+        let id = id.to_string();
+        let mut args = vec!["run", "rerun", id.as_str()];
+        if scope == RerunScope::FailedOnly {
+            args.push("--failed");
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn run_cancel(&self, dir: &Path, id: u64) -> Result<()> {
+        // `<run-id>` is a `u64`, so the bare positional can never look like a flag —
+        // nothing to guard.
+        let id = id.to_string();
+        self.core
+            .run_unit(self.core.command_in(dir, ["run", "cancel", id.as_str()]))
+            .await
+    }
+
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
         self.core
             .run(
@@ -1643,6 +1843,9 @@ vcs_cli_support::at_forwarders! {
         fn run_list(limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
         fn run_view(id: u64) -> Result<WorkflowRun>;
         fn run_watch(id: u64) -> Result<WorkflowRun>;
+        fn workflow_dispatch(spec: WorkflowDispatch) -> Result<()>;
+        fn run_rerun(id: u64, scope: RerunScope) -> Result<()>;
+        fn run_cancel(id: u64) -> Result<()>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_close(number: u64) -> Result<()>;
@@ -1754,10 +1957,15 @@ mod tests {
         // One of the new lifecycle methods.
         gh.run_list(dir, 3, None).await.unwrap();
         gh.at(dir).run_list(3, None).await.unwrap();
+        // A new run-control verb (spec-carrying) forwards identically too.
+        let disp = || WorkflowDispatch::new("ci.yml").git_ref("main");
+        gh.workflow_dispatch(dir, disp()).await.unwrap();
+        gh.at(dir).workflow_dispatch(disp()).await.unwrap();
 
         let calls = rec.calls();
         assert_eq!(calls[0].args_str(), calls[1].args_str());
         assert_eq!(calls[2].args_str(), calls[3].args_str());
+        assert_eq!(calls[4].args_str(), calls[5].args_str());
         assert_eq!(calls[1].cwd.as_deref(), Some(dir));
     }
 
@@ -3069,6 +3277,142 @@ mod tests {
             Err(Error::Cancelled { program }) => assert_eq!(program, "gh"),
             other => panic!("expected Error::Cancelled, got {other:?}"),
         }
+    }
+
+    // workflow_dispatch with a ref and two inputs pins the empirically-verified
+    // `gh workflow run` argv (gh 2.95.0): the bare `<workflow>` positional, then
+    // `--ref <ref>`, then each input as `--raw-field key=value` in the order added.
+    // `--raw-field` (not `--field`) is deliberate — `--field`'s `@value` reads a
+    // file, so the raw form keeps an arbitrary input value a literal string.
+    #[tokio::test]
+    async fn workflow_dispatch_builds_argv_with_ref_and_inputs() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.workflow_dispatch(
+            Path::new("/repo"),
+            WorkflowDispatch::new("release.yml")
+                .git_ref("main")
+                .field("name", "scully")
+                .field("greeting", "hello"),
+        )
+        .await
+        .expect("workflow_dispatch");
+        let call = rec.only_call();
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(
+            call.args_str(),
+            [
+                "workflow",
+                "run",
+                "release.yml",
+                "--ref",
+                "main",
+                "--raw-field",
+                "name=scully",
+                "--raw-field",
+                "greeting=hello",
+            ]
+        );
+    }
+
+    // With only the workflow selector, neither `--ref` nor any `--raw-field` is
+    // emitted — a minimal `gh workflow run <workflow>`. A value beginning with `-`
+    // rides safely in the `--raw-field` flag-VALUE slot (proving it is not guarded
+    // away like a bare positional would be).
+    #[tokio::test]
+    async fn workflow_dispatch_omits_unset_ref_and_allows_dash_value() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.workflow_dispatch(Path::new("/r"), WorkflowDispatch::new("ci.yml"))
+            .await
+            .expect("workflow_dispatch");
+        assert_eq!(rec.calls()[0].args_str(), ["workflow", "run", "ci.yml"]);
+
+        // A leading-`-` input VALUE is legitimate and passed verbatim.
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.workflow_dispatch(
+            Path::new("/r"),
+            WorkflowDispatch::new("ci.yml").field("flag", "-x"),
+        )
+        .await
+        .expect("workflow_dispatch");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["workflow", "run", "ci.yml", "--raw-field", "flag=-x"]
+        );
+    }
+
+    // The bare `<workflow>` positional is flag-injection guarded before spawning,
+    // like `release_view`/`api` — a leading-`-` or empty selector is refused and
+    // nothing spawns.
+    #[tokio::test]
+    async fn workflow_dispatch_rejects_flag_like_workflow() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        assert!(
+            gh.workflow_dispatch(Path::new("."), WorkflowDispatch::new("-evil"))
+                .await
+                .is_err()
+        );
+        assert!(
+            gh.workflow_dispatch(Path::new("."), WorkflowDispatch::new(""))
+                .await
+                .is_err()
+        );
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // run_rerun pins `gh run rerun <id>` (All) and `gh run rerun <id> --failed`
+    // (FailedOnly). The u64 id can never look like a flag, so there is no guard.
+    #[tokio::test]
+    async fn run_rerun_builds_argv_for_each_scope() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.run_rerun(Path::new("/r"), 42, RerunScope::All)
+            .await
+            .expect("rerun all");
+        gh.run_rerun(Path::new("/r"), 42, RerunScope::FailedOnly)
+            .await
+            .expect("rerun failed");
+        let calls = rec.calls();
+        assert_eq!(calls[0].args_str(), ["run", "rerun", "42"]);
+        assert!(!calls[0].has_flag("--failed"), "All reruns the whole run");
+        assert_eq!(calls[1].args_str(), ["run", "rerun", "42", "--failed"]);
+    }
+
+    // run_cancel pins `gh run cancel <id>`.
+    #[tokio::test]
+    async fn run_cancel_builds_argv() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let gh = GitHub::with_runner(&rec);
+        gh.run_cancel(Path::new("/r"), 42).await.expect("cancel");
+        assert_eq!(rec.only_call().args_str(), ["run", "cancel", "42"]);
+    }
+
+    // A non-zero gh exit on a run-control verb surfaces as `Error::Exit`, not a
+    // swallowed success (e.g. cancelling an already-completed run, gh exit 1).
+    #[tokio::test]
+    async fn run_control_surfaces_gh_exit_errors() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "run", "cancel"],
+            Reply::fail(1, "Cannot cancel a workflow run that is completed"),
+        ));
+        assert!(matches!(
+            gh.run_cancel(Path::new("."), 42).await.unwrap_err(),
+            Error::Exit { .. }
+        ));
+
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "workflow", "run"],
+            Reply::fail(1, "HTTP 404: workflow x.yml not found on the default branch"),
+        ));
+        assert!(matches!(
+            gh.workflow_dispatch(Path::new("."), WorkflowDispatch::new("x.yml"))
+                .await
+                .unwrap_err(),
+            Error::Exit { .. }
+        ));
     }
 
     #[tokio::test]

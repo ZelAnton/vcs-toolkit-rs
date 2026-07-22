@@ -334,6 +334,9 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs |
 | `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id` |
 | `run_watch` | `run watch <id>`, then `run view <id>` | **blocks** until the run finishes |
+| `workflow_dispatch` | `workflow run <workflow> [--ref <ref>] [--raw-field key=value …]` | via `WorkflowDispatch`; returns `()` (dispatch is async, 204) |
+| `run_rerun` | `run rerun <id> [--failed]` | via `RerunScope::{All,FailedOnly}` |
+| `run_cancel` | `run cancel <id>` | requests cancellation of an in-progress run |
 | `release_list` | `release list --limit 100 --json …` | `body`/`url` not fetched |
 | `release_view` | `release view <tag> --json …` | fills `body`/`url` |
 | `release_create` | `release create <tag> [--title] [--notes] [--draft] [--prerelease]` | via `ReleaseCreate`; returns URL |
@@ -351,8 +354,8 @@ escape hatches](../crates/github/docs/github.md#raw-escape-hatches).
 `browse`, `cache`, `codespace`, `extension`, `gist`, `label`, `org`, `project`,
 `pr lock`/`reopen`/`status`, `repo clone`/`create`/`fork`/`edit`/`sync`/`list`,
 `ruleset`, `search`, `secret`, `ssh-key`, `variable`, `workflow` (`list`/`view`/
-`run`/`enable`/`disable`). Reach any of these through `run`/`run_raw`, or
-`api` for a raw REST/GraphQL call.
+`enable`/`disable` — `workflow run` is modeled as `workflow_dispatch`). Reach any
+of these through `run`/`run_raw`, or `api` for a raw REST/GraphQL call.
 
 ## glab (`vcs-gitlab` — the GitLab CLI)
 

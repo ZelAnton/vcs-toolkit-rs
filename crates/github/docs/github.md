@@ -2,8 +2,9 @@
 
 **What you can do:** check auth, view the repo, the full pull-request lifecycle
 (list/view/create/merge/ready/close, review/comment, CI checks, feedback), issues,
-releases, and GitHub Actions runs (list/view/watch). This guide is the full
-reference — every command by theme, with examples.
+releases, and GitHub Actions runs (list/view/watch, plus dispatch a workflow and
+rerun/cancel a run). This guide is the full reference — every command by theme,
+with examples.
 
 `vcs-github` drives the GitHub CLI (`gh`) from Rust. Every operation is `async`,
 runs inside an OS job (via [`processkit`]) so a `gh` subprocess is never
@@ -340,6 +341,9 @@ let full = gh.issue_view(repo, 3).await?; // a single issue, body + url populate
 async fn run_list(&self, dir: &Path, limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
 async fn run_view(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
 async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
+async fn workflow_dispatch(&self, dir: &Path, spec: WorkflowDispatch) -> Result<()>;
+async fn run_rerun(&self, dir: &Path, id: u64, scope: RerunScope) -> Result<()>;
+async fn run_cancel(&self, dir: &Path, id: u64) -> Result<()>;
 ```
 
 `run_list` returns recent runs, newest first, capped at `limit`; `branch`
@@ -365,6 +369,55 @@ match run.conclusion.as_str() {
     "success" => println!("green"),
     other     => println!("ended: {other}"), // "failure", "cancelled", …
 }
+# Ok(()) }
+```
+
+### Controlling runs — dispatch, rerun, cancel
+
+The three *control* verbs close the CI automation loop (start a workflow,
+rerun a failed one, cancel a running one). All three return `Result<()>` and
+follow gh's exit-code convention (`gh help exit-codes`): **0** on success, **1**
+on failure (surfaced as `Error::Exit`), **4** if gh is not authenticated.
+
+`workflow_dispatch` fires a `workflow_dispatch` event (`gh workflow run`) via a
+[`WorkflowDispatch`](#workflowdispatch) spec — the workflow (its file or display
+name), an optional target `ref`, and any number of `key=value` inputs. The
+workflow file must declare an `on: workflow_dispatch` trigger. It returns
+`Result<()>`, **not** a run URL: GitHub's dispatch API replies `204 No Content`
+with no run id (the dispatch is asynchronous — the run may not exist yet), so
+poll `run_list` to find the run it started. Inputs are emitted with
+`--raw-field` (**not** `--field`, whose `@value` reads a *file* — the raw form
+keeps an input value like `@/etc/passwd` a literal string). The bare `<workflow>`
+positional is flag-injection guarded like `release_view`'s tag; the `ref` and
+each `key=value` ride in flag-VALUE slots (consumed verbatim, like `--branch`),
+so an input value may safely begin with `-`.
+
+`run_rerun` reruns a completed run (`gh run rerun <id>`); pass a
+[`RerunScope`](#rerunscope) — `All` reruns every job, `FailedOnly` adds
+`--failed` (only the failed jobs and their dependencies). `run_cancel` requests
+cancellation of an in-progress run (`gh run cancel <id>`). Both take the run id
+([`WorkflowRun::database_id`], a `u64` — never flag-like, so unguarded) and are
+themselves asynchronous: a rerun starts a *new* run, and cancellation returns
+before jobs wind down — read the outcome back via `run_view`/`run_watch` (a
+cancelled run's `conclusion` is `"cancelled"`).
+
+```rust,ignore
+# use vcs_github::{GitHub, GitHubApi, RerunScope, WorkflowDispatch};
+use std::path::Path;
+# async fn demo(repo: &Path) -> Result<(), processkit::Error> {
+let gh = GitHub::new();
+
+// Kick off a deploy workflow on a tag, with two inputs.
+gh.workflow_dispatch(
+    repo,
+    WorkflowDispatch::new("deploy.yml")
+        .git_ref("v1.4.0")
+        .field("environment", "staging")
+        .field("dry_run", "true"),
+).await?;
+
+gh.run_rerun(repo, 27023111945, RerunScope::FailedOnly).await?; // retry failures
+gh.run_cancel(repo, 27023111946).await?;                        // stop a run
 # Ok(()) }
 ```
 
@@ -580,6 +633,48 @@ pub enum ReviewKind {
     Approve,         // --approve
     RequestChanges,  // --request-changes
     Comment,         // --comment
+}
+```
+
+### `WorkflowDispatch`
+
+What [`workflow_dispatch`](#controlling-runs--dispatch-rerun-cancel) fires.
+`#[non_exhaustive]` — build it through `WorkflowDispatch::new(workflow)` (the
+`≥2 options → builder` rule: a target `ref` **and** inputs) plus the chained
+setters, rather than a struct literal:
+
+```rust,ignore
+# use vcs_github::WorkflowDispatch;
+let _ = WorkflowDispatch::new("ci.yml");                       // default branch, no inputs
+let _ = WorkflowDispatch::new("deploy.yml")
+    .git_ref("v1.4.0")                                         // --ref v1.4.0
+    .field("environment", "staging")                          // --raw-field environment=staging
+    .field("dry_run", "true");                                // --raw-field dry_run=true
+```
+
+- `new(workflow)` — the workflow's file name (`ci.yml`) or display name (gh's bare
+  positional). Flag-injection guarded.
+- `.git_ref(r)` — the branch/tag whose workflow-file version to run (`--ref`);
+  omitted, gh uses the repository's default branch. (Named `git_ref` because `ref`
+  is a Rust keyword.)
+- `.field(key, value)` — add one `workflow_dispatch` input; call once per input.
+  Emitted as `--raw-field key=value` in order added — the **raw** form, so a value
+  beginning with `@` is a literal string, not a file read (gh's `--field` `@`
+  syntax).
+
+Public fields: `workflow: String`, `git_ref: Option<String>`,
+`fields: Vec<(String, String)>`.
+
+### `RerunScope`
+
+Which jobs [`run_rerun`](#controlling-runs--dispatch-rerun-cancel) reruns — a
+`#[non_exhaustive]`, `Copy` enum passed directly (a single toggle doesn't reach
+the builder bar):
+
+```rust,ignore
+pub enum RerunScope {
+    All,        // gh run rerun <id>            (every job)
+    FailedOnly, // gh run rerun <id> --failed   (failed jobs + their dependencies)
 }
 ```
 
