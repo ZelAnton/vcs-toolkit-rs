@@ -62,6 +62,42 @@ fn assert_output_contract<T>(label: &str, result: processkit::Result<T>) {
     }
 }
 
+/// Whether a release's `published_at` cell looks like tea's machine-readable timestamp
+/// (RFC3339, e.g. `2023-07-26T13:02:36Z`) or is empty (an unpublished draft), and **not**
+/// like a `Status` keyword (`released`/`draft`/`prerelease`).
+///
+/// `release_list` is the one read op with **no `--fields`** pin — tea's release-table
+/// column order is intrinsic (pinned in `src/parse.rs` to tea's
+/// `modules/print/release.go::ReleasesList`), so a same-typed `Published At`<->`Status`
+/// transposition in a future `tea` would parse with no `Error::Parse`/`unknown output
+/// type` and thus slip past [`is_format_drift`]. This value-shape check makes that
+/// specific swap catchable against a real `tea`: for `--output csv` (machine-readable),
+/// tea's `FormatTime` emits an RFC3339 stamp for a published release and `""` for a
+/// draft — never a bare status word.
+fn release_published_at_is_timestamp_or_empty(published_at: &str) -> bool {
+    published_at.is_empty()
+        || (published_at.chars().any(|c| c.is_ascii_digit())
+            && published_at.chars().any(|c| c == '-' || c == ':'))
+}
+
+// Hermetic guard (runs without `tea`, in the normal test pass) for the shape predicate
+// the live release gate relies on: an RFC3339 stamp and an empty draft cell pass; a
+// `Status` keyword fails — so a `Published At`<->`Status` transposition trips the live
+// gate rather than parsing into a silently-mislabeled release.
+#[test]
+fn release_published_at_shape_predicate_distinguishes_timestamps_from_status() {
+    assert!(release_published_at_is_timestamp_or_empty(
+        "2023-07-26T13:02:36Z"
+    ));
+    assert!(release_published_at_is_timestamp_or_empty("")); // unpublished draft
+    for status in ["released", "draft", "prerelease"] {
+        assert!(
+            !release_published_at_is_timestamp_or_empty(status),
+            "{status:?} must not read as a plausible published_at"
+        );
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires the tea binary"]
 async fn version_runs() {
@@ -122,7 +158,30 @@ async fn list_outputs_match_the_parsers() {
 
     assert_output_contract("pr_list", tea.pr_list(&dir).await);
     assert_output_contract("issue_list", tea.issue_list(&dir).await);
-    assert_output_contract("release_list", tea.release_list(&dir).await);
+
+    // `release_list` has no `--fields` pin, so a same-typed `Published At`<->`Status`
+    // transposition would parse cleanly and slip past the format-drift gate. Beyond the
+    // parser/`--output` contract, assert each real release row's `published_at` still
+    // looks like a timestamp (never a `Status` word), so that specific column swap fails
+    // here instead of silently mislabeling releases. Zero rows (empty repo) stays a clean
+    // pass; a genuine environment error stays a skip.
+    match tea.release_list(&dir).await {
+        Ok(releases) => {
+            for r in &releases {
+                assert!(
+                    release_published_at_is_timestamp_or_empty(&r.published_at),
+                    "release_list: published_at {:?} (tag {:?}) is not a timestamp — tea's \
+                     release column order may have drifted (Published At<->Status transposition)",
+                    r.published_at,
+                    r.tag,
+                );
+            }
+        }
+        Err(err) if is_format_drift(&err) => {
+            panic!("release_list: tea output did not match the parser (contract drift): {err}");
+        }
+        Err(other) => eprintln!("skipping release_list: {other}"),
+    }
 
     // issue_view pages the same issues list and filters by number; probe #1 (a
     // non-format-drift error is a fine skip if it simply doesn't exist).

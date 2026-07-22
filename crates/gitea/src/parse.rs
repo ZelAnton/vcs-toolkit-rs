@@ -290,13 +290,38 @@ pub(crate) fn parse_issue_list(csv: &str) -> Result<Vec<Issue>> {
 }
 
 /// Parse `tea releases list --output csv` into the flattened [`Release`]s. tea's fixed
-/// release table has no `--fields` flag; the columns are, in order, `Tag-Name`,
-/// `Title`, `Published At`, `Status`, `Tar URL`. A data row with an empty tag is a real
-/// parse failure (drift), not a silent empty tag.
+/// release table has **no `--fields`** flag, so — unlike `pr`/`issues list`, whose
+/// column order this crate pins with `--fields` — the positional map here relies on
+/// tea's *intrinsic* column order `Tag-Name, Title, Published At, Status, Tar URL`,
+/// pinned to tea's own source at the inline citation below (`modules/print/release.go`,
+/// `func ReleasesList`, tags `v0.9.2`/`v0.10.0`/`v0.14.2`). A data row with an empty tag
+/// is a real parse failure (drift), not a silent empty tag.
+///
+/// The one drift this positional read can't self-detect is a same-typed transposition
+/// among the string columns (e.g. `Published At` <-> `Status`): it parses with no
+/// `Error::Parse`/`unknown output type`, so it would slip past the format-drift gate.
+/// The live `#[ignore]` release check in `tests/cli.rs` covers that specific swap with a
+/// value-shape assertion (a real `published_at` must look like a timestamp, never a
+/// `Status` keyword).
 pub(crate) fn parse_release_list(csv: &str) -> Result<Vec<Release>> {
     data_rows(csv)?
         .iter()
         .map(|row| {
+            // Positional column map, pinned to tea's source (there is no `--fields` on
+            // `releases list`, so this order is tea-intrinsic and cannot be re-selected):
+            //   `modules/print/release.go`, `func ReleasesList` — `tableWithHeader(...)`
+            //   and the matching `t.addRow(...)` emit, in order:
+            //     0  Tag-Name      = release.TagName
+            //     1  Title         = release.Title
+            //     2  Published At  = FormatTime(release.PublishedAt, isMachineReadable) —
+            //                        csv is machine-readable, so an RFC3339 stamp for a
+            //                        published release and "" for a draft (formatters.go)
+            //     3  Status        = "released" | "draft" | "prerelease"
+            //     4  Tar URL       = release.TarURL (intentionally not surfaced here)
+            // Verified identical at v0.9.2 (header L14-18 / addRow L29-33) and v0.10.0;
+            // at v0.14.2 (header L13-17 / addRow L28-32) only the *unread* 5th column
+            // changed (header `Tar URL` -> `Tar/Zip URL`, value `TarURL+"\n"+ZipURL`),
+            // while columns 0-3 read below are unchanged.
             let tag = cell(row, 0);
             if tag.is_empty() {
                 return Err(Error::parse(
@@ -529,13 +554,26 @@ mod tests {
     }
 
     // `tea releases list --output csv`: fixed columns `Tag-Name,Title,Published At,
-    // Status,Tar URL`, and NO release-page URL (so `url` is empty).
+    // Status,Tar URL` (tea `modules/print/release.go::ReleasesList`, v0.9.2/v0.10.0/
+    // v0.14.2), and NO release-page URL (so `url` is empty). This row uses a distinct
+    // *shape* per cell (tag / title / timestamp / status keyword / tar url), so a
+    // parser-side positional index swap (e.g. reading `published_at` from the `Status`
+    // column) fails here — `release_list` has no `--fields` pin, so this hermetic map is
+    // the parser-side guard; the live `tests/cli.rs` shape check guards a real tea's
+    // intrinsic order (see the `parse_release_list` doc comment).
     #[test]
     fn parses_release_list_row() {
         let csv = "\"Tag-Name\",\"Title\",\"Published At\",\"Status\",\"Tar URL\"\n\
                    \"0.1\",\"First\",\"2023-07-26T13:02:36Z\",\"released\",\"https://gitea/0.1.tar.gz\"\n";
         let releases = parse_release_list(csv).expect("parse releases");
         assert_eq!(releases.len(), 1);
+        // Field count is fixed at 5; a future tea that adds/removes a column would drift
+        // the intrinsic order this positional map depends on (see the doc comment).
+        assert_eq!(
+            parse_csv_records(csv)[0].len(),
+            5,
+            "tea's release table is a fixed 5-column shape"
+        );
         assert_eq!(
             releases[0],
             Release {
