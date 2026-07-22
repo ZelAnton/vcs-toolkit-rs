@@ -168,7 +168,7 @@ const ISSUE_VIEW_FIELDS: &str =
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
 const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedAt";
-const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt,author";
+const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt";
 const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isPrerelease,author";
 
 /// Injection guard for bare positional argv slots: a caller-supplied value

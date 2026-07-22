@@ -175,6 +175,14 @@ where
     Ok(raw.map(|a| a.login).unwrap_or_default())
 }
 
+fn author_login_opt<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<AuthorJson>::deserialize(deserializer)?;
+    Ok(raw.map(|a| a.login))
+}
+
 // gh nests `milestone` as `{"title": …}`, `null` when none is attached.
 #[derive(Deserialize)]
 struct MilestoneJson {
@@ -370,11 +378,12 @@ pub struct Release {
     /// from `release_view` it defaults to `false`.
     #[serde(rename = "isLatest", default)]
     pub is_latest: bool,
-    /// Release author's login (gh `--json author`, flattened from
-    /// `{"login": …}`; a deleted account's `null` author becomes an empty
-    /// string).
-    #[serde(default, deserialize_with = "author_login")]
-    pub author: String,
+    /// Release author's login. `None` from `release_list`, which doesn't request
+    /// the field (only `release_view` does) — so an absent value reads as the
+    /// honest "not fetched", not a false empty string. A present author object
+    /// with no login for a deleted or anonymized account becomes `Some("")`.
+    #[serde(default, deserialize_with = "author_login_opt")]
+    pub author: Option<String>,
 }
 
 /// A submitted PR review (from `gh pr view --json reviews`).
@@ -519,7 +528,7 @@ struct CommentJson {
 
 #[derive(Deserialize)]
 struct AuthorJson {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     login: String,
 }
 
@@ -745,14 +754,14 @@ mod tests {
         let release: Release = vcs_cli_support::json::from_json(
             BINARY,
             r#"{"tagName": "v1", "name": null, "body": null, "url": null, "publishedAt": null,
-                "author": null}"#,
+                "author": {}}"#,
         )
         .expect("release with null name/body/url/publishedAt/author");
         assert_eq!(release.name, "");
         // `body`/`url` are `Option`: a present `null` reads as `None`, not "".
         assert_eq!(release.body, None);
         assert_eq!(release.url, None);
-        assert_eq!(release.author, "", "deleted account → empty login");
+        assert_eq!(release.author, Some("".to_string()), "deleted account → empty login");
     }
 
     #[test]
@@ -850,7 +859,7 @@ mod tests {
         let list = r#"[
             {"tagName": "vcs-git-v0.4.0", "name": "vcs-git v0.4.0",
              "isLatest": true, "isDraft": false, "isPrerelease": false,
-             "publishedAt": "2026-06-04T12:00:00Z", "author": {"login": "ZelAnton"}}
+             "publishedAt": "2026-06-04T12:00:00Z"}
         ]"#;
         let releases: Vec<Release> =
             vcs_cli_support::json::from_json(BINARY, list).expect("parse list");
@@ -861,7 +870,7 @@ mod tests {
             "list doesn't request the body → None"
         );
         assert_eq!(releases[0].url, None, "list doesn't request the url → None");
-        assert_eq!(releases[0].author, "ZelAnton");
+        assert_eq!(releases[0].author, None);
 
         let view = r#"{"tagName": "vcs-git-v0.4.0", "name": "vcs-git v0.4.0",
             "body": "Added\n- stuff", "url": "https://gh/releases/1",
@@ -871,7 +880,7 @@ mod tests {
         assert!(!release.is_latest, "view has no isLatest → default false");
         assert_eq!(release.body.as_deref(), Some("Added\n- stuff"));
         assert_eq!(release.url.as_deref(), Some("https://gh/releases/1"));
-        assert_eq!(release.author, "ZelAnton");
+        assert_eq!(release.author, Some("ZelAnton".to_string()));
     }
 
     #[test]

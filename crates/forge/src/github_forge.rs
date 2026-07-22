@@ -391,9 +391,9 @@ fn map_release(r: Release) -> ForgeRelease {
         // sets), so these are confirmed values.
         draft: Some(r.is_draft),
         prerelease: Some(r.is_prerelease),
-        // gh always reports author when requested (both list and view field
-        // sets) — confirmed, not unknown.
-        author: Some(r.author),
+        // `author` is absent from `release_list` and present from `release_view`,
+        // so preserve whether it was fetched.
+        author: r.author,
     }
 }
 
