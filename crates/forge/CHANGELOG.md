@@ -10,6 +10,20 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Variant-grain capability introspection.** The whole set of `Unsupported`
+  outcomes is now predictable *before* the call, not just the whole-operation ones
+  `Forge::supports(ForgeOp)` already covered. New probes:
+  `Forge::supports_review_kind(ReviewKind)` (`Approve` on every real backend;
+  `RequestChanges` not on GitLab; a comment-only `Comment` review GitHub-only),
+  `Forge::supports_merge_option(MergeOption)` (`Auto`/`DeleteBranch` GitHub-only),
+  and `Forge::supports_pr_close_delete_branch()` (GitHub-only). New
+  `#[non_exhaustive]` enums `ReviewKind` (+ `ReviewKind::ALL`) and `MergeOption`
+  (+ `MergeOption::ALL`), plus the same source-of-truth methods on `ForgeKind`
+  (`ForgeKind::supports_review_kind`/`supports_merge_option`/
+  `supports_pr_close_delete_branch`) — the single table the dispatch reads, so a
+  probe can never disagree with the runtime `Unsupported`. `Forge::supports(ForgeOp)`
+  is unchanged in behaviour and now routes its `PrRequestChanges` answer through that
+  same review-kind table. (Serialized under the `serde` feature.)
 - **Unified issue-lifecycle operations.** `Forge::issue_close(number)` /
   `issue_reopen(number)` close and reopen an issue, and `issue_comment(number,
   body)` posts a comment — supported on all three backends (`gh`/`glab` `issue
@@ -34,7 +48,20 @@ crates; tag releases as `vcs-forge-v<version>`.
   `ForgeIssue::new`/`ForgeRelease::new`.
 
 ### Changed
--
+- **`pr_close` now rejects `delete_branch` on GitLab/Gitea instead of silently
+  ignoring it (behaviour change).** Deleting the source branch on close is
+  GitHub-only; previously `pr_close(PrClose::new(n).delete_branch())` on GitLab/Gitea
+  closed the PR/MR *without* deleting the branch (a silently dropped side effect).
+  It now returns `Error::Unsupported` **before spawning** — the same deliberate
+  contract as `pr_merge`'s `auto`/`delete_branch` (a quietly dropped option on an
+  irreversible action can produce the wrong result). A plain close (no branch
+  deletion) is unaffected on every backend. `Error::is_unsupported()` classifies it.
+- Internal only (no public API change): `pr_merge`'s `auto`/`delete_branch` gap and
+  `pr_request_changes`'s GitLab gap are now gated at the **facade** (reading the
+  shared `supports_merge_option` / `supports_review_kind` tables) before dispatch,
+  rather than relying on the wrapper crate to reject the option — so introspection
+  and dispatch read one source of truth. The observable result is unchanged
+  (`Unsupported`, no spawn); the wrapper-level rejection remains as a backstop.
 
 ### Fixed
 -

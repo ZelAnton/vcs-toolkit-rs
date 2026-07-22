@@ -57,6 +57,67 @@ impl ForgeKind {
             None
         }
     }
+
+    /// Whether this backend can submit a review of the given [`ReviewKind`] — the
+    /// **single source of truth** the
+    /// [`Forge::supports_review_kind`](crate::Forge::supports_review_kind)
+    /// introspection and the [`pr_approve`](crate::Forge::pr_approve) /
+    /// [`pr_request_changes`](crate::Forge::pr_request_changes) dispatch both read, so
+    /// what a consumer probes can never disagree with the runtime behaviour.
+    ///
+    /// [`Approve`](ReviewKind::Approve) is available on all three real backends;
+    /// [`RequestChanges`](ReviewKind::RequestChanges) is **not** on GitLab (its review
+    /// model is approve/revoke, with no request-changes action); a comment-only review
+    /// ([`Comment`](ReviewKind::Comment)) is **GitHub only** (`gh pr review --comment`)
+    /// — GitLab and Gitea have no comment-review verb. An
+    /// [`Unknown`](ForgeKind::Unknown) backend supports none.
+    pub fn supports_review_kind(self, kind: ReviewKind) -> bool {
+        match (self, kind) {
+            // No classified CLI ⇒ nothing.
+            (ForgeKind::Unknown, _) => false,
+            // Every real backend can approve.
+            (_, ReviewKind::Approve) => true,
+            // Request-changes: GitHub (`gh pr review --request-changes`) and Gitea
+            // (`tea pr reject`) yes; GitLab has no such action.
+            (ForgeKind::GitHub | ForgeKind::Gitea, ReviewKind::RequestChanges) => true,
+            (ForgeKind::GitLab, ReviewKind::RequestChanges) => false,
+            // Comment-only review is GitHub-native (`gh pr review --comment`); GitLab
+            // and Gitea have no comment-review verb.
+            (ForgeKind::GitHub, ReviewKind::Comment) => true,
+            (ForgeKind::GitLab | ForgeKind::Gitea, ReviewKind::Comment) => false,
+        }
+    }
+
+    /// Whether this backend can express the given [`MergeOption`] on
+    /// [`pr_merge`](crate::Forge::pr_merge). The `auto` and `delete_branch` side
+    /// effects are **GitHub only** (`gh pr merge --auto --delete-branch`); GitLab and
+    /// Gitea report `false`, and the facade rejects a requested-but-unsupported option
+    /// with [`Unsupported`](crate::Error::Unsupported) **before spawning** rather than
+    /// merging without it. The **single source of truth** both
+    /// [`Forge::supports_merge_option`](crate::Forge::supports_merge_option) and the
+    /// `pr_merge` dispatch read.
+    pub fn supports_merge_option(self, option: MergeOption) -> bool {
+        matches!(
+            (self, option),
+            (
+                ForgeKind::GitHub,
+                MergeOption::Auto | MergeOption::DeleteBranch
+            )
+        )
+    }
+
+    /// Whether this backend can delete the source branch when **closing** a PR/MR
+    /// ([`pr_close`](crate::Forge::pr_close) with [`PrClose::delete_branch`]). **GitHub
+    /// only** (`gh pr close --delete-branch`): GitLab and Gitea have no such flag, so
+    /// the facade rejects the option with [`Unsupported`](crate::Error::Unsupported)
+    /// before spawning rather than closing without deleting the branch (the same
+    /// deliberate contract as [`pr_merge`](crate::Forge::pr_merge)'s
+    /// `auto`/`delete_branch`). The **single source of truth** both
+    /// [`Forge::supports_pr_close_delete_branch`](crate::Forge::supports_pr_close_delete_branch)
+    /// and the `pr_close` dispatch read.
+    pub fn supports_pr_close_delete_branch(self) -> bool {
+        matches!(self, ForgeKind::GitHub)
+    }
 }
 
 /// Whether `host` is exactly `domain` or a **proper subdomain** of it
@@ -133,6 +194,19 @@ fn host_of(url: &str) -> Option<&str> {
 /// *auth-gated* action menu from [`Forge::capabilities`](crate::Forge::capabilities).
 /// They overlap only on `pr_checks`: here it means "this backend ships a checks
 /// command"; in `ForgeCapabilities` it additionally requires an authenticated CLI.
+///
+/// **Operation grain vs. option/review grain.** `ForgeOp` answers "does this backend
+/// ship this whole operation". Some [`Unsupported`](crate::Error::Unsupported) failures
+/// are finer than that — a backend *has* the operation but can't express a specific
+/// **option** or **review kind** on it: [`pr_merge`](crate::Forge::pr_merge)'s
+/// `auto`/`delete_branch` and [`pr_close`](crate::Forge::pr_close)'s branch deletion are
+/// GitHub-only, a request-changes review (and a comment-only review) is unavailable on
+/// GitLab, and `release_create`'s `draft`/`prerelease` are a GitLab gap. Those are
+/// **not** `ForgeOp` entries (the operation itself works everywhere); probe them with
+/// [`supports_review_kind`](crate::Forge::supports_review_kind) /
+/// [`supports_merge_option`](crate::Forge::supports_merge_option) /
+/// [`supports_pr_close_delete_branch`](crate::Forge::supports_pr_close_delete_branch),
+/// the variant-grain companions to [`supports`](crate::Forge::supports).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -208,6 +282,62 @@ impl ForgeOp {
         ForgeOp::IssueReopen,
         ForgeOp::IssueComment,
     ];
+}
+
+/// A kind of PR/MR **review** a consumer can submit — the review "verb" whose
+/// availability varies across the three forges. Probe it with
+/// [`Forge::supports_review_kind`](crate::Forge::supports_review_kind) (or
+/// [`ForgeKind::supports_review_kind`]) before calling, the review-grain companion to
+/// [`ForgeOp`]'s operation-grain [`supports`](crate::Forge::supports). Requesting an
+/// unsupported review kind returns [`Unsupported`](crate::Error::Unsupported) before
+/// spawning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ReviewKind {
+    /// An **approving** review — `gh pr review --approve` / `glab mr approve` /
+    /// `tea pr approve`. Available on all three real backends.
+    Approve,
+    /// A **request-changes** review — `gh pr review --request-changes` /
+    /// `tea pr reject`. **Unavailable on GitLab**, whose review model is
+    /// approve/revoke with no request-changes action.
+    RequestChanges,
+    /// A **comment-only** review — `gh pr review --comment`. **GitHub only**: GitLab
+    /// and Gitea have no comment-review verb (post an ordinary PR/MR comment with
+    /// [`pr_comment`](crate::Forge::pr_comment) instead).
+    Comment,
+}
+
+impl ReviewKind {
+    /// Every review kind, to iterate a per-backend review support matrix (mirrors
+    /// [`ForgeOp::ALL`]).
+    pub const ALL: &'static [ReviewKind] = &[
+        ReviewKind::Approve,
+        ReviewKind::RequestChanges,
+        ReviewKind::Comment,
+    ];
+}
+
+/// An optional side effect of [`pr_merge`](crate::Forge::pr_merge) — beyond the merge
+/// itself — whose availability varies by backend. Probe it with
+/// [`Forge::supports_merge_option`](crate::Forge::supports_merge_option) (or
+/// [`ForgeKind::supports_merge_option`]) before calling; requesting an unsupported
+/// option returns [`Unsupported`](crate::Error::Unsupported) before spawning (see
+/// [`PrMerge`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum MergeOption {
+    /// Enable auto-merge — merge once requirements/checks are met (`--auto`).
+    /// **GitHub only.**
+    Auto,
+    /// Delete the source branch after the merge (`--delete-branch`). **GitHub only.**
+    DeleteBranch,
+}
+
+impl MergeOption {
+    /// Every merge option, to iterate a per-backend merge-option support matrix.
+    pub const ALL: &'static [MergeOption] = &[MergeOption::Auto, MergeOption::DeleteBranch];
 }
 
 /// A pull request (GitHub) / merge request (GitLab) / pull request (Gitea),
@@ -719,8 +849,13 @@ pub struct PrClose {
     /// The PR/MR number to close.
     pub number: u64,
     /// Also delete the source branch. **GitHub only** (`gh pr close --delete-branch`):
-    /// GitLab's `glab mr close` and Gitea's `tea pr close` have no such flag, so this
-    /// is **ignored** on those backends.
+    /// GitLab's `glab mr close` and Gitea's `tea pr close` have no such flag, so
+    /// requesting it on those backends returns
+    /// [`Unsupported`](crate::Error::Unsupported) **before spawning** — rather than
+    /// closing the PR/MR *without* deleting the branch the caller asked to remove (the
+    /// same deliberate contract as [`PrMerge`]'s `auto`/`delete_branch`). Probe it up
+    /// front with
+    /// [`Forge::supports_pr_close_delete_branch`](crate::Forge::supports_pr_close_delete_branch).
     pub delete_branch: bool,
 }
 
@@ -733,7 +868,9 @@ impl PrClose {
         }
     }
 
-    /// Also delete the source branch (GitHub only; ignored on GitLab/Gitea).
+    /// Also delete the source branch (GitHub only;
+    /// [`Unsupported`](crate::Error::Unsupported) on GitLab/Gitea, rejected before
+    /// spawning).
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
         self
