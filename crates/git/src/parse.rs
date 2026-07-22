@@ -637,7 +637,7 @@ pub(crate) fn parse_ls_remote_heads(output: &str) -> Vec<String> {
 
 /// One configured Git remote, as listed by `git remote -v`.
 ///
-/// Git emits one row for each fetch and push URL. [`parse_remotes`] coalesces
+/// Git emits one row for each fetch and push URL. `parse_remotes` coalesces
 /// those rows to one remote name and prefers its fetch URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
