@@ -15,6 +15,33 @@ crates; tag releases as `vcs-jj-v<version>`.
   `Remote { name, url }` result type. The positional remote names and URLs are
   guarded against empty/flag-like values before jj is spawned; `remote_list`
   parses jj's `name URL` display rows, pinned by ignored real-jj tests. (T-097.)
+- `JjApi::config_get`/`config_set`: parity with `GitApi::config_get`/
+  `config_set` (`jj config get <key>` / `jj config set --repo -- <key>
+  <value>`). `config_get` maps jj's exit codes (`0` → `Some`, `1` → `None`
+  unset, other → error); `config_set` pins `key`/`value` behind a `--` option
+  terminator so a flag-shaped value is written literally rather than rejected
+  as an unrecognised argument. `key` keeps the same empty/flag-like guard as
+  the git wrapper; `value` deliberately keeps none, matching git's contract
+  (verified on jj 0.42).
+- `JjApi::bookmark_forget`/`bookmark_untrack`: the inverse operations of the
+  existing `bookmark_track`/`bookmark_delete` — forget a bookmark locally
+  without marking it for remote deletion, and stop tracking a bookmark's
+  remote counterpart without forgetting it locally. Both wrap their
+  glob-matched name/remote positionals in jj's `exact:` string pattern
+  (mirroring `bookmark_delete`), and `bookmark_untrack` uses the current,
+  non-deprecated `--remote` flag rather than `bookmark_track`'s deprecated
+  composite `<name>@<remote>` form (verified on jj 0.42).
+- `JjApi::revert`: an undo-by-new-change operation (`jj revert -r <revset>
+  --onto @`), parity with `GitApi::revert`'s "create an inverse commit" shape.
+  Empirically verified (via the upstream jj CHANGELOG, cross-checked against
+  the installed jj 0.42 binary) that jj's older `backout` was deprecated in
+  jj 0.28.0 and fully removed in jj 0.35.0 — both below this crate's validated
+  0.38 floor — so `revert` is the only verb across the crate's entire
+  supported range; no `JjCapabilities` version gate is needed. Documents a
+  real divergence from `GitApi::revert`: jj's `--onto @` creates the reverting
+  commit as a new head off `@` without moving `@` onto it or rebasing `@`'s
+  other descendants, unlike git's `revert --no-edit`, which advances the
+  branch tip.
 
 ### Changed
 -

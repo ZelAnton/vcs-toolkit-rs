@@ -807,6 +807,42 @@ pub trait JjApi: Send + Sync {
     ///
     /// jj exits non-zero if `name` does not name an existing remote.
     async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+    /// The value of a config key, or `None` when unset (`jj config get <key>`),
+    /// mirroring [`GitApi::config_get`](../vcs_git/trait.GitApi.html#tymethod.config_get).
+    /// jj exits 1 both when the key is genuinely unset and — unlike git — when
+    /// `key` names a section/table rather than a scalar leaf, in which case jj
+    /// renders the whole sub-table as its TOML text instead of erroring (verified
+    /// on jj 0.42: `config get user` prints `{ email = "...", name = "..." }`
+    /// with exit 0). `key` is guarded like a bare positional (empty/leading `-`
+    /// refused before spawning); a key that is itself flag-shaped otherwise
+    /// reaches jj's own CLI parser as an unrecognised argument.
+    async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>>;
+    /// Set a config key in the repository's local (`--repo`) config
+    /// (`jj config set --repo -- <key> <value>`), mirroring
+    /// [`GitApi::config_set`](../vcs_git/trait.GitApi.html#tymethod.config_set).
+    ///
+    /// The `--` option terminator pins both `key` and `value` as positionals —
+    /// verified on jj 0.42: without it, a flag-shaped `key`/`value` (e.g.
+    /// `--evil`) is rejected as an unrecognised argument rather than written;
+    /// with it, both are taken literally, even a `value` shaped like a flag.
+    /// `value` is jj's own TOML-expression grammar (documented by `jj config
+    /// set --help`): an unquoted value that isn't valid TOML syntax is stored
+    /// as that literal string (verified: `"hello world"`, `"abc#def"`, and
+    /// `""` all round-trip byte-for-byte through `config_get`), but a value
+    /// that *is* valid TOML (`"42"`, `"true"`) is stored as that TOML type
+    /// (integer/bool) rather than a string — `config_get` still renders it
+    /// back as the same text, so a plain round-trip is unaffected, but this is
+    /// a real divergence from git's always-literal-string `config_set`; quote
+    /// the value yourself (e.g. `"\"42\""`) if you need a TOML string
+    /// specifically. `key` keeps the same guard as [`config_get`](JjApi::config_get);
+    /// `value` deliberately keeps none (a config value may legitimately begin
+    /// with `-`), matching `GitApi::config_set`'s own contract.
+    ///
+    /// **Trusted-input sink**, exactly like `GitApi::config_set`: the `--`
+    /// guard only stops `value` being *misparsed* as a flag, not the key/value
+    /// *content* — never wire untrusted input into a key like
+    /// `core.fsmonitor`/`ui.*-editor` that jj interprets as a command to run.
+    async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
 
     // --- Discovery / identity ------------------------------------------------
 
@@ -845,6 +881,36 @@ pub trait JjApi: Send + Sync {
     /// Move a bookmark to a revision (`bookmark move <name> --to <rev>
     /// [--allow-backwards]`); see [`BookmarkMove`].
     async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
+    /// Forget a bookmark locally without marking it for deletion on the remote
+    /// (`bookmark forget <name>`) — the inverse of [`bookmark_track`](JjApi::bookmark_track):
+    /// where `bookmark_delete` propagates the deletion to the remote on the
+    /// next push, `forget` drops the local bookmark (and its remote-tracking
+    /// state) silently, and a subsequent fetch recreates it if it still exists
+    /// on the remote. Like [`bookmark_delete`](JjApi::bookmark_delete), `name`
+    /// is wrapped in jj's `exact:` string pattern so a `*`/glob-bearing name
+    /// can't fan the forget out across every bookmark (verified on jj 0.42:
+    /// `bookmark forget` matches `<NAMES>` as a glob pattern, same as `delete`).
+    /// Forgetting a name that matches nothing is a warning, not an error (exit
+    /// 0, "No bookmarks to forget").
+    async fn bookmark_forget(&self, dir: &Path, name: &BookmarkName) -> Result<()>;
+    /// Stop tracking a bookmark's remote counterpart, without forgetting the
+    /// local bookmark (`bookmark untrack <name> --remote <remote>`) — the
+    /// inverse of [`bookmark_track`](JjApi::bookmark_track). Unlike
+    /// `bookmark_track`'s deprecated composite `<name>@<remote>` positional
+    /// (verified on jj 0.42: that form now prints a "syntax is deprecated, use
+    /// `<bookmark> --remote=<remote>` instead" warning), this uses the
+    /// current, non-deprecated separate `--remote` flag, so no deprecation
+    /// warning is emitted. Both `name` and `remote` are glob-matched patterns
+    /// (verified: an unwrapped `--remote '*'` untracks from every remote), so
+    /// both are wrapped in jj's `exact:` string pattern, mirroring
+    /// `bookmark_delete`/`git_fetch_from`. `remote` must be non-empty after
+    /// trimming — jj's own revset-string-pattern parser already rejects an
+    /// empty pattern (a real error, not a silent no-op, unlike
+    /// `bookmark_track`'s composite-form gap), but the check here gives a
+    /// clearer, classifiable message before jj is even spawned. A `name`/
+    /// `remote` pair that matches no tracked remote bookmark is a warning, not
+    /// an error (exit 0, "Nothing changed").
+    async fn bookmark_untrack(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()>;
 
     // --- Diff / query / state ------------------------------------------------
 
@@ -992,6 +1058,31 @@ pub trait JjApi: Send + Sync {
     async fn split_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
     /// Duplicate the commits a revset resolves to (`duplicate <revset>`).
     async fn duplicate(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
+    /// Undo `revset` by creating a new commit that applies its reverse, as a
+    /// new child of `@` (`revert -r <revset> --onto @`), mirroring
+    /// [`GitApi::revert`](../vcs_git/trait.GitApi.html#tymethod.revert)'s
+    /// "create an inverse commit" shape.
+    ///
+    /// **Verb history (empirically confirmed via the upstream jj CHANGELOG,
+    /// cross-checked against the installed jj 0.42 binary):** jj's older
+    /// `backout` was deprecated in 0.28.0 in favor of the newly-added `revert`
+    /// and fully **removed** in 0.35.0 — both **below** this crate's validated
+    /// floor (jj ≥ 0.38, see `MIN_SUPPORTED`) — so `revert` is the *only* verb
+    /// across this crate's entire supported range; no [`JjCapabilities`]
+    /// version gate is needed. The `--onto`/`-o` flag name (aliased `-d`/
+    /// `--destination`) was introduced in exactly 0.38.0 (renamed from the
+    /// then-sole `--destination`/`-d`, which remains a deprecated alias), so
+    /// `--onto` is likewise safe across the whole floor-to-current range.
+    ///
+    /// **Divergence from `GitApi::revert` (verified on jj 0.42):** git's
+    /// `revert --no-edit <rev>` both creates the inverse commit *and* advances
+    /// the current branch tip to it. jj's `--onto @` only creates the new
+    /// commit as a child of `@` — a new head — and does **not** move `@` onto
+    /// it, nor rebase `@`'s other existing descendants onto it (they keep
+    /// pointing at the old `@`). Call [`edit`](JjApi::edit) afterwards if you
+    /// need the working copy to move onto the reverted change. `revset` may
+    /// resolve to multiple commits (jj reverts each in turn).
+    async fn revert(&self, dir: &Path, revset: &RevsetExpr) -> Result<()>;
 
     // --- Operation log -------------------------------------------------------
 
@@ -1651,6 +1742,40 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             .await
     }
 
+    async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>> {
+        reject_flag_like("config key", key)?;
+        let res = self
+            .core
+            .output_string(self.cmd_in(dir, ["config", "get", key]))
+            .await?;
+        match res.code() {
+            // Exit 1 = unset (verified on jj 0.42: "Config error: Value not found").
+            Some(1) => Ok(None),
+            // Only jj's trailing line terminator is stripped, not all trailing
+            // whitespace — a config value can legitimately end in spaces/a tab.
+            Some(0) => Ok(Some(
+                res.stdout().trim_end_matches(['\r', '\n']).to_string(),
+            )),
+            _ => {
+                let _ = res.ensure_success()?;
+                Ok(None) // unreachable: a non-zero, non-1 exit always errors above.
+            }
+        }
+    }
+
+    async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()> {
+        reject_flag_like("config key", key)?;
+        // `--` closes jj's option grammar: `key` and `value` are pinned as bare
+        // positionals, so a flag-shaped `value` (or `key`) is taken literally
+        // rather than rejected as an unrecognised argument. Verified on jj
+        // 0.42. `value` deliberately keeps no `reject_flag_like` guard — a
+        // config value may legitimately begin with `-` — mirroring
+        // `GitApi::config_set`.
+        self.core
+            .run_unit(self.cmd_in(dir, ["config", "set", "--repo", "--", key, value]))
+            .await
+    }
+
     async fn root(&self, dir: &Path) -> Result<PathBuf> {
         self.root_wc(dir, WorkingCopy::Snapshot).await
     }
@@ -1742,6 +1867,40 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("--allow-backwards");
         }
         self.core.run_unit(self.cmd_in(dir, args)).await
+    }
+
+    async fn bookmark_forget(&self, dir: &Path, name: &BookmarkName) -> Result<()> {
+        let name_pat = exact(name.as_str());
+        self.core
+            .run_unit(self.cmd_in(dir, ["bookmark", "forget", name_pat.as_str()]))
+            .await
+    }
+
+    async fn bookmark_untrack(&self, dir: &Path, name: &BookmarkName, remote: &str) -> Result<()> {
+        if remote.trim().is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "remote must not be empty or whitespace-only — jj's string-pattern parser \
+                     would reject it with an unclassifiable error",
+                ),
+            ));
+        }
+        let name_pat = exact(name.as_str());
+        let remote_pat = exact(remote);
+        self.core
+            .run_unit(self.cmd_in(
+                dir,
+                [
+                    "bookmark",
+                    "untrack",
+                    name_pat.as_str(),
+                    "--remote",
+                    remote_pat.as_str(),
+                ],
+            ))
+            .await
     }
 
     async fn diff_summary(
@@ -2145,6 +2304,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn duplicate(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
         self.core
             .run_unit(self.cmd_in(dir, ["duplicate", revset.as_str()]))
+            .await
+    }
+
+    async fn revert(&self, dir: &Path, revset: &RevsetExpr) -> Result<()> {
+        self.core
+            .run_unit(self.cmd_in(dir, ["revert", "-r", revset.as_str(), "--onto", "@"]))
             .await
     }
 
@@ -2700,6 +2865,8 @@ vcs_cli_support::at_forwarders! {
         fn remote_remove(name: &str) -> Result<()>;
         fn remote_rename(old: &str, new: &str) -> Result<()>;
         fn remote_set_url(name: &str, url: &str) -> Result<()>;
+        fn config_get(key: &str) -> Result<Option<String>>;
+        fn config_set(key: &str, value: &str) -> Result<()>;
         fn root() -> Result<PathBuf>;
         fn current_bookmark() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
@@ -2707,6 +2874,8 @@ vcs_cli_support::at_forwarders! {
         fn bookmark_rename(old: &BookmarkName, new: &BookmarkName) -> Result<()>;
         fn bookmark_delete(name: &BookmarkName) -> Result<()>;
         fn bookmark_move(spec: BookmarkMove) -> Result<()>;
+        fn bookmark_forget(name: &BookmarkName) -> Result<()>;
+        fn bookmark_untrack(name: &BookmarkName, remote: &str) -> Result<()>;
         fn diff_summary(from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<ChangedPath>>;
         fn diff_stat(revset: &RevsetExpr) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
@@ -2723,6 +2892,7 @@ vcs_cli_support::at_forwarders! {
         fn absorb(from: Option<RevsetExpr>, filesets: &[JjFileset]) -> Result<()>;
         fn split_paths(filesets: &[JjFileset], message: &str) -> Result<()>;
         fn duplicate(revset: &RevsetExpr) -> Result<()>;
+        fn revert(revset: &RevsetExpr) -> Result<()>;
         fn rebase(onto: &RevsetExpr) -> Result<()>;
         fn rebase_branch(branch: &RevsetExpr, dest: &RevsetExpr) -> Result<()>;
         fn edit(revset: &RevsetExpr) -> Result<()>;
@@ -4069,6 +4239,163 @@ mod tests {
             jj.remote_set_url(Path::new("/r"), "missing", "https://example.com/r.git")
                 .await
                 .is_err()
+        );
+    }
+
+    // T-098: `config get`/`config set --repo`: exit 0 → Some(value)/success, exit
+    // 1 on get → None (unset), other → error — mirroring `GitApi::config_get`'s
+    // exit-code contract (verified on jj 0.42).
+    #[tokio::test]
+    async fn config_get_maps_exit_codes() {
+        let set =
+            Jj::with_runner(ScriptedRunner::new().on(["jj", "config", "get"], Reply::ok("Alice\n")));
+        assert_eq!(
+            set.config_get(Path::new("."), "user.name").await.unwrap(),
+            Some("Alice".to_string())
+        );
+        // Only jj's trailing newline (here `\r\n`) is stripped — a value's own
+        // trailing spaces are preserved.
+        let spaced = Jj::with_runner(
+            ScriptedRunner::new().on(["jj", "config", "get"], Reply::ok("prefix:  \r\n")),
+        );
+        assert_eq!(
+            spaced.config_get(Path::new("."), "x.y").await.unwrap(),
+            Some("prefix:  ".to_string())
+        );
+        let unset = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "config", "get"],
+            Reply::fail(1, "Config error: Value not found for user.name"),
+        ));
+        assert_eq!(
+            unset.config_get(Path::new("."), "user.name").await.unwrap(),
+            None
+        );
+        // Any other non-zero exit (e.g. a malformed key jj's own parser
+        // rejects) is a real error, not `None`.
+        let bad = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "config", "get"],
+            Reply::fail(2, "error: invalid value"),
+        ));
+        assert!(bad.config_get(Path::new("."), "x").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn config_get_rejects_flag_like_key_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        for key in ["", "-bad", "--evil"] {
+            let err = jj
+                .config_get(Path::new("."), key)
+                .await
+                .expect_err("flag-like/empty key must be rejected before spawn");
+            assert!(vcs_cli_support::is_invalid_input(&err));
+        }
+        assert!(rec.calls().is_empty(), "must not spawn for a rejected key");
+    }
+
+    // T-098: `config_set` pins `key`/`value` behind `--repo --`, so a
+    // flag-shaped `value` (or `key`) sits where jj can only read it as a
+    // literal positional — never as an option. Argv pinned here; a live-jj
+    // round-trip isn't in this hermetic suite (see `config_get_maps_exit_codes`
+    // for the get-side contract).
+    #[tokio::test]
+    async fn config_set_pins_key_and_value_behind_option_terminator() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.config_set(Path::new("/r"), "test.key", "--looks-like-a-flag")
+            .await
+            .unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "config",
+                "set",
+                "--repo",
+                "--",
+                "test.key",
+                "--looks-like-a-flag",
+                "--color",
+                "never"
+            ],
+            "value must sit after `--`, unreachable to jj's option parser"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_set_rejects_flag_like_key_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        for key in ["", "-bad"] {
+            let err = jj
+                .config_set(Path::new("."), key, "value")
+                .await
+                .expect_err("flag-like/empty key must be rejected before spawn");
+            assert!(vcs_cli_support::is_invalid_input(&err));
+        }
+        assert!(rec.calls().is_empty(), "must not spawn for a rejected key");
+    }
+
+    // T-098: `bookmark_forget`/`bookmark_untrack` are the inverse of
+    // `bookmark_track`/`bookmark_delete`; both wrap glob-matched positionals in
+    // `exact:` so a `*`/hostile name can't fan out (verified on jj 0.42).
+    #[tokio::test]
+    async fn bookmark_forget_and_untrack_build_exact_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.bookmark_forget(Path::new("."), &bn("feat"))
+            .await
+            .unwrap();
+        jj.bookmark_untrack(Path::new("."), &bn("feat"), "origin")
+            .await
+            .unwrap();
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            ["bookmark", "forget", "exact:feat", "--color", "never"]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "bookmark",
+                "untrack",
+                "exact:feat",
+                "--remote",
+                "exact:origin",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn bookmark_untrack_rejects_blank_remote_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        for remote in ["", " ", "\t"] {
+            let err = jj
+                .bookmark_untrack(Path::new("."), &bn("feat"), remote)
+                .await
+                .expect_err("blank remote must be rejected before spawn");
+            assert!(vcs_cli_support::is_invalid_input(&err));
+        }
+        assert!(
+            rec.calls().is_empty(),
+            "must not spawn for a blank remote"
+        );
+    }
+
+    // T-098: undo-by-new-change — `revert -r <revset> --onto @`. No
+    // `JjCapabilities` gate: `backout` was removed in jj 0.35.0, below this
+    // crate's 0.38 floor, so `revert` is the only verb across the whole
+    // supported range (see the `JjApi::revert` doc comment).
+    #[tokio::test]
+    async fn revert_builds_onto_at_args() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.revert(Path::new("."), &rv("feat")).await.unwrap();
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["revert", "-r", "feat", "--onto", "@", "--color", "never"]
         );
     }
 

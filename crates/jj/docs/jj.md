@@ -209,6 +209,8 @@ async fn bookmark_create(&self, dir: &Path, name: &str, revision: &str) -> Resul
 async fn bookmark_delete(&self, dir: &Path, name: &str) -> Result<()>;
 async fn bookmark_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
 async fn bookmark_track(&self, dir: &Path, name: &str, remote: &str) -> Result<()>;
+async fn bookmark_forget(&self, dir: &Path, name: &str) -> Result<()>;
+async fn bookmark_untrack(&self, dir: &Path, name: &str, remote: &str) -> Result<()>;
 async fn bookmark_set(&self, dir: &Path, name: &str, revision: &str) -> Result<()>;
 async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 ```
@@ -224,6 +226,17 @@ async fn bookmark_move(&self, dir: &Path, spec: BookmarkMove) -> Result<()>;
 - `trunk` — the trunk bookmark (`log -r 'trunk()'`); `None` when unresolved.
 - `bookmark_create` / `bookmark_delete` / `bookmark_rename` — at/by name.
 - `bookmark_track` — track a remote bookmark (`bookmark track <name>@<remote>`).
+- `bookmark_forget` — forget a bookmark locally without marking it for deletion
+  on the remote (`bookmark forget <name>`), the inverse of `bookmark_track`:
+  where `bookmark_delete` propagates the deletion on the next push, `forget`
+  drops the local bookmark (and its remote-tracking state) silently — a
+  subsequent fetch recreates it if it still exists on the remote.
+- `bookmark_untrack` — stop tracking a bookmark's remote counterpart without
+  forgetting the local bookmark (`bookmark untrack <name> --remote <remote>`),
+  the inverse of `bookmark_track`. Unlike `bookmark_track`'s deprecated
+  composite `<name>@<remote>` positional (verified on jj 0.42: it now prints a
+  deprecation warning), this uses the current, non-deprecated separate
+  `--remote` flag. `remote` must be non-empty after trimming.
 - `bookmark_set` — point a bookmark at `revision` (`bookmark set <name> -r`).
 - `bookmark_move` — move a bookmark to a revision, built with
   `BookmarkMove::new(name, to)`; chain `.allow_backwards()` to append
@@ -424,18 +437,34 @@ jj.sparse_set(repo, &["src".into(), "Cargo.toml".into()]).await?;
 # Ok(()) }
 ```
 
-## Merging
+## Merging & undo
 
 ```rust,ignore
 async fn new_merge(&self, dir: &Path, message: &str, parents: Vec<String>) -> Result<()>;
 async fn duplicate(&self, dir: &Path, revset: &str) -> Result<()>;
 async fn abandon(&self, dir: &Path, revset: &str) -> Result<()>;
+async fn revert(&self, dir: &Path, revset: &str) -> Result<()>;
 ```
 
 `new_merge` creates a new change with the given parents (`new -m <msg> <p1>
 <p2> …`); each parent is a bare positional and is guarded against a leading-`-`
 value. `duplicate` duplicates the commits a revset resolves to. `abandon`
 abandons a revision; its revset is guarded too.
+
+`revert` undoes `revset` by creating a new commit that applies its reverse, as
+a new child of `@` (`revert -r <revset> --onto @`) — mirroring
+`GitApi::revert`'s "create an inverse commit" shape. **Verb history:** jj's
+older `backout` was deprecated in jj 0.28.0 in favor of the newly-added
+`revert`, and fully removed in jj 0.35.0 — both *below* this crate's validated
+floor (jj ≥ 0.38) — so `revert` is the only verb across the crate's whole
+supported range; no `JjCapabilities` gate is needed. The `--onto`/`-o` flag
+(aliased `-d`/`--destination`) was introduced in exactly jj 0.38.0, so it too
+is safe across the whole range. **Divergence from `GitApi::revert` (verified
+on jj 0.42):** git's `revert --no-edit <rev>` both creates the inverse commit
+*and* advances the current branch tip to it; jj's `--onto @` only creates the
+new commit as a new head off `@` — it does not move `@` onto it, nor rebase
+`@`'s other existing descendants. Call `edit` afterwards if the working copy
+must move onto the reverted change.
 
 ```rust,ignore
 # use std::path::Path;
@@ -444,6 +473,7 @@ abandons a revision; its revset is guarded too.
 jj.new_merge(repo, "merge: a + b", vec!["feature-a".into(), "feature-b".into()]).await?;
 jj.duplicate(repo, "abc123").await?;
 jj.abandon(repo, "@-").await?;
+jj.revert(repo, "abc123").await?;   // new commit reversing abc123, as a child of @
 # Ok(()) }
 ```
 
@@ -529,6 +559,41 @@ jj.remote_rename(repo, "upstream", "mirror").await?;
 jj.remote_set_url(repo, "mirror", "ssh://example.com/project.git").await?;
 jj.remote_remove(repo, "mirror").await?;
 # Ok(()) }
+```
+
+## Config
+
+```rust,ignore
+async fn config_get(&self, dir: &Path, key: &str) -> Result<Option<String>>;
+async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
+```
+
+Parity with `GitApi::config_get`/`config_set`. `config_get` runs `config get
+<key>` and maps jj's exit codes: `0` → `Some(value)` (only jj's trailing line
+terminator is stripped, not all trailing whitespace), `1` → `None` (unset —
+verified on jj 0.42: "Config error: Value not found"), anything else is a real
+error. `config_set` runs `config set --repo -- <key> <value>`: the `--`
+terminator pins both as bare positionals, so a flag-shaped `value` (or `key`)
+is taken literally rather than rejected as an unrecognised argument. `key` is
+guarded like a bare positional (empty/leading `-` refused before spawning);
+`value` deliberately keeps no such guard — a config value may legitimately
+begin with `-` — matching `GitApi::config_set`. `value` is jj's own
+TOML-expression grammar: an unquoted value that isn't valid TOML syntax is
+stored as that literal string, but a value that *is* valid TOML (`"42"`,
+`"true"`) is stored as that TOML type rather than a string — a real divergence
+from git's always-literal-string `config_set` (a plain round-trip through
+`config_get` is unaffected either way, since both render back to the same
+text). Like `GitApi::config_set`, this is a **trusted-input sink**: the `--`
+guard only stops `value` being misparsed as a flag, never wire untrusted input
+into a key jj interprets as a command to run.
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_jj::{Jj, JjApi};
+# async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
+jj.config_set(repo, "user.name", "Ada Lovelace").await?;
+let name = jj.config_get(repo, "user.name").await?;  // Option<String>
+# let _ = name; Ok(()) }
 ```
 
 ## Workspaces

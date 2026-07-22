@@ -207,6 +207,8 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `reachable_bookmarks` | `log -r 'heads(::@ & bookmarks())'` | snapshots the WC first |
 | `reachable_bookmarks_ignoring_working_copy` | adds `--ignore-working-copy` | read-only twin |
 | `bookmark_track` | `bookmark track <name>@<remote>` | |
+| `bookmark_forget` | `bookmark forget <name>` | inverse of `bookmark_track`; local only |
+| `bookmark_untrack` | `bookmark untrack <name> --remote <remote>` | inverse of `bookmark_track`; non-deprecated `--remote` flag |
 | `bookmark_set` | `bookmark set <name> -r <revision>` | |
 | `bookmark_create` | `bookmark create <name> -r <rev>` | |
 | `bookmark_rename` | `bookmark rename <old> <new>` | |
@@ -248,6 +250,7 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `new_merge` | `new -m <msg> <p1> <p2> …` | multiple parents |
 | `duplicate` | `duplicate <revset>` | |
 | `abandon` | `abandon <revset>` | |
+| `revert` | `revert -r <revset> --onto @` | undo-by-new-change; no `JjCapabilities` gate (`revert` is the only verb `≥ 0.38`) |
 
 ### Git integration, workspaces, operation log
 
@@ -259,6 +262,8 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `git_push` | `git push [-b <bookmark>]` | |
 | `git_import` | `git import` | colocated-repo sync |
 | `git_clone` | `git clone <url> <dest> --colocate\|--no-colocate` | via `GitClone`; dirless, absolute `dest` |
+| `config_get` | `config get <key>` | `None` when unset (exit 1); other non-zero exit errors |
+| `config_set` | `config set --repo -- <key> <value>` | trusted-input sink — see the trait doc comment |
 | `remote_add` | `git remote add <name> <url>` | flag-injection-guarded positionals |
 | `remote_list` | `git remote list` | parsed `Vec<Remote>`; no template/JSON form, pinned display-format parser |
 | `remote_remove` | `git remote remove <name>` | also forgets the remote's bookmarks |
@@ -291,14 +296,15 @@ hatches](../crates/jj/docs/jj.md#raw-escape-hatches).
 
 ### jj — not modeled (examples) → escape hatch
 
-`backout`, `bookmark forget` (only `delete` is typed), `config` (`list`/`get`/
-`set`/`edit`), `debug`, `file chmod`/`file track`/`file untrack`, `fix`,
-`git init`, `interdiff`, `next`/`prev`, `resolve` (interactive; only `resolve
---list` via `resolve_list`), `simplify-parents`, `util`. Reach any of these
-through `run`/`run_raw` — note the trait doc comment's warning that
-`run`/`run_raw` are **unguarded**: jj's `--config`/`--config-toml` and
-user-defined aliases can reach code execution, so never forward untrusted
-argv there.
+`config` (`list`/`edit`; only `get`/`set` are typed), `debug`, `file chmod`/
+`file track`/`file untrack`, `fix`, `git init`, `interdiff`, `next`/`prev`,
+`resolve` (interactive; only `resolve --list` via `resolve_list`),
+`simplify-parents`, `util`. (`backout` was jj's older, since-removed name for
+`revert`, which is now typed — see [`revert`](#rebase-squashsplit-merging-sparse)
+above.) Reach any of these through `run`/`run_raw` — note the trait doc
+comment's warning that `run`/`run_raw` are **unguarded**: jj's `--config`/
+`--config-toml` and user-defined aliases can reach code execution, so never
+forward untrusted argv there.
 
 ## gh (`vcs-github` — the GitHub CLI)
 
