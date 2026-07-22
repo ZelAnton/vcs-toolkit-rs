@@ -336,6 +336,26 @@ fn find_bare_git_repo(start: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Pin a caller-supplied path to its absolute form when building a cwd-bound
+/// handle, so the handle no longer depends on the process's current directory —
+/// the **same** [`std::path::absolute`] normalisation [`Repo::open`] /
+/// [`Repo::discover`] apply to their `dir`. A relative input (`"."`, `"sub"`) is
+/// resolved against the cwd *at construction time* and frozen; an already-absolute
+/// input is returned unchanged (`absolute` is idempotent on it).
+///
+/// Unlike `open`/`discover`/`clone` — which touch the filesystem and are already
+/// fallible — the pure handle constructors [`from_git`](Repo::from_git),
+/// [`from_jj`](Repo::from_jj) and [`at`](Repo::at) stay **infallible**: on the one
+/// input `std::path::absolute` rejects — an **empty** path, which has no absolute
+/// form and names no repository — this returns the path unchanged rather than
+/// forcing a `Result` onto an otherwise-infallible constructor (see the CHANGELOG
+/// for the full signature rationale against `crates/core/docs/stability.md`).
+/// Preserving the empty path verbatim exactly reproduces the prior behaviour for
+/// that degenerate case while every real (non-empty) path is absolutised.
+fn absolutise_handle_path(path: PathBuf) -> PathBuf {
+    std::path::absolute(&path).unwrap_or(path)
+}
+
 /// The per-tool client behind a [`Repo`]. Shared via `Arc` so [`Repo::at`] can
 /// re-anchor the cwd cheaply without rebuilding the client.
 enum Backend<R: ProcessRunner> {
@@ -558,19 +578,29 @@ impl Repo<JobRunner> {
 impl<R: ProcessRunner> Repo<R> {
     /// Build a git-backed handle from an explicit client — for a custom runner
     /// (e.g. a test seam) or a pre-configured [`Git`].
+    ///
+    /// `root` and `cwd` are absolutised at construction (via the same
+    /// [`std::path::absolute`] normalisation as [`Repo::open`]), so the handle is
+    /// **independent of the process's current directory**: a relative input is
+    /// resolved against the cwd *now* and frozen, matching `open`/`discover`. This
+    /// stays infallible — an empty path (the only input `std::path::absolute`
+    /// rejects) is kept verbatim rather than turned into an error (see the private
+    /// `absolutise_handle_path` helper).
     pub fn from_git(root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Git<R>) -> Self {
         Repo {
-            root: root.into(),
-            cwd: cwd.into(),
+            root: absolutise_handle_path(root.into()),
+            cwd: absolutise_handle_path(cwd.into()),
             backend: Backend::Git(Arc::new(client)),
         }
     }
 
-    /// Build a jj-backed handle from an explicit client.
+    /// Build a jj-backed handle from an explicit client. `root`/`cwd` are
+    /// absolutised at construction for the same cwd-independence contract as
+    /// [`from_git`](Repo::from_git).
     pub fn from_jj(root: impl Into<PathBuf>, cwd: impl Into<PathBuf>, client: Jj<R>) -> Self {
         Repo {
-            root: root.into(),
-            cwd: cwd.into(),
+            root: absolutise_handle_path(root.into()),
+            cwd: absolutise_handle_path(cwd.into()),
             backend: Backend::Jj(Arc::new(client)),
         }
     }
@@ -670,10 +700,17 @@ impl<R: ProcessRunner> Repo<R> {
     }
 
     /// A sibling handle bound to `dir`, sharing this handle's client and root.
+    ///
+    /// `dir` is absolutised now (the same [`std::path::absolute`] normalisation as
+    /// [`Repo::open`]), so the re-anchored handle does not inherit the process's
+    /// current directory: a relative `dir` is resolved against the cwd *at this
+    /// call* and frozen. The shared `root` is already absolute (every constructor
+    /// absolutises it), so it is carried across unchanged. Infallible — an empty
+    /// `dir` is kept verbatim (see the private `absolutise_handle_path` helper).
     pub fn at(&self, dir: impl Into<PathBuf>) -> Self {
         Repo {
             root: self.root.clone(),
-            cwd: dir.into(),
+            cwd: absolutise_handle_path(dir.into()),
             backend: self.backend.shared(),
         }
     }
@@ -1923,6 +1960,16 @@ mod tests {
         Repo::from_jj("/repo", "/repo", Jj::with_runner(runner))
     }
 
+    // The absolute form of the `"/repo"` fixture base — exactly what `jj_repo`'s
+    // handle now stores after `from_jj` absolutises its `cwd` (T-114). `/repo` is
+    // Unix-absolute but Windows-drive-relative, so on Windows the handle's cwd is
+    // `<drive>:\repo`; a jj `workspace root` cassette and a `remove_worktree`
+    // target must be derived from THIS base (not the bare `/repo` literal) to stay
+    // consistent with the handle's absolutised cwd on every platform.
+    fn abs_repo_base() -> PathBuf {
+        std::path::absolute("/repo").unwrap()
+    }
+
     // --- Debug -------------------------------------------------------------
     //
     // Regression tests for the `Repo`/`Backend` `Debug` impl (PR #7): formatting
@@ -2241,6 +2288,8 @@ mod tests {
     // error is a real dangling-registration the caller should see.
     #[tokio::test]
     async fn jj_remove_worktree_surfaces_forget_error() {
+        let base = abs_repo_base();
+        let ws1 = base.join("ws1");
         let repo = jj_repo(
             ScriptedRunner::new()
                 .on(
@@ -2256,16 +2305,16 @@ mod tests {
                         "--name",
                         "ws1",
                     ],
-                    Reply::ok("/repo/ws1\n"),
+                    Reply::ok(format!("{}\n", ws1.display())),
                 )
                 .on(
                     ["jj", "workspace", "forget"],
                     Reply::fail(1, "Error: cannot forget workspace"),
                 ),
         );
-        // `/repo/ws1` does not exist on disk, so the dir-removal step is skipped and
+        // `<base>/ws1` does not exist on disk, so the dir-removal step is skipped and
         // the forget error is the sole outcome.
-        let res = repo.remove_worktree(WorktreeRemove::new("/repo/ws1")).await;
+        let res = repo.remove_worktree(WorktreeRemove::new(ws1)).await;
         assert!(res.is_err(), "a forget failure is surfaced, not swallowed");
     }
 
@@ -2374,6 +2423,8 @@ mod tests {
     // still-registered workspace by name, and completes the forget — no error.
     #[tokio::test]
     async fn jj_remove_worktree_retry_after_dir_gone_forgets_cleanly() {
+        let base = abs_repo_base();
+        let ws1 = base.join("ws1");
         let repo = jj_repo(
             ScriptedRunner::new()
                 .on(
@@ -2389,13 +2440,13 @@ mod tests {
                         "--name",
                         "ws1",
                     ],
-                    Reply::ok("/repo/ws1\n"),
+                    Reply::ok(format!("{}\n", ws1.display())),
                 )
                 .on(["jj", "workspace", "forget"], Reply::ok("")),
         );
-        // `/repo/ws1` does not exist on disk (a prior pass removed it), so the removal
+        // `<base>/ws1` does not exist on disk (a prior pass removed it), so the removal
         // step is skipped and the forget clears the dangling registration.
-        repo.remove_worktree(WorktreeRemove::new("/repo/ws1"))
+        repo.remove_worktree(WorktreeRemove::new(ws1))
             .await
             .expect("a retry with the dir already gone completes the forget");
     }
@@ -2406,6 +2457,7 @@ mod tests {
     // so we assert the *refusal* message to prove the guard, not a fallthrough).
     #[tokio::test]
     async fn jj_remove_worktree_refuses_the_main_workspace() {
+        let base = abs_repo_base();
         let repo = jj_repo(
             ScriptedRunner::new()
                 .on(
@@ -2421,11 +2473,11 @@ mod tests {
                         "--name",
                         "default",
                     ],
-                    Reply::ok("/repo\n"),
+                    Reply::ok(format!("{}\n", base.display())),
                 ),
         );
         let err = repo
-            .remove_worktree(WorktreeRemove::new("/repo").force())
+            .remove_worktree(WorktreeRemove::new(base).force())
             .await
             .expect_err("the main workspace must be refused");
         assert!(
@@ -2578,8 +2630,13 @@ mod tests {
         let git = git_repo(ScriptedRunner::new());
         assert!(git.git_at().is_some());
         assert!(git.jj_at().is_none());
-        // A sibling handle bound elsewhere yields a view rooted at that dir.
-        assert_eq!(git.at("/repo/wt").cwd(), Path::new("/repo/wt"));
+        // A sibling handle bound elsewhere yields a view rooted at that dir. `at`
+        // absolutises the new cwd, so compare against the absolutised form (on
+        // Windows `/repo/wt` gains the current drive; on Unix it is unchanged).
+        assert_eq!(
+            git.at("/repo/wt").cwd(),
+            std::path::absolute("/repo/wt").unwrap()
+        );
 
         let jj = jj_repo(ScriptedRunner::new());
         assert!(jj.jj_at().is_some());
@@ -2654,9 +2711,157 @@ mod tests {
     async fn at_rebinds_cwd_and_shares_backend() {
         let repo = git_repo(ScriptedRunner::new());
         let moved = repo.at("/repo/sub");
-        assert_eq!(moved.cwd(), Path::new("/repo/sub"));
-        assert_eq!(moved.root(), Path::new("/repo"));
+        // Both `at`'s new cwd and the inherited (already-absolute) root are stored
+        // in absolutised form — `std::path::absolute` is idempotent on an absolute
+        // path (Unix) and drive-qualifies a rooted one (Windows).
+        assert_eq!(moved.cwd(), std::path::absolute("/repo/sub").unwrap());
+        assert_eq!(moved.root(), std::path::absolute("/repo").unwrap());
         assert_eq!(moved.kind(), BackendKind::Git);
+    }
+
+    // T-114: every one of the four handle constructors — `open`, `at`, `from_git`,
+    // `from_jj` — freezes an ABSOLUTE `root`/`cwd` at creation, so a handle built
+    // from a *relative* path keeps pointing at the same repository after the
+    // process changes its current directory. `open` already honoured this via
+    // `std::path::absolute`; `at`/`from_git`/`from_jj` used to store the input
+    // verbatim, so a later `set_current_dir` silently re-pointed their operations.
+    // Each hermetic path also proves the fix *behaviourally*: after moving the
+    // process elsewhere, a dispatched op still runs in the ORIGINAL dir (asserted
+    // via the recorded invocation's working directory), not the new cwd.
+    //
+    // All four live in ONE test on purpose: it mutates the process-global cwd
+    // (`std::env::set_current_dir`), which the libtest harness shares across its
+    // parallel test threads. This is the ONLY test in this binary that changes the
+    // process cwd, and no other test resolves a relative path against it (they use
+    // absolute `TempDir`s, or `/repo` literals that are drive-relative not
+    // cwd-relative), so a single self-contained test needs no cross-test lock — a
+    // `std::sync::Mutex` guard held across the `.await`s below would itself trip
+    // clippy's `await_holding_lock`. Any FUTURE cwd-mutating test must fold into
+    // this one (or introduce an async-aware serialisation) rather than run loose.
+    #[tokio::test]
+    async fn handles_freeze_an_absolute_dir_independent_of_the_process_cwd() {
+        use processkit::testing::RecordingRunner;
+
+        // Put the process cwd back before the temp dirs are removed: Windows
+        // refuses to delete a directory that is the current directory, so a cwd
+        // left inside `elsewhere`/a base would break their cleanup on drop.
+        struct RestoreCwd(PathBuf);
+        impl Drop for RestoreCwd {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+
+        let original = std::env::current_dir().unwrap();
+
+        // Every temp dir is created BEFORE the restore guard, so drop order
+        // (reverse of declaration) restores the cwd before they are deleted.
+        let elsewhere = TempDir::new("t114-elsewhere");
+        let from_git_base = TempDir::new("t114-from-git");
+        let from_jj_base = TempDir::new("t114-from-jj");
+        let at_base = TempDir::new("t114-at");
+        let open_base = TempDir::new("t114-open");
+        std::fs::create_dir_all(from_git_base.path().join("repo")).unwrap();
+        std::fs::create_dir_all(from_jj_base.path().join("repo")).unwrap();
+        std::fs::create_dir_all(at_base.path().join("repo")).unwrap();
+        std::fs::create_dir_all(open_base.path().join("repo").join(".git")).unwrap();
+        let _restore = RestoreCwd(original);
+
+        // --- from_git ------------------------------------------------------------
+        std::env::set_current_dir(from_git_base.path()).unwrap();
+        // The exact value the constructor computes: the same `std::path::absolute`
+        // on the same relative input at the same cwd, so this comparison is robust
+        // to any canonicalisation the platform applies to the current directory.
+        let bound = std::path::absolute("repo").unwrap();
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_git("repo", "repo", Git::with_runner(&rec));
+        assert_eq!(
+            repo.root(),
+            bound,
+            "from_git must absolutise root at creation"
+        );
+        assert_eq!(
+            repo.cwd(),
+            bound,
+            "from_git must absolutise cwd at creation"
+        );
+        std::env::set_current_dir(elsewhere.path()).unwrap();
+        assert_eq!(
+            repo.cwd(),
+            bound,
+            "the handle must ignore a later cwd change"
+        );
+        repo.create_branch("feat").await.unwrap();
+        assert_eq!(
+            rec.only_call().cwd.as_deref(),
+            Some(bound.as_path()),
+            "the git op must run in the original repo dir, not the process's new cwd",
+        );
+
+        // --- from_jj (symmetric) -------------------------------------------------
+        std::env::set_current_dir(from_jj_base.path()).unwrap();
+        let bound = std::path::absolute("repo").unwrap();
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_jj("repo", "repo", Jj::with_runner(&rec));
+        assert_eq!(
+            repo.root(),
+            bound,
+            "from_jj must absolutise root at creation"
+        );
+        assert_eq!(repo.cwd(), bound, "from_jj must absolutise cwd at creation");
+        std::env::set_current_dir(elsewhere.path()).unwrap();
+        assert_eq!(
+            repo.cwd(),
+            bound,
+            "the handle must ignore a later cwd change"
+        );
+        repo.create_branch("feat").await.unwrap();
+        assert_eq!(
+            rec.only_call().cwd.as_deref(),
+            Some(bound.as_path()),
+            "the jj op must run in the original repo dir, not the process's new cwd",
+        );
+
+        // --- at (re-anchoring a base handle to a *relative* dir) -----------------
+        std::env::set_current_dir(at_base.path()).unwrap();
+        let bound = std::path::absolute("repo").unwrap();
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        // Base handle bound to an absolute dir; `at` re-anchors to a relative one.
+        let base = Repo::from_git(at_base.path(), at_base.path(), Git::with_runner(&rec));
+        let sub = base.at("repo");
+        assert_eq!(sub.cwd(), bound, "at must absolutise the new cwd");
+        std::env::set_current_dir(elsewhere.path()).unwrap();
+        assert_eq!(
+            sub.cwd(),
+            bound,
+            "the re-anchored handle must ignore a later cwd change"
+        );
+        sub.create_branch("feat").await.unwrap();
+        assert_eq!(
+            rec.only_call().cwd.as_deref(),
+            Some(bound.as_path()),
+            "the re-anchored op must run in the original dir, not the process's new cwd",
+        );
+
+        // --- open (already-absolute contract, re-pinned as a regression) ---------
+        // `open` uses the real job runner and spawns nothing here (it only probes
+        // the FS marker), so assert on the frozen handle paths rather than a
+        // dispatched op.
+        std::env::set_current_dir(open_base.path()).unwrap();
+        let bound = std::path::absolute("repo").unwrap();
+        let repo =
+            Repo::open("repo").expect("a relative `open` resolves against the cwd at call time");
+        assert_eq!(repo.root(), bound, "open must absolutise root at creation");
+        assert_eq!(repo.cwd(), bound, "open must absolutise cwd at creation");
+        std::env::set_current_dir(elsewhere.path()).unwrap();
+        assert_eq!(
+            repo.cwd(),
+            bound,
+            "the opened handle must ignore a later cwd change"
+        );
+        assert_eq!(repo.root(), bound);
+
+        // `_restore` drops here, putting the cwd back before the temp dirs go.
     }
 
     // --- dispatch: jj backend (hermetic) -----------------------------------

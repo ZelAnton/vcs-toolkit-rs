@@ -52,7 +52,35 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
--
+- `Repo::at`, `Repo::from_git` and `Repo::from_jj` now **absolutise** the `root`/`cwd`
+  they store at construction — via the same `std::path::absolute` normalisation
+  `Repo::open`/`Repo::discover` already apply — so a handle built from a **relative**
+  path no longer depends on the process's current directory. Previously these three
+  factories stored the caller's path verbatim (`impl Into<PathBuf>`), so a handle
+  created from a relative path silently re-pointed at a different location after the
+  process changed its current directory, while `Repo::open` (which absolutises) did
+  not. The contract of a single type is now honoured on all four creation paths
+  (`open`/`at`/`from_git`/`from_jj`). The same asymmetry was found and fixed in the
+  sibling F# port. (T-114.)
+  - **Signature decision — kept infallible (non-breaking), per
+    `crates/core/docs/stability.md`.** `std::path::absolute` is fallible, and `open`
+    already returns `Result`, so one option was to switch `at`/`from_git`/`from_jj`
+    to `Result` as well. We deliberately did **not**: unlike `open`/`discover`/`clone`
+    — which do filesystem work and are legitimately fallible — these three are **pure
+    in-memory constructors** whose only failure mode is a degenerate **empty** path
+    (`std::path::absolute` rejects nothing else). `from_git`/`from_jj` are also the
+    documented **facade test seam** (see stability.md's object-safety/mockability note)
+    and `at` is a pervasive cheap re-anchor, so a `Result` return would force
+    `.unwrap()` across every consumer and test for a failure that a valid path can
+    never trigger — a large ergonomic regression with no safety gain. Keeping the
+    signatures identical also means the public API surface is unchanged (the
+    `public-api` snapshot gate is unaffected) and this is a non-breaking, patch-level
+    change. This matches the "infallible-where-possible handle-builders" framing the
+    `Repo::clone` entry already uses and the sibling F# port's identical choice.
+  - **Degenerate input (documented).** On the one input `std::path::absolute` rejects
+    — an empty path (`""`), which has no absolute form and names no repository — the
+    constructor falls back to the path as given, exactly preserving the prior behaviour
+    for that degenerate case. Every non-empty path (relative or absolute) is absolutised.
 
 ## [0.9.0] - 2026-07-19
 
