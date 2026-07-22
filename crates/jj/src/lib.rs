@@ -791,7 +791,8 @@ pub trait JjApi: Send + Sync {
     /// then call `remote_set_url`, or do not rely on exact preservation after
     /// `remote_add`.
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
-    /// List configured Git remotes (`jj git remote list`).
+    /// List configured Git remotes (`jj git remote list`) without snapshotting
+    /// the working copy, so this static configuration query records no operation.
     ///
     /// jj currently exposes no template or JSON form for this command. The
     /// returned [`Remote`] rows therefore parse the `<name> <url>` display
@@ -1713,7 +1714,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>> {
         self.core
             .parse(
-                self.cmd_in(dir, ["git", "remote", "list"]),
+                self.cmd_in_wc(dir, ["git", "remote", "list"], WorkingCopy::Ignore),
                 parse::parse_remotes,
             )
             .await
@@ -4191,7 +4192,14 @@ mod tests {
         );
         assert_eq!(
             calls[1].args_str(),
-            ["git", "remote", "list", "--color", "never"]
+            [
+                "git",
+                "remote",
+                "list",
+                "--color",
+                "never",
+                "--ignore-working-copy"
+            ]
         );
         assert_eq!(
             calls[2].args_str(),

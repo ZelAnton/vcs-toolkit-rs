@@ -782,8 +782,8 @@ impl<R: ProcessRunner> Repo<R> {
     /// Git reads `git remote -v`; jj reads `jj git remote list`. The facade owns
     /// [`Remote`] rather than exposing `vcs_jj::Remote`, so callers receive the
     /// same backend-agnostic DTO regardless of which client drives this repo.
-    /// On jj this is a normal query and may snapshot the working copy, matching
-    /// the rest of the facade's live read methods.
+    /// On jj this is a static-configuration query and ignores the working copy,
+    /// so it records no operation.
     pub async fn remotes(&self) -> Result<Vec<Remote>> {
         match &self.backend {
             Backend::Git(g) => git_backend::remotes(g, &self.cwd).await,

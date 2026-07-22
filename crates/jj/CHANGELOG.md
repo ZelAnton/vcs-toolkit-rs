@@ -44,7 +44,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   branch tip.
 
 ### Changed
--
+- `JjApi::remote_list` now runs `jj git remote list` with
+  `--ignore-working-copy`. Listing static remote configuration no longer
+  snapshots the working copy or records a jj operation; its parsed remotes are
+  otherwise unchanged. (T-109.)
 
 ### Fixed
 - **`JjApi::root` (and the `root_wc` helper feeding `status`/
