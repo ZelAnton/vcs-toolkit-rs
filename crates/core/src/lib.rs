@@ -49,7 +49,9 @@
 //!   ([`BackendKind`] + worktree root).
 //! - **[`Repo`]** — the cwd-bound facade handle, the thing you hold. Open one with
 //!   [`Repo::discover`] (walks up to find the repo; real job-backed runner) or
-//!   [`Repo::open`] (strict — exactly `dir`, no walking up), or build it over an
+//!   [`Repo::open`] (strict — exactly `dir`, no walking up), clone a fresh one with
+//!   [`Repo::clone`] (backend-agnostic, the one constructor with no repository yet), or
+//!   build it over an
 //!   explicit client with [`Repo::from_git`] / [`Repo::from_jj`] (the test seam).
 //!   Re-anchor it to another directory cheaply with [`Repo::at`] — the backend is
 //!   shared behind an `Arc`, so threading work across worktrees never re-detects
@@ -187,9 +189,9 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    AnnotationLine, BackendKind, BranchDelete, ChangeKind, Commit, CreateOutcome, DiffStat,
-    FileChange, FileDiff, MergeProbe, OperationState, Remote, RepoSnapshot, UpstreamTracking,
-    WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
+    AnnotationLine, BackendKind, BranchDelete, ChangeKind, CloneSpec, Commit, CreateOutcome,
+    DiffStat, FileChange, FileDiff, MergeProbe, OperationState, Remote, RepoSnapshot,
+    UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
 };
 pub use error::{Error, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
@@ -461,6 +463,96 @@ impl Repo<JobRunner> {
             backend,
         })
     }
+
+    /// Clone `url` into `dest` with the chosen `backend`, returning a [`Repo`] handle
+    /// bound to the freshly-cloned `dest`.
+    ///
+    /// Clone is the one facade operation with **no repository yet** — there is no
+    /// [`Repo`] handle to hang it off, so it's an **associated constructor** (like
+    /// [`discover`](Repo::discover) / [`open`](Repo::open)) that takes the `backend`
+    /// explicitly (the existing [`BackendKind`], not a second enum) rather than a
+    /// method on `self`. It dispatches through the same per-backend adapters as the
+    /// rest of the facade — to
+    /// [`GitApi::clone_repo`](vcs_git::GitApi::clone_repo) on git and
+    /// [`JjApi::git_clone`](vcs_jj::JjApi::git_clone) on jj — never calling a client in
+    /// a way that bypasses that layer.
+    ///
+    /// The [`CloneSpec`] unifies the two tools' clone options
+    /// (git's `branch`/`depth`/`bare`, jj's `colocate`). Because the backends share no
+    /// clone option, an option meant for the *other* backend is **structurally rejected**
+    /// with [`Error::Unsupported`] *before anything spawns* — not silently ignored — so a
+    /// caller learns immediately that, say, `bare` has no meaning for a jj clone or
+    /// `colocate` none for a git one. See [`CloneSpec`] for the per-field mapping.
+    ///
+    /// **Destination contract.** `git`/`jj clone` create `dest` themselves and run
+    /// without a working directory, so `dest` is absolutised up front (as
+    /// [`discover`](Repo::discover) / [`open`](Repo::open) do) — a relative path would
+    /// otherwise resolve against the process cwd. A **non-empty** `dest` is refused by
+    /// the backend itself ("destination path already exists and is not empty"); a
+    /// **failed** clone cleans only a `dest` it *could have created* (absent/empty),
+    /// never pre-existing caller data. That "delete only a directory we could have
+    /// created" guarantee lives in the clients (`GitApi::clone_repo` /
+    /// `JjApi::git_clone`) — this constructor **delegates** to it and deliberately adds
+    /// no cleanup of its own, so the single well-tested contract is neither weakened nor
+    /// re-implemented on top.
+    ///
+    /// A **bare** git clone (`CloneSpec::bare`) returns a handle over a repository with
+    /// no working tree; the facade's working-tree operations don't apply to it, though
+    /// ref/history reads still do. The returned handle carries the default client
+    /// ([`Git::new`] / [`Jj::new`]), exactly like [`discover`](Repo::discover); build
+    /// from an explicit client via [`from_git`](Repo::from_git) /
+    /// [`from_jj`](Repo::from_jj) if you cloned by hand and want a pre-configured one.
+    ///
+    /// There is intentionally **no MCP tool** for clone: an MCP server is bound to a
+    /// single repository, and cloning is an out-of-repository operation that sits
+    /// outside that model.
+    ///
+    /// # Errors
+    /// Returns `Result<Repo>` (a clone can fail — network, auth, an occupied `dest`),
+    /// unlike the infallible-where-possible `open`/`at`/`from_*` handle-builders. This
+    /// asymmetry is deliberate and independent of the separate `open`/`at`/`from_git`/
+    /// `from_jj` signature cleanup tracked elsewhere. The error is
+    /// [`Error::Unsupported`] for a cross-backend option (pre-spawn), an
+    /// [`Error::Vcs`] for a clone the backend rejected/failed, or an [`Error::Io`] from
+    /// absolutising `dest`.
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use vcs_core::{BackendKind, CloneSpec, Repo};
+    /// # async fn f() -> vcs_core::Result<()> {
+    /// let repo = Repo::clone(
+    ///     BackendKind::Git,
+    ///     "https://example.com/r.git",
+    ///     Path::new("/tmp/r"),
+    ///     CloneSpec::new().branch("main"),
+    /// )
+    /// .await?;
+    /// assert_eq!(repo.kind(), BackendKind::Git);
+    /// # Ok(()) }
+    /// ```
+    pub async fn clone(
+        backend: BackendKind,
+        url: &str,
+        dest: &Path,
+        spec: CloneSpec,
+    ) -> Result<Self> {
+        // Absolutise first: the clone runs with no working directory and creates `dest`
+        // itself, so a relative path would resolve against the process cwd. The returned
+        // handle then binds the same absolute path the clone populated.
+        let dest = std::path::absolute(dest)?;
+        match backend {
+            BackendKind::Git => {
+                let git = Git::new();
+                git_backend::clone(&git, url, &dest, &spec).await?;
+                Ok(Repo::from_git(dest.clone(), dest, git))
+            }
+            BackendKind::Jj => {
+                let jj = Jj::new();
+                jj_backend::clone(&jj, url, &dest, &spec).await?;
+                Ok(Repo::from_jj(dest.clone(), dest, jj))
+            }
+        }
+    }
 }
 
 impl<R: ProcessRunner> Repo<R> {
@@ -690,8 +782,8 @@ impl<R: ProcessRunner> Repo<R> {
     /// Git reads `git remote -v`; jj reads `jj git remote list`. The facade owns
     /// [`Remote`] rather than exposing `vcs_jj::Remote`, so callers receive the
     /// same backend-agnostic DTO regardless of which client drives this repo.
-    /// On jj this is a normal query and may snapshot the working copy, matching
-    /// the rest of the facade's live read methods.
+    /// On jj this is a static-configuration query and ignores the working copy,
+    /// so it records no operation.
     pub async fn remotes(&self) -> Result<Vec<Remote>> {
         match &self.backend {
             Backend::Git(g) => git_backend::remotes(g, &self.cwd).await,

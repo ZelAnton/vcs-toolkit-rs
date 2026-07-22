@@ -363,6 +363,32 @@ async fn remote_management_round_trip() {
     );
 }
 
+// `git remote list` only reads static Git configuration, so the typed query
+// must not snapshot the jj working copy or append an operation-log entry.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn remote_list_does_not_record_an_operation() {
+    let sandbox = JjSandbox::init("remote-list-read-only");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+    sandbox.jj(&[
+        "git",
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+
+    let before = sandbox.op_head();
+    let remotes = jj.remote_list(dir).await.expect("list remotes");
+    let after = sandbox.op_head();
+
+    assert!(remotes.iter().any(|remote| {
+        remote.name == "origin" && remote.url == "https://github.com/example/repo.git"
+    }));
+    assert_eq!(after, before, "remote listing must not append an operation");
+}
+
 // absorb folds an edit into the change that introduced the lines; split carves
 // named paths into their own commit; duplicate copies a commit.
 #[tokio::test]

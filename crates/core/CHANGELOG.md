@@ -10,6 +10,38 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `Repo::clone(backend, url, dest, spec)` and the unified `CloneSpec` DTO:
+  backend-agnostic repository cloning on the facade. Clone is the one operation with
+  **no repository yet** (nothing to hang a `Repo` method off), so it is an associated
+  constructor — like `Repo::discover` / `Repo::open` — taking the backend explicitly
+  via the existing `BackendKind` (not a second parallel enum) and returning a `Repo`
+  bound to the freshly-cloned `dest`. It dispatches through the per-backend adapters
+  (`git_backend`/`jj_backend`) to the existing `GitApi::clone_repo` / `JjApi::git_clone`,
+  never bypassing that layer.
+  - **Unified spec, structural rejection.** `CloneSpec` unifies the two tools' clone
+    options — git's `branch`/`depth`/`bare` (`vcs_git::CloneSpec`) and jj's `colocate`
+    (`vcs_jj::GitClone`). The backends share no clone option, so an option meant for the
+    *other* backend is **rejected structurally** with a typed `Error::Unsupported`
+    *before anything spawns* (git-only `branch`/`depth`/`bare` on a jj clone; jj-only
+    `colocate` on a git clone) — never silently dropped nor surfaced as a raw CLI error.
+    jj's colocate flag is always passed explicitly (its CLI default varies by
+    version/config); when unset the facade defaults a jj clone to non-colocated
+    (`--no-colocate`).
+  - **Destination contract.** `dest` is absolutised up front (the clone runs with no
+    working directory and creates `dest` itself). A non-empty `dest` is refused by the
+    backend; a failed clone cleans only a `dest` it *could have created* (absent/empty),
+    never pre-existing caller data. That "delete only a directory we could have created"
+    guarantee lives in the clients — the facade **delegates** to it and adds no cleanup
+    of its own, so the single well-tested contract is neither weakened nor re-implemented.
+  - **`Result<Repo>` signature (deliberate).** A clone can genuinely fail (network,
+    auth, an occupied `dest`), so this returns `Result<Repo>` — unlike the
+    infallible-where-possible `open`/`at`/`from_*` handle-builders. That asymmetry is
+    intentional here and independent of any separate `open`/`at`/`from_git`/`from_jj`
+    signature cleanup.
+  - **No MCP tool (by design).** An MCP server is bound to a single repository, and
+    cloning is an out-of-repository operation outside that model — so no clone tool is
+    added, noted here so the omission reads as a decision rather than an oversight.
+  (T-110.)
 - `Repo::remotes` (and `VcsRepo::remotes`): backend-agnostic configured remote
   listing, dispatching to `git remote -v` or `jj git remote list`. The returned
   `vcs_core::Remote { name, url }` is a new facade-owned DTO rather than a

@@ -12,8 +12,8 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ### Added
 - `repo_remotes`: read query returning configured remotes and fetch URLs through
   `Repo::remotes`. It uses `destructiveHint = false` plus `idempotentHint = true`,
-  not `readOnlyHint`, because jj's `git remote list` snapshots the working copy
-  and records a reversible op-log operation. (T-108.)
+  not `readOnlyHint`; jj's `git remote list` reads static configuration without
+  snapshotting the working copy. (T-108, T-109.)
 - Three write-gated forge mutation tools: `forge_issue_close` (`{ number }`),
   `forge_issue_reopen` (`{ number }`), and `forge_issue_comment` (`{ number, body }`),
   exposing `Forge::issue_close`/`issue_reopen`/`issue_comment` over MCP. All three
@@ -27,7 +27,9 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Fixed
--
+- Forge auto-detection now reads `origin` through backend-agnostic
+  `Repo::remotes`, so it works for non-colocated jj repositories as well as git
+  and colocated jj checkouts. (T-109.)
 
 ## [0.7.0] - 2026-07-19
 

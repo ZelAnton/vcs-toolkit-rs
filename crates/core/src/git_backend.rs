@@ -562,6 +562,39 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     Ok(())
 }
 
+/// Clone `url` into `dest` via [`GitApi::clone_repo`], translating the facade's unified
+/// [`crate::dto::CloneSpec`] into git's own [`vcs_git::CloneSpec`]. jj's `colocate` has
+/// no git analogue, so any explicit value is **rejected structurally** — a typed
+/// [`Error::Unsupported`], raised *before* the client spawns — rather than being
+/// silently dropped. The dest-cleanup-on-failure contract is the client's (see
+/// `GitApi::clone_repo`); this adapter adds nothing on top of it.
+pub(crate) async fn clone<R: ProcessRunner>(
+    git: &Git<R>,
+    url: &str,
+    dest: &Path,
+    spec: &crate::dto::CloneSpec,
+) -> Result<()> {
+    if spec.colocate.is_some() {
+        return Err(Error::Unsupported(
+            "git clone has no colocation option (`colocate` is jj-only — jj is what \
+             materialises a `.git` beside `.jj`); omit it for a git clone"
+                .to_string(),
+        ));
+    }
+    let mut git_spec = vcs_git::CloneSpec::new();
+    if let Some(branch) = spec.branch.as_deref() {
+        git_spec = git_spec.branch(branch);
+    }
+    if let Some(depth) = spec.depth {
+        git_spec = git_spec.depth(depth);
+    }
+    if spec.bare {
+        git_spec = git_spec.bare();
+    }
+    git.clone_repo(url, dest, git_spec).await?;
+    Ok(())
+}
+
 /// Project a `git status --porcelain` entry into a [`FileChange`].
 fn file_change_from_status(entry: StatusEntry) -> FileChange {
     FileChange {
@@ -673,6 +706,105 @@ mod tests {
             commit_args.last().map(String::as_str),
             Some("sub/file.txt"),
             "the repo-relative pathspec is passed through unchanged"
+        );
+    }
+
+    // The clone adapter translates the facade's unified `CloneSpec` into git's own
+    // flags and dispatches to `GitApi::clone_repo` dir-lessly — the git-only
+    // branch/depth/bare all land, in git's argv order.
+    #[tokio::test]
+    async fn clone_translates_spec_and_dispatches_dirless() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{RecordingRunner, Reply};
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        clone(
+            &git,
+            "https://example.com/r.git",
+            Path::new("/dest"),
+            &CloneSpec::new().branch("main").depth(1).bare(),
+        )
+        .await
+        .expect("clone");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "clone",
+                "--branch",
+                "main",
+                "--depth",
+                "1",
+                "--bare",
+                "https://example.com/r.git",
+                "/dest"
+            ]
+        );
+        assert_eq!(call.cwd, None, "clone runs without a working directory");
+    }
+
+    // jj's `colocate` has no git analogue: any explicit value is rejected structurally
+    // as `Unsupported`, *before* the client spawns — asserted via a `RecordingRunner`
+    // that must record zero calls.
+    #[tokio::test]
+    async fn clone_rejects_colocate_pre_spawn() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{RecordingRunner, Reply};
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = clone(&git, "u", Path::new("/d"), &CloneSpec::new().colocate(true))
+            .await
+            .expect_err("colocate is jj-only and must be rejected on a git clone");
+        assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+        assert!(
+            rec.calls().is_empty(),
+            "a structurally-rejected option must not spawn git"
+        );
+    }
+
+    // The facade adapter must not weaken the client's "clean only a dest we could have
+    // created" contract: it delegates to `GitApi::clone_repo`, whose failure path
+    // removes an empty dest but never a non-empty caller dir. Scripted-fail clone + real
+    // temp dirs (only the fs cleanup is real; nothing actually spawns).
+    #[tokio::test]
+    async fn clone_delegates_dest_cleanup_to_client() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("t110-git-clone-cleanup");
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "clone"],
+            Reply::fail(128, "fatal: could not read Username: prompts disabled"),
+        ));
+
+        // An empty dest we could have populated is cleaned so a retry isn't blocked.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(
+            clone(&git, "https://x/r", &empty, &CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            !empty.exists(),
+            "an empty dest is cleaned on a failed clone"
+        );
+
+        // A non-empty caller dir must survive untouched.
+        let occupied = tmp.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
+        assert!(
+            clone(&git, "https://x/r", &occupied, &CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            occupied.join("keep.txt").exists(),
+            "a non-empty caller dir must survive a failed clone"
         );
     }
 }

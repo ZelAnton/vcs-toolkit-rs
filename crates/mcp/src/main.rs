@@ -26,7 +26,7 @@ use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use vcs_core::OutputBudget;
 use vcs_core::Repo;
-use vcs_core::vcs_git::{Git, GitApi};
+use vcs_core::vcs_git::Git;
 use vcs_core::vcs_jj::Jj;
 use vcs_forge::vcs_gitea::Gitea;
 use vcs_forge::vcs_github::GitHub;
@@ -289,7 +289,7 @@ async fn resolve_forge(
     let cwd = repo.root().to_path_buf();
     let kind = match forced {
         Some(k) => Some(k),
-        None => detect_forge_kind(repo.root(), timeout).await,
+        None => detect_forge_kind(repo).await,
     };
     // Each forge CLI client exposes the same `default_timeout`/
     // `default_output_budget` builders, but they are distinct types with no
@@ -327,21 +327,27 @@ async fn resolve_forge(
     })
 }
 
-/// Best-effort: read the `origin` remote URL (works on a colocated jj repo too)
-/// and classify its host. `None` when there's no git remote or the host is
-/// unrecognised. Uses the hardened, timeout-bound client; the remote URL isn't a
-/// content read, so the output budget doesn't apply here.
-async fn detect_forge_kind(root: &Path, timeout: Option<Duration>) -> Option<ForgeKind> {
-    let url = hardened_git(timeout, OutputBudget::unlimited())
-        .remote_url(root, "origin")
+/// Best-effort: read the `origin` remote URL through the backend-agnostic repo
+/// facade and classify its host. This works for both colocated and non-colocated
+/// jj repositories. `None` when there is no `origin`, the remote query fails, or
+/// the host is unrecognised.
+async fn detect_forge_kind<R: vcs_core::processkit::ProcessRunner>(
+    repo: &Repo<R>,
+) -> Option<ForgeKind> {
+    let origin = repo
+        .remotes()
         .await
-        .ok()?;
-    ForgeKind::from_remote_url(&url)
+        .ok()?
+        .into_iter()
+        .find(|remote| remote.name == "origin")?;
+    ForgeKind::from_remote_url(&origin.url)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::testing::{RecordingRunner, Reply};
+    use vcs_core::vcs_jj::Jj;
 
     /// Run `parse_args` over a borrowed slice of `&str` args, as if they were argv.
     fn parse(args: &[&str]) -> Result<Option<Args>, String> {
@@ -522,5 +528,76 @@ mod tests {
     fn output_budget_conversion() {
         assert_eq!(output_budget(None), OutputBudget::unlimited());
         assert_eq!(output_budget(Some(4096)), OutputBudget::bytes(4096));
+    }
+
+    // A `Repo` backed by jj has no need for a colocated `.git`: its remote list
+    // goes through `jj git remote list`. The same facade is selected for a
+    // colocated jj checkout, so this hermetic test pins both code paths without
+    // requiring a real jj binary.
+    #[tokio::test]
+    async fn detect_forge_kind_uses_jj_remotes_without_a_colocated_git_dir() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            "upstream https://gitlab.com/example/ignored.git\norigin git@github.com:example/repo.git\n",
+        ));
+        let repo = Repo::from_jj(
+            "/non-colocated-jj",
+            "/non-colocated-jj",
+            Jj::with_runner(&rec),
+        );
+
+        assert_eq!(detect_forge_kind(&repo).await, Some(ForgeKind::GitHub));
+        assert_eq!(rec.calls().len(), 1);
+        assert_eq!(
+            rec.calls()[0].args_str(),
+            [
+                "git",
+                "remote",
+                "list",
+                "--color",
+                "never",
+                "--ignore-working-copy"
+            ],
+            "jj remote discovery must override ui.color=always and avoid a working-copy snapshot"
+        );
+    }
+
+    // Exercise both jj layouts against the real CLI. The non-colocated case also
+    // sets the user configuration that used to inject ANSI escapes into the
+    // parsed remote-list output; `Jj::cmd_in_wc` must override it with
+    // `--color never`.
+    #[tokio::test]
+    #[ignore = "requires the jj binary"]
+    async fn detect_forge_kind_handles_colocated_and_non_colocated_jj() {
+        let colocated = vcs_testkit::JjSandbox::colocated("mcp-forge-colocated");
+        colocated.jj(&[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/colocated.git",
+        ]);
+        assert!(colocated.path().join(".git").is_dir());
+        let colocated_repo = Repo::discover(colocated.path()).expect("discover colocated jj");
+        assert_eq!(
+            detect_forge_kind(&colocated_repo).await,
+            Some(ForgeKind::GitHub)
+        );
+
+        let non_colocated = vcs_testkit::JjSandbox::init("mcp-forge-non-colocated");
+        non_colocated.jj(&["config", "set", "--repo", "ui.color", "always"]);
+        non_colocated.jj(&[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.com/example/non-colocated.git",
+        ]);
+        assert!(!non_colocated.path().join(".git").exists());
+        let non_colocated_repo =
+            Repo::discover(non_colocated.path()).expect("discover non-colocated jj");
+        assert_eq!(
+            detect_forge_kind(&non_colocated_repo).await,
+            Some(ForgeKind::GitLab)
+        );
     }
 }
