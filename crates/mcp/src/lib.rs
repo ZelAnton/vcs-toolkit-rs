@@ -100,6 +100,7 @@ use std::sync::Arc;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool_handler};
+use vcs_core::processkit::ProcessRunner;
 use vcs_core::{Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi};
 
@@ -140,7 +141,18 @@ pub struct VcsMcpServer {
 impl VcsMcpServer {
     /// Build a server bound to `repo`, with an optional `forge` (PR/MR tools), and
     /// a [`WriteGate`] controlling which mutating tools are callable.
-    pub fn new(repo: Repo, forge: Option<Forge>, writes: WriteGate) -> Self {
+    ///
+    /// Generic over the clients' [`ProcessRunner`] so a caller can inject a
+    /// non-default runner — for example a command-logging decorator
+    /// ([`vcs_cli_support::logging::LoggingRunner`], as the `--log-commands` binary
+    /// flag does) built over a `Box<dyn ProcessRunner>` — without this crate naming
+    /// the runner type. The handles are erased to `dyn VcsRepo`/`dyn ForgeApi`
+    /// immediately, so the server itself stays runner-agnostic.
+    pub fn new<R: ProcessRunner + 'static>(
+        repo: Repo<R>,
+        forge: Option<Forge<R>>,
+        writes: WriteGate,
+    ) -> Self {
         Self::from_handles(
             Arc::new(repo),
             forge.map(|f| Arc::new(f) as Arc<dyn ForgeApi>),

@@ -597,7 +597,7 @@ pub fn vcs_mcp::VcsMcpServer::forge_release_view_tool_attr() -> rmcp::model::too
 pub fn vcs_mcp::VcsMcpServer::forge_repo_view(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_repo_view_tool_attr() -> rmcp::model::tool::Tool
 impl vcs_mcp::VcsMcpServer
-pub fn vcs_mcp::VcsMcpServer::new(vcs_core::Repo, core::option::Option<vcs_forge::Forge>, vcs_mcp::WriteGate) -> Self
+pub fn vcs_mcp::VcsMcpServer::new<R: processkit::runner::ProcessRunner + 'static>(vcs_core::Repo<R>, core::option::Option<vcs_forge::Forge<R>>, vcs_mcp::WriteGate) -> Self
 impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress_tool_attr() -> rmcp::model::tool::Tool

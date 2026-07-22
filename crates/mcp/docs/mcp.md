@@ -56,7 +56,7 @@ Install it with `cargo install vcs-mcp` (or point `command` at a built binary).
 ```text
 vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
-        [--max-output-bytes <n>]
+        [--max-output-bytes <n>] [--log-commands]
 ```
 
 | Flag | Effect |
@@ -67,6 +67,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--allow-tools <name,…>` | Enable **only the named** mutating tools (comma-separated; repeatable — occurrences accumulate). Tool names are the method names from the catalogue below (the canonical set is `vcs_mcp::WRITE_TOOLS`); an unknown/misspelled name is **rejected up front** with an error listing the valid write tools, rather than being silently inert. Read tools are unaffected. `--allow-write` wins when both are given. |
 | `--timeout <seconds>` | Per-command deadline so a stalled fetch/forge call can't hang a request (default: 120; `--timeout 0` disables it). |
 | `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `repo_diff`, `forge_pr_diff`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` rather than a truncated result. |
+| `--log-commands` | Log every git/jj/forge command the server runs — program, argv, working directory, exit code, and duration — to **stderr**, for diagnosing why the server behaves unexpectedly. Off by default. The log goes to stderr only, so the stdout JSON-RPC transport stays clean; argv values that could carry a secret (a token flag, a credentialed URL) are **redacted**, and long free text (a PR/issue body) is truncated. See the safety model below. |
 | `-h`, `--help` | Print usage and exit. |
 
 ## Tool catalogue
@@ -242,6 +243,22 @@ The `vcs-mcp` binary applies, in order:
    what an agent calling `repo_status`/`repo_diff` right after editing a file needs.
    That is why `--ignore-working-copy` is not an acceptable way to reclaim
    `readOnlyHint` here: it would trade a false annotation for stale reads.
+9. **Command logging is off by default, redacted, and stderr-only.** `--log-commands`
+   wraps the git/jj/forge clients in a command-logging `ProcessRunner` decorator
+   (`vcs_cli_support::logging::LoggingRunner`) so you can see exactly what the server
+   spawns — program, argv, working directory, exit code, duration. It is a diagnostic
+   surface over argv, so it is treated as security-sensitive: the log is written to
+   **stderr only** (the stdout JSON-RPC transport is never touched), the process
+   **environment is never logged** (that is the channel the forge token rides in —
+   `GH_TOKEN`/`GITLAB_TOKEN` — and git's secret goes through `credential.helper`, so
+   the token-carrying channel is out of scope by construction), and each argv value
+   is redacted before it is written: the value after a sensitive flag (`--token`,
+   `--password`, …) or the value of its `--flag=value` form is masked, a secret-shaped
+   token (`ghp_`/`github_pat_`/`glpat-`/… prefix, an `x-access-token:` embed) is
+   masked, a URL's embedded credentials are masked (host and path kept), and long free
+   text (a PR/issue body, a commit message) is truncated. This is defence in depth on
+   top of guard (4) above — the "token never rides in argv" contract — not a
+   replacement for it.
 
 > Note the hardening, timeout, and output budget are how the **binary** constructs
 > the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from

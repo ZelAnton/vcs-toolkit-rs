@@ -22,9 +22,22 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `idempotentHint` pattern); they are added to `WRITE_TOOLS`. `forge_issue_comment`
   rejects an empty body up front as `invalid_params`. `forge_info`'s capability map
   gains the `issue_close`/`issue_reopen`/`issue_comment` flags.
+- `--log-commands` flag: wraps the git/jj/forge clients in a command-logging
+  `ProcessRunner` (`vcs_cli_support::logging::LoggingRunner`) that reports every
+  spawn — program, argv, working directory, exit code, duration — to **stderr**,
+  for diagnosing what the server actually runs. stdout stays a clean JSON-RPC
+  transport (the log goes to stderr only), and argv values that could carry a
+  secret are redacted (the existing "token never in argv" contract is not
+  weakened). Off by default. (T-117.)
 
 ### Changed
--
+- `VcsMcpServer::new` is now generic over the clients' `ProcessRunner`
+  (`new<R: ProcessRunner + 'static>(Repo<R>, Option<Forge<R>>, WriteGate)`), so a
+  caller can inject a non-default runner — e.g. the `--log-commands`
+  `LoggingRunner` over a `Box<dyn ProcessRunner>`. The handles are erased to
+  `dyn VcsRepo`/`dyn ForgeApi` immediately, so the server stays runner-agnostic;
+  existing `new(repo, forge, writes)` calls infer `R = JobRunner` unchanged.
+  (T-117.)
 
 ### Fixed
 - Forge auto-detection now reads `origin` through backend-agnostic

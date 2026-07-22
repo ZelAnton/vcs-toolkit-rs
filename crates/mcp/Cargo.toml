@@ -22,6 +22,10 @@ rmcp = { version = "2", features = ["server", "macros", "transport-io"] }
 # feature on so the DTOs the tools return serialize to JSON.
 vcs-core = { path = "../core", version = "0.9", features = ["serde"] }
 vcs-forge = { path = "../forge", version = "0.7", features = ["serde"] }
+# The command-logging `ProcessRunner` decorator (`LoggingRunner`) the
+# `--log-commands` flag installs over the git/jj/forge clients, with argv secret
+# redaction. Shared plumbing, so library consumers can reuse it too.
+vcs-cli-support = { path = "../cli-support", version = "0.7" }
 # Async runtime for the server loop + rmcp's async handler dispatch (like
 # `vcs-watch`, this is a runtime dependency, not just dev). `io-std` backs the
 # stdio transport.

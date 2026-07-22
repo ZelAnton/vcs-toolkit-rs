@@ -10,7 +10,21 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `logging` module — a command-logging `ProcessRunner` decorator:
+  `LoggingRunner` wraps any real runner and reports every spawn (program, argv,
+  working directory, exit code, duration) to a `CommandObserver`; the default
+  `StderrObserver` writes a one-line summary to **stderr** (never stdout, so a
+  stdout JSON-RPC transport stays clean). Because it sits on the single
+  `ProcessRunner` seam every wrapper spawns through, coverage is complete by
+  construction. Argv is redacted before it reaches an observer (`redact_args`,
+  also public): a value after a sensitive flag (`--token`/`--password`/…) or the
+  value of a `--flag=value` form is masked, a secret-shaped token
+  (`ghp_`/`github_pat_`/`glpat-`/… prefix, `x-access-token:`) is masked, a URL's
+  embedded credentials are masked (host/path kept), and long free text (a PR/issue
+  body, a commit message) is truncated — a fail-closed policy that upholds the
+  workspace's "token never in argv" contract as defence in depth (the environment,
+  which carries the token, is never logged). Also exports `CommandObserver`,
+  `CommandRecord`, `CommandStatus`, and `StderrObserver`. (T-117.)
 
 ### Changed
 -

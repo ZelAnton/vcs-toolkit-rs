@@ -85,6 +85,11 @@ pub use credentials::{
     GitCredentialHelper, Secret, StaticCredential, git_credential_helper, https_host, provider_fn,
 };
 
+pub mod logging;
+pub use logging::{
+    CommandObserver, CommandRecord, CommandStatus, LoggingRunner, StderrObserver, redact_args,
+};
+
 /// JSON helpers shared by the forge wrappers, behind the `serde` feature — so the
 /// three forge parsers share one `null -> ""` and parse-error convention.
 #[cfg(feature = "serde")]

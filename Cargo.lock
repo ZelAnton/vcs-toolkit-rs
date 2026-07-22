@@ -1579,6 +1579,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "vcs-cli-support",
  "vcs-core",
  "vcs-forge",
  "vcs-testkit",
