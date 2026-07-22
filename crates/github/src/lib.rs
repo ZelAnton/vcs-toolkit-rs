@@ -3405,7 +3405,10 @@ mod tests {
 
         let gh = GitHub::with_runner(ScriptedRunner::new().on(
             ["gh", "workflow", "run"],
-            Reply::fail(1, "HTTP 404: workflow x.yml not found on the default branch"),
+            Reply::fail(
+                1,
+                "HTTP 404: workflow x.yml not found on the default branch",
+            ),
         ));
         assert!(matches!(
             gh.workflow_dispatch(Path::new("."), WorkflowDispatch::new("x.yml"))
