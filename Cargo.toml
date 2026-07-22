@@ -76,7 +76,7 @@ mockall = "0.15"
 
 # Statistical benchmarking harness for the large, pure parser fixtures in vcs-diff,
 # vcs-git, and vcs-jj. Dev-only: benchmark binaries are never published dependencies.
-criterion = "0.5"
+criterion = "0.8"
 
 # ---------------------------------------------------------------------------
 # Workspace lints — inherited by every crate via `[lints] workspace = true`.
