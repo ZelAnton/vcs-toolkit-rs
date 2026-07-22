@@ -85,10 +85,14 @@ too noisy for performance conclusions.
 - **Each crate has its own `CHANGELOG.md`** ([Keep a Changelog](https://keepachangelog.com/));
   curate the `[Unreleased]` section as you work when a change is user-facing.
 - **Published crates carry the full MIT text.** Keep a byte-identical `LICENSE` in
-  every crate directory, set `license-file = "LICENSE"`, and do not add a
-  restrictive `include` list that omits it. CI runs `cargo package --list` for all
-  published crates and compares each local copy with the root `LICENSE`; add the same
-  file and explicit field before publishing a new crate.
+  every crate directory and do not add an `include` list that omits it — a crate
+  with no `include` list already ships every tracked file. CI runs
+  `cargo package --list` for all published crates and compares each local copy
+  with the root `LICENSE`; add the same file before publishing a new crate.
+  Set only `license.workspace = true` in Cargo.toml — don't also set
+  `license-file`, since cargo warns when both a `license` SPDX expression and a
+  `license-file` are given (`license-file` is only for non-standard licenses; see
+  [the manifest docs](https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields)).
 - **Multi-option commands take a builder/spec** rather than a long positional list —
   the trigger is **≥2 options, or any bare `bool`** (a bare boolean at a call site is
   ambiguous, so it becomes a presence-only setter or a spec field).
