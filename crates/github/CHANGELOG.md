@@ -50,7 +50,23 @@ crates; tag releases as `vcs-github-v<version>`.
   `RELEASE_LIST_FIELDS`/`RELEASE_VIEW_FIELDS` are widened accordingly.
 
 ### Changed
--
+- **Test infrastructure: `gh` parser fixtures now come from recorded cassettes,
+  not hand-invented JSON.** `processkit`'s `record` feature (`RecordReplayRunner`)
+  is now enabled for this crate's dev/test profile only (`[dev-dependencies]` in
+  Cargo.toml — no effect on the published library build or any other workspace
+  crate). `crates/github/tests/cassettes/release_round_trip.json` and
+  `run_round_trip.json` were captured against a live, authenticated `gh` run
+  against this very repository (`crates/github/tests/cli.rs`'s `#[ignore]`d
+  `record_release_round_trip`/`record_run_round_trip`) and are replayed
+  hermetically by the corresponding unit tests in `src/lib.rs`
+  (`release_view_requests_view_fields`, `run_list_and_view_replay_recorded_cassette`),
+  replacing their previous hand-picked JSON literals. This is a pilot for the
+  workspace: it does not touch `crates/gitea/**` or
+  `.github/workflows/scheduled-cli-drift.yml`, and most of this crate's
+  hermetic tests still use hand-scripted `ScriptedRunner`/`RecordingRunner`
+  fixtures — converting the rest is left to follow-up work. See
+  CONTRIBUTING.md, "Updating a `gh` CLI cassette", for how a cassette diff
+  should read on review and how this relates to the scheduled live-drift lane.
 
 ### Fixed
 -

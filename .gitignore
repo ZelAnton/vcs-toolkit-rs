@@ -14,5 +14,10 @@ progress.md
 **/*.rs.bk
 *.pdb
 
+# `processkit` `RecordReplayRunner::save` advisory lock sidecar — created next
+# to a cassette while (re)recording, released and left as a harmless empty
+# file on drop. Never part of the committed fixture (crates/*/tests/cassettes/).
+*.json.lock
+
 # Nix
 /result

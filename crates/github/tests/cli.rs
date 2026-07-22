@@ -124,3 +124,67 @@ async fn release_list_and_view_round_trip() {
     );
     assert!(release.url.as_deref().is_some_and(|u| !u.is_empty()));
 }
+
+// --- Cassette recording ------------------------------------------------
+//
+// The two tests below are not part of the ordinary suite: they drive a real,
+// authenticated `gh` against this very repository and (re)write the
+// human-readable JSON cassettes `src/lib.rs`'s hermetic unit tests replay
+// (`release_view_requests_view_fields`, `run_list_and_view_replay_recorded_cassette`).
+// See CONTRIBUTING.md, "Updating a `gh` CLI cassette", for when/how to run
+// these and how a cassette diff should read on review.
+//
+// `processkit`'s `record` feature is enabled unconditionally for this crate's
+// dev/test profile (see `[dev-dependencies]` in Cargo.toml), so no extra
+// `--features` flag is needed here — just `--ignored` to opt into the ones
+// that spawn a real `gh`.
+//
+// Run with: `cargo test -p vcs-github -- --ignored record_`
+mod record {
+    use super::*;
+    use processkit::JobRunner;
+    use processkit::testing::RecordReplayRunner;
+    use std::path::PathBuf;
+
+    fn cassette_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/cassettes")
+            .join(name)
+    }
+
+    #[tokio::test]
+    #[ignore = "records a live cassette against gh; requires network + an authenticated gh"]
+    async fn record_release_round_trip() {
+        let runner =
+            RecordReplayRunner::record(cassette_path("release_round_trip.json"), JobRunner::new());
+        let gh = GitHub::with_runner(&runner);
+        let dir = std::path::Path::new(".");
+
+        let releases = gh.release_list(dir).await.expect("release_list");
+        let tag = releases
+            .first()
+            .map(|r| r.tag_name.clone())
+            .expect("this repo has releases");
+        gh.release_view(dir, &tag).await.expect("release_view");
+
+        runner.save().expect("save release cassette");
+    }
+
+    #[tokio::test]
+    #[ignore = "records a live cassette against gh; requires network + an authenticated gh"]
+    async fn record_run_round_trip() {
+        let runner =
+            RecordReplayRunner::record(cassette_path("run_round_trip.json"), JobRunner::new());
+        let gh = GitHub::with_runner(&runner);
+        let dir = std::path::Path::new(".");
+
+        let runs = gh.run_list(dir, 3, None).await.expect("run_list");
+        let id = runs
+            .first()
+            .map(|r| r.database_id)
+            .expect("this repo has Actions runs");
+        gh.run_view(dir, id).await.expect("run_view");
+
+        runner.save().expect("save run cassette");
+    }
+}
