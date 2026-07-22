@@ -146,8 +146,8 @@ mod parse;
 #[doc(hidden)]
 pub use parse::parse_porcelain_v2;
 pub use parse::{
-    BlameLine, Branch, BranchStatus, CleanEntry, Commit, StashEntry, StatusEntry, Submodule,
-    SubmoduleState, SubmoduleStatus, Worktree,
+    BlameLine, Branch, BranchStatus, CleanEntry, Commit, Remote, StashEntry, StatusEntry,
+    Submodule, SubmoduleState, SubmoduleStatus, Worktree,
 };
 // The git-format diff model + parser and the version type are shared with
 // `vcs-jj` (identical output) — re-exported so `vcs_git::FileDiff`,
@@ -1130,6 +1130,9 @@ pub trait GitApi: Send + Sync {
     async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
     /// A remote's URL (`remote get-url <remote>`).
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
+    /// Configured remotes from `remote -v`, coalesced to one typed row per name
+    /// with its fetch URL.
+    async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>>;
     /// The current attached branch's upstream, e.g. `Some("origin/main")`
     /// (`rev-parse --abbrev-ref --symbolic-full-name @{u}`); `None` when unset.
     /// A detached HEAD or a directory outside a repository is an error.
@@ -2225,6 +2228,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         reject_flag_like("remote name", remote)?;
         self.core
             .run(self.core.command_in(dir, ["remote", "get-url", remote]))
+            .await
+    }
+
+    async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>> {
+        self.core
+            .parse(
+                self.core.command_in(dir, ["remote", "-v"]),
+                parse::parse_remotes,
+            )
             .await
     }
 
@@ -3768,6 +3780,7 @@ vcs_cli_support::at_forwarders! {
         fn branch_exists(name: &RefName) -> Result<bool>;
         fn remote_branch_exists(name: &RefName) -> Result<bool>;
         fn remote_url(remote: &str) -> Result<String>;
+        fn remote_list() -> Result<Vec<Remote>>;
         fn upstream() -> Result<Option<String>>;
         fn remote_branches(remote: &str) -> Result<Vec<String>>;
         fn is_merged(spec: MergeCheck) -> Result<bool>;
@@ -5996,6 +6009,24 @@ mod tests {
         ));
         let branches = git.remote_branches(Path::new("."), "origin").await.unwrap();
         assert_eq!(branches, ["main", "feat/x"]);
+    }
+
+    #[tokio::test]
+    async fn remote_list_runs_remote_v_and_prefers_fetch_url() {
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "remote", "-v"],
+            Reply::ok(
+                "origin https://example.test/fetch.git (fetch)\n\
+                 origin https://example.test/push.git (push)\n",
+            ),
+        ));
+        assert_eq!(
+            git.remote_list(Path::new("/repo")).await.unwrap(),
+            vec![Remote {
+                name: "origin".into(),
+                url: "https://example.test/fetch.git".into(),
+            }]
+        );
     }
 
     #[tokio::test]

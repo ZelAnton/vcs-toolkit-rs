@@ -1545,6 +1545,7 @@ fn jj_snapshotting_read_tools_are_not_read_only_but_non_destructive() {
         ("repo_log", VcsMcpServer::repo_log_tool_attr()),
         ("repo_show_file", VcsMcpServer::repo_show_file_tool_attr()),
         ("repo_branches", VcsMcpServer::repo_branches_tool_attr()),
+        ("repo_remotes", VcsMcpServer::repo_remotes_tool_attr()),
         ("repo_annotate", VcsMcpServer::repo_annotate_tool_attr()),
         (
             "repo_current_branch",
@@ -1645,6 +1646,7 @@ async fn reclassified_reads_stay_ungated_and_callable() {
         "repo_show_file",
         "repo_annotate",
         "repo_branches",
+        "repo_remotes",
         "repo_current_branch",
         "repo_conflicts",
         "repo_worktrees",

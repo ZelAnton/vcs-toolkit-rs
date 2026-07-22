@@ -198,6 +198,32 @@ pub use vcs_diff::DiffStat;
 /// (no remapping); the same type `GitApi::diff`/`JjApi::diff` already return.
 pub use vcs_diff::FileDiff;
 
+/// One configured repository remote, unified across Git and Jujutsu.
+///
+/// This is deliberately a facade-owned DTO rather than re-exporting
+/// `vcs_jj::Remote`: `Repo::remotes` has the same name/URL contract on both
+/// backends, and placing that common contract here prevents a Git-backed
+/// consumer from depending on a jj-specific public type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct Remote {
+    /// Configured remote name (for example, `origin`).
+    pub name: String,
+    /// The remote's fetch URL.
+    pub url: String,
+}
+
+impl Remote {
+    /// A configured remote with its fetch URL.
+    pub fn new(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            url: url.into(),
+        }
+    }
+}
+
 /// One attached worktree (git) / workspace (jj).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

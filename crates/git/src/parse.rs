@@ -635,6 +635,58 @@ pub(crate) fn parse_ls_remote_heads(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// One configured Git remote, as listed by `git remote -v`.
+///
+/// Git emits one row for each fetch and push URL. [`parse_remotes`] coalesces
+/// those rows to one remote name and prefers its fetch URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Remote {
+    /// Configured remote name (for example, `origin`).
+    pub name: String,
+    /// The remote's fetch URL.
+    pub url: String,
+}
+
+/// Parse `git remote -v` output into one row per configured remote.
+///
+/// The normal format is `<name> <url> (fetch)` followed by a matching `(push)`
+/// row. Rows with a name and URL but no recognised direction are tolerated as a
+/// fallback, while a recognised fetch row always replaces an earlier fallback
+/// or push URL. Malformed/blank rows are ignored rather than aborting a whole
+/// listing because a future Git display-format change should remain diagnosable
+/// without making the configured remotes disappear behind a parser error.
+pub(crate) fn parse_remotes(output: &str) -> Vec<Remote> {
+    let mut remotes: Vec<(Remote, bool)> = Vec::new();
+
+    for line in output.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(name), Some(url)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let is_fetch = matches!(fields.next(), Some("(fetch)"));
+
+        if let Some((remote, has_fetch)) =
+            remotes.iter_mut().find(|(remote, _)| remote.name == name)
+        {
+            if is_fetch && !*has_fetch {
+                remote.url = url.to_string();
+                *has_fetch = true;
+            }
+        } else {
+            remotes.push((
+                Remote {
+                    name: name.to_string(),
+                    url: url.to_string(),
+                },
+                is_fetch,
+            ));
+        }
+    }
+
+    remotes.into_iter().map(|(remote, _)| remote).collect()
+}
+
 /// One submodule declared in the superproject's `.gitmodules`, parsed from the
 /// machine-unambiguous `git config --file .gitmodules --list -z` source rather
 /// than a hand-rolled text scan of the ini-style file.
@@ -1195,6 +1247,47 @@ mod tests {
         assert!(parse_gitmodules_config(b"").is_empty());
     }
 
+    #[test]
+    fn remotes_empty_output_is_empty() {
+        assert!(parse_remotes("\n \t\r\n").is_empty());
+    }
+
+    #[test]
+    fn remotes_one_remote_prefers_fetch_url() {
+        assert_eq!(
+            parse_remotes(
+                "origin\thttps://example.test/fetch.git (fetch)\norigin\thttps://example.test/push.git (push)\n"
+            ),
+            vec![Remote {
+                name: "origin".into(),
+                url: "https://example.test/fetch.git".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn remotes_multiple_rows_dedupe_and_tolerate_malformed_output() {
+        assert_eq!(
+            parse_remotes(
+                "origin ssh://example.test/push.git (push)\n\
+                 upstream https://example.test/upstream.git (fetch)\r\n\
+                 malformed-only-name\n\
+                 origin https://example.test/fetch.git (fetch)\n\
+                 upstream https://example.test/upstream-push.git (push)\n",
+            ),
+            vec![
+                Remote {
+                    name: "origin".into(),
+                    url: "https://example.test/fetch.git".into(),
+                },
+                Remote {
+                    name: "upstream".into(),
+                    url: "https://example.test/upstream.git".into(),
+                },
+            ]
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn gitmodules_config_preserves_non_utf8_path_bytes() {
@@ -1408,6 +1501,7 @@ mod proptests {
             let _ = parse_blame_porcelain(&s);
             let _ = parse_shortstat(&s);
             let _ = parse_ls_remote_heads(&s);
+            let _ = parse_remotes(&s);
             let _ = parse_nul_paths(s.as_bytes());
             let _ = parse_git_version(&s);
             let _ = parse_stash_list(&s);
