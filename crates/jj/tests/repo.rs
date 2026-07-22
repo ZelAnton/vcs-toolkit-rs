@@ -317,7 +317,9 @@ async fn remote_management_round_trip() {
     let dir = sandbox.path();
     let jj = Jj::new();
 
-    jj.remote_add(dir, "t097-origin", "https://example.com/репо.git")
+    // `jj git remote add` percent-encodes non-ASCII URL bytes, so use ASCII
+    // here; the set-url phase below verifies literal non-ASCII preservation.
+    jj.remote_add(dir, "t097-origin", "https://example.com/repo.git")
         .await
         .expect("add remote");
     assert!(
@@ -326,7 +328,7 @@ async fn remote_management_round_trip() {
             .expect("list after add")
             .iter()
             .any(|remote| {
-                remote.name == "t097-origin" && remote.url == "https://example.com/репо.git"
+                remote.name == "t097-origin" && remote.url == "https://example.com/repo.git"
             }),
         "added remote should round-trip through list"
     );

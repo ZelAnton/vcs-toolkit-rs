@@ -761,7 +761,11 @@ mod tests {
         // `body`/`url` are `Option`: a present `null` reads as `None`, not "".
         assert_eq!(release.body, None);
         assert_eq!(release.url, None);
-        assert_eq!(release.author, Some("".to_string()), "deleted account → empty login");
+        assert_eq!(
+            release.author,
+            Some("".to_string()),
+            "deleted account → empty login"
+        );
     }
 
     #[test]

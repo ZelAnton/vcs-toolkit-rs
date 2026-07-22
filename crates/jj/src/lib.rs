@@ -784,6 +784,12 @@ pub trait JjApi: Send + Sync {
     ///
     /// `name` and `url` are positional arguments and reject empty or leading-`-`
     /// values before spawning, preventing flag injection.
+    ///
+    /// jj may percent-encode non-ASCII URL bytes when adding a remote, unlike
+    /// [`remote_set_url`](JjApi::remote_set_url), which preserves them
+    /// literally. For byte-exact non-ASCII URLs, add an ASCII placeholder and
+    /// then call `remote_set_url`, or do not rely on exact preservation after
+    /// `remote_add`.
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
     /// List configured Git remotes (`jj git remote list`).
     ///

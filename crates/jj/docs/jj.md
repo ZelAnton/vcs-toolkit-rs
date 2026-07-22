@@ -505,8 +505,10 @@ the jj non-zero exit as an error when the named remote does not exist.
 
 The list command has no jj template or JSON output. Its `<name> <url>` display
 rows are pinned by the ignored real-jj suite across the supported version matrix,
-with only the first whitespace boundary separating the two fields. URLs containing
-non-ASCII path text round-trip; jj remote configuration is UTF-8 text, so there
+with only the first whitespace boundary separating the two fields. Non-ASCII URL
+text round-trips through `remote_set_url`, but not necessarily immediately after
+`remote_add`: jj percent-encodes non-ASCII bytes at add time on jj 0.40.0 and
+0.42.0 on both tested platforms. jj remote configuration is UTF-8 text, so there
 is no separate non-UTF-8 decoding path.
 
 This matches `vcs-git`'s remote add/set-url capability and adds jj-native list,
