@@ -74,10 +74,11 @@ impl Error {
     /// `stderr` on an `Exit`) without hand-walking it. `None` for a `Notify`/`Io`
     /// failure or a non-subprocess `vcs-core` error (e.g. "not a repository").
     pub fn processkit_error(&self) -> Option<&processkit::Error> {
-        match self {
-            Error::Vcs(e) if let vcs_core::ErrorKind::Vcs(cause) = e.kind() => Some(cause),
-            _ => None,
-        }
+        let Error::Vcs(e) = self else { return None };
+        let vcs_core::ErrorKind::Vcs(cause) = e.kind() else {
+            return None;
+        };
+        Some(cause)
     }
 }
 
