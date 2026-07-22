@@ -1783,7 +1783,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core
             .run_unit(self.core.command_in(
                 dir,
-                ["config", "set", "--repo", "--color", "never", "--", key, value],
+                [
+                    "config", "set", "--repo", "--color", "never", "--", key, value,
+                ],
             ))
             .await
     }
@@ -4259,8 +4261,9 @@ mod tests {
     // exit-code contract (verified on jj 0.42).
     #[tokio::test]
     async fn config_get_maps_exit_codes() {
-        let set =
-            Jj::with_runner(ScriptedRunner::new().on(["jj", "config", "get"], Reply::ok("Alice\n")));
+        let set = Jj::with_runner(
+            ScriptedRunner::new().on(["jj", "config", "get"], Reply::ok("Alice\n")),
+        );
         assert_eq!(
             set.config_get(Path::new("."), "user.name").await.unwrap(),
             Some("Alice".to_string())
@@ -4362,12 +4365,28 @@ mod tests {
         assert_eq!(
             calls[0].args_str(),
             [
-                "config", "set", "--repo", "--color", "never", "--", "test.flag", "--evil"
+                "config",
+                "set",
+                "--repo",
+                "--color",
+                "never",
+                "--",
+                "test.flag",
+                "--evil"
             ]
         );
         assert_eq!(
             calls[1].args_str(),
-            ["config", "set", "--repo", "--color", "never", "--", "test.empty", ""]
+            [
+                "config",
+                "set",
+                "--repo",
+                "--color",
+                "never",
+                "--",
+                "test.empty",
+                ""
+            ]
         );
     }
 
@@ -4428,10 +4447,7 @@ mod tests {
                 .expect_err("blank remote must be rejected before spawn");
             assert!(vcs_cli_support::is_invalid_input(&err));
         }
-        assert!(
-            rec.calls().is_empty(),
-            "must not spawn for a blank remote"
-        );
+        assert!(rec.calls().is_empty(), "must not spawn for a blank remote");
     }
 
     // T-098: undo-by-new-change — `revert -r <revset> --onto @`. No
