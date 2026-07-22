@@ -1896,6 +1896,21 @@ mod tests {
         assert_eq!(prs[0].updated_at.as_deref(), Some("2026-07-02T00:00:00Z"));
         assert_eq!(prs[0].milestone.as_deref(), Some("v2.0"));
 
+        // GitLab MR: a `null` author (anonymised account) is a *confirmed*
+        // empty string, and a `null` milestone (none attached) is `None` —
+        // mirrors the GitHub PR null case above.
+        let json = r#"[{"iid":13,"title":"Y","state":"opened","source_branch":"f",
+            "target_branch":"main","web_url":"u","draft":false,
+            "author":null,"milestone":null}]"#;
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
+        let prs = forge.pr_list().await.unwrap();
+        assert_eq!(
+            prs[0].author.as_deref(),
+            Some(""),
+            "confirmed anonymised account"
+        );
+        assert_eq!(prs[0].milestone, None, "no milestone attached");
+
         // GitHub issue: same flatten/null contract as the PR mapper.
         let json = r#"{"number":3,"title":"Docs","state":"OPEN","body":"b","url":"u",
             "author":{"login":"andyfeller"},
