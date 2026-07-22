@@ -10,7 +10,11 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `JjApi::remote_add`, `remote_list`, `remote_remove`, `remote_rename`, and
+  `remote_set_url`: typed management of jj Git remotes, including the public
+  `Remote { name, url }` result type. The positional remote names and URLs are
+  guarded against empty/flag-like values before jj is spawned; `remote_list`
+  parses jj's `name URL` display rows, pinned by ignored real-jj tests. (T-097.)
 
 ### Changed
 -

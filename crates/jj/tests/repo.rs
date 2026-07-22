@@ -308,6 +308,59 @@ async fn git_clone_from_local_bare_remote() {
     assert!(colocated.join(".git").exists(), "colocated keeps .git");
 }
 
+// `git remote list` has no machine template. Exercise the real CLI's output
+// framing and all five typed remote operations without a network dependency.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn remote_management_round_trip() {
+    let sandbox = JjSandbox::init("remotes");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    jj.remote_add(dir, "t097-origin", "https://example.com/репо.git")
+        .await
+        .expect("add remote");
+    assert!(
+        jj.remote_list(dir)
+            .await
+            .expect("list after add")
+            .iter()
+            .any(|remote| {
+                remote.name == "t097-origin" && remote.url == "https://example.com/репо.git"
+            }),
+        "added remote should round-trip through list"
+    );
+
+    jj.remote_rename(dir, "t097-origin", "t097-upstream")
+        .await
+        .expect("rename remote");
+    jj.remote_set_url(dir, "t097-upstream", "ssh://example.com/новый.git")
+        .await
+        .expect("set remote URL");
+    assert!(
+        jj.remote_list(dir)
+            .await
+            .expect("list after rename/set-url")
+            .iter()
+            .any(|remote| {
+                remote.name == "t097-upstream" && remote.url == "ssh://example.com/новый.git"
+            }),
+        "renamed remote and non-ASCII URL should round-trip through list"
+    );
+
+    jj.remote_remove(dir, "t097-upstream")
+        .await
+        .expect("remove remote");
+    assert!(
+        !jj.remote_list(dir)
+            .await
+            .expect("list after remove")
+            .iter()
+            .any(|remote| remote.name == "t097-upstream"),
+        "removed remote should be absent"
+    );
+}
+
 // absorb folds an edit into the change that introduced the lines; split carves
 // named paths into their own commit; duplicate copies a commit.
 #[tokio::test]
