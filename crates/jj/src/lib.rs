@@ -1771,8 +1771,20 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // 0.42. `value` deliberately keeps no `reject_flag_like` guard — a
         // config value may legitimately begin with `-` — mirroring
         // `GitApi::config_set`.
+        //
+        // R-01 (T-098): `cmd_in` appends the global `--color never` flag
+        // *after* the caller-supplied args, so routing this through `cmd_in`
+        // would land `--color never` after the `--` terminator, where jj can
+        // only read it as two extra positional arguments — `jj config set`
+        // then fails with "unexpected argument '--color' found" (verified on
+        // jj 0.42). Global flags must precede `--`, so this builds the
+        // command directly instead (mirroring `file_annotate`), placing
+        // `--color never` before the terminator that pins `key`/`value`.
         self.core
-            .run_unit(self.cmd_in(dir, ["config", "set", "--repo", "--", key, value]))
+            .run_unit(self.core.command_in(
+                dir,
+                ["config", "set", "--repo", "--color", "never", "--", key, value],
+            ))
             .await
     }
 
@@ -4295,9 +4307,12 @@ mod tests {
 
     // T-098: `config_set` pins `key`/`value` behind `--repo --`, so a
     // flag-shaped `value` (or `key`) sits where jj can only read it as a
-    // literal positional — never as an option. Argv pinned here; a live-jj
-    // round-trip isn't in this hermetic suite (see `config_get_maps_exit_codes`
-    // for the get-side contract).
+    // literal positional — never as an option. `--color never` MUST precede
+    // `--` (R-01: trailing it after `--` makes jj read it as two extra
+    // positional arguments and fail with "unexpected argument '--color'
+    // found" — verified on jj 0.42). Argv pinned here; a live-jj round-trip
+    // isn't in this hermetic suite (see `config_get_maps_exit_codes` for the
+    // get-side contract).
     #[tokio::test]
     async fn config_set_pins_key_and_value_behind_option_terminator() {
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -4311,13 +4326,48 @@ mod tests {
                 "config",
                 "set",
                 "--repo",
+                "--color",
+                "never",
                 "--",
                 "test.key",
                 "--looks-like-a-flag",
-                "--color",
-                "never"
             ],
-            "value must sit after `--`, unreachable to jj's option parser"
+            "value must sit after `--`, unreachable to jj's option parser; \
+             `--color never` must precede `--`, not trail it"
+        );
+    }
+
+    // R-02 (T-098): a flag-shaped or empty `value` is deliberately accepted,
+    // not rejected — mirroring `GitApi::config_set` exactly, where the `--`
+    // terminator (not a `reject_flag_like` content check) is the guard: it
+    // pins `value` as a literal positional jj's option parser can never
+    // re-read as a flag. Verified empirically on jj 0.42: both
+    // `--looks-like-a-flag` and an empty string round-trip through
+    // `config set --repo --color never -- <key> <value>` unchanged (`config
+    // get` echoes them back verbatim) once `--color never` precedes `--`
+    // (the R-01 fix above) restores that pinning. Adding a content guard on
+    // `value` would reject legitimate values (e.g. `-1`) and break parity
+    // with the git wrapper.
+    #[tokio::test]
+    async fn config_set_accepts_flag_like_and_empty_value_unrejected() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        jj.config_set(Path::new("/r"), "test.flag", "--evil")
+            .await
+            .expect("flag-shaped value must be accepted, not rejected");
+        jj.config_set(Path::new("/r"), "test.empty", "")
+            .await
+            .expect("empty value must be accepted, not rejected");
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "config", "set", "--repo", "--color", "never", "--", "test.flag", "--evil"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["config", "set", "--repo", "--color", "never", "--", "test.empty", ""]
         );
     }
 
