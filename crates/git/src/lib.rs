@@ -2763,7 +2763,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             CleanIgnored::Include => command = command.arg("-x"),
             CleanIgnored::Only => command = command.arg("-X"),
         }
-        self.core.parse(command, parse::parse_clean_output).await
+        // C locale: `parse_clean_output` keys on the English "Would remove "/
+        // "Removing " prefixes; git gettext-translates both under a non-English
+        // locale. Unwrapped, a forced clean would still delete files but return
+        // an empty `Vec<CleanEntry>` (losing the audit trail of what was
+        // removed), and a dry run would falsely report nothing to remove — same
+        // failure mode `diff_stat`'s `c_locale` wrap guards against above.
+        self.core
+            .parse(c_locale(command), parse::parse_clean_output)
+            .await
     }
 
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
@@ -5082,6 +5090,25 @@ mod tests {
                 path: PathBuf::from("junk.txt"),
                 is_dir: false,
             }]
+        );
+    }
+
+    // `parse_clean_output` keys on the English "Would remove "/"Removing "
+    // prefixes, which git gettext-translates under a non-English locale; `clean`
+    // must force `LC_ALL=C` so those prefixes are always present, the same way
+    // `diff_stat` forces it for `parse_shortstat`'s English keys.
+    #[tokio::test]
+    async fn clean_forces_c_locale() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(Path::new("."), Clean::new().dry_run())
+            .await
+            .expect("dry run");
+        assert!(
+            rec.only_call().envs.iter().any(|(k, v)| {
+                k.to_str() == Some("LC_ALL") && v.as_deref().and_then(|o| o.to_str()) == Some("C")
+            }),
+            "clean should force LC_ALL=C"
         );
     }
 
