@@ -3,7 +3,7 @@
 //! `vcs-gitea` — automate Gitea (and Forgejo) from Rust by driving the `tea` CLI.
 //!
 //! You call typed `async` methods; `vcs-gitea` runs the real `tea`, asks each
-//! command for `--output json`, and deserializes that into typed values — so you
+//! read command for `--output csv`, and parses that into typed values — so you
 //! get *tea's own* auth, config, and instance handling, not a reimplementation of
 //! the Gitea API. Async, structured errors, mockable. Every command runs inside an
 //! OS **job** (an OS-level container that kills the whole process tree if your
@@ -64,18 +64,20 @@
 //! command, and **no** single-release view (`tea releases` ignores any positional
 //! and always lists), so those operations are simply absent here (the
 //! [`vcs-forge`](https://crates.io/crates/vcs-forge) facade reports them
-//! `Unsupported` for the Gitea backend). [`pr_view`](GiteaApi::pr_view) is
-//! synthesized by **paging** `--state all` and filtering by number (so it finds a PR
-//! past the server's ~50-row page cap); [`issue_view`](GiteaApi::issue_view), by
-//! contrast, is a first-class `tea issues <index>`.
+//! `Unsupported` for the Gitea backend). Both [`pr_view`](GiteaApi::pr_view) and
+//! [`issue_view`](GiteaApi::issue_view) are synthesized by **paging** the list
+//! `--state all` and filtering by number (so they find an item past the server's
+//! ~50-row page cap) — `tea` has no usable single-PR view, and its bare-index issue
+//! view renders Markdown and ignores `--output`.
 //!
-//! One shape caveat: `tea`'s `--output json` is **not** the Gitea REST shape. Its
-//! *list* commands emit tea's print-*table* — a JSON array of string-maps whose
-//! keys are snake-cased column headers and whose values are **all strings** (no
-//! `html_url`, no nested branch objects, no typed bools); we pick columns with
-//! `--fields`. Its *detail* view (`issues <n>`) is a separate *typed* object. The
-//! parsers model both (the `#[ignore]` real-`tea` tests in `tests/cli.rs` are the
-//! contract check).
+//! One shape caveat: these read ops ask for **`--output csv`**, not `json`, because
+//! `json` is unsupported on the crate's `tea` 0.9.x floor (there it prints `unknown
+//! output type 'json'` with exit 0; `json` was added in `tea` 0.10). `tea`'s *list*
+//! commands emit a print-*table* — a quoted DSV whose columns are chosen with
+//! `--fields` and whose values are all strings (no `html_url`, no nested branch
+//! objects, no typed bools). The positional DSV parsers read tea's two CSV dialects
+//! (naive 0.9.x and RFC-4180 0.14.x) with one reader; the `#[ignore]` real-`tea`
+//! tests in `tests/cli.rs` are the live contract check.
 //!
 //! # Recipes
 //!
@@ -112,7 +114,7 @@
 //! Two seams: enable the **`mock`** feature for a `mockall`-generated
 //! `MockGiteaApi` (stub whole methods), or inject a
 //! [`ScriptedRunner`](processkit::testing::ScriptedRunner) with [`Gitea::with_runner`] to
-//! exercise the *real* argv-building and JSON parsing against canned output. The
+//! exercise the *real* argv-building and DSV parsing against canned output. The
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 //!
@@ -241,18 +243,22 @@ impl Default for PrEdit {
 pub const BINARY: &str = "tea";
 
 // tea's `list` commands serialize a print-table whose columns are chosen with
-// `--fields`. We request exactly the columns the parsers read; every value comes
-// back as a JSON string (see `parse.rs`). These names are validated by tea
-// against its `PullFields`/`IssueFields` lists — keep them in that set.
+// `--fields`. We request exactly the columns the positional DSV parsers read, in
+// this column order (see `parse.rs`); we ask for `--output csv`, not `json`, because
+// `json` is unsupported on the crate's `tea` 0.9.x floor (it prints `unknown output
+// type 'json'` with exit 0). These names are validated by tea against its
+// `PullFields`/`IssueFields` lists — keep them in that set.
 const PR_FIELDS: &str = "index,title,state,head,base,url";
 const ISSUE_FIELDS: &str = "index,title,state,body,url";
 
-// `pr_view` has no single-PR endpoint in `tea`, so it lists all states and pages
-// through, filtering by number. `PR_VIEW_PAGE_SIZE` is the requested per-page size
-// (the Gitea server may clamp it lower, which the page-until-empty loop tolerates);
-// `PR_VIEW_MAX_PAGES` bounds the walk so a pathological repo can't loop unboundedly.
-const PR_VIEW_PAGE_SIZE: usize = 50;
-const PR_VIEW_MAX_PAGES: usize = 200;
+// `pr_view` (and `issue_view`) have no usable single-item endpoint in `tea`, so they
+// list all states and page through, filtering by number. `VIEW_PAGE_SIZE` is the
+// requested per-page size (the Gitea server may clamp it lower, which the
+// page-until-empty loop tolerates); `VIEW_MAX_PAGES` bounds the walk so a pathological
+// repo can't loop unboundedly. Shared by both paged views (same server page-cap
+// semantics).
+const VIEW_PAGE_SIZE: usize = 50;
+const VIEW_MAX_PAGES: usize = 200;
 
 /// How [`GiteaApi::pr_merge`] merges the PR — maps to `tea pr merge --style`
 /// (Gitea's default is a merge commit).
@@ -440,11 +446,12 @@ pub struct GiteaCapabilities {
 }
 
 /// The oldest `tea` this crate is written against — **0.9.0**. Every command this
-/// crate's argv drives is present across the `tea` 0.9+ line: the `--output json`
+/// crate's argv drives is present across the `tea` 0.9+ line: the `--output csv`
 /// print-table read surface (`pr`/`issues`/`releases list`, `login list`) selected
 /// with `--fields`, the `pr create`/`merge`/`close`/`checkout` lifecycle verbs, and
-/// `comment`. A `tea` older than this predates parts of that JSON/`--fields`
-/// surface, so gating here lets
+/// `comment`. `csv` (not `json`, which `tea` only added in 0.10) is the read format
+/// precisely because it works across this whole floor-to-latest range. A `tea` older
+/// than 0.9.0 predates parts of that `--fields`/print-table surface, so gating here lets
 /// [`ensure_supported`](GiteaCapabilities::ensure_supported) reject a too-old binary
 /// up front with a clear message instead of letting an operation fail deep inside
 /// tea with a cryptic `unknown command`/`unknown flag`.
@@ -505,13 +512,13 @@ pub trait GiteaApi: Send + Sync {
     /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `tea`
     /// with [`GiteaCapabilities::ensure_supported`].
     async fn capabilities(&self) -> Result<GiteaCapabilities>;
-    /// Whether at least one login is configured (`tea login list --output json`
-    /// is a non-empty array). `tea` has no per-instance `auth status`, so this is
+    /// Whether at least one login is configured (`tea login list --output csv`
+    /// has a data row). `tea` has no per-instance `auth status`, so this is
     /// the closest "are we logged in" signal. Must not error on an unusual
     /// outcome: a non-zero exit (e.g. no config file yet) reads as `false`, the
-    /// same as an empty array; only a spawn failure or timeout errors.
+    /// same as a header-only table; only a spawn failure or timeout errors.
     async fn auth_status(&self) -> Result<bool>;
-    /// Open pull requests for `dir` (`tea pr list --output json`). The Gitea
+    /// Open pull requests for `dir` (`tea pr list --output csv`). The Gitea
     /// **server** caps an API page at `MAX_RESPONSE_ITEMS` (default 50) and `tea`
     /// makes a single call, so this returns **at most ~50** open PRs regardless of
     /// the requested limit — a busier repo is silently truncated here. For the full
@@ -599,15 +606,16 @@ pub trait GiteaApi: Send + Sync {
             operation: "pr_reject".into(),
         })
     }
-    /// Open issues for `dir` (`tea issues list --output json`). As with
+    /// Open issues for `dir` (`tea issues list --output csv`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
     /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** open issues
     /// in one call — page via [`run`](GiteaApi::run) (`--page N`) for the rest.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
-    /// A single issue by number. Unlike PRs, `tea` *does* have a single-issue
-    /// view — `tea issues <number>` (the bare index form), here run as
-    /// `tea issues <number> --output json`, deserializing one object rather than
-    /// listing and filtering.
+    /// A single issue by number. `tea`'s bare-index view (`tea issues <number>`)
+    /// renders Markdown and ignores `--output`, so — like [`pr_view`](GiteaApi::pr_view) —
+    /// this is synthesized by **paging** `tea issues list --state all` (`--page N`) and
+    /// filtering by number, finding a closed issue and one past the server's ~50-row
+    /// page cap. An absence is an [`Error::Parse`].
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
     /// Open an issue, returning the command's output (`tea issues create
     /// --title <t> --description <d>`). Like [`pr_create`](GiteaApi::pr_create),
@@ -651,7 +659,7 @@ pub trait GiteaApi: Send + Sync {
             operation: "issue_comment".into(),
         })
     }
-    /// Releases for `dir` (`tea releases list --output json`). As with
+    /// Releases for `dir` (`tea releases list --output csv`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
     /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** releases in
     /// one call — page via [`run`](GiteaApi::run) (`--page N`) for the rest.
@@ -736,14 +744,15 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn auth_status(&self) -> Result<bool> {
-        // `tea login list --output json` is a global (non-repo) command that
-        // yields the configured logins as a JSON array; non-empty ⇒ logged in.
-        // `output_string` (not `run`) so a NON-ZERO exit — e.g. tea erroring because no
-        // config file exists yet — reads as "not logged in" rather than surfacing
-        // as an error; a spawn failure or timeout still errors via `ensure_success`.
+        // `tea login list --output csv` is a global (non-repo) command that yields one
+        // DSV row per configured login (`csv`, not `json`: json is unsupported on the
+        // 0.9.x floor). `output_string` (not `run`) so a NON-ZERO exit — e.g. tea
+        // erroring because no config file exists yet — reads as "not logged in" rather
+        // than surfacing as an error; a spawn failure or timeout still errors via
+        // `ensure_success`.
         let res = self
             .core
-            .output_string(["login", "list", "--output", "json"])
+            .output_string(["login", "list", "--output", "csv"])
             .await?;
         if res.code() != Some(0) {
             // A timeout / signal-kill (no exit code) is a genuine failure;
@@ -754,14 +763,9 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             }
             return Ok(false);
         }
-        let json = res.stdout().trim();
-        // Treat empty output as "no logins" rather than a parse error — some tea
-        // builds print nothing (not `[]`) when none are configured.
-        if json.is_empty() {
-            return Ok(false);
-        }
-        let logins: Vec<serde_json::Value> = vcs_cli_support::json::from_json(BINARY, json)?;
-        Ok(!logins.is_empty())
+        // A header-only or empty table means no logins; the `unknown output type`
+        // diagnostic is a loud error, not a silent `false` (see `parse::parse_login_present`).
+        parse::parse_login_present(res.stdout())
     }
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
@@ -776,7 +780,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
                 self.core.command_in(
                     dir,
                     [
-                        "pr", "list", "--limit", "100", "--fields", PR_FIELDS, "--output", "json",
+                        "pr", "list", "--limit", "100", "--fields", PR_FIELDS, "--output", "csv",
                     ],
                 ),
                 parse::parse_pr_list,
@@ -795,8 +799,8 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         // the walk regardless of the server's actual clamp, so an instance whose cap
         // is below our request still tiles correctly). `--fields` selects the columns
         // we parse (see `pr_list`).
-        let limit = PR_VIEW_PAGE_SIZE.to_string();
-        for page in 1..=PR_VIEW_MAX_PAGES {
+        let limit = VIEW_PAGE_SIZE.to_string();
+        for page in 1..=VIEW_MAX_PAGES {
             let page_str = page.to_string();
             let prs = self
                 .core
@@ -815,7 +819,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
                             "--fields",
                             PR_FIELDS,
                             "--output",
-                            "json",
+                            "csv",
                         ],
                     ),
                     parse::parse_pr_list,
@@ -839,9 +843,9 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             BINARY,
             format!(
                 "pull request #{number} not found in the first {} of `tea pr list` (stopped at \
-                 the {PR_VIEW_MAX_PAGES}-page safety bound; query `tea`/the Gitea API directly for \
+                 the {VIEW_MAX_PAGES}-page safety bound; query `tea`/the Gitea API directly for \
                  a repository this large)",
-                PR_VIEW_MAX_PAGES * PR_VIEW_PAGE_SIZE
+                VIEW_MAX_PAGES * VIEW_PAGE_SIZE
             ),
         ))
     }
@@ -978,7 +982,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
                         "--fields",
                         ISSUE_FIELDS,
                         "--output",
-                        "json",
+                        "csv",
                     ],
                 ),
                 parse::parse_issue_list,
@@ -987,17 +991,59 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue> {
-        // `tea issues <index>` is the documented bare-index single-issue view;
-        // `--output json` yields one object. `number` is a `u64`, so it can
-        // never look like a flag — nothing to guard with `reject_flag_like`.
-        let n = number.to_string();
-        self.core
-            .try_parse(
-                self.core
-                    .command_in(dir, ["issues", n.as_str(), "--output", "json"]),
-                parse::parse_issue,
-            )
-            .await
+        // `tea`'s bare-index single-issue view (`tea issues <index>`) renders **Markdown**
+        // and ignores `--output` entirely, so it can't be parsed structurally. Instead
+        // synthesize the view the way `pr_view` does: page `tea issues list --state all`
+        // (`--output csv`) and filter by number — this also finds a closed issue and one
+        // past the server's ~50-row page cap. `number` is a `u64`, so nothing can look
+        // like a flag.
+        let limit = VIEW_PAGE_SIZE.to_string();
+        for page in 1..=VIEW_MAX_PAGES {
+            let page_str = page.to_string();
+            let issues = self
+                .core
+                .try_parse(
+                    self.core.command_in(
+                        dir,
+                        [
+                            "issues",
+                            "list",
+                            "--state",
+                            "all",
+                            "--limit",
+                            limit.as_str(),
+                            "--page",
+                            page_str.as_str(),
+                            "--fields",
+                            ISSUE_FIELDS,
+                            "--output",
+                            "csv",
+                        ],
+                    ),
+                    parse::parse_issue_list,
+                )
+                .await?;
+            let exhausted = issues.is_empty();
+            if let Some(issue) = issues.into_iter().find(|issue| issue.number == number) {
+                return Ok(issue);
+            }
+            if exhausted {
+                // An empty page means we walked past the last issue — a genuine absence.
+                return Err(Error::parse(
+                    BINARY,
+                    format!("no issue #{number} in `tea issues list`"),
+                ));
+            }
+        }
+        Err(Error::parse(
+            BINARY,
+            format!(
+                "issue #{number} not found in the first {} of `tea issues list` (stopped at the \
+                 {VIEW_MAX_PAGES}-page safety bound; query `tea`/the Gitea API directly for a \
+                 repository this large)",
+                VIEW_MAX_PAGES * VIEW_PAGE_SIZE
+            ),
+        ))
     }
 
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
@@ -1046,7 +1092,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             .try_parse(
                 self.core.command_in(
                     dir,
-                    ["releases", "list", "--limit", "100", "--output", "json"],
+                    ["releases", "list", "--limit", "100", "--output", "csv"],
                 ),
                 parse::parse_release_list,
             )
@@ -1315,14 +1361,16 @@ mod tests {
         assert_eq!(tea.run_args(&["whoami"]).await.unwrap(), "me");
     }
 
-    // Hermetic: real pr_list() arg-building + JSON deserialization against canned
-    // output — no `tea` binary or network needed, so this runs on CI. The fixture
-    // is tea's *table* shape: all-string values, flat `head`/`base`, `url` column.
+    // Hermetic: real pr_list() arg-building + DSV parsing against canned output — no
+    // `tea` binary or network needed, so this runs on CI. The fixture is tea's csv
+    // *table* shape: a quoted-DSV header line then one row per PR, flat `head`/`base`.
     #[tokio::test]
-    async fn pr_list_parses_scripted_json() {
-        let json = r#"[{"index":"7","title":"Add X","state":"open","head":"feat/x","base":"main","url":"u"}]"#;
+    async fn pr_list_parses_scripted_csv() {
+        let csv = r#""index","title","state","head","base","url"
+"7","Add X","open","feat/x","main","u"
+"#;
         let tea =
-            Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+            Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(csv)));
         let prs = tea.pr_list(Path::new(".")).await.expect("pr_list");
         assert_eq!(prs.len(), 1);
         assert_eq!(prs[0].number, 7);
@@ -1333,12 +1381,12 @@ mod tests {
     // `state` column (`"merged"`), from which the `merged` flag is derived.
     #[tokio::test]
     async fn pr_view_filters_listing_by_number() {
-        let json = r#"[
-            {"index":"7","title":"Seven","state":"open","head":"a","base":"main","url":"u"},
-            {"index":"9","title":"Nine","state":"merged","head":"b","base":"main","url":"u"}
-        ]"#;
+        let csv = r#""index","title","state","head","base","url"
+"7","Seven","open","a","main","u"
+"9","Nine","merged","b","main","u"
+"#;
         let tea =
-            Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
+            Gitea::with_runner(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(csv)));
         let pr = tea.pr_view(Path::new("."), 9).await.expect("pr_view");
         assert_eq!(pr.title, "Nine");
         assert!(pr.merged);
@@ -1351,19 +1399,16 @@ mod tests {
     #[tokio::test]
     async fn pr_view_pages_past_the_server_cap() {
         // Page 1: a full 50 rows, none is #77. Page 2: #77 is present.
-        let page1_rows: Vec<String> = (1..=50)
-            .map(|i| {
-                format!(
-                    r#"{{"index":"{i}","title":"t","state":"open","head":"h","base":"main","url":"u"}}"#
-                )
-            })
+        let header = "\"index\",\"title\",\"state\",\"head\",\"base\",\"url\"\n";
+        let page1_rows: String = (1..=50)
+            .map(|i| format!("\"{i}\",\"t\",\"open\",\"h\",\"main\",\"u\"\n"))
             .collect();
-        let page1 = format!("[{}]", page1_rows.join(","));
-        let page2 = r#"[{"index":"77","title":"Target","state":"open","head":"h","base":"main","url":"u"}]"#;
-        let rec = RecordingRunner::new(
-            ScriptedRunner::new()
-                .on_sequence(["tea", "pr", "list"], [Reply::ok(&page1), Reply::ok(page2)]),
-        );
+        let page1 = format!("{header}{page1_rows}");
+        let page2 = format!("{header}\"77\",\"Target\",\"open\",\"h\",\"main\",\"u\"\n");
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["tea", "pr", "list"],
+            [Reply::ok(&page1), Reply::ok(&page2)],
+        ));
         let tea = Gitea::with_runner(&rec);
         let pr = tea
             .pr_view(Path::new("."), 77)
@@ -1383,12 +1428,14 @@ mod tests {
     // page 2 — a `len < limit` stop would false-negative it.
     #[tokio::test]
     async fn pr_view_continues_past_a_short_nonempty_page() {
-        let page1 = r#"[
-            {"index":"1","title":"a","state":"open","head":"h","base":"main","url":"u"},
-            {"index":"2","title":"b","state":"open","head":"h","base":"main","url":"u"},
-            {"index":"3","title":"c","state":"open","head":"h","base":"main","url":"u"}
-        ]"#;
-        let page2 = r#"[{"index":"9","title":"Found","state":"merged","head":"h","base":"main","url":"u"}]"#;
+        let page1 = r#""index","title","state","head","base","url"
+"1","a","open","h","main","u"
+"2","b","open","h","main","u"
+"3","c","open","h","main","u"
+"#;
+        let page2 = r#""index","title","state","head","base","url"
+"9","Found","merged","h","main","u"
+"#;
         let tea = Gitea::with_runner(
             ScriptedRunner::new()
                 .on_sequence(["tea", "pr", "list"], [Reply::ok(page1), Reply::ok(page2)]),
@@ -1402,7 +1449,8 @@ mod tests {
     // first page is a genuine absence → parse error (not a panic), in one call.
     #[tokio::test]
     async fn pr_view_requests_all_states_and_errors_when_missing() {
-        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        // An empty page (header-only or nothing) is a genuine absence → parse error.
+        let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         let err = tea.pr_view(Path::new("/repo"), 5).await.unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
@@ -1420,7 +1468,7 @@ mod tests {
                 "--fields",
                 "index,title,state,head,base,url",
                 "--output",
-                "json"
+                "csv"
             ]
         );
     }
@@ -1429,7 +1477,7 @@ mod tests {
     // does not silently truncate) and `--fields` (so head/base/url are present).
     #[tokio::test]
     async fn pr_list_pins_limit_and_fields() {
-        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         tea.pr_list(Path::new("/repo")).await.expect("pr_list");
         assert_eq!(
@@ -1442,23 +1490,29 @@ mod tests {
                 "--fields",
                 "index,title,state,head,base,url",
                 "--output",
-                "json"
+                "csv"
             ]
         );
     }
 
-    // auth_status reads the logins array: non-empty ⇒ true, empty ⇒ false.
+    // auth_status counts login DSV rows: a data row ⇒ true, header-only ⇒ false.
     #[tokio::test]
     async fn auth_status_counts_logins() {
-        let yes = Gitea::with_runner(
-            ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok(r#"[{"name":"gitea"}]"#)),
-        );
+        let yes = Gitea::with_runner(ScriptedRunner::new().on(
+            ["tea", "login", "list"],
+            Reply::ok(
+                "\"Name\",\"URL\",\"SSHHost\",\"User\",\"Default\"\n\
+                 \"gitea\",\"https://gitea\",\"\",\"me\",\"true\"\n",
+            ),
+        ));
         assert!(yes.auth_status().await.unwrap());
-        let no =
-            Gitea::with_runner(ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok("[]")));
+        let no = Gitea::with_runner(ScriptedRunner::new().on(
+            ["tea", "login", "list"],
+            Reply::ok("\"Name\",\"URL\",\"SSHHost\",\"User\",\"Default\"\n"),
+        ));
         assert!(!no.auth_status().await.unwrap());
-        // Some tea builds print nothing (not `[]`) when no login is configured;
-        // that must read as `false`, not a parse error.
+        // Some tea builds print nothing (not even a header) when no login is
+        // configured; that must read as `false`, not a parse error.
         let empty =
             Gitea::with_runner(ScriptedRunner::new().on(["tea", "login", "list"], Reply::ok("")));
         assert!(!empty.auth_status().await.unwrap());
@@ -1687,14 +1741,15 @@ mod tests {
         );
     }
 
-    // issue_list parses tea's table shape (all-string `index` column) and pins
-    // `--limit 100 --fields … --output json`.
+    // issue_list parses tea's csv table shape (quoted DSV, `index` column) and pins
+    // `--limit 100 --fields … --output csv`.
     #[tokio::test]
-    async fn issue_list_parses_scripted_json() {
-        let json = r#"[{"index":"12","title":"Bug","state":"open","body":"broken","url":"u"}]"#;
-        let tea = Gitea::with_runner(
-            ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(json)),
-        );
+    async fn issue_list_parses_scripted_csv() {
+        let csv = r#""index","title","state","body","url"
+"12","Bug","open","broken","u"
+"#;
+        let tea =
+            Gitea::with_runner(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(csv)));
         let issues = tea.issue_list(Path::new(".")).await.expect("issue_list");
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].number, 12);
@@ -1703,7 +1758,7 @@ mod tests {
 
     #[tokio::test]
     async fn issue_list_pins_limit_and_fields() {
-        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         tea.issue_list(Path::new("/repo"))
             .await
@@ -1718,17 +1773,20 @@ mod tests {
                 "--fields",
                 "index,title,state,body,url",
                 "--output",
-                "json"
+                "csv"
             ]
         );
     }
 
-    // issue_view is a first-class `tea issues <index> --output json` returning a
-    // single **typed** object (numeric `index`) — not a list+filter like pr_view.
+    // issue_view is synthesized by paging `tea issues list --state all` (csv) and
+    // filtering by number — tea's bare-index view renders Markdown and ignores
+    // `--output`. This mirrors pr_view; the paged-list argv is pinned.
     #[tokio::test]
-    async fn issue_view_uses_bare_index_and_parses_object() {
+    async fn issue_view_pages_and_filters_by_number() {
         let rec = RecordingRunner::replying(Reply::ok(
-            r#"{"index":7,"title":"One","state":"closed","body":"b","url":"u"}"#,
+            "\"index\",\"title\",\"state\",\"body\",\"url\"\n\
+             \"6\",\"Other\",\"open\",\"b\",\"u\"\n\
+             \"7\",\"One\",\"closed\",\"b\",\"u\"\n",
         ));
         let tea = Gitea::with_runner(&rec);
         let issue = tea
@@ -1739,8 +1797,31 @@ mod tests {
         assert_eq!(issue.state, "closed");
         assert_eq!(
             rec.only_call().args_str(),
-            ["issues", "7", "--output", "json"]
+            [
+                "issues",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "50",
+                "--page",
+                "1",
+                "--fields",
+                "index,title,state,body,url",
+                "--output",
+                "csv"
+            ]
         );
+    }
+
+    // issue_view surfaces a genuine absence (walked past the last issue → empty page)
+    // as a parse error, not a false "found".
+    #[tokio::test]
+    async fn issue_view_errors_when_missing() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        let err = tea.issue_view(Path::new("/repo"), 5).await.unwrap_err();
+        assert!(matches!(err, Error::Parse { .. }));
     }
 
     // issue_create assembles title/description; returns the trimmed stdout.
@@ -1811,14 +1892,16 @@ mod tests {
         assert!(tea.issue_comment(Path::new("."), 7, "").await.is_err());
     }
 
-    // release_list parses tea's fixed release table (all-string values, tea's
-    // `toSnakeCase`d `tag-_name`/`published _at`/`status` keys) and pins the argv.
-    // tea exposes no release-page URL, so `url` is empty.
+    // release_list parses tea's fixed release table (csv columns Tag-Name, Title,
+    // Published At, Status, Tar URL) and pins the argv. tea exposes no release-page
+    // URL, so `url` is empty.
     #[tokio::test]
-    async fn release_list_parses_scripted_json() {
-        let json = r#"[{"tag-_name":"0.1","title":"First","status":"released","published _at":"2023-07-26T13:02:36Z","tar/_zip url":"https://gitea/0.1.tar.gz\nhttps://gitea/0.1.zip"}]"#;
+    async fn release_list_parses_scripted_csv() {
+        let csv = r#""Tag-Name","Title","Published At","Status","Tar URL"
+"0.1","First","2023-07-26T13:02:36Z","released","https://gitea/0.1.tar.gz"
+"#;
         let tea = Gitea::with_runner(
-            ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)),
+            ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(csv)),
         );
         let releases = tea
             .release_list(Path::new("."))
@@ -1833,14 +1916,14 @@ mod tests {
 
     #[tokio::test]
     async fn release_list_pins_limit_100() {
-        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         tea.release_list(Path::new("/repo"))
             .await
             .expect("release_list");
         assert_eq!(
             rec.only_call().args_str(),
-            ["releases", "list", "--limit", "100", "--output", "json"]
+            ["releases", "list", "--limit", "100", "--output", "csv"]
         );
     }
 

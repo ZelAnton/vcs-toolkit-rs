@@ -5,18 +5,21 @@
 //! returns) when the binary is absent, rather than failing — CI installs it
 //! best-effort.
 //!
-//! The list/view tests below are the **definitive check** of the `tea --output
-//! json` contract our parsers model (the hermetic unit tests can only confirm the
-//! parser against *assumed* fixtures). They run a real `tea … list` and assert
-//! the output is **not** an `Error::Parse` — a parse error means tea's real shape
-//! diverged from our structs, the exact bug class this crate's re-model fixed.
-//! Any *other* error (no Gitea repo, not authenticated, network) is an
-//! environment skip, so they need a live, authenticated Gitea repo to be
-//! meaningful: point `VCS_GITEA_TEST_REPO` at one (defaults to the cwd). The
-//! weekly `gitea-live` lane in `.github/workflows/scheduled-cli-drift.yml` stands
-//! up a one-shot Gitea, logs `tea` in, and points `VCS_GITEA_TEST_REPO` at a
-//! seeded repo, so these run live there (alongside the `vcs-forge` facade
-//! lifecycle suite) — run them against a real `tea` locally too, the same way.
+//! The list/view tests below are the **definitive check** of the `tea --output csv`
+//! DSV contract our positional parsers model (the hermetic unit tests can only confirm
+//! the parser against *assumed* fixtures). They run a real `tea … list` and assert the
+//! output is a real table our parser accepts — **not** a format mismatch. A format
+//! mismatch is a hard **failure**, the exact bug class this crate's re-model fixed:
+//! that means either our parser diverged from tea's real output (`Error::Parse`) or tea
+//! rejected the requested `--output` format (an `unknown output type` diagnostic — how
+//! `tea` 0.9.x reported the old, unsupported `--output json`, with exit 0). Only a
+//! genuine **environment** problem (no Gitea repo, not authenticated, network) is a
+//! skip. So they need a live, authenticated Gitea repo to be meaningful: point
+//! `VCS_GITEA_TEST_REPO` at one (defaults to the cwd). The weekly `gitea-live` lane in
+//! `.github/workflows/scheduled-cli-drift.yml` stands up a one-shot Gitea, logs `tea`
+//! in, and points `VCS_GITEA_TEST_REPO` at a seeded repo, so these run live there
+//! (alongside the `vcs-forge` facade lifecycle suite) — run them against a real `tea`
+//! locally too, the same way.
 
 use std::path::PathBuf;
 
@@ -34,14 +37,26 @@ fn test_repo() -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().expect("cwd"))
 }
 
-/// Fail only on the contract violation this suite hunts — a parser that doesn't
-/// match `tea`'s real output (`Error::Parse`). Every other error (the dir is not
-/// a Gitea repo, no login, network) is an environment skip, not a test failure.
-fn assert_not_parse_error<T>(label: &str, result: processkit::Result<T>) {
+/// Whether an error is a **format-contract** signal (a hard failure) rather than an
+/// environment skip. Two shapes count as drift: our parser rejecting tea's real output
+/// (`Error::Parse`), and tea rejecting the requested `--output` format — the `unknown
+/// output type` diagnostic, which on `tea` 0.9.x arrived with exit 0 and so used to be
+/// swallowed as a silent empty list. Everything else (no repo, no login, network) is a
+/// genuine environment error we skip on.
+fn is_format_drift(err: &processkit::Error) -> bool {
+    matches!(err, processkit::Error::Parse { .. })
+        || err.to_string().contains("unknown output type")
+}
+
+/// Fail on a format-contract violation this suite hunts (a parser/`--output` mismatch);
+/// treat only a genuine environment error (the dir is not a Gitea repo, no login,
+/// network) as a skip. This is the un-masked gate: a format drift is **never** quietly
+/// skipped, even when tea reports it via a non-`Parse` error.
+fn assert_output_contract<T>(label: &str, result: processkit::Result<T>) {
     match result {
-        Ok(_) => {} // tea produced output and our parser accepted it.
-        Err(processkit::Error::Parse { message, .. }) => {
-            panic!("{label}: tea output did not match the parser (contract drift): {message}");
+        Ok(_) => {} // tea produced a real table and our parser accepted it.
+        Err(err) if is_format_drift(&err) => {
+            panic!("{label}: tea output did not match the parser (contract drift): {err}");
         }
         Err(other) => eprintln!("skipping {label}: {other}"),
     }
@@ -86,17 +101,15 @@ async fn auth_status_does_not_error() {
         eprintln!("skipping: tea not installed");
         return;
     }
-    // Reports the bool whether or not a login is configured; must not error.
-    let _authed = Gitea::new()
-        .auth_status()
-        .await
-        .expect("auth_status should not error");
+    // Reports the bool whether or not a login is configured; must not error — but if
+    // tea rejects `--output csv` (a format regression), that IS a failure, not a skip.
+    assert_output_contract("auth_status", Gitea::new().auth_status().await);
 }
 
-// The three list shapes (PR / issue / release tables) and the issue detail view
-// must deserialize from REAL `tea --output json` without an `Error::Parse`. These
-// are the only structural validation of the table/detail contract the parsers
-// model — point `VCS_GITEA_TEST_REPO` at a populated, authenticated Gitea repo.
+// The three list shapes (PR / issue / release tables) and the paged issue view must
+// deserialize from REAL `tea --output csv` without a format mismatch. These are the
+// only structural validation of the DSV table contract the parsers model — point
+// `VCS_GITEA_TEST_REPO` at a populated, authenticated Gitea repo.
 #[tokio::test]
 #[ignore = "requires the tea binary + a real Gitea repo/login"]
 async fn list_outputs_match_the_parsers() {
@@ -107,11 +120,11 @@ async fn list_outputs_match_the_parsers() {
     let tea = Gitea::new();
     let dir = test_repo();
 
-    assert_not_parse_error("pr_list", tea.pr_list(&dir).await);
-    assert_not_parse_error("issue_list", tea.issue_list(&dir).await);
-    assert_not_parse_error("release_list", tea.release_list(&dir).await);
+    assert_output_contract("pr_list", tea.pr_list(&dir).await);
+    assert_output_contract("issue_list", tea.issue_list(&dir).await);
+    assert_output_contract("release_list", tea.release_list(&dir).await);
 
-    // issue_view goes through tea's *typed* detail path (a different shape from
-    // the list); probe #1 (a non-Parse error is fine if it doesn't exist).
-    assert_not_parse_error("issue_view", tea.issue_view(&dir, 1).await);
+    // issue_view pages the same issues list and filters by number; probe #1 (a
+    // non-format-drift error is a fine skip if it simply doesn't exist).
+    assert_output_contract("issue_view", tea.issue_view(&dir, 1).await);
 }

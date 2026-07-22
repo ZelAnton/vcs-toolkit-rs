@@ -21,10 +21,43 @@ crates; tag releases as `vcs-gitea-v<version>`.
   exact argv is pinned by hermetic tests.
 
 ### Changed
--
+- **Read operations now use `--output csv`, not `--output json`.** `auth_status`,
+  `pr_list`, `pr_view`, `issue_list`, `issue_view`, and `release_list` ask `tea` for
+  its quoted-DSV `csv` output and parse it positionally, replacing the previous
+  `--output json` path. `json` is **not** supported on this crate's declared floor —
+  `tea` 0.9.x's table printer (`modules/print/table.go`) has no `json` case, so
+  `--output json` fell through to its `default` arm and printed `unknown output type
+  'json', available types are: …` to stdout **with exit code 0**, which a JSON parser
+  then rejected. (`json` was only added in `tea` 0.10.0; newer `tea` also makes the
+  unknown-format arm exit non-zero.) `csv` is supported across the whole `tea` 0.9+
+  line, so the read surface now works on the floor as well as the latest release.
+  Verified by reading tea's source at the `v0.9.2`/`v0.10.0`/`v0.14.2` tags and
+  corroborated by the sibling F# port hitting the same `unknown output type 'json'`
+  against live `tea` 0.9.2; the `#[ignore]` real-`tea` tests in `tests/cli.rs` are the
+  ongoing live confirmation. The positional DSV reader handles both of tea's CSV
+  dialects — the naive always-quoted `","`-joined format (0.9.x–0.13.x) and the
+  RFC-4180 `encoding/csv` format (0.14.x), including quoted multi-line issue bodies.
+- **`issue_view` is now synthesized by paging `tea issues list`.** `tea`'s bare-index
+  single-issue view (`tea issues <n>`) renders Markdown and ignores `--output`, so it
+  can't be parsed structurally; `issue_view` now pages `tea issues list --state all`
+  (`--output csv`) and filters by number, like `pr_view` — finding a closed issue and
+  one past the server's ~50-row page cap. The public `GiteaApi::issue_view` signature
+  and the `Issue` DTO are **unchanged**; a genuine absence is an `Error::Parse`.
 
 ### Fixed
--
+- **Empty/header-only reads parse as an empty list; `unknown output type` is a loud
+  error.** tea always prints a DSV header even for zero rows, and some builds print
+  nothing — both now read as an empty list rather than an error, while the
+  `unknown output type` diagnostic (the exit-0 signal that a requested `--output`
+  format is unsupported) is turned into an `Error::Parse` instead of a silently-empty
+  result, so a format regression can't pass unnoticed.
+- **Format-drift test gate no longer degrades into an environment-skip.** The
+  `#[ignore]` real-`tea` suite (`tests/cli.rs`) and the weekly `gitea-live` workflow
+  lane now classify a format mismatch — our parser rejecting tea's output, **or** tea
+  reporting `unknown output type` — as an explicit test **failure**, not a silent skip;
+  only a genuine environment error (no repo, no login, network) is skipped. The
+  `gitea-live` lane also runs against both the `tea` 0.9.x floor and the latest release,
+  so a floor-only format regression is exercised instead of missed by a latest-only run.
 
 ## [0.7.0] - 2026-07-19
 

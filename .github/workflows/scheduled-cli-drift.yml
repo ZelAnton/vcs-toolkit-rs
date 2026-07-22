@@ -176,9 +176,27 @@ jobs:
   # leaves the one provisioning step (it is not written to $GITHUB_ENV), and the
   # test process only ever sees `tea`'s ambient login plus the seeded git remote
   # — never a raw credential.
+  #
+  # Run against BOTH the crate's declared `tea` floor (0.9.x) and the current
+  # release. This matters because the `#[ignore]` format-contract tests only catch
+  # `--output` drift on the tea version actually installed: `tea` 0.9.x does NOT
+  # support `--output json` (it printed `unknown output type 'json'` with exit 0),
+  # a break that a latest-only lane silently missed. The list ops now use
+  # `--output csv` (supported across the whole 0.9+ line), and the floor leg is what
+  # would catch a regression back to a floor-incompatible format — a format mismatch
+  # is a hard test FAILURE now (see the `cli` suite's `assert_output_contract`), not
+  # an environment skip. A genuinely unreachable/incompatible floor `tea` still skips
+  # gracefully (best-effort install + graceful skip), so it never falsely reds this
+  # non-gating lane.
   gitea-live:
-    name: gitea live lifecycle
+    name: gitea live lifecycle (tea ${{ matrix.tea }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tea:
+          - "0.9.2" # the declared floor — where `--output json` was unsupported
+          - "latest"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -189,15 +207,20 @@ jobs:
 
       # `tea` drives every facade/vcs-gitea operation under test. Best-effort
       # (same posture as the drift job's install): a download hiccup makes the
-      # live test skip gracefully rather than red this non-gating lane.
-      - name: Install tea (best-effort)
+      # live test skip gracefully rather than red this non-gating lane. The matrix
+      # picks either a pinned floor version or the resolved latest release.
+      - name: Install tea ${{ matrix.tea }} (best-effort)
         continue-on-error: true
         run: |
           set -uo pipefail
           mkdir -p "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          tea_ver="$(curl -fsSL 'https://gitea.com/api/v1/repos/gitea/tea/releases?limit=1' \
-            | grep -oP '"tag_name":"v?\K[^"]+' | head -1)" || true
+          if [ "${{ matrix.tea }}" = "latest" ]; then
+            tea_ver="$(curl -fsSL 'https://gitea.com/api/v1/repos/gitea/tea/releases?limit=1' \
+              | grep -oP '"tag_name":"v?\K[^"]+' | head -1)" || true
+          else
+            tea_ver="${{ matrix.tea }}"
+          fi
           if [ -n "${tea_ver:-}" ] \
             && curl -fsSL "https://dl.gitea.com/tea/${tea_ver}/tea-${tea_ver}-linux-amd64" -o "$HOME/.local/bin/tea"; then
             chmod +x "$HOME/.local/bin/tea"
@@ -309,7 +332,7 @@ jobs:
           set -euo pipefail
           title="Live Gitea lifecycle check failed"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          body="The scheduled live-Gitea lifecycle lane failed: the end-to-end create → view → comment → edit → merge PR lifecycle (plus issues/releases) through vcs-forge/vcs-gitea against a one-shot Gitea did not pass.
+          body="The scheduled live-Gitea lifecycle lane failed (tea ${{ matrix.tea }}): the end-to-end create → view → comment → edit → merge PR lifecycle (plus issues/releases) through vcs-forge/vcs-gitea against a one-shot Gitea did not pass.
 
           Run: ${run_url}
 

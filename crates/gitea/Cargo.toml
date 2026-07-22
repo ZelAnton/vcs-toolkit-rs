@@ -18,17 +18,16 @@ categories = ["command-line-utilities","api-bindings","asynchronous"]
 # tree is killed on close — no orphaned subprocesses. Also the `ProcessRunner`
 # seam, `CliClient` core, and structured `Error`.
 processkit.workspace = true
-# Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`).
-# features=["serde"]: shared JSON helpers (json::null_to_empty/from_json) live in cli-support behind that feature — added after cli-support 0.2.0, so its NEXT release must be >= minor and this floor raised to match.
-vcs-cli-support = { path = "../cli-support", version = "0.7", features = ["serde"] }
+# Shared processkit-coupled plumbing: the argv injection guard (`reject_flag_like`)
+# and the `managed_client!`/`at_forwarders!`/`raw_run_forwarders!` scaffolding macros.
+# No `serde` feature: the read ops parse tea's quoted-DSV `--output csv` positionally
+# (see `parse.rs`), not JSON, so the cli-support JSON helpers are no longer needed here.
+vcs-cli-support = { path = "../cli-support", version = "0.7" }
 # The shared `major.minor.patch` version type + tolerant `<tool> --version` parser
 # `vcs-git`/`vcs-jj`/`vcs-github` also gate on, reused for the `tea` version floor
 # (`GiteaCapabilities`). std-only, no async — the same crate the other wrappers
 # use for their capability gate, so all four share one version-parsing contract.
 vcs-diff = { path = "../diff", version = "0.7" }
-# Deserialize `tea … --output json` output into typed structs (PullRequest).
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 # `async fn` in the object-safe `GiteaApi` trait (dyn + mockall friendly).
 async-trait = "0.1"
 # Auto-generated `MockGiteaApi` for consumers' tests. Test-only — enabled only
@@ -44,8 +43,8 @@ tracing = ["processkit/tracing"]
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-# Property-test the `tea` print-table parsers for panic-freedom on arbitrary /
-# malformed input (tea's `--output json` shape is empirically reverse-engineered).
+# Property-test the `tea` print-table (`--output csv`) DSV parsers for panic-freedom
+# on arbitrary / malformed input (tea's quoted-DSV shape is reverse-engineered).
 proptest = "1"
 
 [package.metadata.docs.rs]
