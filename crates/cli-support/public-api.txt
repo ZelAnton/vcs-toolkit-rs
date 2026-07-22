@@ -1,0 +1,428 @@
+pub mod vcs_cli_support
+pub mod vcs_cli_support::credentials
+#[non_exhaustive] pub enum vcs_cli_support::credentials::CredentialService
+pub vcs_cli_support::credentials::CredentialService::Git
+pub vcs_cli_support::credentials::CredentialService::GitHub
+pub vcs_cli_support::credentials::CredentialService::GitLab
+pub vcs_cli_support::credentials::CredentialService::Gitea
+impl core::clone::Clone for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::clone(&self) -> vcs_cli_support::credentials::CredentialService
+impl core::cmp::Eq for vcs_cli_support::credentials::CredentialService
+impl core::cmp::Ord for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::cmp(&self, &vcs_cli_support::credentials::CredentialService) -> core::cmp::Ordering
+impl core::cmp::PartialEq for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::eq(&self, &vcs_cli_support::credentials::CredentialService) -> bool
+impl core::cmp::PartialOrd for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::partial_cmp(&self, &vcs_cli_support::credentials::CredentialService) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for vcs_cli_support::credentials::CredentialService
+impl core::marker::StructuralPartialEq for vcs_cli_support::credentials::CredentialService
+impl core::marker::Freeze for vcs_cli_support::credentials::CredentialService
+impl core::marker::Send for vcs_cli_support::credentials::CredentialService
+impl core::marker::Sync for vcs_cli_support::credentials::CredentialService
+impl core::marker::Unpin for vcs_cli_support::credentials::CredentialService
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::CredentialService
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::CredentialService
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::CredentialService
+pub struct vcs_cli_support::credentials::Credential
+impl vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::secret(&self) -> &vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Credential::token(impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+pub fn vcs_cli_support::credentials::Credential::username(&self) -> core::option::Option<&str>
+pub fn vcs_cli_support::credentials::Credential::userpass(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::clone(&self) -> vcs_cli_support::credentials::Credential
+impl core::fmt::Debug for vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::Credential
+impl core::marker::Send for vcs_cli_support::credentials::Credential
+impl core::marker::Sync for vcs_cli_support::credentials::Credential
+impl core::marker::Unpin for vcs_cli_support::credentials::Credential
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::Credential
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::Credential
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::Credential
+#[non_exhaustive] pub struct vcs_cli_support::credentials::CredentialRequest<'a>
+pub vcs_cli_support::credentials::CredentialRequest::host: core::option::Option<&'a str>
+pub vcs_cli_support::credentials::CredentialRequest::service: vcs_cli_support::credentials::CredentialService
+impl<'a> vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::new(vcs_cli_support::credentials::CredentialService) -> Self
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::with_host(self, &'a str) -> Self
+impl<'a> core::clone::Clone for vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::clone(&self) -> vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::fmt::Debug for vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Freeze for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Send for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Sync for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Unpin for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::UnsafeUnpin for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::CredentialRequest<'a>
+pub struct vcs_cli_support::credentials::EnvToken
+impl vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::new(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_cli_support::credentials::EnvToken::with_username(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::clone(&self) -> vcs_cli_support::credentials::EnvToken
+impl core::fmt::Debug for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl core::marker::Freeze for vcs_cli_support::credentials::EnvToken
+impl core::marker::Send for vcs_cli_support::credentials::EnvToken
+impl core::marker::Sync for vcs_cli_support::credentials::EnvToken
+impl core::marker::Unpin for vcs_cli_support::credentials::EnvToken
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::EnvToken
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::EnvToken
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::EnvToken
+pub struct vcs_cli_support::credentials::FnProvider<F>(_)
+impl<F> core::fmt::Debug for vcs_cli_support::credentials::FnProvider<F>
+pub fn vcs_cli_support::credentials::FnProvider<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::credentials::FnProvider<F>::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl<F> core::marker::Freeze for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Freeze
+impl<F> core::marker::Send for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Send
+impl<F> core::marker::Sync for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Sync
+impl<F> core::marker::Unpin for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::FnProvider<F> where F: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::FnProvider<F> where F: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub struct vcs_cli_support::credentials::GitCredentialHelper
+pub vcs_cli_support::credentials::GitCredentialHelper::config_args: alloc::vec::Vec<alloc::string::String>
+pub vcs_cli_support::credentials::GitCredentialHelper::env: alloc::vec::Vec<(alloc::string::String, vcs_cli_support::credentials::Secret)>
+impl core::clone::Clone for vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::credentials::GitCredentialHelper::clone(&self) -> vcs_cli_support::credentials::GitCredentialHelper
+impl core::fmt::Debug for vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::credentials::GitCredentialHelper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Send for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Sync for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Unpin for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::GitCredentialHelper
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::GitCredentialHelper
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::GitCredentialHelper
+pub struct vcs_cli_support::credentials::Secret(_)
+impl vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::expose(&self) -> &str
+pub fn vcs_cli_support::credentials::Secret::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::clone(&self) -> vcs_cli_support::credentials::Secret
+impl core::convert::From<&str> for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::from(alloc::string::String) -> Self
+impl core::fmt::Debug for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::Secret
+impl core::marker::Send for vcs_cli_support::credentials::Secret
+impl core::marker::Sync for vcs_cli_support::credentials::Secret
+impl core::marker::Unpin for vcs_cli_support::credentials::Secret
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::Secret
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::Secret
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::Secret
+pub struct vcs_cli_support::credentials::StaticCredential(_)
+impl vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::new(vcs_cli_support::credentials::Credential) -> Self
+pub fn vcs_cli_support::credentials::StaticCredential::token(impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::clone(&self) -> vcs_cli_support::credentials::StaticCredential
+impl core::fmt::Debug for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl core::marker::Freeze for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Send for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Sync for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Unpin for vcs_cli_support::credentials::StaticCredential
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::StaticCredential
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::StaticCredential
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::StaticCredential
+pub trait vcs_cli_support::credentials::CredentialProvider: core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::credentials::CredentialProvider::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl<F> vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::credentials::FnProvider<F>::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_cli_support::credentials::git_credential_helper(&vcs_cli_support::credentials::Credential, core::option::Option<&str>) -> vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::credentials::https_host(&str) -> core::option::Option<alloc::string::String>
+pub fn vcs_cli_support::credentials::provider_fn<F>(F) -> vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub mod vcs_cli_support::json
+pub fn vcs_cli_support::json::from_json<T: serde_core::de::DeserializeOwned>(&str, &str) -> processkit::error::Result<T>
+pub fn vcs_cli_support::json::null_to_empty<'de, D>(D) -> core::result::Result<alloc::string::String, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub macro vcs_cli_support::at_forwarders!
+pub macro vcs_cli_support::managed_client!
+pub macro vcs_cli_support::raw_run_forwarders!
+#[non_exhaustive] pub enum vcs_cli_support::CredentialService
+pub vcs_cli_support::CredentialService::Git
+pub vcs_cli_support::CredentialService::GitHub
+pub vcs_cli_support::CredentialService::GitLab
+pub vcs_cli_support::CredentialService::Gitea
+impl core::clone::Clone for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::clone(&self) -> vcs_cli_support::credentials::CredentialService
+impl core::cmp::Eq for vcs_cli_support::credentials::CredentialService
+impl core::cmp::Ord for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::cmp(&self, &vcs_cli_support::credentials::CredentialService) -> core::cmp::Ordering
+impl core::cmp::PartialEq for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::eq(&self, &vcs_cli_support::credentials::CredentialService) -> bool
+impl core::cmp::PartialOrd for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::partial_cmp(&self, &vcs_cli_support::credentials::CredentialService) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for vcs_cli_support::credentials::CredentialService
+pub fn vcs_cli_support::credentials::CredentialService::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for vcs_cli_support::credentials::CredentialService
+impl core::marker::StructuralPartialEq for vcs_cli_support::credentials::CredentialService
+impl core::marker::Freeze for vcs_cli_support::credentials::CredentialService
+impl core::marker::Send for vcs_cli_support::credentials::CredentialService
+impl core::marker::Sync for vcs_cli_support::credentials::CredentialService
+impl core::marker::Unpin for vcs_cli_support::credentials::CredentialService
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::CredentialService
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::CredentialService
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::CredentialService
+pub struct vcs_cli_support::Credential
+impl vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::secret(&self) -> &vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Credential::token(impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+pub fn vcs_cli_support::credentials::Credential::username(&self) -> core::option::Option<&str>
+pub fn vcs_cli_support::credentials::Credential::userpass(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::clone(&self) -> vcs_cli_support::credentials::Credential
+impl core::fmt::Debug for vcs_cli_support::credentials::Credential
+pub fn vcs_cli_support::credentials::Credential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::Credential
+impl core::marker::Send for vcs_cli_support::credentials::Credential
+impl core::marker::Sync for vcs_cli_support::credentials::Credential
+impl core::marker::Unpin for vcs_cli_support::credentials::Credential
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::Credential
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::Credential
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::Credential
+#[non_exhaustive] pub struct vcs_cli_support::CredentialRequest<'a>
+pub vcs_cli_support::CredentialRequest::host: core::option::Option<&'a str>
+pub vcs_cli_support::CredentialRequest::service: vcs_cli_support::credentials::CredentialService
+impl<'a> vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::new(vcs_cli_support::credentials::CredentialService) -> Self
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::with_host(self, &'a str) -> Self
+impl<'a> core::clone::Clone for vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::clone(&self) -> vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::fmt::Debug for vcs_cli_support::credentials::CredentialRequest<'a>
+pub fn vcs_cli_support::credentials::CredentialRequest<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Freeze for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Send for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Sync for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::Unpin for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::marker::UnsafeUnpin for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::CredentialRequest<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::CredentialRequest<'a>
+pub struct vcs_cli_support::EnvToken
+impl vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::new(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_cli_support::credentials::EnvToken::with_username(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::clone(&self) -> vcs_cli_support::credentials::EnvToken
+impl core::fmt::Debug for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl core::marker::Freeze for vcs_cli_support::credentials::EnvToken
+impl core::marker::Send for vcs_cli_support::credentials::EnvToken
+impl core::marker::Sync for vcs_cli_support::credentials::EnvToken
+impl core::marker::Unpin for vcs_cli_support::credentials::EnvToken
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::EnvToken
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::EnvToken
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::EnvToken
+pub struct vcs_cli_support::FnProvider<F>(_)
+impl<F> core::fmt::Debug for vcs_cli_support::credentials::FnProvider<F>
+pub fn vcs_cli_support::credentials::FnProvider<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::credentials::FnProvider<F>::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl<F> core::marker::Freeze for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Freeze
+impl<F> core::marker::Send for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Send
+impl<F> core::marker::Sync for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Sync
+impl<F> core::marker::Unpin for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for vcs_cli_support::credentials::FnProvider<F> where F: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::FnProvider<F> where F: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::FnProvider<F> where F: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub struct vcs_cli_support::GitCredentialHelper
+pub vcs_cli_support::GitCredentialHelper::config_args: alloc::vec::Vec<alloc::string::String>
+pub vcs_cli_support::GitCredentialHelper::env: alloc::vec::Vec<(alloc::string::String, vcs_cli_support::credentials::Secret)>
+impl core::clone::Clone for vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::credentials::GitCredentialHelper::clone(&self) -> vcs_cli_support::credentials::GitCredentialHelper
+impl core::fmt::Debug for vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::credentials::GitCredentialHelper::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Send for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Sync for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::Unpin for vcs_cli_support::credentials::GitCredentialHelper
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::GitCredentialHelper
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::GitCredentialHelper
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::GitCredentialHelper
+pub struct vcs_cli_support::ManagedClient<R: processkit::runner::ProcessRunner>
+impl vcs_cli_support::ManagedClient<processkit::runner::JobRunner>
+pub fn vcs_cli_support::ManagedClient<processkit::runner::JobRunner>::new(impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+impl<R: processkit::runner::ProcessRunner> vcs_cli_support::ManagedClient<R>
+pub fn vcs_cli_support::ManagedClient<R>::budget_diagnostics(&self, processkit::command::Command) -> processkit::command::Command
+pub fn vcs_cli_support::ManagedClient<R>::command<I, S>(&self, I) -> processkit::command::Command where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::AsRef<std::ffi::os_str::OsStr>
+pub fn vcs_cli_support::ManagedClient<R>::command_in<I, S>(&self, &std::path::Path, I) -> processkit::command::Command where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::AsRef<std::ffi::os_str::OsStr>
+pub fn vcs_cli_support::ManagedClient<R>::default_cancel_on(self, tokio_util::sync::cancellation_token::CancellationToken) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::default_env(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::default_env_remove(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::default_output_budget(self, vcs_cli_support::OutputBudget) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::default_timeout(self, core::time::Duration) -> Self
+pub async fn vcs_cli_support::ManagedClient<R>::exit_code(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<i32>
+pub fn vcs_cli_support::ManagedClient<R>::has_credentials(&self) -> bool
+pub fn vcs_cli_support::ManagedClient<R>::output_budget(&self) -> vcs_cli_support::OutputBudget
+pub async fn vcs_cli_support::ManagedClient<R>::output_bytes(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<processkit::result::ProcessResult<alloc::vec::Vec<u8>>>
+pub async fn vcs_cli_support::ManagedClient<R>::output_string(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+pub async fn vcs_cli_support::ManagedClient<R>::parse<T>(&self, impl processkit::client::IntoCommand<R>, impl core::ops::function::FnOnce(&str) -> T + core::marker::Send) -> processkit::error::Result<T> where T: core::marker::Send
+pub async fn vcs_cli_support::ManagedClient<R>::parse_bytes<T>(&self, impl processkit::client::IntoCommand<R>, impl core::ops::function::FnOnce(&[u8]) -> T + core::marker::Send) -> processkit::error::Result<T> where T: core::marker::Send
+pub async fn vcs_cli_support::ManagedClient<R>::probe(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<bool>
+pub async fn vcs_cli_support::ManagedClient<R>::resolve_credential(&self, vcs_cli_support::credentials::CredentialService, core::option::Option<&str>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>
+pub fn vcs_cli_support::ManagedClient<R>::retry_policy(&self) -> vcs_cli_support::RetryPolicy
+pub async fn vcs_cli_support::ManagedClient<R>::run(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_cli_support::ManagedClient<R>::run_unit(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<()>
+pub async fn vcs_cli_support::ManagedClient<R>::run_untrimmed(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_cli_support::ManagedClient<R>::run_untrimmed_within(&self, impl processkit::client::IntoCommand<R>, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::string::String>
+pub fn vcs_cli_support::ManagedClient<R>::runner(&self) -> &R
+pub async fn vcs_cli_support::ManagedClient<R>::try_parse<T>(&self, impl processkit::client::IntoCommand<R>, impl core::ops::function::FnOnce(&str) -> processkit::error::Result<T> + core::marker::Send) -> processkit::error::Result<T> where T: core::marker::Send
+pub fn vcs_cli_support::ManagedClient<R>::with_credentials(self, alloc::sync::Arc<dyn vcs_cli_support::credentials::CredentialProvider>) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::with_expected_host(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::with_retry(self, vcs_cli_support::RetryPolicy) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::with_runner(impl core::convert::AsRef<std::ffi::os_str::OsStr>, R) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::with_token_env(self, vcs_cli_support::credentials::CredentialService, &'static str) -> Self
+impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_cli_support::ManagedClient<R>
+pub fn vcs_cli_support::ManagedClient<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R> core::marker::Freeze for vcs_cli_support::ManagedClient<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for vcs_cli_support::ManagedClient<R>
+impl<R> core::marker::Sync for vcs_cli_support::ManagedClient<R>
+impl<R> core::marker::Unpin for vcs_cli_support::ManagedClient<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for vcs_cli_support::ManagedClient<R> where R: core::marker::UnsafeUnpin
+impl<R> !core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::ManagedClient<R>
+impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_cli_support::ManagedClient<R>
+pub struct vcs_cli_support::OutputBudget
+impl vcs_cli_support::OutputBudget
+pub const fn vcs_cli_support::OutputBudget::bytes(usize) -> Self
+pub fn vcs_cli_support::OutputBudget::content_policy(&self) -> core::option::Option<processkit::buffer::OutputBufferPolicy>
+pub fn vcs_cli_support::OutputBudget::diagnostic_policy(&self) -> core::option::Option<processkit::buffer::OutputBufferPolicy>
+pub const fn vcs_cli_support::OutputBudget::is_unlimited(&self) -> bool
+pub const fn vcs_cli_support::OutputBudget::max_bytes(&self) -> core::option::Option<usize>
+pub const fn vcs_cli_support::OutputBudget::max_lines(&self) -> core::option::Option<usize>
+pub const fn vcs_cli_support::OutputBudget::unlimited() -> Self
+pub const fn vcs_cli_support::OutputBudget::with_max_lines(self, usize) -> Self
+impl core::clone::Clone for vcs_cli_support::OutputBudget
+pub fn vcs_cli_support::OutputBudget::clone(&self) -> vcs_cli_support::OutputBudget
+impl core::cmp::Eq for vcs_cli_support::OutputBudget
+impl core::cmp::PartialEq for vcs_cli_support::OutputBudget
+pub fn vcs_cli_support::OutputBudget::eq(&self, &vcs_cli_support::OutputBudget) -> bool
+impl core::default::Default for vcs_cli_support::OutputBudget
+pub fn vcs_cli_support::OutputBudget::default() -> Self
+impl core::fmt::Debug for vcs_cli_support::OutputBudget
+pub fn vcs_cli_support::OutputBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_cli_support::OutputBudget
+impl core::marker::StructuralPartialEq for vcs_cli_support::OutputBudget
+impl core::marker::Freeze for vcs_cli_support::OutputBudget
+impl core::marker::Send for vcs_cli_support::OutputBudget
+impl core::marker::Sync for vcs_cli_support::OutputBudget
+impl core::marker::Unpin for vcs_cli_support::OutputBudget
+impl core::marker::UnsafeUnpin for vcs_cli_support::OutputBudget
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::OutputBudget
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::OutputBudget
+#[non_exhaustive] pub struct vcs_cli_support::RetryPolicy
+pub vcs_cli_support::RetryPolicy::attempts: u32
+pub vcs_cli_support::RetryPolicy::base_backoff: core::time::Duration
+pub vcs_cli_support::RetryPolicy::jitter: bool
+pub vcs_cli_support::RetryPolicy::max_backoff: core::time::Duration
+impl vcs_cli_support::RetryPolicy
+pub fn vcs_cli_support::RetryPolicy::attempts(self, u32) -> Self
+pub fn vcs_cli_support::RetryPolicy::base_backoff(self, core::time::Duration) -> Self
+pub const fn vcs_cli_support::RetryPolicy::lock_contention() -> Self
+pub fn vcs_cli_support::RetryPolicy::max_backoff(self, core::time::Duration) -> Self
+pub const fn vcs_cli_support::RetryPolicy::none() -> Self
+pub fn vcs_cli_support::RetryPolicy::with_jitter(self, bool) -> Self
+impl core::clone::Clone for vcs_cli_support::RetryPolicy
+pub fn vcs_cli_support::RetryPolicy::clone(&self) -> vcs_cli_support::RetryPolicy
+impl core::cmp::Eq for vcs_cli_support::RetryPolicy
+impl core::cmp::PartialEq for vcs_cli_support::RetryPolicy
+pub fn vcs_cli_support::RetryPolicy::eq(&self, &vcs_cli_support::RetryPolicy) -> bool
+impl core::default::Default for vcs_cli_support::RetryPolicy
+pub fn vcs_cli_support::RetryPolicy::default() -> Self
+impl core::fmt::Debug for vcs_cli_support::RetryPolicy
+pub fn vcs_cli_support::RetryPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_cli_support::RetryPolicy
+impl core::marker::StructuralPartialEq for vcs_cli_support::RetryPolicy
+impl core::marker::Freeze for vcs_cli_support::RetryPolicy
+impl core::marker::Send for vcs_cli_support::RetryPolicy
+impl core::marker::Sync for vcs_cli_support::RetryPolicy
+impl core::marker::Unpin for vcs_cli_support::RetryPolicy
+impl core::marker::UnsafeUnpin for vcs_cli_support::RetryPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::RetryPolicy
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::RetryPolicy
+pub struct vcs_cli_support::Secret(_)
+impl vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::expose(&self) -> &str
+pub fn vcs_cli_support::credentials::Secret::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::clone(&self) -> vcs_cli_support::credentials::Secret
+impl core::convert::From<&str> for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::from(&str) -> Self
+impl core::convert::From<alloc::string::String> for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::from(alloc::string::String) -> Self
+impl core::fmt::Debug for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_cli_support::credentials::Secret
+pub fn vcs_cli_support::credentials::Secret::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_cli_support::credentials::Secret
+impl core::marker::Send for vcs_cli_support::credentials::Secret
+impl core::marker::Sync for vcs_cli_support::credentials::Secret
+impl core::marker::Unpin for vcs_cli_support::credentials::Secret
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::Secret
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::Secret
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::Secret
+pub struct vcs_cli_support::StaticCredential(_)
+impl vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::new(vcs_cli_support::credentials::Credential) -> Self
+pub fn vcs_cli_support::credentials::StaticCredential::token(impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+impl core::clone::Clone for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::clone(&self) -> vcs_cli_support::credentials::StaticCredential
+impl core::fmt::Debug for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl core::marker::Freeze for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Send for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Sync for vcs_cli_support::credentials::StaticCredential
+impl core::marker::Unpin for vcs_cli_support::credentials::StaticCredential
+impl core::marker::UnsafeUnpin for vcs_cli_support::credentials::StaticCredential
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_cli_support::credentials::StaticCredential
+impl core::panic::unwind_safe::UnwindSafe for vcs_cli_support::credentials::StaticCredential
+pub const vcs_cli_support::FETCH_ATTEMPTS: u32
+pub const vcs_cli_support::FETCH_BACKOFF: core::time::Duration
+pub const vcs_cli_support::FETCH_TIMEOUT_GRACE: core::time::Duration
+pub trait vcs_cli_support::CredentialProvider: core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::CredentialProvider::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::EnvToken
+pub fn vcs_cli_support::credentials::EnvToken::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::StaticCredential
+pub fn vcs_cli_support::credentials::StaticCredential::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl<F> vcs_cli_support::credentials::CredentialProvider for vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::credentials::FnProvider<F>::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_cli_support::cleanup_failed_clone_dest(&std::path::Path, bool)
+pub fn vcs_cli_support::clone_dest_cleanable(&std::path::Path) -> bool
+pub fn vcs_cli_support::git_credential_helper(&vcs_cli_support::credentials::Credential, core::option::Option<&str>) -> vcs_cli_support::credentials::GitCredentialHelper
+pub fn vcs_cli_support::https_host(&str) -> core::option::Option<alloc::string::String>
+pub fn vcs_cli_support::is_invalid_input(&processkit::error::Error) -> bool
+pub fn vcs_cli_support::is_lock_contention(&processkit::error::Error) -> bool
+pub fn vcs_cli_support::is_merge_conflict(&processkit::error::Error) -> bool
+pub fn vcs_cli_support::is_nothing_to_commit(&processkit::error::Error) -> bool
+pub fn vcs_cli_support::is_transient_fetch_error(&processkit::error::Error) -> bool
+pub fn vcs_cli_support::provider_fn<F>(F) -> vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
+pub fn vcs_cli_support::reject_flag_like(&str, &str, &str) -> processkit::error::Result<()>
+pub async fn vcs_cli_support::retry_async<T, Fut>(&vcs_cli_support::RetryPolicy, core::option::Option<&tokio_util::sync::cancellation_token::CancellationToken>, impl core::ops::function::Fn(&processkit::error::Error) -> bool, impl core::ops::function::FnMut() -> Fut) -> processkit::error::Result<T> where Fut: core::future::future::Future<Output = processkit::error::Result<T>>

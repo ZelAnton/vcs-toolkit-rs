@@ -1,0 +1,167 @@
+pub mod vcs_diff
+#[non_exhaustive] pub enum vcs_diff::ChangeKind
+pub vcs_diff::ChangeKind::Added
+pub vcs_diff::ChangeKind::Deleted
+pub vcs_diff::ChangeKind::Modified
+pub vcs_diff::ChangeKind::Renamed
+impl core::clone::Clone for vcs_diff::ChangeKind
+pub fn vcs_diff::ChangeKind::clone(&self) -> vcs_diff::ChangeKind
+impl core::cmp::Eq for vcs_diff::ChangeKind
+impl core::cmp::PartialEq for vcs_diff::ChangeKind
+pub fn vcs_diff::ChangeKind::eq(&self, &vcs_diff::ChangeKind) -> bool
+impl core::fmt::Debug for vcs_diff::ChangeKind
+pub fn vcs_diff::ChangeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_diff::ChangeKind
+impl core::marker::StructuralPartialEq for vcs_diff::ChangeKind
+impl serde_core::ser::Serialize for vcs_diff::ChangeKind
+pub fn vcs_diff::ChangeKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::ChangeKind
+impl core::marker::Send for vcs_diff::ChangeKind
+impl core::marker::Sync for vcs_diff::ChangeKind
+impl core::marker::Unpin for vcs_diff::ChangeKind
+impl core::marker::UnsafeUnpin for vcs_diff::ChangeKind
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::ChangeKind
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::ChangeKind
+#[non_exhaustive] pub enum vcs_diff::DiffLine
+pub vcs_diff::DiffLine::Added(alloc::string::String)
+pub vcs_diff::DiffLine::Context(alloc::string::String)
+pub vcs_diff::DiffLine::Removed(alloc::string::String)
+impl core::clone::Clone for vcs_diff::DiffLine
+pub fn vcs_diff::DiffLine::clone(&self) -> vcs_diff::DiffLine
+impl core::cmp::Eq for vcs_diff::DiffLine
+impl core::cmp::PartialEq for vcs_diff::DiffLine
+pub fn vcs_diff::DiffLine::eq(&self, &vcs_diff::DiffLine) -> bool
+impl core::fmt::Debug for vcs_diff::DiffLine
+pub fn vcs_diff::DiffLine::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_diff::DiffLine
+impl serde_core::ser::Serialize for vcs_diff::DiffLine
+pub fn vcs_diff::DiffLine::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::DiffLine
+impl core::marker::Send for vcs_diff::DiffLine
+impl core::marker::Sync for vcs_diff::DiffLine
+impl core::marker::Unpin for vcs_diff::DiffLine
+impl core::marker::UnsafeUnpin for vcs_diff::DiffLine
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::DiffLine
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::DiffLine
+pub enum vcs_diff::DiffSpec
+pub vcs_diff::DiffSpec::Rev(alloc::string::String)
+pub vcs_diff::DiffSpec::WorkingTree
+impl core::clone::Clone for vcs_diff::DiffSpec
+pub fn vcs_diff::DiffSpec::clone(&self) -> vcs_diff::DiffSpec
+impl core::fmt::Debug for vcs_diff::DiffSpec
+pub fn vcs_diff::DiffSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_diff::DiffSpec
+impl core::marker::Send for vcs_diff::DiffSpec
+impl core::marker::Sync for vcs_diff::DiffSpec
+impl core::marker::Unpin for vcs_diff::DiffSpec
+impl core::marker::UnsafeUnpin for vcs_diff::DiffSpec
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::DiffSpec
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::DiffSpec
+#[non_exhaustive] pub struct vcs_diff::DiffStat
+pub vcs_diff::DiffStat::deletions: usize
+pub vcs_diff::DiffStat::files_changed: usize
+pub vcs_diff::DiffStat::insertions: usize
+impl vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::new(usize, usize, usize) -> Self
+pub fn vcs_diff::DiffStat::parse(&str) -> Self
+impl core::clone::Clone for vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::clone(&self) -> vcs_diff::DiffStat
+impl core::cmp::Eq for vcs_diff::DiffStat
+impl core::cmp::PartialEq for vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::eq(&self, &vcs_diff::DiffStat) -> bool
+impl core::default::Default for vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::default() -> vcs_diff::DiffStat
+impl core::fmt::Debug for vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_diff::DiffStat
+impl core::marker::StructuralPartialEq for vcs_diff::DiffStat
+impl serde_core::ser::Serialize for vcs_diff::DiffStat
+pub fn vcs_diff::DiffStat::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::DiffStat
+impl core::marker::Send for vcs_diff::DiffStat
+impl core::marker::Sync for vcs_diff::DiffStat
+impl core::marker::Unpin for vcs_diff::DiffStat
+impl core::marker::UnsafeUnpin for vcs_diff::DiffStat
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::DiffStat
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::DiffStat
+#[non_exhaustive] pub struct vcs_diff::FileDiff
+pub vcs_diff::FileDiff::change: vcs_diff::ChangeKind
+pub vcs_diff::FileDiff::hunks: alloc::vec::Vec<vcs_diff::Hunk>
+pub vcs_diff::FileDiff::old_path: core::option::Option<std::path::PathBuf>
+pub vcs_diff::FileDiff::path: std::path::PathBuf
+pub vcs_diff::FileDiff::raw: alloc::string::String
+impl core::clone::Clone for vcs_diff::FileDiff
+pub fn vcs_diff::FileDiff::clone(&self) -> vcs_diff::FileDiff
+impl core::cmp::Eq for vcs_diff::FileDiff
+impl core::cmp::PartialEq for vcs_diff::FileDiff
+pub fn vcs_diff::FileDiff::eq(&self, &vcs_diff::FileDiff) -> bool
+impl core::fmt::Debug for vcs_diff::FileDiff
+pub fn vcs_diff::FileDiff::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_diff::FileDiff
+impl serde_core::ser::Serialize for vcs_diff::FileDiff
+pub fn vcs_diff::FileDiff::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::FileDiff
+impl core::marker::Send for vcs_diff::FileDiff
+impl core::marker::Sync for vcs_diff::FileDiff
+impl core::marker::Unpin for vcs_diff::FileDiff
+impl core::marker::UnsafeUnpin for vcs_diff::FileDiff
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::FileDiff
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::FileDiff
+#[non_exhaustive] pub struct vcs_diff::Hunk
+pub vcs_diff::Hunk::lines: alloc::vec::Vec<vcs_diff::DiffLine>
+pub vcs_diff::Hunk::new_lines: usize
+pub vcs_diff::Hunk::new_start: usize
+pub vcs_diff::Hunk::old_lines: usize
+pub vcs_diff::Hunk::old_start: usize
+pub vcs_diff::Hunk::section: alloc::string::String
+impl core::clone::Clone for vcs_diff::Hunk
+pub fn vcs_diff::Hunk::clone(&self) -> vcs_diff::Hunk
+impl core::cmp::Eq for vcs_diff::Hunk
+impl core::cmp::PartialEq for vcs_diff::Hunk
+pub fn vcs_diff::Hunk::eq(&self, &vcs_diff::Hunk) -> bool
+impl core::fmt::Debug for vcs_diff::Hunk
+pub fn vcs_diff::Hunk::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_diff::Hunk
+impl serde_core::ser::Serialize for vcs_diff::Hunk
+pub fn vcs_diff::Hunk::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::Hunk
+impl core::marker::Send for vcs_diff::Hunk
+impl core::marker::Sync for vcs_diff::Hunk
+impl core::marker::Unpin for vcs_diff::Hunk
+impl core::marker::UnsafeUnpin for vcs_diff::Hunk
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::Hunk
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::Hunk
+pub struct vcs_diff::Version
+pub vcs_diff::Version::major: u64
+pub vcs_diff::Version::minor: u64
+pub vcs_diff::Version::patch: u64
+impl core::clone::Clone for vcs_diff::Version
+pub fn vcs_diff::Version::clone(&self) -> vcs_diff::Version
+impl core::cmp::Eq for vcs_diff::Version
+impl core::cmp::Ord for vcs_diff::Version
+pub fn vcs_diff::Version::cmp(&self, &vcs_diff::Version) -> core::cmp::Ordering
+impl core::cmp::PartialEq for vcs_diff::Version
+pub fn vcs_diff::Version::eq(&self, &vcs_diff::Version) -> bool
+impl core::cmp::PartialOrd for vcs_diff::Version
+pub fn vcs_diff::Version::partial_cmp(&self, &vcs_diff::Version) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for vcs_diff::Version
+pub fn vcs_diff::Version::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_diff::Version
+pub fn vcs_diff::Version::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for vcs_diff::Version
+pub fn vcs_diff::Version::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for vcs_diff::Version
+impl core::marker::StructuralPartialEq for vcs_diff::Version
+impl serde_core::ser::Serialize for vcs_diff::Version
+pub fn vcs_diff::Version::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_diff::Version
+impl core::marker::Send for vcs_diff::Version
+impl core::marker::Sync for vcs_diff::Version
+impl core::marker::Unpin for vcs_diff::Version
+impl core::marker::UnsafeUnpin for vcs_diff::Version
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_diff::Version
+impl core::panic::unwind_safe::UnwindSafe for vcs_diff::Version
+pub fn vcs_diff::os_from_bytes(&[u8]) -> std::ffi::os_str::OsString
+pub fn vcs_diff::parse_diff(&str) -> alloc::vec::Vec<vcs_diff::FileDiff>
+pub fn vcs_diff::parse_dotted_version(&str) -> core::option::Option<vcs_diff::Version>
+pub fn vcs_diff::path_from_bytes(&[u8]) -> std::path::PathBuf

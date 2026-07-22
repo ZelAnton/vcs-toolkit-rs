@@ -1,0 +1,186 @@
+pub mod vcs_watch
+pub use vcs_watch::OperationState
+pub use vcs_watch::RepoSnapshot
+pub use vcs_watch::processkit
+pub mod vcs_watch::guide
+#[non_exhaustive] pub enum vcs_watch::Error
+pub vcs_watch::Error::Io(std::io::error::Error)
+pub vcs_watch::Error::Notify(vcs_watch::WatchError)
+pub vcs_watch::Error::Vcs(vcs_core::error::Error)
+impl vcs_watch::Error
+pub fn vcs_watch::Error::is_not_found(&self) -> bool
+pub fn vcs_watch::Error::is_transient(&self) -> bool
+pub fn vcs_watch::Error::processkit_error(&self) -> core::option::Option<&processkit::error::Error>
+pub fn vcs_watch::Error::watch_error(&self) -> core::option::Option<&vcs_watch::WatchError>
+impl core::convert::From<notify::error::Error> for vcs_watch::Error
+pub fn vcs_watch::Error::from(notify::error::Error) -> Self
+impl core::convert::From<std::io::error::Error> for vcs_watch::Error
+pub fn vcs_watch::Error::from(std::io::error::Error) -> Self
+impl core::convert::From<vcs_core::error::Error> for vcs_watch::Error
+pub fn vcs_watch::Error::from(vcs_core::error::Error) -> Self
+impl core::error::Error for vcs_watch::Error
+pub fn vcs_watch::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for vcs_watch::Error
+pub fn vcs_watch::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_watch::Error
+pub fn vcs_watch::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_watch::Error
+impl core::marker::Send for vcs_watch::Error
+impl core::marker::Sync for vcs_watch::Error
+impl core::marker::Unpin for vcs_watch::Error
+impl core::marker::UnsafeUnpin for vcs_watch::Error
+impl !core::panic::unwind_safe::RefUnwindSafe for vcs_watch::Error
+impl !core::panic::unwind_safe::UnwindSafe for vcs_watch::Error
+#[non_exhaustive] pub enum vcs_watch::RepoEvent
+#[non_exhaustive] pub vcs_watch::RepoEvent::AheadBehindChanged
+pub vcs_watch::RepoEvent::AheadBehindChanged::ahead: core::option::Option<usize>
+pub vcs_watch::RepoEvent::AheadBehindChanged::behind: core::option::Option<usize>
+#[non_exhaustive] pub vcs_watch::RepoEvent::BranchCreated
+pub vcs_watch::RepoEvent::BranchCreated::name: alloc::string::String
+#[non_exhaustive] pub vcs_watch::RepoEvent::BranchDeleted
+pub vcs_watch::RepoEvent::BranchDeleted::name: alloc::string::String
+#[non_exhaustive] pub vcs_watch::RepoEvent::BranchSwitched
+pub vcs_watch::RepoEvent::BranchSwitched::from: core::option::Option<alloc::string::String>
+pub vcs_watch::RepoEvent::BranchSwitched::to: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub vcs_watch::RepoEvent::ConflictChanged
+pub vcs_watch::RepoEvent::ConflictChanged::conflicted: bool
+#[non_exhaustive] pub vcs_watch::RepoEvent::HeadMoved
+pub vcs_watch::RepoEvent::HeadMoved::from: core::option::Option<alloc::string::String>
+pub vcs_watch::RepoEvent::HeadMoved::to: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub vcs_watch::RepoEvent::OperationChanged
+pub vcs_watch::RepoEvent::OperationChanged::from: vcs_core::dto::OperationState
+pub vcs_watch::RepoEvent::OperationChanged::to: vcs_core::dto::OperationState
+#[non_exhaustive] pub vcs_watch::RepoEvent::UpstreamChanged
+pub vcs_watch::RepoEvent::UpstreamChanged::upstream: core::option::Option<alloc::string::String>
+#[non_exhaustive] pub vcs_watch::RepoEvent::WorkingCopyChanged
+pub vcs_watch::RepoEvent::WorkingCopyChanged::change_count: usize
+pub vcs_watch::RepoEvent::WorkingCopyChanged::dirty: bool
+impl core::clone::Clone for vcs_watch::RepoEvent
+pub fn vcs_watch::RepoEvent::clone(&self) -> vcs_watch::RepoEvent
+impl core::cmp::Eq for vcs_watch::RepoEvent
+impl core::cmp::PartialEq for vcs_watch::RepoEvent
+pub fn vcs_watch::RepoEvent::eq(&self, &vcs_watch::RepoEvent) -> bool
+impl core::fmt::Debug for vcs_watch::RepoEvent
+pub fn vcs_watch::RepoEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_watch::RepoEvent
+impl core::marker::Freeze for vcs_watch::RepoEvent
+impl core::marker::Send for vcs_watch::RepoEvent
+impl core::marker::Sync for vcs_watch::RepoEvent
+impl core::marker::Unpin for vcs_watch::RepoEvent
+impl core::marker::UnsafeUnpin for vcs_watch::RepoEvent
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_watch::RepoEvent
+impl core::panic::unwind_safe::UnwindSafe for vcs_watch::RepoEvent
+#[non_exhaustive] pub enum vcs_watch::WatcherErrorKind
+pub vcs_watch::WatcherErrorKind::Branches
+pub vcs_watch::WatcherErrorKind::Snapshot
+pub vcs_watch::WatcherErrorKind::Timeout
+impl core::clone::Clone for vcs_watch::WatcherErrorKind
+pub fn vcs_watch::WatcherErrorKind::clone(&self) -> vcs_watch::WatcherErrorKind
+impl core::cmp::Eq for vcs_watch::WatcherErrorKind
+impl core::cmp::PartialEq for vcs_watch::WatcherErrorKind
+pub fn vcs_watch::WatcherErrorKind::eq(&self, &vcs_watch::WatcherErrorKind) -> bool
+impl core::fmt::Debug for vcs_watch::WatcherErrorKind
+pub fn vcs_watch::WatcherErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_watch::WatcherErrorKind
+impl core::marker::StructuralPartialEq for vcs_watch::WatcherErrorKind
+impl core::marker::Freeze for vcs_watch::WatcherErrorKind
+impl core::marker::Send for vcs_watch::WatcherErrorKind
+impl core::marker::Sync for vcs_watch::WatcherErrorKind
+impl core::marker::Unpin for vcs_watch::WatcherErrorKind
+impl core::marker::UnsafeUnpin for vcs_watch::WatcherErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_watch::WatcherErrorKind
+impl core::panic::unwind_safe::UnwindSafe for vcs_watch::WatcherErrorKind
+pub struct vcs_watch::Builder
+impl vcs_watch::Builder
+pub async fn vcs_watch::Builder::build(self) -> vcs_watch::Result<vcs_watch::RepoWatcher>
+pub fn vcs_watch::Builder::debounce(self, core::time::Duration) -> Self
+pub fn vcs_watch::Builder::max_wait(self, core::time::Duration) -> Self
+pub fn vcs_watch::Builder::requery_timeout(self, core::option::Option<core::time::Duration>) -> Self
+pub fn vcs_watch::Builder::snapshot_working_copy(self, bool) -> Self
+pub fn vcs_watch::Builder::working_tree(self, bool) -> Self
+impl core::marker::Freeze for vcs_watch::Builder
+impl core::marker::Send for vcs_watch::Builder
+impl core::marker::Sync for vcs_watch::Builder
+impl core::marker::Unpin for vcs_watch::Builder
+impl core::marker::UnsafeUnpin for vcs_watch::Builder
+impl !core::panic::unwind_safe::RefUnwindSafe for vcs_watch::Builder
+impl !core::panic::unwind_safe::UnwindSafe for vcs_watch::Builder
+#[non_exhaustive] pub struct vcs_watch::RepoChange
+pub vcs_watch::RepoChange::events: alloc::vec::Vec<vcs_watch::RepoEvent>
+pub vcs_watch::RepoChange::snapshot: vcs_core::dto::RepoSnapshot
+impl core::clone::Clone for vcs_watch::RepoChange
+pub fn vcs_watch::RepoChange::clone(&self) -> vcs_watch::RepoChange
+impl core::cmp::Eq for vcs_watch::RepoChange
+impl core::cmp::PartialEq for vcs_watch::RepoChange
+pub fn vcs_watch::RepoChange::eq(&self, &vcs_watch::RepoChange) -> bool
+impl core::fmt::Debug for vcs_watch::RepoChange
+pub fn vcs_watch::RepoChange::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_watch::RepoChange
+impl core::marker::Freeze for vcs_watch::RepoChange
+impl core::marker::Send for vcs_watch::RepoChange
+impl core::marker::Sync for vcs_watch::RepoChange
+impl core::marker::Unpin for vcs_watch::RepoChange
+impl core::marker::UnsafeUnpin for vcs_watch::RepoChange
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_watch::RepoChange
+impl core::panic::unwind_safe::UnwindSafe for vcs_watch::RepoChange
+pub struct vcs_watch::RepoWatcher
+impl vcs_watch::RepoWatcher
+pub fn vcs_watch::RepoWatcher::builder(impl vcs_core::VcsRepo + 'static) -> vcs_watch::Builder
+pub fn vcs_watch::RepoWatcher::current(&self) -> &vcs_core::dto::RepoSnapshot
+pub async fn vcs_watch::RepoWatcher::recv(&mut self) -> core::option::Option<vcs_watch::RepoChange>
+pub fn vcs_watch::RepoWatcher::stats(&self) -> vcs_watch::WatcherStats
+pub async fn vcs_watch::RepoWatcher::watch(impl vcs_core::VcsRepo + 'static) -> vcs_watch::Result<vcs_watch::RepoWatcher>
+impl core::ops::drop::Drop for vcs_watch::RepoWatcher
+pub fn vcs_watch::RepoWatcher::drop(&mut self)
+impl futures_core::stream::Stream for vcs_watch::RepoWatcher
+pub type vcs_watch::RepoWatcher::Item = vcs_watch::RepoChange
+pub fn vcs_watch::RepoWatcher::poll_next(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<core::option::Option<vcs_watch::RepoChange>>
+impl core::marker::Freeze for vcs_watch::RepoWatcher
+impl core::marker::Send for vcs_watch::RepoWatcher
+impl core::marker::Sync for vcs_watch::RepoWatcher
+impl core::marker::Unpin for vcs_watch::RepoWatcher
+impl core::marker::UnsafeUnpin for vcs_watch::RepoWatcher
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_watch::RepoWatcher
+impl core::panic::unwind_safe::UnwindSafe for vcs_watch::RepoWatcher
+pub struct vcs_watch::WatchError(_)
+impl vcs_watch::WatchError
+pub fn vcs_watch::WatchError::io_error(&self) -> core::option::Option<&std::io::error::Error>
+pub fn vcs_watch::WatchError::is_path_not_found(&self) -> bool
+pub fn vcs_watch::WatchError::is_watch_limit(&self) -> bool
+pub fn vcs_watch::WatchError::paths(&self) -> &[std::path::PathBuf]
+impl core::error::Error for vcs_watch::WatchError
+pub fn vcs_watch::WatchError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for vcs_watch::WatchError
+pub fn vcs_watch::WatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_watch::WatchError
+pub fn vcs_watch::WatchError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_watch::WatchError
+impl core::marker::Send for vcs_watch::WatchError
+impl core::marker::Sync for vcs_watch::WatchError
+impl core::marker::Unpin for vcs_watch::WatchError
+impl core::marker::UnsafeUnpin for vcs_watch::WatchError
+impl !core::panic::unwind_safe::RefUnwindSafe for vcs_watch::WatchError
+impl !core::panic::unwind_safe::UnwindSafe for vcs_watch::WatchError
+#[non_exhaustive] pub struct vcs_watch::WatcherStats
+pub vcs_watch::WatcherStats::changes: u64
+pub vcs_watch::WatcherStats::last_error: core::option::Option<vcs_watch::WatcherErrorKind>
+pub vcs_watch::WatcherStats::recoveries: u64
+pub vcs_watch::WatcherStats::requeries: u64
+pub vcs_watch::WatcherStats::retries: u64
+pub vcs_watch::WatcherStats::skipped: u64
+pub vcs_watch::WatcherStats::terminal_failures: u64
+pub vcs_watch::WatcherStats::watch_errors: u64
+impl core::clone::Clone for vcs_watch::WatcherStats
+pub fn vcs_watch::WatcherStats::clone(&self) -> vcs_watch::WatcherStats
+impl core::fmt::Debug for vcs_watch::WatcherStats
+pub fn vcs_watch::WatcherStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_watch::WatcherStats
+impl core::marker::Freeze for vcs_watch::WatcherStats
+impl core::marker::Send for vcs_watch::WatcherStats
+impl core::marker::Sync for vcs_watch::WatcherStats
+impl core::marker::Unpin for vcs_watch::WatcherStats
+impl core::marker::UnsafeUnpin for vcs_watch::WatcherStats
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_watch::WatcherStats
+impl core::panic::unwind_safe::UnwindSafe for vcs_watch::WatcherStats
+pub const vcs_watch::DEFAULT_REQUERY_TIMEOUT: core::time::Duration
+pub type vcs_watch::Result<T> = core::result::Result<T, vcs_watch::Error>

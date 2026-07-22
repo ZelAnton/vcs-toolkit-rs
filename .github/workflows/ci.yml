@@ -458,6 +458,100 @@ jobs:
             cmp --silent LICENSE "$dir/LICENSE"
             cargo package --list -p "$crate" --locked | grep -qx 'LICENSE'
           done
+
+  # Snapshot-gate the public API surface of every published crate. Each crate
+  # carries a committed `crates/<crate>/public-api.txt` baseline; this job
+  # regenerates the ACTUAL exported surface and diffs it against that baseline,
+  # failing (and printing the unified diff) on any drift — a new trait method, a
+  # new error variant, a new DTO field, a changed signature, or a changed
+  # auto-trait (`Send`/`Sync`) impl. That turns the public-API review in
+  # crates/core/docs/stability.md from a manual reading into a MECHANICAL gate:
+  # the reviewer sees exactly what moved and cross-checks only that. Updating a
+  # baseline is a deliberate act (see CONTRIBUTING.md, "Updating a public-API
+  # snapshot") — a stale baseline fails here instead of drifting silently.
+  #
+  # cargo-public-api reads rustdoc JSON, which is nightly-only, so this job pins a
+  # DATED nightly SOLELY for the snapshot tool; it does NOT touch the 1.88 MSRV
+  # the other jobs enforce. The nightly is pinned (not a floating `@nightly`) so
+  # the type/auto-trait rendering is reproducible and a routine nightly bump can't
+  # spuriously fail the gate — keep it in lockstep with the toolchain
+  # CONTRIBUTING.md documents for regenerating the baselines. Runs on
+  # windows-latest because a few public items are cfg-gated per-OS (e.g.
+  # `vcs-testkit::non_utf8_filename` is `#[cfg(unix)]`), so the committed
+  # baselines are Windows-shaped and the checking OS must match the generating one.
+  public-api:
+    name: public-api snapshot
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-25
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      # Prebuilt, version-pinned binary (the same install-action the coverage job
+      # uses) so the rendering matches what generated the committed baselines.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api@0.52.0
+      - name: Diff each published crate's public API against its snapshot
+        shell: bash
+        run: |
+          set -uo pipefail
+          # One `<crate-dir> <package-name>` pair per line (mirrors the workspace
+          # members). Adding a published crate is a one-line change here plus a
+          # committed crates/<dir>/public-api.txt.
+          pairs="
+          diff vcs-diff
+          cli-support vcs-cli-support
+          git vcs-git
+          jj vcs-jj
+          github vcs-github
+          gitlab vcs-gitlab
+          gitea vcs-gitea
+          forge vcs-forge
+          core vcs-core
+          testkit vcs-testkit
+          watch vcs-watch
+          mcp vcs-mcp
+          "
+          # Check EVERY crate before failing, so a single run surfaces all drift.
+          failed=""
+          while read -r dir name; do
+            [ -z "$dir" ] && continue
+            baseline="crates/$dir/public-api.txt"
+            echo "::group::public-api diff — $name"
+            if [ ! -f "$baseline" ]; then
+              echo "::error::missing snapshot $baseline (generate it — see CONTRIBUTING.md)"
+              failed="$failed $name"
+              echo "::endgroup::"
+              continue
+            fi
+            # `--simplified` (omit blanket impls) + `--all-features` (mock/serde/
+            # tracing surfaces) must match how the baselines were generated. stdin
+            # is detached so the here-string driving the loop can't be consumed.
+            if ! cargo +nightly-2026-06-25 public-api -p "$name" --simplified --all-features \
+                 < /dev/null > "current-api-$name.txt"; then
+              echo "::error::cargo public-api failed for $name (see the log above)"
+              failed="$failed $name"
+              echo "::endgroup::"
+              continue
+            fi
+            if diff -u "$baseline" "current-api-$name.txt"; then
+              echo "(no changes)"
+            else
+              echo "::error::public API of $name drifted from $baseline — if intended, regenerate the snapshot (see CONTRIBUTING.md)"
+              failed="$failed $name"
+            fi
+            echo "::endgroup::"
+          done <<< "$pairs"
+          if [ -n "$failed" ]; then
+            echo "public-API snapshot mismatch:$failed"
+            exit 1
+          fi
+
   # Report-only SemVer check (cargo-semver-checks). Every crate is 0.x and may break
   # its API freely pre-1.0, so this must NOT gate — `continue-on-error: true` keeps it
   # advisory: it surfaces accidental breaking changes against each crate's crates.io

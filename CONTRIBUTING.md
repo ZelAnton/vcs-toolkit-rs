@@ -97,6 +97,56 @@ too noisy for performance conclusions.
 - **[Extending vcs-toolkit-rs](docs/extending.md)** — the full contributor workflow for
   adding capabilities: CLI methods, facade operations, MCP tools, and decision records.
 
+### Public-API snapshots
+
+Every published crate carries a committed **`crates/<crate>/public-api.txt`** — a
+snapshot of its exported surface (public items, signatures, and the `Send`/`Sync`
+auto-trait impls), generated with
+[`cargo public-api`](https://github.com/cargo-public-api/cargo-public-api). The
+`public-api` CI job (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml))
+regenerates each crate's surface and **diffs it against the committed snapshot**,
+failing — and printing the unified diff — on any drift. This turns the pre-1.0
+public-API review in
+[`crates/core/docs/stability.md`](crates/core/docs/stability.md) into a
+*mechanical* gate: a new trait method, error variant, DTO field, or a changed
+signature can no longer slip in unnoticed, and the diff in the job log is exactly
+what to cross-check against that checklist.
+
+**A surface change is accepted deliberately, never auto-generated.** When a change
+moves the public API, CI fails against the now-stale snapshot. Do **not** blindly
+regenerate: first read the diff the job prints (or run the command below and
+inspect it), confirm every added/removed/changed item is intended and
+changelog-worthy, and only then overwrite the snapshot — committing it *in the
+same PR* as the code change so review sees the surface delta next to the code.
+
+Regenerate a crate's snapshot with:
+
+```bash
+cargo +nightly-2026-06-25 public-api -p <crate> \
+  --simplified --all-features > crates/<dir>/public-api.txt
+# e.g. -p vcs-core > crates/core/public-api.txt
+```
+
+Two things about the toolchain:
+
+- **Nightly, pinned.** `cargo public-api` reads rustdoc JSON, which is nightly
+  only, so this is the one job that needs a nightly toolchain. It pins the
+  *dated* `nightly-2026-06-25` (and `cargo-public-api` 0.52.0) **solely for this
+  job** — it does **not** touch the `1.88` MSRV the rest of the workspace holds.
+  Pinning keeps the type/auto-trait rendering reproducible, so a routine nightly
+  bump can't spuriously fail the gate; regenerate with that same nightly
+  (`rustup toolchain install nightly-2026-06-25`). Bumping the pinned nightly or
+  the tool is a deliberate maintenance step: rendering can shift between
+  nightlies, so it regenerates **every** `crates/*/public-api.txt` in one commit
+  and updates the pin in both [`ci.yml`](.github/workflows/ci.yml) and
+  [`scripts/gate`](scripts/gate).
+- **Windows-shaped.** A few public items are OS-gated (e.g.
+  `vcs-testkit::non_utf8_filename` is `#[cfg(unix)]`), so the surface differs by
+  OS. The baselines are generated on **Windows** and CI checks them on
+  `windows-latest`; regenerate on Windows (or let the CI job show you the diff) so
+  the checking OS matches the generating one. `scripts/gate` runs this check only
+  on Windows and skips it with a message elsewhere.
+
 ## Releasing
 
 Maintainer-only, via the **Release** GitHub Actions workflow (manual
