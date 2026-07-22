@@ -1,9 +1,9 @@
 # vcs-jj — Jujutsu CLI guide
 
 **What you can do:** working-copy status & the change log, describe/new change,
-bookmarks, the operation log (restore/undo), workspaces, squash/split/absorb/
-duplicate/abandon, diff & template queries, git sync, parse & resolve jj's native
-conflicts, and op-log-rollback transactions. This guide is the full reference —
+bookmarks, Git remote management and sync, the operation log (restore/undo),
+workspaces, squash/split/absorb/duplicate/abandon, diff & template queries, parse
+& resolve jj's native conflicts, and op-log-rollback transactions. This guide is the full reference —
 every command by theme, with examples.
 
 Typed, repo-scoped, **async** commands over the `jj` binary, behind a mockable
@@ -487,6 +487,48 @@ jj.git_clone("https://example.com/r.git", Path::new("/abs/dest"), GitClone::colo
 # Ok(()) }
 ```
 
+## Remotes
+
+```rust,ignore
+async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>>;
+async fn remote_remove(&self, dir: &Path, name: &str) -> Result<()>;
+async fn remote_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
+async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+```
+
+`remote_add`, `remote_remove`, `remote_rename`, and `remote_set_url` run their
+`jj git remote` counterparts; `remote_list` returns typed [`Remote`] rows.
+Remote names and URLs are bare positional arguments, so all mutating methods
+reject empty or leading-`-` values before starting jj. `remote_set_url` returns
+the jj non-zero exit as an error when the named remote does not exist.
+
+The list command has no jj template or JSON output. Its `<name> <url>` display
+rows are pinned by the ignored real-jj suite across the supported version matrix,
+with only the first whitespace boundary separating the two fields. URLs containing
+non-ASCII path text round-trip; jj remote configuration is UTF-8 text, so there
+is no separate non-UTF-8 decoding path.
+
+This matches `vcs-git`'s remote add/set-url capability and adds jj-native list,
+remove, and rename. `vcs-jj` deliberately does not provide `vcs-git`'s singular
+`remote_url` or network-backed `remote_branches`: select a row from
+`remote_list` for configured URLs, and use the git wrapper when branch discovery
+against a remote is required.
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_jj::{Jj, JjApi};
+# async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
+jj.remote_add(repo, "upstream", "https://example.com/project.git").await?;
+for remote in jj.remote_list(repo).await? {
+    println!("{} -> {}", remote.name, remote.url);
+}
+jj.remote_rename(repo, "upstream", "mirror").await?;
+jj.remote_set_url(repo, "mirror", "ssh://example.com/project.git").await?;
+jj.remote_remove(repo, "mirror").await?;
+# Ok(()) }
+```
+
 ## Workspaces
 
 ```rust,ignore
@@ -642,6 +684,14 @@ From `bookmark list -a` — local *or* remote-tracking.
 | `remote` | `Option<String>` | Remote (e.g. `origin`/`git`); `None` for a local. |
 | `target` | `String` | **Full** commit id (empty for a conflicted bookmark) — a cross-referenceable id, not a display prefix. |
 | `tracked` | `bool` | Whether this remote-tracking bookmark is tracked (`false` for locals). |
+
+### `Remote`
+From `git remote list`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | `String` | Configured remote name. |
+| `url` | `String` | Configured fetch/push URL. |
 
 ### `Workspace`
 | Field | Type | Notes |

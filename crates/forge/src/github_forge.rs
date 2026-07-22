@@ -328,6 +328,13 @@ fn map_pr(pr: PullRequest) -> ForgePr {
         draft: Some(pr.is_draft),
         labels: Some(pr.labels),
         assignees: Some(pr.assignees),
+        // gh always reports author/createdAt/updatedAt when requested — confirmed,
+        // not unknown (an empty author string is a *confirmed* deleted account).
+        author: Some(pr.author),
+        created_at: Some(pr.created_at),
+        updated_at: Some(pr.updated_at),
+        // milestone is genuinely optional per PR — pass the raw Option through.
+        milestone: pr.milestone,
     }
 }
 
@@ -349,6 +356,13 @@ fn map_issue(i: Issue) -> ForgeIssue {
         // gh always reports labels/assignees when requested — confirmed, not unknown.
         labels: Some(i.labels),
         assignees: Some(i.assignees),
+        // gh always reports author/createdAt/updatedAt when requested — confirmed,
+        // not unknown (an empty author string is a *confirmed* deleted account).
+        author: Some(i.author),
+        created_at: Some(i.created_at),
+        updated_at: Some(i.updated_at),
+        // milestone is genuinely optional per issue — pass the raw Option through.
+        milestone: i.milestone,
     }
 }
 
@@ -377,6 +391,9 @@ fn map_release(r: Release) -> ForgeRelease {
         // sets), so these are confirmed values.
         draft: Some(r.is_draft),
         prerelease: Some(r.is_prerelease),
+        // gh always reports author when requested (both list and view field
+        // sets) — confirmed, not unknown.
+        author: Some(r.author),
     }
 }
 

@@ -247,13 +247,37 @@ pub struct ForgePr {
     /// is a *confirmed* "unassigned"; Gitea is always `None` — `tea`'s PR list/view
     /// has no assignees column.
     pub assignees: Option<Vec<String>>,
+    /// The PR/MR author's login/username, or `None` when the backend can't report
+    /// it. **Per-backend support:** GitHub (`gh --json author` → `login`) and
+    /// GitLab (`author` → `username`) report `Some(..)` — a deleted/anonymised
+    /// account is a *confirmed* empty `Some(String::new())`, distinct from the
+    /// `None` "unknown"; Gitea is always `None` — `tea`'s PR list/view has no
+    /// author column.
+    pub author: Option<String>,
+    /// Creation timestamp (RFC 3339), or `None` when the backend can't report it.
+    /// **Per-backend support:** GitHub (`gh --json createdAt`) and GitLab (its
+    /// default REST `created_at`) report `Some(..)`; Gitea is always `None` —
+    /// `tea`'s PR list/view has no timestamp column.
+    pub created_at: Option<String>,
+    /// Last-update timestamp (RFC 3339), or `None` when the backend can't report
+    /// it. **Per-backend support:** GitHub (`gh --json updatedAt`) and GitLab (its
+    /// default REST `updated_at`) report `Some(..)`; Gitea is always `None`.
+    pub updated_at: Option<String>,
+    /// Milestone title, or `None` when no milestone is attached **or** the backend
+    /// can't report milestones at all. **Per-backend support:** GitHub (`gh --json
+    /// milestone` → `title`) and GitLab (`milestone` → `title`) report `Some(..)`
+    /// when a milestone is attached, `None` when it isn't; Gitea is always `None`
+    /// — `tea`'s PR list/view has no milestone column, so an unset milestone can't
+    /// be told apart from "unknown".
+    pub milestone: Option<String>,
 }
 
 impl ForgePr {
     /// A PR/MR with the given number, title, and state; empty branches/url and
-    /// **unknown** (`None`) draft/labels/assignees — chain the setters to record a
-    /// confirmed value. Lets a custom [`ForgeApi`](crate::ForgeApi) backend or a
-    /// test build one despite the `#[non_exhaustive]`.
+    /// **unknown** (`None`) draft/labels/assignees/author/timestamps/milestone —
+    /// chain the setters to record a confirmed value. Lets a custom
+    /// [`ForgeApi`](crate::ForgeApi) backend or a test build one despite the
+    /// `#[non_exhaustive]`.
     pub fn new(number: u64, title: impl Into<String>, state: ForgePrState) -> Self {
         Self {
             number,
@@ -265,6 +289,10 @@ impl ForgePr {
             draft: None,
             labels: None,
             assignees: None,
+            author: None,
+            created_at: None,
+            updated_at: None,
+            milestone: None,
         }
     }
 
@@ -305,6 +333,32 @@ impl ForgePr {
     /// confirmed "unassigned", distinct from the `None` "unknown".
     pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
         self.assignees = Some(assignees.into());
+        self
+    }
+
+    /// Record a *confirmed* author login/username (`Some(author)`) — an empty
+    /// string is a confirmed "deleted/anonymised account", distinct from the
+    /// `None` "backend doesn't report authorship".
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Record a *confirmed* creation timestamp (RFC 3339).
+    pub fn created_at(mut self, ts: impl Into<String>) -> Self {
+        self.created_at = Some(ts.into());
+        self
+    }
+
+    /// Record a *confirmed* last-update timestamp (RFC 3339).
+    pub fn updated_at(mut self, ts: impl Into<String>) -> Self {
+        self.updated_at = Some(ts.into());
+        self
+    }
+
+    /// Record a *confirmed* milestone title (`Some(milestone)`).
+    pub fn milestone(mut self, milestone: impl Into<String>) -> Self {
+        self.milestone = Some(milestone.into());
         self
     }
 }
@@ -413,12 +467,36 @@ pub struct ForgeIssue {
     /// is a *confirmed* "unassigned"; Gitea is always `None` — `tea`'s issue
     /// list/view has no assignees column.
     pub assignees: Option<Vec<String>>,
+    /// The issue author's login/username, or `None` when the backend can't report
+    /// it. **Per-backend support:** GitHub (`gh --json author` → `login`) and
+    /// GitLab (`author` → `username`) report `Some(..)` — a deleted/anonymised
+    /// account is a *confirmed* empty `Some(String::new())`, distinct from the
+    /// `None` "unknown"; Gitea is always `None` — `tea`'s issue list/view has no
+    /// author column.
+    pub author: Option<String>,
+    /// Creation timestamp (RFC 3339), or `None` when the backend can't report it.
+    /// **Per-backend support:** GitHub (`gh --json createdAt`) and GitLab (its
+    /// default REST `created_at`) report `Some(..)`; Gitea is always `None` —
+    /// `tea`'s issue list/view has no timestamp column.
+    pub created_at: Option<String>,
+    /// Last-update timestamp (RFC 3339), or `None` when the backend can't report
+    /// it. **Per-backend support:** GitHub (`gh --json updatedAt`) and GitLab (its
+    /// default REST `updated_at`) report `Some(..)`; Gitea is always `None`.
+    pub updated_at: Option<String>,
+    /// Milestone title, or `None` when no milestone is attached **or** the backend
+    /// can't report milestones at all. **Per-backend support:** GitHub (`gh --json
+    /// milestone` → `title`) and GitLab (`milestone` → `title`) report `Some(..)`
+    /// when a milestone is attached, `None` when it isn't; Gitea is always `None`
+    /// — `tea`'s issue list/view has no milestone column, so an unset milestone
+    /// can't be told apart from "unknown".
+    pub milestone: Option<String>,
 }
 
 impl ForgeIssue {
     /// An issue with the given number, title, and state; empty body/url and
-    /// **unknown** (`None`) labels/assignees — chain the setters to record a
-    /// confirmed value. For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    /// **unknown** (`None`) labels/assignees/author/timestamps/milestone — chain
+    /// the setters to record a confirmed value. For a custom
+    /// [`ForgeApi`](crate::ForgeApi) backend or test.
     pub fn new(number: u64, title: impl Into<String>, state: ForgeIssueState) -> Self {
         Self {
             number,
@@ -428,6 +506,10 @@ impl ForgeIssue {
             url: String::new(),
             labels: None,
             assignees: None,
+            author: None,
+            created_at: None,
+            updated_at: None,
+            milestone: None,
         }
     }
 
@@ -454,6 +536,32 @@ impl ForgeIssue {
     /// confirmed "unassigned", distinct from the `None` "unknown".
     pub fn assignees(mut self, assignees: impl Into<Vec<String>>) -> Self {
         self.assignees = Some(assignees.into());
+        self
+    }
+
+    /// Record a *confirmed* author login/username (`Some(author)`) — an empty
+    /// string is a confirmed "deleted/anonymised account", distinct from the
+    /// `None` "backend doesn't report authorship".
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Record a *confirmed* creation timestamp (RFC 3339).
+    pub fn created_at(mut self, ts: impl Into<String>) -> Self {
+        self.created_at = Some(ts.into());
+        self
+    }
+
+    /// Record a *confirmed* last-update timestamp (RFC 3339).
+    pub fn updated_at(mut self, ts: impl Into<String>) -> Self {
+        self.updated_at = Some(ts.into());
+        self
+    }
+
+    /// Record a *confirmed* milestone title (`Some(milestone)`).
+    pub fn milestone(mut self, milestone: impl Into<String>) -> Self {
+        self.milestone = Some(milestone.into());
         self
     }
 }
@@ -506,12 +614,20 @@ pub struct ForgeRelease {
     /// concept. **Per-backend support:** GitHub and Gitea report `Some(..)`; GitLab
     /// is always `None` — a GitLab release has no pre-release flag.
     pub prerelease: Option<bool>,
+    /// The release author's login/username, or `None` when the backend can't
+    /// report it. **Per-backend support:** GitHub (`gh --json author` → `login`)
+    /// and GitLab (`author` → `username`) report `Some(..)` — a
+    /// deleted/anonymised account is a *confirmed* empty `Some(String::new())`,
+    /// distinct from the `None` "unknown"; Gitea is always `None` — `tea releases`
+    /// has no author column.
+    pub author: Option<String>,
 }
 
 impl ForgeRelease {
     /// A release on `tag`; empty title, no url/timestamp/body and **unknown**
-    /// (`None`) draft/pre-release — chain the setters to record a confirmed value.
-    /// For a custom [`ForgeApi`](crate::ForgeApi) backend or test.
+    /// (`None`) draft/pre-release/author — chain the setters to record a
+    /// confirmed value. For a custom [`ForgeApi`](crate::ForgeApi) backend or
+    /// test.
     pub fn new(tag: impl Into<String>) -> Self {
         Self {
             tag: tag.into(),
@@ -521,6 +637,7 @@ impl ForgeRelease {
             body: None,
             draft: None,
             prerelease: None,
+            author: None,
         }
     }
 
@@ -560,6 +677,14 @@ impl ForgeRelease {
     /// the `None` "unknown" a fresh [`new`](ForgeRelease::new) starts with.
     pub fn prerelease(mut self, prerelease: bool) -> Self {
         self.prerelease = Some(prerelease);
+        self
+    }
+
+    /// Record a *confirmed* author login/username (`Some(author)`) — an empty
+    /// string is a confirmed "deleted/anonymised account", distinct from the
+    /// `None` "backend doesn't report authorship".
+    pub fn author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
         self
     }
 }
@@ -1233,7 +1358,11 @@ mod tests {
             .url("https://x/pr/7")
             .draft(true)
             .labels(vec!["bug".to_string()])
-            .assignees(vec!["octocat".to_string()]);
+            .assignees(vec!["octocat".to_string()])
+            .author("octocat")
+            .created_at("2026-07-01T00:00:00Z")
+            .updated_at("2026-07-02T00:00:00Z")
+            .milestone("v1.0");
         assert_eq!(pr.number, 7);
         assert_eq!(pr.title, "Add widget");
         assert_eq!(pr.state, ForgePrState::Open);
@@ -1243,12 +1372,20 @@ mod tests {
         assert_eq!(pr.draft, Some(true));
         assert_eq!(pr.labels, Some(vec!["bug".to_string()]));
         assert_eq!(pr.assignees, Some(vec!["octocat".to_string()]));
+        assert_eq!(pr.author.as_deref(), Some("octocat"));
+        assert_eq!(pr.created_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(pr.updated_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(pr.milestone.as_deref(), Some("v1.0"));
         // A fresh PR leaves the support-gated fields `None` (unknown), and
         // `.draft(false)` records a *confirmed* non-draft (not the same as `None`).
         let bare = ForgePr::new(8, "Bare", ForgePrState::Open);
         assert_eq!(bare.draft, None);
         assert_eq!(bare.labels, None);
         assert_eq!(bare.assignees, None);
+        assert_eq!(bare.author, None);
+        assert_eq!(bare.created_at, None);
+        assert_eq!(bare.updated_at, None);
+        assert_eq!(bare.milestone, None);
         assert_eq!(
             ForgePr::new(9, "x", ForgePrState::Open).draft(false).draft,
             Some(false)
@@ -1270,7 +1407,11 @@ mod tests {
             .body("desc")
             .url("https://x/i/3")
             .labels(vec!["wontfix".to_string()])
-            .assignees(vec!["andyfeller".to_string()]);
+            .assignees(vec!["andyfeller".to_string()])
+            .author("andyfeller")
+            .created_at("2026-07-01T00:00:00Z")
+            .updated_at("2026-07-02T00:00:00Z")
+            .milestone("v1.0");
         assert_eq!(issue.number, 3);
         assert_eq!(issue.title, "Bug");
         assert_eq!(issue.state, ForgeIssueState::Closed);
@@ -1278,7 +1419,16 @@ mod tests {
         assert_eq!(issue.url, "https://x/i/3");
         assert_eq!(issue.labels, Some(vec!["wontfix".to_string()]));
         assert_eq!(issue.assignees, Some(vec!["andyfeller".to_string()]));
-        assert_eq!(ForgeIssue::new(4, "x", ForgeIssueState::Open).labels, None);
+        assert_eq!(issue.author.as_deref(), Some("andyfeller"));
+        assert_eq!(issue.created_at.as_deref(), Some("2026-07-01T00:00:00Z"));
+        assert_eq!(issue.updated_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+        assert_eq!(issue.milestone.as_deref(), Some("v1.0"));
+        let bare_issue = ForgeIssue::new(4, "x", ForgeIssueState::Open);
+        assert_eq!(bare_issue.labels, None);
+        assert_eq!(bare_issue.author, None);
+        assert_eq!(bare_issue.created_at, None);
+        assert_eq!(bare_issue.updated_at, None);
+        assert_eq!(bare_issue.milestone, None);
 
         let rel = ForgeRelease::new("v1.0")
             .title("First")
@@ -1286,7 +1436,8 @@ mod tests {
             .published_at("2026-07-03T10:00:00+02:00")
             .body("notes")
             .draft(true)
-            .prerelease(true);
+            .prerelease(true)
+            .author("octocat");
         assert_eq!(rel.url.as_deref(), Some("https://x/rel/v1.0"));
         assert_eq!(rel.draft, Some(true));
         assert_eq!(rel.tag, "v1.0");
@@ -1297,11 +1448,13 @@ mod tests {
         );
         assert_eq!(rel.body.as_deref(), Some("notes"));
         assert_eq!(rel.prerelease, Some(true));
-        // A fresh release leaves url/draft/prerelease `None` (unknown).
+        assert_eq!(rel.author.as_deref(), Some("octocat"));
+        // A fresh release leaves url/draft/prerelease/author `None` (unknown).
         let bare_rel = ForgeRelease::new("v2.0");
         assert_eq!(bare_rel.url, None);
         assert_eq!(bare_rel.draft, None);
         assert_eq!(bare_rel.prerelease, None);
+        assert_eq!(bare_rel.author, None);
         assert_eq!(ForgeRelease::new("v3").draft(false).draft, Some(false));
 
         // ForgeCapabilities builds a non-all-false map for a custom backend.
@@ -1462,6 +1615,10 @@ mod serde_tests {
             draft: Some(false),
             labels: Some(vec!["bug".into()]),
             assignees: Some(vec!["octocat".into()]),
+            author: Some("octocat".into()),
+            created_at: Some("2026-07-01T00:00:00Z".into()),
+            updated_at: Some("2026-07-02T00:00:00Z".into()),
+            milestone: Some("v1.0".into()),
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert_eq!(v["number"], 7);
@@ -1472,6 +1629,10 @@ mod serde_tests {
         assert_eq!(v["draft"], false);
         assert_eq!(v["labels"], serde_json::json!(["bug"]));
         assert_eq!(v["assignees"], serde_json::json!(["octocat"]));
+        assert_eq!(v["author"], "octocat");
+        assert_eq!(v["created_at"], "2026-07-01T00:00:00Z");
+        assert_eq!(v["updated_at"], "2026-07-02T00:00:00Z");
+        assert_eq!(v["milestone"], "v1.0");
     }
 
     // The support contract on the wire: a `None` (backend can't report the field)
@@ -1491,11 +1652,19 @@ mod serde_tests {
             draft: None,
             labels: None,
             assignees: None,
+            author: None,
+            created_at: None,
+            updated_at: None,
+            milestone: None,
         };
         let v = serde_json::to_value(&unknown).unwrap();
         assert!(v["draft"].is_null(), "unknown draft must be null");
         assert!(v["labels"].is_null(), "unknown labels must be null");
         assert!(v["assignees"].is_null(), "unknown assignees must be null");
+        assert!(v["author"].is_null(), "unknown author must be null");
+        assert!(v["created_at"].is_null(), "unknown created_at must be null");
+        assert!(v["updated_at"].is_null(), "unknown updated_at must be null");
+        assert!(v["milestone"].is_null(), "unknown milestone must be null");
 
         // A confirmed *empty* label set is `[]`, NOT `null` — "we asked and there
         // are none" reads differently from "we couldn't ask".
@@ -1528,6 +1697,7 @@ mod serde_tests {
             v["prerelease"].is_null(),
             "no-prerelease-concept must be null"
         );
+        assert!(v["author"].is_null(), "unknown release author must be null");
     }
 
     // The Wave-A DTOs are part of vcs-mcp's JSON wire format — pin their shape:
@@ -1543,6 +1713,10 @@ mod serde_tests {
             url: "u".into(),
             labels: Some(vec!["wontfix".into()]),
             assignees: Some(Vec::new()),
+            author: Some("andyfeller".into()),
+            created_at: Some("2026-07-01T00:00:00Z".into()),
+            updated_at: None,
+            milestone: None,
         };
         let v = serde_json::to_value(&issue).unwrap();
         assert_eq!(v["number"], 3);
@@ -1550,6 +1724,10 @@ mod serde_tests {
         assert_eq!(v["body"], "b");
         assert_eq!(v["labels"], serde_json::json!(["wontfix"]));
         assert_eq!(v["assignees"], serde_json::json!([]));
+        assert_eq!(v["author"], "andyfeller");
+        assert_eq!(v["created_at"], "2026-07-01T00:00:00Z");
+        assert!(v["updated_at"].is_null());
+        assert!(v["milestone"].is_null());
 
         let release = ForgeRelease {
             tag: "v1".into(),
@@ -1559,6 +1737,7 @@ mod serde_tests {
             body: Some("notes".into()),
             draft: Some(false),
             prerelease: Some(true),
+            author: Some("octocat".into()),
         };
         let v = serde_json::to_value(&release).unwrap();
         assert_eq!(v["tag"], "v1");
@@ -1567,6 +1746,7 @@ mod serde_tests {
         assert_eq!(v["body"], "notes");
         assert_eq!(v["draft"], false);
         assert_eq!(v["prerelease"], true);
+        assert_eq!(v["author"], "octocat");
 
         let spec = PrCreate::new("T", "B").source("feat");
         let v = serde_json::to_value(&spec).unwrap();

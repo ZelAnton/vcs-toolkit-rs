@@ -54,6 +54,30 @@ pub struct PullRequest {
     /// `[{"login": "octocat", ...}]` to plain logins).
     #[serde(default, deserialize_with = "assignees_to_logins")]
     pub assignees: Vec<String>,
+    /// Author's login (gh `--json author`, flattened from `{"login": …}`; a
+    /// deleted account's `null` author becomes an empty string, matching the
+    /// existing PR feedback author flatten).
+    #[serde(default, deserialize_with = "author_login")]
+    pub author: String,
+    /// Creation timestamp (RFC 3339) (gh `--json createdAt`).
+    #[serde(
+        rename = "createdAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub created_at: String,
+    /// Last-update timestamp (RFC 3339) (gh `--json updatedAt`).
+    #[serde(
+        rename = "updatedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub updated_at: String,
+    /// Milestone title, or `None` when no milestone is attached (gh `--json
+    /// milestone`, flattened from `{"title": …}`; a `null` milestone becomes
+    /// `None`).
+    #[serde(default, deserialize_with = "milestone_to_title")]
+    pub milestone: Option<String>,
 }
 
 /// An issue (`gh issue list --json number,title,state`;
@@ -81,6 +105,30 @@ pub struct Issue {
     /// `[{"login": "octocat", ...}]` to plain logins).
     #[serde(default, deserialize_with = "assignees_to_logins")]
     pub assignees: Vec<String>,
+    /// Author's login (gh `--json author`, flattened from `{"login": …}`; a
+    /// deleted account's `null` author becomes an empty string, matching the
+    /// existing PR feedback author flatten).
+    #[serde(default, deserialize_with = "author_login")]
+    pub author: String,
+    /// Creation timestamp (RFC 3339) (gh `--json createdAt`).
+    #[serde(
+        rename = "createdAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub created_at: String,
+    /// Last-update timestamp (RFC 3339) (gh `--json updatedAt`).
+    #[serde(
+        rename = "updatedAt",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub updated_at: String,
+    /// Milestone title, or `None` when no milestone is attached (gh `--json
+    /// milestone`, flattened from `{"title": …}`; a `null` milestone becomes
+    /// `None`).
+    #[serde(default, deserialize_with = "milestone_to_title")]
+    pub milestone: Option<String>,
 }
 
 // gh emits both `labels` and `assignees` as arrays of objects (`[{"name": …}]`,
@@ -114,6 +162,32 @@ where
 {
     let raw = Option::<Vec<AssigneeJson>>::deserialize(deserializer)?.unwrap_or_default();
     Ok(raw.into_iter().map(|a| a.login).collect())
+}
+
+// gh nests a PR/issue/release `author` as `{"login": …}` (and reports `null` for
+// a deleted account) — the same shape `AuthorJson` (below) flattens for PR
+// feedback; reused here so an author's `null` uniformly becomes an empty login.
+fn author_login<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<AuthorJson>::deserialize(deserializer)?;
+    Ok(raw.map(|a| a.login).unwrap_or_default())
+}
+
+// gh nests `milestone` as `{"title": …}`, `null` when none is attached.
+#[derive(Deserialize)]
+struct MilestoneJson {
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    title: String,
+}
+
+fn milestone_to_title<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<MilestoneJson>::deserialize(deserializer)?;
+    Ok(raw.map(|m| m.title))
 }
 
 /// A GitHub Actions workflow run (`gh run list/view --json …`).
@@ -296,6 +370,11 @@ pub struct Release {
     /// from `release_view` it defaults to `false`.
     #[serde(rename = "isLatest", default)]
     pub is_latest: bool,
+    /// Release author's login (gh `--json author`, flattened from
+    /// `{"login": …}`; a deleted account's `null` author becomes an empty
+    /// string).
+    #[serde(default, deserialize_with = "author_login")]
+    pub author: String,
 }
 
 /// A submitted PR review (from `gh pr view --json reviews`).
@@ -498,6 +577,10 @@ mod tests {
                 url: "https://gh/pr/12".into(),
                 labels: Vec::new(),
                 assignees: Vec::new(),
+                author: String::new(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                milestone: None,
             }
         );
     }
@@ -543,6 +626,49 @@ mod tests {
         assert!(pr_no_keys.assignees.is_empty());
     }
 
+    // Positive case: gh's `--json author,createdAt,updatedAt,milestone` shape
+    // (`{"login": …}`/`{"title": …}` nested objects) flattens to plain strings.
+    #[test]
+    fn pr_parses_author_timestamps_and_milestone() {
+        let json = r#"{"number": 12, "title": "Add feature", "state": "OPEN", "isDraft": false,
+            "headRefName": "feat/x", "baseRefName": "main", "url": "https://gh/pr/12",
+            "author": {"login": "octocat", "id": 1},
+            "createdAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-02T00:00:00Z",
+            "milestone": {"title": "v1.0"}}"#;
+        let pr: PullRequest = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse pr with author/timestamps/milestone");
+        assert_eq!(pr.author, "octocat");
+        assert_eq!(pr.created_at, "2026-07-01T00:00:00Z");
+        assert_eq!(pr.updated_at, "2026-07-02T00:00:00Z");
+        assert_eq!(pr.milestone.as_deref(), Some("v1.0"));
+    }
+
+    // Negative case: a `null` author (deleted account) flattens to an empty
+    // login, and a `null` milestone (none attached) flattens to `None` — neither
+    // fails the parse.
+    #[test]
+    fn pr_null_author_and_milestone_parse_tolerantly() {
+        let json = r#"{"number": 13, "title": "t", "state": "OPEN", "isDraft": false,
+            "headRefName": "h", "baseRefName": "main", "url": "u",
+            "author": null, "milestone": null}"#;
+        let pr: PullRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("PR with null author/milestone");
+        assert_eq!(pr.author, "", "deleted account → empty login");
+        assert_eq!(pr.milestone, None, "no milestone attached → None");
+
+        // Absent keys entirely (an older canned fixture) default the same way.
+        let pr_no_keys: PullRequest = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"number": 14, "title": "t", "state": "OPEN",
+                "headRefName": "h", "baseRefName": "main", "url": "u"}"#,
+        )
+        .expect("PR without author/timestamps/milestone keys");
+        assert_eq!(pr_no_keys.author, "");
+        assert_eq!(pr_no_keys.created_at, "");
+        assert_eq!(pr_no_keys.updated_at, "");
+        assert_eq!(pr_no_keys.milestone, None);
+    }
+
     // `#[serde(default)]` robustness: a payload that omits `isDraft` deserializes
     // to `false` rather than failing the whole parse. (When we request `--json
     // isDraft`, gh emits the key or hard-errors on an unknown field — it never
@@ -564,6 +690,32 @@ mod tests {
         let issues: Vec<Issue> =
             vcs_cli_support::json::from_json(BINARY, json).expect("parse issues");
         assert_eq!(issues[0].number, 3);
+    }
+
+    // Positive case for issues, mirroring `pr_parses_author_timestamps_and_milestone`.
+    #[test]
+    fn issue_parses_author_timestamps_and_milestone() {
+        let json = r#"{"number": 3, "title": "Docs", "state": "OPEN",
+            "author": {"login": "andyfeller"},
+            "createdAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-02T00:00:00Z",
+            "milestone": {"title": "v1.0"}}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse issue with author/timestamps/milestone");
+        assert_eq!(issue.author, "andyfeller");
+        assert_eq!(issue.created_at, "2026-07-01T00:00:00Z");
+        assert_eq!(issue.updated_at, "2026-07-02T00:00:00Z");
+        assert_eq!(issue.milestone.as_deref(), Some("v1.0"));
+    }
+
+    // Negative case for issues: a `null` author/milestone parses tolerantly.
+    #[test]
+    fn issue_null_author_and_milestone_parse_tolerantly() {
+        let json = r#"{"number": 4, "title": "t", "state": "OPEN",
+            "author": null, "milestone": null}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("issue with null author/milestone");
+        assert_eq!(issue.author, "");
+        assert_eq!(issue.milestone, None);
     }
 
     // gh emits a *present* `null` (not an absent key) for some optional strings —
@@ -592,13 +744,15 @@ mod tests {
 
         let release: Release = vcs_cli_support::json::from_json(
             BINARY,
-            r#"{"tagName": "v1", "name": null, "body": null, "url": null, "publishedAt": null}"#,
+            r#"{"tagName": "v1", "name": null, "body": null, "url": null, "publishedAt": null,
+                "author": null}"#,
         )
-        .expect("release with null name/body/url/publishedAt");
+        .expect("release with null name/body/url/publishedAt/author");
         assert_eq!(release.name, "");
         // `body`/`url` are `Option`: a present `null` reads as `None`, not "".
         assert_eq!(release.body, None);
         assert_eq!(release.url, None);
+        assert_eq!(release.author, "", "deleted account → empty login");
     }
 
     #[test]
@@ -696,7 +850,7 @@ mod tests {
         let list = r#"[
             {"tagName": "vcs-git-v0.4.0", "name": "vcs-git v0.4.0",
              "isLatest": true, "isDraft": false, "isPrerelease": false,
-             "publishedAt": "2026-06-04T12:00:00Z"}
+             "publishedAt": "2026-06-04T12:00:00Z", "author": {"login": "ZelAnton"}}
         ]"#;
         let releases: Vec<Release> =
             vcs_cli_support::json::from_json(BINARY, list).expect("parse list");
@@ -707,15 +861,17 @@ mod tests {
             "list doesn't request the body → None"
         );
         assert_eq!(releases[0].url, None, "list doesn't request the url → None");
+        assert_eq!(releases[0].author, "ZelAnton");
 
         let view = r#"{"tagName": "vcs-git-v0.4.0", "name": "vcs-git v0.4.0",
             "body": "Added\n- stuff", "url": "https://gh/releases/1",
             "publishedAt": "2026-06-04T12:00:00Z",
-            "isDraft": false, "isPrerelease": false}"#;
+            "isDraft": false, "isPrerelease": false, "author": {"login": "ZelAnton"}}"#;
         let release: Release = vcs_cli_support::json::from_json(BINARY, view).expect("parse view");
         assert!(!release.is_latest, "view has no isLatest → default false");
         assert_eq!(release.body.as_deref(), Some("Added\n- stuff"));
         assert_eq!(release.url.as_deref(), Some("https://gh/releases/1"));
+        assert_eq!(release.author, "ZelAnton");
     }
 
     #[test]

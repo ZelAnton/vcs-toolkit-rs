@@ -114,7 +114,8 @@ trait adds nothing but the `&dyn` boundary.
 
 [`ForgePr`] generalises GitHub's PR, GitLab's MR, and Gitea's PR: `number` (the id
 each CLI takes — GitLab's `iid`), `title`, `state` ([`ForgePrState`]),
-`source_branch`, `target_branch`, `url`, `draft`, `labels`, `assignees`.
+`source_branch`, `target_branch`, `url`, `draft`, `labels`, `assignees`, `author`,
+`created_at`, `updated_at`, `milestone`.
 
 **State normalisation** ([`ForgePrState`]):
 
@@ -151,6 +152,17 @@ empty `Some(vec![])` is a *confirmed* "no labels / unassigned". Gitea is `None` 
 both — `tea`'s PR list/view has no labels/assignees column, so an empty list there
 would be a false "none" rather than the truthful "unknown".
 
+`author: Option<String>` / `created_at: Option<String>` / `updated_at: Option<String>`
+(RFC 3339) / `milestone: Option<String>` follow the same contract: GitHub (`gh
+--json author,createdAt,updatedAt,milestone`, flattening the nested
+`{"login": …}`/`{"title": …}` objects) and GitLab (`author`/`created_at`/
+`updated_at`/`milestone`, its default REST fields, `author`/`milestone` similarly
+flattened) both report `Some(..)` for `author`/`created_at`/`updated_at` — an empty
+`Some(String::new())` author is a *confirmed* deleted/anonymised account, distinct
+from `None`. `milestone` is `Some(title)` only when one is attached and `None` when
+it isn't — on GitHub/GitLab that `None` means "confirmed unset", not "unknown".
+Gitea is `None` on all four — `tea`'s PR list/view has no such columns.
+
 `pr_diff` returns [`FileDiff`] (re-exported from [`vcs-diff`](https://docs.rs/vcs-diff/latest/vcs_diff/)) directly — no
 facade-specific DTO wraps it, since `gh pr diff`/`glab mr diff` already emit the
 same git-format unified diff `git diff`/`jj diff --git` do, so it goes through
@@ -160,21 +172,26 @@ the same shared parser.
 `title`, `state` ([`ForgeIssueState`] — `Closed` for any case of "closed",
 everything else reads as `Open`, so an unmodelled state is treated as live),
 `body`, `url` — both populated by `issue_list` and `issue_view` on every forge —
-plus `labels: Option<Vec<String>>` / `assignees: Option<Vec<String>>`, following
-the same support contract as [`ForgePr`]'s: GitHub and GitLab report `Some(..)`,
-Gitea is `None` on both.
+plus `labels: Option<Vec<String>>` / `assignees: Option<Vec<String>>` /
+`author: Option<String>` / `created_at: Option<String>` /
+`updated_at: Option<String>` / `milestone: Option<String>`, following the same
+support contract as [`ForgePr`]'s: GitHub and GitLab report `Some(..)`, Gitea is
+`None` on all six.
 
 [`ForgeRelease`] is `tag` / `title` / `url: Option<String>` /
 `published_at: Option<String>` (`None` for an unpublished draft or when the backend
 doesn't report one) / `body: Option<String>` / `draft: Option<bool>` /
-`prerelease: Option<bool>`. `url` is `None` from GitHub's lean `release_list` (only
-`release_view` fills it as `Some`) and always `None` on Gitea — `tea releases list`
-exposes no release-page URL at all (only a tar/zip download URL, deliberately not
-surfaced), and `tea` has no `release_view`. `body` (release notes) is likewise
-`None` from GitHub's lean `release_list` (only `release_view` fills it) and always
-`None` on Gitea (`tea` has no body column); GitLab carries it on both. `draft` /
-`prerelease` are reported as `Some(..)` by GitHub and Gitea, but GitLab has no such
-concept, so both are `None` there — *unknown*, never a false `Some(false)`.
+`prerelease: Option<bool>` / `author: Option<String>`. `url` is `None` from GitHub's
+lean `release_list` (only `release_view` fills it as `Some`) and always `None` on
+Gitea — `tea releases list` exposes no release-page URL at all (only a tar/zip
+download URL, deliberately not surfaced), and `tea` has no `release_view`. `body`
+(release notes) is likewise `None` from GitHub's lean `release_list` (only
+`release_view` fills it) and always `None` on Gitea (`tea` has no body column);
+GitLab carries it on both. `draft` / `prerelease` are reported as `Some(..)` by
+GitHub and Gitea, but GitLab has no such concept, so both are `None` there —
+*unknown*, never a false `Some(false)`. `author` is reported as `Some(..)` by
+GitHub and GitLab (flattened from the nested author object) but always `None` on
+Gitea — `tea releases` has no author column.
 
 [`ReleaseCreate`] is the unified create-a-release spec —
 `ReleaseCreate::new(tag).title(t).notes(n).draft().prerelease()`, where

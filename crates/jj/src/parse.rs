@@ -53,6 +53,21 @@ pub struct BookmarkRef {
     pub tracked: bool,
 }
 
+/// A Git remote configured in a jj repository.
+///
+/// Parsed from the human-readable `jj git remote list` output. The ignored live
+/// suite validates its `<name> <url>` framing on the supported jj version matrix;
+/// the parser splits only at the first whitespace boundary, retaining the rest
+/// as the URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Remote {
+    /// Configured remote name (for example, `origin`).
+    pub name: String,
+    /// Configured fetch/push URL.
+    pub url: String,
+}
+
 /// A workspace from `jj workspace list` (rendered with `WORKSPACE_TEMPLATE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -465,6 +480,30 @@ pub(crate) fn parse_bookmarks_all(output: &str) -> Vec<BookmarkRef> {
         .collect()
 }
 
+/// Parse `jj git remote list`'s human-readable `<name> <url>` rows.
+///
+/// The command does not offer a template option, so this necessarily relies on
+/// its display format. The ignored live suite validates this contract on the
+/// supported jj version matrix: blank lines are ignored; a malformed row without
+/// both fields is ignored; and only the separating whitespace is trimmed, so a
+/// URL's interior whitespace is kept.
+/// Remote configuration is UTF-8 text in jj, so this parser intentionally takes
+/// `&str`; unlike filesystem-path output, there is no raw-byte API to preserve.
+pub(crate) fn parse_remotes(output: &str) -> Vec<Remote> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let (name, url) = line.split_once(char::is_whitespace)?;
+            let url = url.trim();
+            (!name.is_empty() && !url.is_empty()).then(|| Remote {
+                name: name.to_string(),
+                url: url.to_string(),
+            })
+        })
+        .collect()
+}
+
 /// Parse rows produced by [`REACHABLE_BOOKMARKS_TEMPLATE`]:
 /// `"<name>"[ "<name>"…]\t<full-commit>` (names `.escape_json()`-framed). A commit
 /// with several bookmarks yields one [`Bookmark`] per name, all sharing that
@@ -728,6 +767,38 @@ pub(crate) fn parse_diff_stat(output: &str) -> DiffStat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remotes_skip_empty_and_malformed_rows() {
+        assert!(parse_remotes("").is_empty());
+        assert!(parse_remotes("\n  \r\norigin\n\t\n").is_empty());
+    }
+
+    #[test]
+    fn remotes_parse_whitespace_and_unicode_urls() {
+        let remotes = parse_remotes(
+            " origin\thttps://example.com/one.git\n\
+             mañana   ssh://example.com/репо.git\n\
+             space https://example.com/a path.git\n",
+        );
+        assert_eq!(
+            remotes,
+            vec![
+                Remote {
+                    name: "origin".into(),
+                    url: "https://example.com/one.git".into(),
+                },
+                Remote {
+                    name: "mañana".into(),
+                    url: "ssh://example.com/репо.git".into(),
+                },
+                Remote {
+                    name: "space".into(),
+                    url: "https://example.com/a path.git".into(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn jj_version_parses_real_world_shapes() {

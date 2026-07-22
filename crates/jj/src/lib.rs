@@ -171,7 +171,9 @@ pub use processkit::CancellationToken;
 
 pub mod conflict;
 mod parse;
-pub use parse::{AnnotationLine, Bookmark, BookmarkRef, Change, ChangedPath, Operation, Workspace};
+pub use parse::{
+    AnnotationLine, Bookmark, BookmarkRef, Change, ChangedPath, Operation, Remote, Workspace,
+};
 // The git-format diff model + parser and the version type are shared with
 // `vcs-git` (identical output) — re-exported so `vcs_jj::FileDiff`,
 // `vcs_jj::parse_diff`, `vcs_jj::JjVersion`, … still resolve.
@@ -778,6 +780,27 @@ pub trait JjApi: Send + Sync {
     /// Push to the git remote (`jj git push`, optionally `-b <bookmark>`). The
     /// bookmark is owned (`Option<BookmarkName>`) to keep the trait `mockall`-friendly.
     async fn git_push(&self, dir: &Path, bookmark: Option<BookmarkName>) -> Result<()>;
+    /// Add a Git remote (`jj git remote add <name> <url>`).
+    ///
+    /// `name` and `url` are positional arguments and reject empty or leading-`-`
+    /// values before spawning, preventing flag injection.
+    async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
+    /// List configured Git remotes (`jj git remote list`).
+    ///
+    /// jj currently exposes no template or JSON form for this command. The
+    /// returned [`Remote`] rows therefore parse the `<name> <url>` display
+    /// format pinned by the ignored live suite on the supported jj version
+    /// matrix; a future jj display format change may require a parser update.
+    async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>>;
+    /// Remove a Git remote and forget its remote bookmarks
+    /// (`jj git remote remove <name>`).
+    async fn remote_remove(&self, dir: &Path, name: &str) -> Result<()>;
+    /// Rename a Git remote (`jj git remote rename <old> <new>`).
+    async fn remote_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()>;
+    /// Change a Git remote's URL (`jj git remote set-url <name> <url>`).
+    ///
+    /// jj exits non-zero if `name` does not name an existing remote.
+    async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
 
     // --- Discovery / identity ------------------------------------------------
 
@@ -1580,6 +1603,46 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // deadline (matches `git_fetch`).
         let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
         self.core.run_unit(cmd).await
+    }
+
+    async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        reject_flag_like("remote name", name)?;
+        reject_flag_like("url", url)?;
+        self.core
+            .run_unit(self.cmd_in(dir, ["git", "remote", "add", name, url]))
+            .await
+    }
+
+    async fn remote_list(&self, dir: &Path) -> Result<Vec<Remote>> {
+        self.core
+            .parse(
+                self.cmd_in(dir, ["git", "remote", "list"]),
+                parse::parse_remotes,
+            )
+            .await
+    }
+
+    async fn remote_remove(&self, dir: &Path, name: &str) -> Result<()> {
+        reject_flag_like("remote name", name)?;
+        self.core
+            .run_unit(self.cmd_in(dir, ["git", "remote", "remove", name]))
+            .await
+    }
+
+    async fn remote_rename(&self, dir: &Path, old: &str, new: &str) -> Result<()> {
+        reject_flag_like("old remote name", old)?;
+        reject_flag_like("new remote name", new)?;
+        self.core
+            .run_unit(self.cmd_in(dir, ["git", "remote", "rename", old, new]))
+            .await
+    }
+
+    async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
+        reject_flag_like("remote name", name)?;
+        reject_flag_like("url", url)?;
+        self.core
+            .run_unit(self.cmd_in(dir, ["git", "remote", "set-url", name, url]))
+            .await
     }
 
     async fn root(&self, dir: &Path) -> Result<PathBuf> {
@@ -2626,6 +2689,11 @@ vcs_cli_support::at_forwarders! {
         fn git_fetch() -> Result<()>;
         fn git_fetch_from(remote: &str) -> Result<()>;
         fn git_push(bookmark: Option<BookmarkName>) -> Result<()>;
+        fn remote_add(name: &str, url: &str) -> Result<()>;
+        fn remote_list() -> Result<Vec<Remote>>;
+        fn remote_remove(name: &str) -> Result<()>;
+        fn remote_rename(old: &str, new: &str) -> Result<()>;
+        fn remote_set_url(name: &str, url: &str) -> Result<()>;
         fn root() -> Result<PathBuf>;
         fn current_bookmark() -> Result<Option<String>>;
         fn trunk() -> Result<Option<String>>;
@@ -3894,6 +3962,108 @@ mod tests {
     async fn git_push_without_bookmark_is_bare() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "git", "push"], Reply::ok("")));
         jj.git_push(Path::new("."), None).await.expect("bare push");
+    }
+
+    #[tokio::test]
+    async fn remote_methods_build_exact_args_and_parse_list() {
+        let rec = RecordingRunner::replying(Reply::ok("origin https://example.com/a.git\n"));
+        let jj = Jj::with_runner(&rec);
+        let dir = Path::new("/r");
+
+        jj.remote_add(dir, "upstream", "ssh://example.com/репо.git")
+            .await
+            .unwrap();
+        assert_eq!(
+            jj.remote_list(dir).await.unwrap(),
+            vec![Remote {
+                name: "origin".into(),
+                url: "https://example.com/a.git".into(),
+            }]
+        );
+        jj.remote_remove(dir, "upstream").await.unwrap();
+        jj.remote_rename(dir, "upstream", "backup").await.unwrap();
+        jj.remote_set_url(dir, "backup", "https://example.com/b.git")
+            .await
+            .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "git",
+                "remote",
+                "add",
+                "upstream",
+                "ssh://example.com/репо.git",
+                "--color",
+                "never"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            ["git", "remote", "list", "--color", "never"]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            ["git", "remote", "remove", "upstream", "--color", "never"]
+        );
+        assert_eq!(
+            calls[3].args_str(),
+            [
+                "git", "remote", "rename", "upstream", "backup", "--color", "never"
+            ]
+        );
+        assert_eq!(
+            calls[4].args_str(),
+            [
+                "git",
+                "remote",
+                "set-url",
+                "backup",
+                "https://example.com/b.git",
+                "--color",
+                "never"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_methods_reject_flag_like_positionals_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let dir = Path::new("/r");
+        assert!(
+            jj.remote_add(dir, "-bad", "https://example.com/r.git")
+                .await
+                .is_err()
+        );
+        assert!(jj.remote_add(dir, "origin", "--config=bad").await.is_err());
+        assert!(jj.remote_remove(dir, "-bad").await.is_err());
+        assert!(jj.remote_rename(dir, "-old", "new").await.is_err());
+        assert!(jj.remote_rename(dir, "old", "-new").await.is_err());
+        assert!(
+            jj.remote_set_url(dir, "-bad", "https://example.com/r.git")
+                .await
+                .is_err()
+        );
+        assert!(jj.remote_set_url(dir, "origin", "-bad").await.is_err());
+        assert!(
+            rec.calls().is_empty(),
+            "invalid positional values must not spawn jj"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_set_url_surfaces_missing_remote_exit() {
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "git", "remote", "set-url", "missing"],
+            Reply::fail(1, "Error: No git remote named 'missing'"),
+        ));
+        assert!(
+            jj.remote_set_url(Path::new("/r"), "missing", "https://example.com/r.git")
+                .await
+                .is_err()
+        );
     }
 
     // H1: `bookmark delete` and `git fetch -b` pass the name through `exact:` so a
