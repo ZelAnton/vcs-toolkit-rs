@@ -88,6 +88,29 @@ pub struct Branch {
     pub current: bool,
 }
 
+/// One entry from `git stash list`, parsed via
+/// `--format=%gd%x1f%H%x1f%gs -z`: the stash's position, the stashed commit's
+/// hash, and its label split into an optional branch and the rest of the
+/// message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StashEntry {
+    /// The stash's position in the list (`stash@{<index>}`'s `<index>`), most
+    /// recent first (`0`) — the numeral [`crate::GitApi::stash_apply`] /
+    /// [`crate::GitApi::stash_drop`] take.
+    pub index: usize,
+    /// The stashed commit's full object id (`%H`).
+    pub hash: String,
+    /// The branch checked out when the stash was pushed, from git's default
+    /// `"WIP on <branch>: …"` / `stash push -m`'s `"On <branch>: …"` label;
+    /// `None` when git recorded no branch (a detached HEAD, `"(no branch)"`).
+    pub branch: Option<String>,
+    /// The rest of the label: the default `<abbrev-sha> <subject>` when
+    /// `stash push` was given no `-m`, or the caller's message verbatim when
+    /// it was.
+    pub message: String,
+}
+
 /// A worktree from `git worktree list --porcelain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -242,6 +265,59 @@ pub(crate) fn parse_log(output: &str) -> Vec<Commit> {
         .collect()
 }
 
+/// Parse `git stash list -z --format=%gd%x1f%H%x1f%gs` output into
+/// [`StashEntry`] records: NUL-separated entries (robust to a multi-line
+/// message), `\x1f`-separated fields — the same framing [`parse_log`] uses. A
+/// record whose selector isn't the expected `stash@{<n>}` shape (unexpected
+/// git output) is skipped rather than turned into a garbage entry.
+pub(crate) fn parse_stash_list(output: &str) -> Vec<StashEntry> {
+    output
+        .split('\0')
+        .filter(|rec| !rec.is_empty())
+        .filter_map(|rec| {
+            let mut fields = rec.split('\u{1f}');
+            let selector = fields.next()?;
+            let hash = fields.next()?.to_string();
+            let subject = fields.next().unwrap_or("");
+            let index: usize = selector
+                .strip_prefix("stash@{")?
+                .strip_suffix('}')?
+                .parse()
+                .ok()?;
+            let (branch, message) = parse_stash_subject(subject);
+            Some(StashEntry {
+                index,
+                hash,
+                branch,
+                message,
+            })
+        })
+        .collect()
+}
+
+/// Split a `git stash` reflog subject (`%gs`) into the branch it names and the
+/// rest of the message. git's default label is `WIP on <branch>: <subject>`;
+/// an explicit `stash push -m <msg>` instead records `On <branch>: <msg>`. A
+/// detached-HEAD stash names the placeholder `(no branch)`, reported here as
+/// `None` rather than that literal string. A subject matching neither shape
+/// (an unrecognized or hand-crafted reflog entry) is returned whole as the
+/// message, with no branch.
+fn parse_stash_subject(subject: &str) -> (Option<String>, String) {
+    let Some(rest) = subject
+        .strip_prefix("WIP on ")
+        .or_else(|| subject.strip_prefix("On "))
+    else {
+        return (None, subject.to_string());
+    };
+    match rest.split_once(": ") {
+        Some((branch, message)) => {
+            let branch = (branch != "(no branch)").then(|| branch.to_string());
+            (branch, message.to_string())
+        }
+        None => (None, rest.to_string()),
+    }
+}
+
 /// Parse `git branch` output. The first column is the `* `/`  `/`+ ` marker.
 pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
     output
@@ -350,6 +426,111 @@ pub(crate) fn parse_worktree_porcelain(output: &[u8]) -> Vec<Worktree> {
     }
     flush(&mut current, &mut worktrees);
     worktrees
+}
+
+/// One path `git clean` would remove (`-n`, dry run) or removed (`-f`,
+/// forced), from a `Would remove <path>` / `Removing <path>` output line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CleanEntry {
+    /// The path, decoded from git's C-quoting (unquoted the same way this
+    /// crate unquotes any other git porcelain path) and stripped of the
+    /// directory-entry trailing `/` when [`is_dir`](Self::is_dir) is set.
+    pub path: PathBuf,
+    /// Whether this entry names a whole untracked **directory** (`-d`), from
+    /// git's trailing `/` on directory entries, rather than a single file.
+    pub is_dir: bool,
+}
+
+/// Parse `git clean -n`/`-f` output: one line per candidate/removed path,
+/// `Would remove <path>` (dry run, `-n`) or `Removing <path>` (forced, `-f`,
+/// unless `-q`). Any other line — e.g. `Skipping repository <path>` for a
+/// nested untracked `.git`, or a `warning:`/`fatal:` line — names neither a
+/// delete candidate nor a deleted path, so it is ignored rather than
+/// mis-parsed as one.
+///
+/// `git clean` has no `-z`/NUL machine framing, so this parses newline-framed
+/// text (`str::lines` also strips a CRLF `\r`, so Windows output parses
+/// identically); a path needing escaping is C-quoted like any other git
+/// porcelain path — see [`unquote_clean_path`].
+pub(crate) fn parse_clean_output(output: &str) -> Vec<CleanEntry> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let rest = line
+                .strip_prefix("Would remove ")
+                .or_else(|| line.strip_prefix("Removing "))?;
+            let mut decoded = unquote_clean_path(rest);
+            let is_dir = decoded.last() == Some(&b'/');
+            if is_dir {
+                decoded.pop();
+            }
+            Some(CleanEntry {
+                path: vcs_diff::path_from_bytes(&decoded),
+                is_dir,
+            })
+        })
+        .collect()
+}
+
+/// Decode a `git clean` path the same way git quotes any other porcelain
+/// path: wrapped in double quotes and C-escaped when it holds a control byte,
+/// a `"`, a `\`, or — with the default `core.quotePath=true` — any non-ASCII
+/// byte (e.g. `é` → `\303\251`, pure ASCII in the quoted form, so decoding
+/// `git clean`'s stdout as `&str` first never corrupts a quoted path; only an
+/// *unquoted* non-UTF-8 byte, which requires `core.quotePath=false` plus a
+/// non-UTF-8 filename, stays out of scope). An unquoted path (no leading `"`)
+/// is returned unchanged. Mirrors the diff-header path-unquoting `vcs_diff`
+/// uses internally for `git diff`'s `a/`/`b/` headers; kept as a small local
+/// copy since `git clean` has no `-z` machine framing to prefer instead, and
+/// the two crates' quoting rules are otherwise unrelated.
+fn unquote_clean_path(s: &str) -> Vec<u8> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return bytes.to_vec();
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 1; // skip the opening quote
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => break, // unescaped closing quote
+            b'\\' if i + 1 < bytes.len() => {
+                i += 1;
+                match bytes[i] {
+                    b'a' => out.push(0x07),
+                    b'b' => out.push(0x08),
+                    b't' => out.push(b'\t'),
+                    b'n' => out.push(b'\n'),
+                    b'v' => out.push(0x0b),
+                    b'f' => out.push(0x0c),
+                    b'r' => out.push(b'\r'),
+                    b'"' => out.push(b'"'),
+                    b'\\' => out.push(b'\\'),
+                    d @ b'0'..=b'7' => {
+                        // Up to 3 octal digits → one byte (`\NNN`, NNN ≤ 0o377).
+                        let mut val = u32::from(d - b'0');
+                        let mut taken = 0;
+                        while taken < 2
+                            && i + 1 < bytes.len()
+                            && (b'0'..=b'7').contains(&bytes[i + 1])
+                        {
+                            i += 1;
+                            val = val * 8 + u32::from(bytes[i] - b'0');
+                            taken += 1;
+                        }
+                        out.push(val as u8);
+                    }
+                    other => out.push(other), // unknown escape: keep the byte
+                }
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// One line of `git blame --line-porcelain` output: who last touched the line
@@ -1078,6 +1259,109 @@ mod tests {
     fn submodule_status_empty_is_no_entries() {
         assert!(parse_submodule_status(b"").is_empty());
     }
+
+    #[test]
+    fn stash_list_parses_default_and_custom_labels() {
+        // Entry 0: `stash push -m "my label"` on `feature`. Entry 1: a plain
+        // `stash push` (no `-m`), whose default label embeds the abbrev sha +
+        // subject of the commit stashed on top of.
+        let out = concat!(
+            "stash@{0}\u{1f}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}",
+            "On feature: my label\0",
+            "stash@{1}\u{1f}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u{1f}",
+            "WIP on feature: f1c02c2 init\0",
+        );
+        let got = parse_stash_list(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].index, 0);
+        assert_eq!(got[0].hash, "a".repeat(40));
+        assert_eq!(got[0].branch.as_deref(), Some("feature"));
+        assert_eq!(got[0].message, "my label");
+        assert_eq!(got[1].index, 1);
+        assert_eq!(got[1].branch.as_deref(), Some("feature"));
+        assert_eq!(got[1].message, "f1c02c2 init");
+    }
+
+    #[test]
+    fn stash_list_detached_head_has_no_branch() {
+        let out = "stash@{0}\u{1f}cccccccccccccccccccccccccccccccccccccccc\u{1f}\
+                    On (no branch): detached label\0";
+        let got = parse_stash_list(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].branch, None);
+        assert_eq!(got[0].message, "detached label");
+    }
+
+    #[test]
+    fn stash_list_empty_is_no_entries() {
+        assert!(parse_stash_list("").is_empty());
+    }
+
+    #[test]
+    fn stash_list_skips_a_record_with_an_unrecognized_selector() {
+        // A malformed/foreign selector (not `stash@{<n>}`) must be skipped, not
+        // turned into a garbage entry with index 0.
+        let out = "not-a-selector\u{1f}deadbeef\u{1f}subject\0";
+        assert!(parse_stash_list(out).is_empty());
+    }
+
+    #[test]
+    fn clean_output_parses_dry_run_files_and_directories() {
+        let out = "Would remove junk.txt\nWould remove sub/\n";
+        let got = parse_clean_output(out);
+        assert_eq!(
+            got,
+            vec![
+                CleanEntry {
+                    path: PathBuf::from("junk.txt"),
+                    is_dir: false,
+                },
+                CleanEntry {
+                    path: PathBuf::from("sub"),
+                    is_dir: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn clean_output_parses_forced_removals() {
+        let out = "Removing junk.txt\nRemoving sub/\n";
+        let got = parse_clean_output(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].path, PathBuf::from("junk.txt"));
+        assert!(!got[0].is_dir);
+        assert_eq!(got[1].path, PathBuf::from("sub"));
+        assert!(got[1].is_dir);
+    }
+
+    #[test]
+    fn clean_output_unquotes_c_quoted_paths() {
+        // `é` under the default `core.quotePath=true` is octal-escaped
+        // (`\303\251`); the directory's trailing `/` sits INSIDE the quotes.
+        let out = "Would remove \"caf\\303\\251.txt\"\nWould remove \"w\\303\\251ird dir/\"\n";
+        let got = parse_clean_output(out);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].path, PathBuf::from("café.txt"));
+        assert!(!got[0].is_dir);
+        assert_eq!(got[1].path, PathBuf::from("wéird dir"));
+        assert!(got[1].is_dir);
+    }
+
+    #[test]
+    fn clean_output_ignores_unrecognized_lines() {
+        // `Skipping repository …` (a nested untracked `.git`) names neither a
+        // delete candidate nor a deleted path.
+        let out = "Skipping repository sub/nested\nWould remove real.txt\n";
+        let got = parse_clean_output(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, PathBuf::from("real.txt"));
+    }
+
+    #[test]
+    fn clean_output_empty_is_no_entries() {
+        assert!(parse_clean_output("").is_empty());
+    }
 }
 
 // Property-based fuzzing: the parsers are pure functions over *arbitrary* CLI
@@ -1126,6 +1410,8 @@ mod proptests {
             let _ = parse_ls_remote_heads(&s);
             let _ = parse_nul_paths(s.as_bytes());
             let _ = parse_git_version(&s);
+            let _ = parse_stash_list(&s);
+            let _ = parse_clean_output(&s);
         }
 
         // The byte parsers must also never panic on *arbitrary bytes* — the actual
@@ -1147,6 +1433,8 @@ mod proptests {
             let _ = parse_blame_porcelain(&s);
             let _ = parse_gitmodules_config(s.as_bytes());
             let _ = parse_submodule_status(s.as_bytes());
+            let _ = parse_stash_list(&s);
+            let _ = parse_clean_output(&s);
         }
 
         // porcelain v2 header/entry lines (with the `2`-consumes-next-record path)

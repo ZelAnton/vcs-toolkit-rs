@@ -146,8 +146,8 @@ mod parse;
 #[doc(hidden)]
 pub use parse::parse_porcelain_v2;
 pub use parse::{
-    BlameLine, Branch, BranchStatus, Commit, StatusEntry, Submodule, SubmoduleState,
-    SubmoduleStatus, Worktree,
+    BlameLine, Branch, BranchStatus, CleanEntry, Commit, StashEntry, StatusEntry, Submodule,
+    SubmoduleState, SubmoduleStatus, Worktree,
 };
 // The git-format diff model + parser and the version type are shared with
 // `vcs-jj` (identical output) — re-exported so `vcs_git::FileDiff`,
@@ -549,6 +549,98 @@ impl StashPush {
     /// Also stash untracked files (`--include-untracked`).
     pub fn include_untracked(mut self) -> Self {
         self.include_untracked = true;
+        self
+    }
+}
+
+/// How [`Clean`] treats ignored files/directories — the `-x`/`-X` axis of
+/// `git clean`, orthogonal to [`directories`](Clean::directories).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum CleanIgnored {
+    /// Leave ignored files alone (git's default): only untracked-and-not-ignored
+    /// entries are candidates.
+    #[default]
+    Exclude,
+    /// Also remove ignored files/directories (`-x`), in addition to the
+    /// ordinary untracked ones.
+    Include,
+    /// Remove **only** ignored files/directories (`-X`) — untracked-but-not-ignored
+    /// entries are left alone.
+    Only,
+}
+
+/// Options for [`GitApi::clean`] (`git clean`) — deletes untracked files from
+/// the working tree.
+///
+/// **Force is a deliberate, explicit call, never a default.** There is no
+/// `Clean::new()` state, nor any other setter, that arms deletion by
+/// itself — only the explicit [`force`](Clean::force) call does, the same
+/// "no bare `bool`, no implied default" pattern [`BranchDelete::force`] and
+/// [`WorktreeRemove::force`] use for their own destructive flag. Independently,
+/// [`GitApi::clean`] itself refuses to run at all — before spawning `git` —
+/// unless the spec picked **either** [`dry_run`](Clean::dry_run) **or**
+/// [`force`](Clean::force): this crate's own guard, so the outcome never
+/// depends on whether the caller's `clean.requireForce` git config happens to
+/// be (mis)set to `false`. When [`dry_run`](Clean::dry_run) is set, `force` is
+/// ignored — dry-run always wins, so it is never possible to accidentally
+/// delete while asking for a preview.
+///
+/// `#[non_exhaustive]`, so build it through [`Clean::new`] and the chained
+/// setters rather than a struct literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct Clean {
+    /// Actually delete rather than merely report (`--force`/`-f`). Ignored
+    /// when [`dry_run`](Self::dry_run) is also set.
+    pub force: bool,
+    /// Report what *would* be deleted, without deleting anything (`--dry-run`/
+    /// `-n`). Takes priority over [`force`](Self::force).
+    pub dry_run: bool,
+    /// Remove whole untracked directories, not just untracked files (`-d`).
+    pub directories: bool,
+    /// How ignored files/directories are treated; see [`CleanIgnored`].
+    pub ignored: CleanIgnored,
+}
+
+impl Clean {
+    /// A clean spec with neither [`dry_run`](Self::dry_run) nor
+    /// [`force`](Self::force) picked yet — passing this as-is to
+    /// [`GitApi::clean`] is refused before spawning (see the type docs); chain
+    /// one of the two setters before use.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Actually delete (`--force`/`-f`) — the one, explicit way to arm
+    /// deletion; see the type docs.
+    pub fn force(mut self) -> Self {
+        self.force = true;
+        self
+    }
+
+    /// Report what would be deleted without deleting anything (`--dry-run`/`-n`).
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+
+    /// Remove whole untracked directories too (`-d`).
+    pub fn directories(mut self) -> Self {
+        self.directories = true;
+        self
+    }
+
+    /// Also remove ignored files/directories (`-x`), in addition to ordinary
+    /// untracked ones.
+    pub fn include_ignored(mut self) -> Self {
+        self.ignored = CleanIgnored::Include;
+        self
+    }
+
+    /// Remove **only** ignored files/directories (`-X`).
+    pub fn only_ignored(mut self) -> Self {
+        self.ignored = CleanIgnored::Only;
         self
     }
 }
@@ -1164,6 +1256,30 @@ pub trait GitApi: Send + Sync {
     async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>;
     /// Restore the most recent stash and drop it (`stash pop`).
     async fn stash_pop(&self, dir: &Path) -> Result<()>;
+    /// The stash list, most-recent first (`stash@{0}`), machine-parsed via
+    /// `stash list -z --format=%gd%x1f%H%x1f%gs` into typed [`StashEntry`]
+    /// records — a read, unlike [`stash_push`](GitApi::stash_push)/
+    /// [`stash_pop`](GitApi::stash_pop).
+    async fn stash_list(&self, dir: &Path) -> Result<Vec<StashEntry>>;
+    /// Apply the stash at `index` (`stash@{<index>}`, [`StashEntry::index`])
+    /// **without** dropping it (`stash apply stash@{<index>}`) — unlike
+    /// [`stash_pop`](GitApi::stash_pop), the stash entry survives a successful
+    /// apply, so it can be applied again or dropped explicitly with
+    /// [`stash_drop`](GitApi::stash_drop).
+    async fn stash_apply(&self, dir: &Path, index: usize) -> Result<()>;
+    /// Drop the stash at `index` (`stash@{<index>}`, [`StashEntry::index`])
+    /// **without** applying it (`stash drop stash@{<index>}`) — discards the
+    /// stash entry; the working tree is untouched.
+    async fn stash_drop(&self, dir: &Path, index: usize) -> Result<()>;
+    /// Remove untracked files/directories from the working tree (`git clean`),
+    /// per [`Clean`]. **Destructive unless [`Clean::dry_run`] is set** — with
+    /// neither `dry_run` nor [`Clean::force`] picked, this refuses before
+    /// spawning `git` at all (an [`Error::spawn`] carrying
+    /// [`std::io::ErrorKind::InvalidInput`]), so deletion is never the default
+    /// and never implied by omission (see the [`Clean`] type docs). Returns
+    /// the typed list of paths removed (forced) or that would be removed (dry
+    /// run) — see [`CleanEntry`].
+    async fn clean(&self, dir: &Path, spec: Clean) -> Result<Vec<CleanEntry>>;
 
     // --- Worktrees -----------------------------------------------------------
 
@@ -2589,6 +2705,67 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn stash_list(&self, dir: &Path) -> Result<Vec<StashEntry>> {
+        self.core
+            .parse(
+                self.core
+                    .command_in(dir, ["stash", "list", "-z", "--format=%gd%x1f%H%x1f%gs"]),
+                parse::parse_stash_list,
+            )
+            .await
+    }
+
+    async fn stash_apply(&self, dir: &Path, index: usize) -> Result<()> {
+        // `stash@{<index>}` — the selector always starts with the fixed literal
+        // `stash@{`, so a `usize` index can never be parsed as a flag; no
+        // injection guard is needed on top of that shape. C locale: a
+        // conflicting apply emits the same merge-machinery output `stash_pop`
+        // does, feeding `is_merge_conflict`.
+        let command = self
+            .core
+            .command_in(dir, ["stash", "apply"])
+            .arg(format!("stash@{{{index}}}"));
+        self.core.run_unit(c_locale(command)).await
+    }
+
+    async fn stash_drop(&self, dir: &Path, index: usize) -> Result<()> {
+        let command = self
+            .core
+            .command_in(dir, ["stash", "drop"])
+            .arg(format!("stash@{{{index}}}"));
+        self.core.run_unit(command).await
+    }
+
+    async fn clean(&self, dir: &Path, spec: Clean) -> Result<Vec<CleanEntry>> {
+        // Neither `dry_run` nor `force`: refuse before spawning, rather than
+        // either running a no-op-guarded `git clean` whose safety depends on
+        // the caller's `clean.requireForce` config, or silently doing nothing.
+        if !spec.dry_run && !spec.force {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "clean requires either Clean::dry_run() or Clean::force() — refusing \
+                     to run with neither, rather than depend on this repository's \
+                     `clean.requireForce` config to guard the delete",
+                ),
+            ));
+        }
+        let mut command = self.core.command_in(dir, ["clean"]);
+        // `dry_run` always wins: with it set, `-f` is never sent, so a spec
+        // that (oddly) sets both can never actually delete.
+        command = command.arg(if spec.dry_run { "-n" } else { "-f" });
+        if spec.directories {
+            command = command.arg("-d");
+        }
+        match spec.ignored {
+            CleanIgnored::Exclude => {}
+            CleanIgnored::Include => command = command.arg("-x"),
+            CleanIgnored::Only => command = command.arg("-X"),
+        }
+        self.core.parse(command, parse::parse_clean_output).await
+    }
+
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
         // `parse_bytes`: the porcelain `worktree <path>` value is a filesystem path
         // that need not be valid UTF-8 on Unix, so parse from raw stdout bytes — a
@@ -3619,6 +3796,10 @@ vcs_cli_support::at_forwarders! {
         fn rebase_continue() -> Result<()>;
         fn stash_push(spec: StashPush) -> Result<()>;
         fn stash_pop() -> Result<()>;
+        fn stash_list() -> Result<Vec<StashEntry>>;
+        fn stash_apply(index: usize) -> Result<()>;
+        fn stash_drop(index: usize) -> Result<()>;
+        fn clean(spec: Clean) -> Result<Vec<CleanEntry>>;
         fn switch_with_stash(target: &CheckoutTarget) -> Result<()>;
         fn worktree_list() -> Result<Vec<Worktree>>;
         fn worktree_add(spec: WorktreeAdd) -> Result<()>;
@@ -4818,6 +4999,147 @@ mod tests {
             .await
             .expect("stash");
         assert_eq!(rec.only_call().args_str(), ["stash", "push"]);
+    }
+
+    #[tokio::test]
+    async fn stash_list_builds_argv_and_parses_entries() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            "stash@{0}\u{1f}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}\
+             On feature: my label\0",
+        ));
+        let git = Git::with_runner(&rec);
+        let entries = git.stash_list(Path::new(".")).await.expect("stash_list");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["stash", "list", "-z", "--format=%gd%x1f%H%x1f%gs"]
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].index, 0);
+        assert_eq!(entries[0].branch.as_deref(), Some("feature"));
+        assert_eq!(entries[0].message, "my label");
+    }
+
+    #[tokio::test]
+    async fn stash_apply_builds_the_indexed_selector() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.stash_apply(Path::new("."), 2).await.expect("apply");
+        assert_eq!(rec.only_call().args_str(), ["stash", "apply", "stash@{2}"]);
+    }
+
+    #[tokio::test]
+    async fn stash_drop_builds_the_indexed_selector() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.stash_drop(Path::new("."), 0).await.expect("drop");
+        assert_eq!(rec.only_call().args_str(), ["stash", "drop", "stash@{0}"]);
+    }
+
+    // `clean` must refuse to run at all — no spawn — when the spec has picked
+    // neither `dry_run` nor `force`: the crate's own guard, independent of the
+    // caller's `clean.requireForce` git config.
+    #[tokio::test]
+    async fn clean_refuses_with_neither_dry_run_nor_force_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok("unused"));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .clean(Path::new("."), Clean::new())
+            .await
+            .expect_err("neither dry_run nor force must be refused");
+        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn clean_dry_run_builds_n_flag_and_parses_would_remove() {
+        let rec =
+            RecordingRunner::replying(Reply::ok("Would remove junk.txt\nWould remove sub/\n"));
+        let git = Git::with_runner(&rec);
+        let entries = git
+            .clean(Path::new("."), Clean::new().dry_run())
+            .await
+            .expect("dry run");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-n"]);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, PathBuf::from("junk.txt"));
+        assert!(!entries[0].is_dir);
+        assert_eq!(entries[1].path, PathBuf::from("sub"));
+        assert!(entries[1].is_dir);
+    }
+
+    #[tokio::test]
+    async fn clean_force_builds_f_flag_and_parses_removing() {
+        let rec = RecordingRunner::replying(Reply::ok("Removing junk.txt\n"));
+        let git = Git::with_runner(&rec);
+        let entries = git
+            .clean(Path::new("."), Clean::new().force())
+            .await
+            .expect("force clean");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-f"]);
+        assert_eq!(
+            entries,
+            vec![CleanEntry {
+                path: PathBuf::from("junk.txt"),
+                is_dir: false,
+            }]
+        );
+    }
+
+    // `dry_run` must win when a spec (oddly) sets both: `-f` is never sent, so
+    // the call can never actually delete while also asking for a preview.
+    #[tokio::test]
+    async fn clean_dry_run_takes_priority_over_force() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(Path::new("."), Clean::new().force().dry_run())
+            .await
+            .expect("dry run wins");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-n"]);
+    }
+
+    #[tokio::test]
+    async fn clean_directories_inserts_d_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(Path::new("."), Clean::new().dry_run().directories())
+            .await
+            .expect("dry run + directories");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-n", "-d"]);
+    }
+
+    #[tokio::test]
+    async fn clean_include_ignored_inserts_x_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(Path::new("."), Clean::new().dry_run().include_ignored())
+            .await
+            .expect("dry run + include ignored");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-n", "-x"]);
+    }
+
+    #[tokio::test]
+    async fn clean_only_ignored_inserts_capital_x_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(Path::new("."), Clean::new().dry_run().only_ignored())
+            .await
+            .expect("dry run + only ignored");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-n", "-X"]);
+    }
+
+    // Every option combined: force + directories + include-ignored, in the
+    // order the builder emits them.
+    #[tokio::test]
+    async fn clean_combines_force_directories_and_ignored_in_order() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.clean(
+            Path::new("."),
+            Clean::new().force().directories().include_ignored(),
+        )
+        .await
+        .expect("combined flags");
+        assert_eq!(rec.only_call().args_str(), ["clean", "-f", "-d", "-x"]);
     }
 
     // `diff_text` for the working tree must build `diff HEAD` plus the stable

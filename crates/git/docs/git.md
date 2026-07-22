@@ -582,24 +582,55 @@ match git.cherry_pick(repo, "abc123").await {
 # Ok(()) }
 ```
 
-## Stash
+## Stash & clean
 
 ```rust,ignore
 async fn stash_push(&self, dir: &Path, spec: StashPush) -> Result<()>; // StashPush::new()[.include_untracked()]
 async fn stash_pop(&self, dir: &Path) -> Result<()>;
+async fn stash_list(&self, dir: &Path) -> Result<Vec<StashEntry>>;
+async fn stash_apply(&self, dir: &Path, index: usize) -> Result<()>;
+async fn stash_drop(&self, dir: &Path, index: usize) -> Result<()>;
+async fn clean(&self, dir: &Path, spec: Clean) -> Result<Vec<CleanEntry>>;
 ```
 
 - **`stash_push`** — `stash push` (`--include-untracked` when asked), e.g. to save
   state before a copy-on-write restore.
 - **`stash_pop`** — restore the most recent stash and drop it (`stash pop`).
+- **`stash_list`** — the stash list, most-recent first (`stash@{0}`), machine-parsed
+  via `stash list -z --format=%gd%x1f%H%x1f%gs` into `Vec<StashEntry>` (index / hash /
+  branch / message).
+- **`stash_apply`** — apply the stash at `index` **without** dropping it
+  (`stash apply stash@{<index>}`).
+- **`stash_drop`** — drop the stash at `index` **without** applying it
+  (`stash drop stash@{<index>}`).
+- **`clean`** — remove untracked files/directories (`git clean`) per the
+  [`Clean`](#clean) builder. **Destructive unless `dry_run` is set** — with neither
+  `dry_run` nor `force` picked, this refuses before spawning `git` at all, so deletion is
+  never the default and never implied by omission. Returns the typed paths removed
+  (forced) or that would be removed (dry run).
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, StashPush};
+# use vcs_git::{Clean, Git, GitApi, StashPush};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 git.stash_push(repo, StashPush::new().include_untracked()).await?;   // include untracked
 // … do work on a clean tree …
 git.stash_pop(repo).await?;
+
+// Inspect and manage individual stashes:
+for entry in git.stash_list(repo).await? {
+    println!("stash@{{{}}}: {}", entry.index, entry.message);
+}
+git.stash_apply(repo, 0).await?;  // apply without dropping
+git.stash_drop(repo, 0).await?;   // then drop it explicitly
+
+// Preview untracked garbage, then actually delete it — `force` is always an
+// explicit, separate call; there is no default that deletes.
+let preview = git.clean(repo, Clean::new().dry_run().directories()).await?;
+for entry in &preview {
+    println!("would remove {:?} (dir: {})", entry.path, entry.is_dir);
+}
+git.clean(repo, Clean::new().force().directories()).await?;
 # Ok(()) }
 ```
 
@@ -834,6 +865,26 @@ A commit parsed from a `\x1f`-delimited `git log` line.
 | `detached` | `bool` | checked out at a detached HEAD |
 | `locked` | `bool` | locked against pruning |
 
+### `StashEntry`
+
+One entry from `stash_list`, parsed via `stash list -z --format=%gd%x1f%H%x1f%gs`.
+
+| field | type | meaning |
+|-------|------|---------|
+| `index` | `usize` | position in the list, most recent first — the numeral `stash_apply`/`stash_drop` take |
+| `hash` | `String` | the stashed commit's full object id |
+| `branch` | `Option<String>` | branch checked out when pushed; `None` for a detached-HEAD stash |
+| `message` | `String` | the default `<abbrev-sha> <subject>` label, or the caller's `-m` message |
+
+### `CleanEntry`
+
+One path from `clean`'s `-n` (dry run) or `-f` (forced) output.
+
+| field | type | meaning |
+|-------|------|---------|
+| `path` | `PathBuf` | the path, C-unquoted, with a directory entry's trailing `/` stripped |
+| `is_dir` | `bool` | whether this names a whole untracked directory (`-d`), not a single file |
+
 ### `DiffStat`
 
 `Copy`. Aggregate counts from `git diff --shortstat`.
@@ -971,6 +1022,39 @@ let a = WorktreeAdd::checkout("/wt", "main");                       // existing 
 let b = WorktreeAdd::create_branch("/wt", "feature", "HEAD");       // new branch off HEAD
 let c = WorktreeAdd::checkout("/wt", "main").no_checkout();         // skeleton only
 # let _ = (a, b, c);
+```
+
+### `Clean`
+
+Options for `clean`. `#[non_exhaustive]` — build it through [`Clean::new`] and the
+chained setters, not a struct literal.
+
+```rust,ignore
+pub fn new() -> Self;
+pub fn force(self) -> Self;             // chainable: actually delete (--force)
+pub fn dry_run(self) -> Self;           // chainable: report only, delete nothing (--dry-run); wins over `force`
+pub fn directories(self) -> Self;       // chainable: remove whole untracked dirs too (-d)
+pub fn include_ignored(self) -> Self;   // chainable: also remove ignored files/dirs (-x)
+pub fn only_ignored(self) -> Self;      // chainable: remove ONLY ignored files/dirs (-X)
+```
+
+**Force is always an explicit, separate call — never a default.** `Clean::new()` picks
+neither `dry_run` nor `force`; passing that as-is to `clean` is refused *before*
+spawning `git` (an `Error::Spawn`/`InvalidInput`), rather than depending on this
+repository's `clean.requireForce` git config to guard the delete. When `dry_run` is
+set, `force` is ignored — dry-run always wins, so a spec that (oddly) sets both can
+never actually delete.
+
+Fields: `force: bool`, `dry_run: bool`, `directories: bool`, `ignored: CleanIgnored`.
+`CleanIgnored` is `Exclude` (default: leave ignored files alone), `Include` (`-x`), or
+`Only` (`-X`).
+
+```rust,ignore
+# use vcs_git::Clean;
+let preview = Clean::new().dry_run().directories();       // safe preview, incl. whole dirs
+let delete = Clean::new().force().directories();           // actually delete
+let only_ignored = Clean::new().dry_run().only_ignored();  // preview ignored files only
+# let _ = (preview, delete, only_ignored);
 ```
 
 ### `GitPush`

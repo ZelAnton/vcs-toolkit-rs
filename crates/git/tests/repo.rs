@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
-    AnnotatedTag, CheckoutTarget, CommitPaths, Git, GitApi, MergeCheck, MergeCommit, RefName,
-    RevSpec, SubmoduleState, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, CheckoutTarget, Clean, CommitPaths, Git, GitApi, MergeCheck, MergeCommit,
+    RefName, RevSpec, StashPush, SubmoduleState, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
 
@@ -1352,4 +1352,190 @@ async fn add_commit_paths_and_log_paths_treat_glob_characters_literally() {
          committed — a glob-expanding query would incorrectly find the \
          literal commit here (R-02)"
     );
+}
+
+// `stash_list` reports every pushed stash, most-recent first (index 0);
+// `stash_apply` restores an entry without dropping it; `stash_drop` removes an
+// entry without touching the working tree.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn stash_list_apply_and_drop_round_trip() {
+    let tmp = TempDir::new("stash-list");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("a.txt"), "base\n").expect("write");
+    git.add(dir, &[PathBuf::from("a.txt")]).await.expect("add");
+    git.commit(dir, "base").await.expect("commit");
+
+    assert!(
+        git.stash_list(dir).await.expect("empty list").is_empty(),
+        "a fresh repo has no stashes"
+    );
+
+    // Push two stashes; `stash_list` returns most-recent-first (index 0 = the
+    // "second edit" pushed last).
+    std::fs::write(dir.join("a.txt"), "first edit\n").expect("write");
+    git.stash_push(dir, StashPush::new())
+        .await
+        .expect("stash 1");
+    std::fs::write(dir.join("a.txt"), "second edit\n").expect("write");
+    git.stash_push(dir, StashPush::new())
+        .await
+        .expect("stash 2");
+    assert!(
+        git.status(dir).await.expect("status").is_empty(),
+        "the tree must be clean after both pushes"
+    );
+
+    let entries = git.stash_list(dir).await.expect("list");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].index, 0);
+    assert_eq!(entries[1].index, 1);
+    assert!(
+        entries.iter().all(|e| e.hash.len() == 40),
+        "every entry must carry a full sha, got {entries:?}"
+    );
+    assert!(entries.iter().all(|e| e.branch.is_some()));
+
+    // Apply without dropping — stash@{0} ("second edit") is restored, but the
+    // entry itself survives the apply.
+    git.stash_apply(dir, 0).await.expect("apply");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).expect("read"),
+        "second edit\n"
+    );
+    assert_eq!(
+        git.stash_list(dir).await.expect("list").len(),
+        2,
+        "apply must not drop the stash entry"
+    );
+
+    // Reset the applied change back to a clean tree, then drop that entry
+    // explicitly — only "first edit" should remain.
+    git.reset_hard(dir, &rv("HEAD")).await.expect("reset");
+    git.stash_drop(dir, 0).await.expect("drop");
+    let remaining = git.stash_list(dir).await.expect("list");
+    assert_eq!(remaining.len(), 1, "drop must remove exactly one entry");
+    git.stash_apply(dir, 0).await.expect("apply remaining");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).expect("read"),
+        "first edit\n",
+        "the surviving stash must be the one that was NOT dropped"
+    );
+}
+
+// `clean` dry-run reports untracked files/directories without touching them;
+// forcing it then actually removes exactly what the dry-run reported, leaving
+// tracked and ignored content untouched.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn clean_dry_run_then_force_removes_reported_untracked_paths() {
+    let tmp = TempDir::new("clean-basic");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join("tracked.txt"), "kept\n").expect("write tracked");
+    git.add(dir, &[PathBuf::from("tracked.txt")])
+        .await
+        .expect("add");
+    git.commit(dir, "base").await.expect("commit");
+
+    // Untracked garbage: a loose file and a whole directory.
+    std::fs::write(dir.join("junk.txt"), "junk\n").expect("write junk");
+    std::fs::create_dir(dir.join("sub")).expect("mkdir");
+    std::fs::write(dir.join("sub").join("f.txt"), "nested\n").expect("write nested");
+
+    // `clean` refuses to run at all without an explicit dry-run/force choice.
+    let refused = git.clean(dir, Clean::new()).await;
+    assert!(
+        refused.is_err(),
+        "neither dry_run nor force must be refused before spawning"
+    );
+
+    // Dry run: reports both candidates (with `-d`), deletes nothing.
+    let preview = git
+        .clean(dir, Clean::new().dry_run().directories())
+        .await
+        .expect("dry run");
+    assert_eq!(preview.len(), 2, "junk.txt and sub/ must both be reported");
+    assert!(
+        preview
+            .iter()
+            .any(|e| e.path == Path::new("junk.txt") && !e.is_dir)
+    );
+    assert!(
+        preview
+            .iter()
+            .any(|e| e.path == Path::new("sub") && e.is_dir)
+    );
+    assert!(dir.join("junk.txt").exists(), "dry run must not delete");
+    assert!(dir.join("sub").exists(), "dry run must not delete");
+    assert!(dir.join("tracked.txt").exists());
+
+    // Force: actually removes what the dry run reported.
+    let removed = git
+        .clean(dir, Clean::new().force().directories())
+        .await
+        .expect("force clean");
+    assert_eq!(removed.len(), 2);
+    assert!(!dir.join("junk.txt").exists(), "junk.txt must be gone");
+    assert!(!dir.join("sub").exists(), "sub/ must be gone");
+    assert!(
+        dir.join("tracked.txt").exists(),
+        "tracked file must survive"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("tracked.txt")).expect("read"),
+        "kept\n"
+    );
+}
+
+// `clean`'s ignored-file handling: the default excludes an ignored file;
+// `include_ignored` (`-x`) also removes it; `only_ignored` (`-X`) removes the
+// ignored file but leaves an ordinary untracked one alone.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn clean_respects_gitignore_unless_told_to_include_or_only_ignored() {
+    let tmp = TempDir::new("clean-ignored");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::write(dir.join(".gitignore"), "ignored.txt\n").expect("write gitignore");
+    git.add(dir, &[PathBuf::from(".gitignore")])
+        .await
+        .expect("add");
+    git.commit(dir, "base").await.expect("commit");
+
+    std::fs::write(dir.join("ignored.txt"), "ignored\n").expect("write ignored");
+    std::fs::write(dir.join("plain.txt"), "plain\n").expect("write plain");
+
+    // Default: only the non-ignored untracked file is a candidate.
+    let default_preview = git
+        .clean(dir, Clean::new().dry_run())
+        .await
+        .expect("dry run");
+    assert_eq!(default_preview.len(), 1);
+    assert_eq!(default_preview[0].path, Path::new("plain.txt"));
+
+    // `only_ignored` (`-X`): only the ignored file is a candidate.
+    let only_ignored_preview = git
+        .clean(dir, Clean::new().dry_run().only_ignored())
+        .await
+        .expect("dry run only-ignored");
+    assert_eq!(only_ignored_preview.len(), 1);
+    assert_eq!(only_ignored_preview[0].path, Path::new("ignored.txt"));
+
+    // `include_ignored` (`-x`) + force: BOTH are removed.
+    let removed = git
+        .clean(dir, Clean::new().force().include_ignored())
+        .await
+        .expect("force clean including ignored");
+    assert_eq!(removed.len(), 2);
+    assert!(!dir.join("ignored.txt").exists());
+    assert!(!dir.join("plain.txt").exists());
+    assert!(dir.join(".gitignore").exists(), "tracked file must survive");
 }

@@ -10,6 +10,18 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+- feat: working-tree management round-out — `GitApi::stash_list`, `stash_apply`,
+  `stash_drop`, and `clean` (mirrored on the `GitAt` cwd-bound view). `stash_list`
+  machine-parses `stash list -z --format=%gd%x1f%H%x1f%gs` into typed `StashEntry`
+  records (index / hash / branch / message); `stash_apply`/`stash_drop` act on a
+  stash by its `stash@{<index>}` position without applying-and-dropping in one step.
+  `clean` is a `Clean` builder (`directories`/`-d`, `include_ignored`/`-x`,
+  `only_ignored`/`-X`, first-class `dry_run`/`-n`) that parses `Vec<CleanEntry>` from
+  git's `Would remove`/`Removing` output (unquoting C-quoted paths); `force` is a
+  deliberate, explicit call — like `BranchDelete::force`/`WorktreeRemove::force` — and
+  `clean` itself refuses to run at all, before spawning `git`, unless the spec picked
+  either `dry_run` or `force`, independent of the repository's `clean.requireForce`
+  config. (T-099.)
 - feat: typed git-submodule support — `GitApi::submodule_list`,
   `submodule_status`, and `submodule_update` (mirrored on the `GitAt` cwd-bound
   view). `submodule_list` parses the machine-unambiguous
