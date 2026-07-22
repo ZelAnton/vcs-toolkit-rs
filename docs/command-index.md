@@ -476,7 +476,11 @@ dependency:
   `dir`-taking) and `Repo::git_at()` / `Repo::jj_at()` (the cwd-bound view,
   `None` for the other backend). Its portable `Repo::remotes()` wraps either
   `GitApi::remote_list` or `JjApi::remote_list` and returns a facade-owned
-  name/URL DTO. See [Escape hatches to the underlying
+  name/URL DTO. Its portable `Repo::clone(backend, url, dest, spec)` — the one
+  associated constructor, since there is no handle yet — wraps either
+  `GitApi::clone_repo` or `JjApi::git_clone` under a unified `CloneSpec` (git's
+  `branch`/`depth`/`bare`, jj's `colocate`), structurally rejecting a
+  cross-backend option with `Error::Unsupported`. See [Escape hatches to the underlying
   client](../crates/core/docs/core.md#escape-hatches-to-the-underlying-client).
 - **`vcs-forge`** — the wrapper client directly (`GitHub::new().run_list(dir)…`),
   or the wrapper's `api`/`run` for anything beyond that. See [When to drop to

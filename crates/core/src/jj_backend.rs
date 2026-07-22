@@ -745,6 +745,52 @@ pub(crate) async fn remove_worktree<R: ProcessRunner>(
     Ok(())
 }
 
+/// Clone `url` into `dest` via [`JjApi::git_clone`], translating the facade's unified
+/// [`crate::dto::CloneSpec`] into jj's own [`vcs_jj::GitClone`]. git's
+/// `branch`/`depth`/`bare` have no jj analogue, so any of them is **rejected
+/// structurally** — a typed [`Error::Unsupported`], raised *before* the client spawns —
+/// rather than being silently dropped. jj's colocate flag is always explicit (its CLI
+/// default varies by version/config), so an unset [`colocate`](crate::dto::CloneSpec::colocate)
+/// defaults to a non-colocated (jj-only) checkout here. The dest-cleanup-on-failure
+/// contract is the client's (see `JjApi::git_clone`); this adapter adds nothing on top.
+pub(crate) async fn clone<R: ProcessRunner>(
+    jj: &Jj<R>,
+    url: &str,
+    dest: &Path,
+    spec: &crate::dto::CloneSpec,
+) -> Result<()> {
+    // Collect every git-only option the caller set, so the rejection names all of them
+    // at once rather than one per retry.
+    let mut git_only: Vec<&str> = Vec::new();
+    if spec.branch.is_some() {
+        git_only.push("branch");
+    }
+    if spec.depth.is_some() {
+        git_only.push("depth");
+    }
+    if spec.bare {
+        git_only.push("bare");
+    }
+    if !git_only.is_empty() {
+        return Err(Error::Unsupported(format!(
+            "jj git clone does not support the git-only clone option(s) {} — omit them \
+             for a jj clone (jj clones the whole repository and always keeps a working \
+             copy)",
+            git_only.join("/"),
+        )));
+    }
+    // jj's default flipped across versions and is overridable via `git.colocate` config,
+    // so the flag is always passed explicitly; unset means the facade default,
+    // non-colocated (`--no-colocate`).
+    let jj_spec = if spec.colocate.unwrap_or(false) {
+        vcs_jj::GitClone::colocated()
+    } else {
+        vcs_jj::GitClone::separate()
+    };
+    jj.git_clone(url, dest, jj_spec).await?;
+    Ok(())
+}
+
 /// Derive a jj workspace name from a branch name. jj workspace names must be
 /// valid identifiers, so substitute path/whitespace characters with `_`.
 /// Deterministic so a later lookup can reconstruct it.
@@ -1381,6 +1427,126 @@ mod tests {
                 .any(|a| a == "--ignore-working-copy"),
             "read-only branch listing must ignore the working copy: {:?}",
             calls[0].args_str()
+        );
+    }
+
+    // The clone adapter translates the facade's unified `CloneSpec` into jj's own
+    // `--colocate`/`--no-colocate` and dispatches to `JjApi::git_clone` dir-lessly.
+    // The colocate flag is ALWAYS explicit; unset defaults to `--no-colocate`.
+    #[tokio::test]
+    async fn clone_translates_spec_and_dispatches_dirless() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        clone(
+            &jj,
+            "https://x/r.git",
+            Path::new("/dest"),
+            &CloneSpec::new().colocate(true),
+        )
+        .await
+        .expect("clone");
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            [
+                "git",
+                "clone",
+                "https://x/r.git",
+                "/dest",
+                "--colocate",
+                "--color",
+                "never"
+            ]
+        );
+        assert_eq!(call.cwd, None, "clone runs without a working directory");
+
+        // Unset colocate → the facade default, a non-colocated checkout.
+        let plain = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&plain);
+        clone(&jj, "u", Path::new("/d"), &CloneSpec::new())
+            .await
+            .expect("clone");
+        let call = plain.only_call();
+        assert!(
+            call.has_flag("--no-colocate"),
+            "unset colocate defaults to --no-colocate"
+        );
+        assert!(!call.has_flag("--colocate"));
+    }
+
+    // git's branch/depth/bare have no jj analogue: each is rejected structurally as
+    // `Unsupported`, *before* the client spawns (a `RecordingRunner` records zero
+    // calls). Every git-only option is checked independently.
+    #[tokio::test]
+    async fn clone_rejects_git_only_options_pre_spawn() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{RecordingRunner, Reply};
+        use vcs_jj::Jj;
+
+        for spec in [
+            CloneSpec::new().bare(),
+            CloneSpec::new().depth(1),
+            CloneSpec::new().branch("main"),
+        ] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+            let err = clone(&jj, "u", Path::new("/d"), &spec)
+                .await
+                .expect_err("a git-only clone option must be rejected on jj");
+            assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+            assert!(
+                rec.calls().is_empty(),
+                "a structurally-rejected option must not spawn jj"
+            );
+        }
+    }
+
+    // The facade adapter must not weaken the client's "clean only a dest we could have
+    // created" contract: it delegates to `JjApi::git_clone`, whose failure path removes
+    // an empty dest but never a non-empty caller dir. Scripted-fail clone + real temp
+    // dirs.
+    #[tokio::test]
+    async fn clone_delegates_dest_cleanup_to_client() {
+        use crate::dto::CloneSpec;
+        use processkit::testing::{Reply, ScriptedRunner};
+        use vcs_jj::Jj;
+        use vcs_testkit::TempDir;
+
+        let tmp = TempDir::new("t110-jj-clone-cleanup");
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "git", "clone"],
+            Reply::fail(1, "Error: fetch failed"),
+        ));
+
+        // An empty dest we could have populated is cleaned so a retry isn't blocked.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(
+            clone(&jj, "https://x/r", &empty, &CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            !empty.exists(),
+            "an empty dest is cleaned on a failed clone"
+        );
+
+        // A non-empty caller dir must survive untouched.
+        let occupied = tmp.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep.txt"), b"caller data").unwrap();
+        assert!(
+            clone(&jj, "https://x/r", &occupied, &CloneSpec::new())
+                .await
+                .is_err()
+        );
+        assert!(
+            occupied.join("keep.txt").exists(),
+            "a non-empty caller dir must survive a failed clone"
         );
     }
 }

@@ -120,6 +120,89 @@ impl BranchDelete {
     }
 }
 
+/// Backend-agnostic options for [`Repo::clone`](crate::Repo::clone).
+///
+/// One unified spec over the two tools' clone options: git's `branch`/`depth`/`bare`
+/// (from [`vcs_git::CloneSpec`]) and jj's `colocate` (from [`vcs_jj::GitClone`]). The
+/// two backends' clone commands have **no common option** — each field is meaningful
+/// for exactly one backend — so an option set for the *other* backend is **structurally
+/// rejected** with a typed [`Error::Unsupported`](crate::Error::Unsupported) *before
+/// anything spawns*, rather than being silently dropped or surfaced as a raw CLI error:
+///
+/// - [`branch`](CloneSpec::branch) / [`depth`](CloneSpec::depth) /
+///   [`bare`](CloneSpec::bare) are **git-only** — jj's `git clone` models none of them.
+///   Any of them set on a jj clone → `Unsupported`.
+/// - [`colocate`](CloneSpec::colocate) is **jj-only** — git has no colocation concept
+///   (jj materialises a `.git` beside `.jj`). Set on a git clone → `Unsupported`.
+///
+/// jj's colocate flag is **always** passed explicitly (its CLI default flipped across
+/// versions and is overridable via `git.colocate` config); when unset here the facade
+/// defaults a jj clone to a **non-colocated** (jj-only, `--no-colocate`) checkout, so
+/// the choice is never left to jj's version-dependent default. On git, `colocate` is
+/// left unset.
+///
+/// `#[non_exhaustive]`; build it through [`CloneSpec::new`] and the chained setters.
+///
+/// ```
+/// # use vcs_core::CloneSpec;
+/// let _git = CloneSpec::new().branch("main").depth(1);  // git: shallow, one branch
+/// let _jj  = CloneSpec::new().colocate(true);           // jj:  colocated checkout
+/// ```
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct CloneSpec {
+    /// Check out this branch instead of the remote's default (git `--branch`).
+    /// **git-only** — rejected on a jj clone.
+    pub branch: Option<String>,
+    /// Shallow-clone to this many commits (git `--depth`). **git-only** — rejected on a
+    /// jj clone. (git silently ignores `--depth` for a plain local-path source; use a
+    /// `file://` URL to shallow-clone locally.)
+    pub depth: Option<u32>,
+    /// Create a bare repository (git `--bare`). **git-only** — rejected on a jj clone.
+    /// A bare clone yields a handle over a repository with no working tree, so the
+    /// facade's working-tree operations don't apply to it (ref/history reads still do).
+    pub bare: bool,
+    /// Whether jj creates a visible `.git` alongside `.jj` (`--colocate`) or a jj-only
+    /// checkout (`--no-colocate`). **jj-only** — any explicit value is rejected on a git
+    /// clone. `None` means the facade default for a jj clone: non-colocated
+    /// (`--no-colocate`).
+    pub colocate: Option<bool>,
+}
+
+impl CloneSpec {
+    /// A plain clone with no options — a full clone of the remote's default branch on
+    /// git; a non-colocated (jj-only) checkout on jj.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check out `branch` instead of the remote's default (git `--branch`; git-only).
+    pub fn branch(mut self, branch: impl Into<String>) -> Self {
+        self.branch = Some(branch.into());
+        self
+    }
+
+    /// Shallow-clone to `depth` commits (git `--depth`; git-only) — see the field doc
+    /// for the local-path caveat.
+    pub fn depth(mut self, depth: u32) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Clone as a bare repository (git `--bare`; git-only).
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
+        self
+    }
+
+    /// Choose jj's colocation (`--colocate` when `true`, `--no-colocate` when `false`;
+    /// jj-only). Setting this on a git clone is rejected.
+    pub fn colocate(mut self, colocate: bool) -> Self {
+        self.colocate = Some(colocate);
+        self
+    }
+}
+
 /// Which version-control tool backs a [`Repo`](crate::Repo).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -765,5 +848,29 @@ mod ctor_tests {
         assert!(!clean.dirty && !clean.conflicted && clean.head.is_none());
         assert_eq!(clean.operation, OperationState::Clear);
         assert_eq!(clean.change_count, 0);
+    }
+
+    // The unified `CloneSpec` builder lands each option where the dispatch expects it,
+    // and an empty `new()` carries nothing (no git flags; jj's colocate left to the
+    // facade default).
+    #[test]
+    fn clone_spec_builder_populates_fields() {
+        let empty = CloneSpec::new();
+        assert_eq!(empty.branch, None);
+        assert_eq!(empty.depth, None);
+        assert!(!empty.bare);
+        assert_eq!(empty.colocate, None);
+
+        let git = CloneSpec::new().branch("main").depth(1).bare();
+        assert_eq!(git.branch.as_deref(), Some("main"));
+        assert_eq!(git.depth, Some(1));
+        assert!(git.bare);
+        assert_eq!(
+            git.colocate, None,
+            "colocate stays unset on a git-shaped spec"
+        );
+
+        assert_eq!(CloneSpec::new().colocate(true).colocate, Some(true));
+        assert_eq!(CloneSpec::new().colocate(false).colocate, Some(false));
     }
 }
