@@ -41,6 +41,7 @@ pub fn vcs_testkit::JjSandbox::bookmark(&self, &str)
 pub fn vcs_testkit::JjSandbox::colocated(&str) -> Self
 pub fn vcs_testkit::JjSandbox::describe(&self, &str)
 pub fn vcs_testkit::JjSandbox::init(&str) -> Self
+pub fn vcs_testkit::JjSandbox::init_non_colocated(&str) -> Self
 pub fn vcs_testkit::JjSandbox::jj(&self, &[&str])
 pub fn vcs_testkit::JjSandbox::jj_capture(&self, &[&str]) -> alloc::string::String
 pub fn vcs_testkit::JjSandbox::new_change(&self, &str)

@@ -390,9 +390,11 @@ async fn remote_list_does_not_record_an_operation() {
     // name is never rewritten, so it is the reliable part of the assertion;
     // the URL check merely sanity-checks that it still points at the same
     // repo, regardless of scheme/host rewriting.
-    assert!(remotes.iter().any(|remote| {
-        remote.name == "origin" && remote.url.ends_with("example/repo.git")
-    }));
+    assert!(
+        remotes
+            .iter()
+            .any(|remote| { remote.name == "origin" && remote.url.ends_with("example/repo.git") })
+    );
     assert_eq!(after, before, "remote listing must not append an operation");
 }
 
