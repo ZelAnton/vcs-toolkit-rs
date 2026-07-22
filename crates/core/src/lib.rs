@@ -3302,18 +3302,13 @@ mod tests {
             [PathBuf::from("a.rs"), PathBuf::from("b dir/c.rs")]
         );
 
-        let jj = jj_repo(
-            ScriptedRunner::new().on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
-        );
+        let jj = jj_repo(ScriptedRunner::new().on(["jj", "file", "list"], Reply::ok("a.rs\0")));
         assert_eq!(
             jj.conflicted_files().await.unwrap(),
             [PathBuf::from("a.rs")]
         );
-        // The benign "no conflicts" non-zero exit still reads as an empty list.
-        let clean = jj_repo(ScriptedRunner::new().on(
-            ["jj", "resolve"],
-            Reply::fail(2, "Error: No conflicts found at this revision"),
-        ));
+        // A conflict-free revision succeeds with empty stdout, not a non-zero exit.
+        let clean = jj_repo(ScriptedRunner::new().on(["jj", "file", "list"], Reply::ok("")));
         assert!(clean.conflicted_files().await.unwrap().is_empty());
     }
 
@@ -3537,7 +3532,7 @@ mod tests {
                 .on(["jj", "op", "restore"], Reply::ok(""))
                 .on(["jj", "new"], Reply::ok(""))
                 .on(["jj", "log"], Reply::ok("1\n")) // is_conflicted → true
-                .on(["jj", "resolve"], Reply::ok("a.rs    2-sided conflict\n")),
+                .on(["jj", "file", "list"], Reply::ok("a.rs\0")),
         );
         let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
         assert_eq!(
