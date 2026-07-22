@@ -151,6 +151,17 @@ impl VcsMcpServer {
         ok_json(&self.repo.local_branches().await.map_err(core_err)?)
     }
 
+    // `jj git remote list` is a default jj command and therefore snapshots the
+    // working copy before it reads. It must not claim `readOnlyHint`, despite
+    // Git's path being a plain read; use the honest backend-agnostic annotation.
+    #[tool(
+        description = "Configured remotes with their fetch URLs. Read query; on jj it snapshots the working copy (reversible op-log op) — annotated non-destructive, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    pub async fn repo_remotes(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(&self.repo.remotes().await.map_err(core_err)?)
+    }
+
     // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
     // NOT readOnlyHint; still callable without a write gate).
     #[tool(

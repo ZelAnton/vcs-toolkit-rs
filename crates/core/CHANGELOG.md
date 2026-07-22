@@ -10,7 +10,11 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Repo::remotes` (and `VcsRepo::remotes`): backend-agnostic configured remote
+  listing, dispatching to `git remote -v` or `jj git remote list`. The returned
+  `vcs_core::Remote { name, url }` is a new facade-owned DTO rather than a
+  re-export of `vcs_jj::Remote`: both backends share this contract and a Git
+  consumer must not expose jj-specific API types. (T-108.)
 
 ### Changed
 -
