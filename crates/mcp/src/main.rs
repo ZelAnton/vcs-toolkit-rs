@@ -583,7 +583,7 @@ mod tests {
             Some(ForgeKind::GitHub)
         );
 
-        let non_colocated = vcs_testkit::JjSandbox::init("mcp-forge-non-colocated");
+        let non_colocated = vcs_testkit::JjSandbox::init_non_colocated("mcp-forge-non-colocated");
         non_colocated.jj(&["config", "set", "--repo", "ui.color", "always"]);
         non_colocated.jj(&[
             "git",

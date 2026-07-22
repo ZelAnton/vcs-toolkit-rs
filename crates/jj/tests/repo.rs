@@ -383,8 +383,15 @@ async fn remote_list_does_not_record_an_operation() {
     let remotes = jj.remote_list(dir).await.expect("list remotes");
     let after = sandbox.op_head();
 
+    // The URL check is intentionally loose: a dev/CI environment may carry a
+    // `url.insteadOf` Git config rewrite (e.g. https://github.com/ ->
+    // git@github.com:), so jj can legitimately store/list a rewritten URL
+    // instead of the literal string we passed to `remote add`. The remote
+    // name is never rewritten, so it is the reliable part of the assertion;
+    // the URL check merely sanity-checks that it still points at the same
+    // repo, regardless of scheme/host rewriting.
     assert!(remotes.iter().any(|remote| {
-        remote.name == "origin" && remote.url == "https://github.com/example/repo.git"
+        remote.name == "origin" && remote.url.ends_with("example/repo.git")
     }));
     assert_eq!(after, before, "remote listing must not append an operation");
 }

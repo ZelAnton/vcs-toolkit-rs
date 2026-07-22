@@ -12,29 +12,29 @@
         "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt"
       ],
       "cwd": ".",
-      "stdout": "[{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T18:52:18Z\",\"databaseId\":29948559300,\"displayTitle\":\"Demote Remote doc reference to parse_remotes from an intra-doc link t…\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29948559300\",\"workflowName\":\"Nix\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T18:52:17Z\",\"databaseId\":29948558233,\"displayTitle\":\"Demote Remote doc reference to parse_remotes from an intra-doc link t…\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29948558233\",\"workflowName\":\"CI\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-07-22T18:40:01Z\",\"databaseId\":29947659661,\"displayTitle\":\"Add public-API snapshot baselines and CI gate for all publishable crates\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29947659661\",\"workflowName\":\"CI\"}]",
+      "stdout": "[{\"conclusion\":\"failure\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704478,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704478\",\"workflowName\":\"CI\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704419,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704419\",\"workflowName\":\"Nix\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T18:52:18Z\",\"databaseId\":29948559300,\"displayTitle\":\"Demote Remote doc reference to parse_remotes from an intra-doc link t…\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29948559300\",\"workflowName\":\"Nix\"}]",
       "stderr": "",
       "code": 0,
       "total_lines": 1,
-      "total_bytes": 1020,
-      "duration_ms": 1053
+      "total_bytes": 1000,
+      "duration_ms": 959
     },
     {
       "program": "gh",
       "args": [
         "run",
         "view",
-        "29948559300",
+        "29956704478",
         "--json",
         "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt"
       ],
       "cwd": ".",
-      "stdout": "{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T18:52:18Z\",\"databaseId\":29948559300,\"displayTitle\":\"Demote Remote doc reference to parse_remotes from an intra-doc link t…\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29948559300\",\"workflowName\":\"Nix\"}",
+      "stdout": "{\"conclusion\":\"failure\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704478,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704478\",\"workflowName\":\"CI\"}",
       "stderr": "",
       "code": 0,
       "total_lines": 1,
-      "total_bytes": 340,
-      "duration_ms": 860
+      "total_bytes": 327,
+      "duration_ms": 905
     }
   ]
 }

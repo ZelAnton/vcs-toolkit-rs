@@ -17,7 +17,7 @@
       "code": 0,
       "total_lines": 1,
       "total_bytes": 14826,
-      "duration_ms": 1150
+      "duration_ms": 797
     },
     {
       "program": "gh",
@@ -34,7 +34,7 @@
       "code": 0,
       "total_lines": 1,
       "total_bytes": 1193,
-      "duration_ms": 1210
+      "duration_ms": 643
     }
   ]
 }
