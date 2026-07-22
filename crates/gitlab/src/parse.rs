@@ -50,6 +50,20 @@ pub struct MergeRequest {
     /// array of User objects (`[{"username": …}, ...]`) to plain usernames.
     #[serde(default, deserialize_with = "users_to_usernames")]
     pub assignees: Vec<String>,
+    /// Author's username, flattened from GitLab's REST `author` User object
+    /// (`{"username": …}`) to a plain string.
+    #[serde(default, deserialize_with = "author_username")]
+    pub author: String,
+    /// Creation timestamp (RFC 3339) (GitLab REST `created_at`).
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub created_at: String,
+    /// Last-update timestamp (RFC 3339) (GitLab REST `updated_at`).
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub updated_at: String,
+    /// Milestone title, or `None` when no milestone is attached (GitLab REST
+    /// `milestone.title`; `null` → `None`).
+    #[serde(default, deserialize_with = "milestone_to_title")]
+    pub milestone: Option<String>,
 }
 
 /// A project, returned as `RepoView` (`glab repo view --output json`) — the
@@ -116,6 +130,20 @@ pub struct Issue {
     /// array of User objects (`[{"username": …}, ...]`) to plain usernames.
     #[serde(default, deserialize_with = "users_to_usernames")]
     pub assignees: Vec<String>,
+    /// Author's username, flattened from GitLab's REST `author` User object
+    /// (`{"username": …}`) to a plain string.
+    #[serde(default, deserialize_with = "author_username")]
+    pub author: String,
+    /// Creation timestamp (RFC 3339) (GitLab REST `created_at`).
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub created_at: String,
+    /// Last-update timestamp (RFC 3339) (GitLab REST `updated_at`).
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub updated_at: String,
+    /// Milestone title, or `None` when no milestone is attached (GitLab REST
+    /// `milestone.title`; `null` → `None`).
+    #[serde(default, deserialize_with = "milestone_to_title")]
+    pub milestone: Option<String>,
 }
 
 // GitLab's REST `assignees` is an array of User objects (`{"username": …, "id":
@@ -135,6 +163,34 @@ where
 {
     let raw = Option::<Vec<UserJson>>::deserialize(deserializer)?.unwrap_or_default();
     Ok(raw.into_iter().map(|u| u.username).collect())
+}
+
+// GitLab's REST `author` is a single User object (`{"username": …, "id": …,
+// ...}`), unlike `assignees` (an array of the same shape) — flatten just the
+// username. A present `null` (an anonymised/deleted account) degrades to an
+// empty username rather than failing the whole parse.
+fn author_username<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<UserJson>::deserialize(deserializer)?;
+    Ok(raw.map(|u| u.username).unwrap_or_default())
+}
+
+// GitLab's REST `milestone` is a Milestone object (`{"title": …, "id": …,
+// ...}`), `null` when none is attached.
+#[derive(Deserialize)]
+struct MilestoneJson {
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    title: String,
+}
+
+fn milestone_to_title<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<MilestoneJson>::deserialize(deserializer)?;
+    Ok(raw.map(|m| m.title))
 }
 
 /// A release (`glab release list/view --output json`) — GitLab's REST
@@ -164,6 +220,10 @@ pub struct Release {
     /// Release notes (GitLab's `description`, markdown); empty when absent/null.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub description: String,
+    /// Author's username, flattened from GitLab's REST `author` User object
+    /// (`{"username": …}`) to a plain string.
+    #[serde(default, deserialize_with = "author_username")]
+    pub author: String,
 }
 
 /// Deserialize a `Release`'s `url` from GitLab's `_links.self`. The links object
@@ -281,6 +341,10 @@ mod tests {
                 draft: false,
                 labels: Vec::new(),
                 assignees: Vec::new(),
+                author: String::new(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                milestone: None,
             }
         );
     }
@@ -326,6 +390,44 @@ mod tests {
         assert!(mr_no_keys.assignees.is_empty());
     }
 
+    // Positive case: GitLab's `author` is a single User object flattened to a
+    // plain username; `milestone` is a Milestone object flattened to its title.
+    #[test]
+    fn mr_parses_author_timestamps_and_milestone() {
+        let json = r#"{"iid": 12, "title": "Add feature", "state": "opened",
+            "author": {"username": "steiza", "id": 1},
+            "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-02T00:00:00Z",
+            "milestone": {"title": "v1.0"}}"#;
+        let mr: MergeRequest = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse mr with author/timestamps/milestone");
+        assert_eq!(mr.author, "steiza");
+        assert_eq!(mr.created_at, "2026-07-01T00:00:00Z");
+        assert_eq!(mr.updated_at, "2026-07-02T00:00:00Z");
+        assert_eq!(mr.milestone.as_deref(), Some("v1.0"));
+    }
+
+    // Negative case: a `null` author (anonymised account) flattens to an empty
+    // username, and a `null` milestone (none attached) flattens to `None`.
+    #[test]
+    fn mr_null_author_and_milestone_parse_tolerantly() {
+        let json = r#"{"iid": 13, "title": "t", "state": "opened",
+            "author": null, "milestone": null}"#;
+        let mr: MergeRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("mr with null author/milestone");
+        assert_eq!(mr.author, "", "anonymised account → empty username");
+        assert_eq!(mr.milestone, None, "no milestone attached → None");
+
+        let mr_no_keys: MergeRequest = vcs_cli_support::json::from_json(
+            BINARY,
+            r#"{"iid": 14, "title": "t", "state": "opened"}"#,
+        )
+        .expect("mr without author/timestamps/milestone keys");
+        assert_eq!(mr_no_keys.author, "");
+        assert_eq!(mr_no_keys.created_at, "");
+        assert_eq!(mr_no_keys.updated_at, "");
+        assert_eq!(mr_no_keys.milestone, None);
+    }
+
     // glab/GitLab omit fields that don't apply; the DTO must tolerate a minimal
     // object (only the required `iid`/`title`/`state`).
     #[test]
@@ -357,6 +459,10 @@ mod tests {
                 url: "https://gl/i/1".into(),
                 labels: Vec::new(),
                 assignees: Vec::new(),
+                author: String::new(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                milestone: None,
             }
         );
     }
@@ -386,6 +492,32 @@ mod tests {
             .expect("issue with empty labels/assignees");
         assert!(issue.labels.is_empty());
         assert!(issue.assignees.is_empty());
+    }
+
+    // Positive case for issues, mirroring `mr_parses_author_timestamps_and_milestone`.
+    #[test]
+    fn issue_parses_author_timestamps_and_milestone() {
+        let json = r#"{"iid": 1, "title": "Fix bug", "state": "opened",
+            "author": {"username": "steiza"},
+            "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-02T00:00:00Z",
+            "milestone": {"title": "v1.0"}}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("parse issue with author/timestamps/milestone");
+        assert_eq!(issue.author, "steiza");
+        assert_eq!(issue.created_at, "2026-07-01T00:00:00Z");
+        assert_eq!(issue.updated_at, "2026-07-02T00:00:00Z");
+        assert_eq!(issue.milestone.as_deref(), Some("v1.0"));
+    }
+
+    // Negative case for issues: a `null` author/milestone parses tolerantly.
+    #[test]
+    fn issue_null_author_and_milestone_parse_tolerantly() {
+        let json = r#"{"iid": 2, "title": "t", "state": "closed",
+            "author": null, "milestone": null}"#;
+        let issue: Issue = vcs_cli_support::json::from_json(BINARY, json)
+            .expect("issue with null author/milestone");
+        assert_eq!(issue.author, "");
+        assert_eq!(issue.milestone, None);
     }
 
     // glab/GitLab can omit description/web_url; the DTO must tolerate a minimal
@@ -430,12 +562,14 @@ mod tests {
 
         let release: Release = vcs_cli_support::json::from_json(
             BINARY,
-            r#"{"tag_name": "v1", "name": null, "released_at": null, "description": null}"#,
+            r#"{"tag_name": "v1", "name": null, "released_at": null, "description": null,
+                "author": null}"#,
         )
-        .expect("release with null name/date/description");
+        .expect("release with null name/date/description/author");
         assert_eq!(release.name, "");
         assert_eq!(release.published_at, "");
         assert_eq!(release.description, "");
+        assert_eq!(release.author, "", "anonymised account → empty username");
     }
 
     #[test]
@@ -446,7 +580,8 @@ mod tests {
             "tag_name": "v1.0", "name": "Release 1.0",
             "released_at": "2026-01-02T03:04:05.000Z",
             "description": "the notes",
-            "_links": {"self": "https://gl/-/releases/v1.0"}
+            "_links": {"self": "https://gl/-/releases/v1.0"},
+            "author": {"username": "zelanton"}
         }"#;
         let rel: Release = vcs_cli_support::json::from_json(BINARY, json).expect("parse release");
         assert_eq!(
@@ -457,6 +592,7 @@ mod tests {
                 url: "https://gl/-/releases/v1.0".into(),
                 published_at: "2026-01-02T03:04:05.000Z".into(),
                 description: "the notes".into(),
+                author: "zelanton".into(),
             }
         );
     }

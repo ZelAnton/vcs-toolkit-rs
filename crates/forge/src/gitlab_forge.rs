@@ -318,6 +318,13 @@ fn map_issue(i: Issue) -> ForgeIssue {
         // GitLab's REST issue always carries labels/assignees — confirmed values.
         labels: Some(i.labels),
         assignees: Some(i.assignees),
+        // GitLab's REST issue always carries author/created_at/updated_at —
+        // confirmed values (an empty author is a *confirmed* anonymised account).
+        author: Some(i.author),
+        created_at: Some(i.created_at),
+        updated_at: Some(i.updated_at),
+        // milestone is genuinely optional per issue — pass the raw Option through.
+        milestone: i.milestone,
     }
 }
 
@@ -346,6 +353,8 @@ fn map_release(r: Release) -> ForgeRelease {
         // confirmed "not a draft / not a pre-release".
         draft: None,
         prerelease: None,
+        // GitLab's REST release always carries author — a confirmed value.
+        author: Some(r.author),
     }
 }
 
@@ -361,6 +370,13 @@ fn map_mr(mr: MergeRequest) -> ForgePr {
         draft: Some(mr.draft),
         labels: Some(mr.labels),
         assignees: Some(mr.assignees),
+        // GitLab's REST MR always carries author/created_at/updated_at —
+        // confirmed values (an empty author is a *confirmed* anonymised account).
+        author: Some(mr.author),
+        created_at: Some(mr.created_at),
+        updated_at: Some(mr.updated_at),
+        // milestone is genuinely optional per MR — pass the raw Option through.
+        milestone: mr.milestone,
     }
 }
 

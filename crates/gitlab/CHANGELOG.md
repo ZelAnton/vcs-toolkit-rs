@@ -19,6 +19,14 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   same rule as `mr_comment`/`issue_create`). All three are `at`-forwarded and have
   defaulted `Error::Unsupported` trait bodies so external implementers keep
   compiling; the exact argv is pinned by hermetic tests.
+- **`MergeRequest`/`Issue`/`Release` gain `author`/timestamp/`milestone` fields.**
+  `MergeRequest` and `Issue` gain `author: String`, `created_at: String`,
+  `updated_at: String` (GitLab REST's default fields, already in `glab`'s output —
+  no argv change needed), and `milestone: Option<String>`; `Release` gains
+  `author: String`. `author` and `milestone` flatten GitLab's nested User/
+  Milestone objects (`{"username": …}`/`{"title": …}`; a `null` — an anonymised
+  account, or no milestone attached — degrades to an empty string/`None` rather
+  than failing the parse).
 
 ### Changed
 -

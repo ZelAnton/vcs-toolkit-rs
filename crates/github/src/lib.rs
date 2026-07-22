@@ -159,15 +159,17 @@ pub use vcs_diff::Version as GitHubVersion;
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
-const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees";
+const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees,author,createdAt,updatedAt,milestone";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
-const ISSUE_LIST_FIELDS: &str = "number,title,state,body,url,labels,assignees";
-const ISSUE_VIEW_FIELDS: &str = "number,title,state,body,url,labels,assignees";
+const ISSUE_LIST_FIELDS: &str =
+    "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";
+const ISSUE_VIEW_FIELDS: &str =
+    "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
 const CHECK_FIELDS: &str = "name,state,bucket,workflow,link,startedAt,completedAt";
-const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt";
-const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isPrerelease";
+const RELEASE_LIST_FIELDS: &str = "tagName,name,isLatest,isDraft,isPrerelease,publishedAt,author";
+const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isPrerelease,author";
 
 /// Injection guard for bare positional argv slots: a caller-supplied value
 /// with a leading `-` is parsed by gh's CLI as a *flag* (verified: `gh api -evil` →
