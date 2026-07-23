@@ -10,6 +10,23 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **`is_view_absence` — tell a confirmed issue/PR absence apart from a format drift.**
+  `tea` has no single-item view, so `GiteaApi::issue_view`/`pr_view` synthesize one by
+  paging `tea … list`; a number that is genuinely absent can therefore only be reported
+  as a `processkit::Error::Parse` — the **same variant** a real format drift (our
+  positional parser rejecting tea's output, or tea's `unknown output type`) uses. The
+  new `vcs_gitea::is_view_absence(&err)` classifier recognises the deliberate
+  "confirmed absent" sentinel **by structure** (a shared message prefix the producing
+  sites and the classifier build from one constant), so a consumer — e.g. the scheduled
+  live CLI-drift test gate, or a caller mapping absence to its own `Ok(None)` —
+  distinguishes "this issue/PR doesn't exist" from "tea's output format drifted"
+  **without matching the error message text by hand**, and a real drift is never
+  misread as an absence. This makes the absence-vs-drift split a **documented, typed
+  contract** rather than an incidental string shape. The `issue_view`/`pr_view`
+  signatures and the absence `Error::Parse` value (its message included) are
+  **unchanged**, so existing consumers — including the `vcs-forge` facade's
+  `is_resource_not_found` — keep working; the page-safety-bound miss stays a distinct,
+  loud `Error::Parse` for which `is_view_absence` is `false`.
 - **Issue lifecycle methods.** `GiteaApi::issue_close(dir, number)` (`tea issues
   close <index>`) and `issue_reopen(dir, number)` (`tea issues reopen <index>`)
   flip an issue's state and return `Result<()>`; `issue_comment(dir, number, body)`
