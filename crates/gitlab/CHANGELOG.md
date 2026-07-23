@@ -10,6 +10,12 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Source-branch MR lookup.** `GitLabApi::mr_list_for_source_branch(dir,
+  source_branch)` lists up to 100 MRs for one source branch in every state
+  (`glab mr list --source-branch <branch> --all --per-page 100 --output json`),
+  independent of target; empty is a successful result. It is `at`-forwarded,
+  defaulted to `Unsupported` for external trait implementers, and applies the
+  shared flag-like/empty argument guard before spawning.
 - **Issue lifecycle methods.** `GitLabApi::issue_close(dir, number)` (`glab issue
   close <id>`) and `issue_reopen(dir, number)` (`glab issue reopen <id>`) flip an
   issue's state and return `Result<()>`; `issue_comment(dir, number, body)`

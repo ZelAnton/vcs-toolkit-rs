@@ -104,6 +104,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `forge_auth_status` | — | Whether the forge CLI reports an authenticated session. |
 | `forge_repo_view` | — | The repository/project on the forge (`Unsupported` on Gitea). |
 | `forge_pr_list` | — | Open pull/merge requests (up to 100; ~50 on Gitea). |
+| `forge_pr_for_branch` | `{ source_branch }` | PRs/MRs with that source branch in any state, independent of target (`Unsupported` on Gitea). |
 | `forge_pr_view` | `{ number }` | A single PR/MR by number (GitLab uses the project-scoped `iid`). |
 | `forge_pr_checks` | `{ number }` | The PR/MR's coarse CI status (`Unsupported` on Gitea). |
 | `forge_pr_diff` | `{ number }` | The PR/MR's diff, one file entry per changed file (`Unsupported` on Gitea). |

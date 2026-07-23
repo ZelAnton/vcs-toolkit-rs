@@ -181,9 +181,10 @@ const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isP
 /// Injection guard for bare positional argv slots: a caller-supplied value
 /// with a leading `-` is parsed by gh's CLI as a *flag* (verified: `gh api -evil` →
 /// flag parsing), and an empty value changes a command's
-/// meaning. Refuse both before anything spawns. Flag-VALUE positions
-/// (`--body <b>`, `--branch <b>`) need no guard — gh consumes the next token
-/// verbatim there (verified).
+/// meaning. Refuse both before anything spawns. Most flag-VALUE positions
+/// (`--body <b>`, `--branch <b>`) need no guard because gh consumes the next
+/// token verbatim; public PR list filters additionally use this guard as a
+/// defense-in-depth boundary for untrusted branch input.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
@@ -891,6 +892,19 @@ pub trait GitHubApi: Send + Sync {
     /// Pull requests for `dir` (`gh pr list --limit 100 --json …`). Returns up to
     /// 100 open PRs; use [`run`](GitHubApi::run) for more.
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
+    /// Pull requests whose source branch is `head`, in any state — open, closed,
+    /// or merged (`gh pr list --head <head> --state all --limit 100 --json …`).
+    /// Empty when none match; returns up to 100. A flag-like or empty `head` is
+    /// rejected before spawning so an untrusted branch cannot alter the command.
+    ///
+    /// **Defaulted** to `Error::Unsupported` so external trait implementers keep
+    /// compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_list_for_source_branch(&self, dir: &Path, head: &str) -> Result<Vec<PullRequest>> {
+        Err(Error::Unsupported {
+            operation: "pr_list_for_source_branch".into(),
+        })
+    }
     /// Pull requests that merge `head` into `base`, in any state — open, closed,
     /// or merged (`gh pr list --head <head> --base <base> --state all --limit 100
     /// --json …`). Each carries its title, URL, and `state`. Empty when none
@@ -1300,6 +1314,8 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         head: &str,
         base: &str,
     ) -> Result<Vec<PullRequest>> {
+        reject_flag_like("head", head)?;
+        reject_flag_like("base", base)?;
         // `--state all` so a closed/merged PR for this branch pair is reported
         // too, not just open ones (gh's default); the caller filters on `state`.
         self.core
@@ -1309,6 +1325,22 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                     [
                         "pr", "list", "--head", head, "--base", base, "--state", "all", "--limit",
                         "100", "--json", PR_FIELDS,
+                    ],
+                ),
+                |s| vcs_cli_support::json::from_json(BINARY, s),
+            )
+            .await
+    }
+
+    async fn pr_list_for_source_branch(&self, dir: &Path, head: &str) -> Result<Vec<PullRequest>> {
+        reject_flag_like("head", head)?;
+        self.core
+            .try_parse(
+                self.core.command_in(
+                    dir,
+                    [
+                        "pr", "list", "--head", head, "--state", "all", "--limit", "100", "--json",
+                        PR_FIELDS,
                     ],
                 ),
                 |s| vcs_cli_support::json::from_json(BINARY, s),
@@ -1826,6 +1858,7 @@ vcs_cli_support::at_forwarders! {
         fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn pr_list() -> Result<Vec<PullRequest>>;
+        fn pr_list_for_source_branch(head: &str) -> Result<Vec<PullRequest>>;
         fn pr_list_for_branch(head: &str, base: &str) -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn issue_list() -> Result<Vec<Issue>>;
@@ -2138,6 +2171,43 @@ mod tests {
                 "pr", "list", "--head", "feat/x", "--base", "main", "--state", "all", "--limit",
                 "100", "--json", PR_FIELDS
             ]
+        );
+    }
+
+    // A source-branch lookup deliberately omits `--base`, so a branch with PRs
+    // against different targets still finds every state of each PR.
+    #[tokio::test]
+    async fn pr_list_for_source_branch_filters_all_states_and_guards_head() {
+        use processkit::testing::RecordingRunner;
+        let json = r#"[{"number":9,"title":"Merge feat","state":"CLOSED","headRefName":"feat/x","baseRefName":"release","url":"https://gh/pr/9"}]"#;
+        let rec = RecordingRunner::replying(Reply::ok(json));
+        let gh = GitHub::with_runner(&rec);
+        let prs = gh
+            .pr_list_for_source_branch(Path::new("/repo"), "feat/x")
+            .await
+            .expect("pr_list_for_source_branch");
+        assert_eq!(prs[0].state, "CLOSED");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "pr", "list", "--head", "feat/x", "--state", "all", "--limit", "100", "--json",
+                PR_FIELDS
+            ]
+        );
+
+        let guarded = GitHub::with_runner(ScriptedRunner::new());
+        assert!(
+            guarded
+                .pr_list_for_source_branch(Path::new("/repo"), "--state=open")
+                .await
+                .is_err()
+        );
+        // Existing head/base filtering has the same pre-spawn guard.
+        assert!(
+            guarded
+                .pr_list_for_branch(Path::new("/repo"), "feat", "--state=open")
+                .await
+                .is_err()
         );
     }
 

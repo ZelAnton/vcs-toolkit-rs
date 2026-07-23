@@ -10,6 +10,13 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Source-branch PR lookup.** `GitHubApi::pr_list_for_source_branch(dir, head)`
+  lists up to 100 PRs for one head branch in every state (`gh pr list --head
+  <head> --state all --limit 100 --json …`), independent of base; empty is a
+  successful result. It is `at`-forwarded and defaulted to `Unsupported` for
+  external trait implementers. The existing `pr_list_for_branch(head, base)`
+  now applies the shared flag-like/empty argument guard to both filters, and the
+  new head-only method applies it before spawning too.
 - **GitHub Actions run control.** Three new `GitHubApi` methods close the CI
   automation loop alongside the existing read-only `run_list`/`run_view`/
   `run_watch`. `workflow_dispatch(dir, WorkflowDispatch)` fires a

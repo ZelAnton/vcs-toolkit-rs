@@ -251,9 +251,11 @@ pub const BINARY: &str = "glab";
 
 /// Injection guard for bare positional argv slots: a caller-supplied value with
 /// a leading `-` would be parsed by glab's CLI as a *flag*, and an empty value
-/// changes a command's meaning. Refuse both before anything spawns. Flag-VALUE
-/// positions (`--title <t>`, `--source-branch <b>`) need no guard — glab consumes
-/// the next token verbatim there.
+/// changes a command's meaning. Refuse both before anything spawns. Most
+/// flag-VALUE positions (`--title <t>`, `--source-branch <b>`) need no guard
+/// because glab consumes the next token verbatim; the public source-branch list
+/// filter additionally uses this guard as a defense-in-depth boundary for
+/// untrusted branch input.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
@@ -570,6 +572,24 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab mr list --per-page 100 --output json`). Returns up to 100 (100 is
     /// the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
     async fn mr_list(&self, dir: &Path) -> Result<Vec<MergeRequest>>;
+    /// Merge requests whose source branch is `source_branch`, in any state
+    /// (`glab mr list --source-branch <branch> --all --per-page 100 --output
+    /// json`). Empty when none match; returns up to 100. A flag-like or empty
+    /// branch is rejected before spawning so an untrusted branch cannot alter the
+    /// command.
+    ///
+    /// **Defaulted** to `Error::Unsupported` so external trait implementers keep
+    /// compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_list_for_source_branch(
+        &self,
+        dir: &Path,
+        source_branch: &str,
+    ) -> Result<Vec<MergeRequest>> {
+        Err(Error::Unsupported {
+            operation: "mr_list_for_source_branch".into(),
+        })
+    }
     /// A single merge request by its project-scoped number — GitLab's `iid`
     /// (`glab mr view <number> --output json`). Named `number` for consistency
     /// with the issue methods and the other forge wrappers (`vcs-github`/
@@ -859,6 +879,33 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             .try_parse(
                 self.core
                     .command_in(dir, ["mr", "list", "--per-page", "100", "--output", "json"]),
+                |s| vcs_cli_support::json::from_json(BINARY, s),
+            )
+            .await
+    }
+
+    async fn mr_list_for_source_branch(
+        &self,
+        dir: &Path,
+        source_branch: &str,
+    ) -> Result<Vec<MergeRequest>> {
+        reject_flag_like("source_branch", source_branch)?;
+        self.core
+            .try_parse(
+                self.core.command_in(
+                    dir,
+                    [
+                        "mr",
+                        "list",
+                        "--source-branch",
+                        source_branch,
+                        "--all",
+                        "--per-page",
+                        "100",
+                        "--output",
+                        "json",
+                    ],
+                ),
                 |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
@@ -1256,6 +1303,7 @@ vcs_cli_support::at_forwarders! {
         fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn mr_list() -> Result<Vec<MergeRequest>>;
+        fn mr_list_for_source_branch(source_branch: &str) -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
         fn mr_merge(number: u64, merge: MrMerge) -> Result<()>;
@@ -1485,6 +1533,39 @@ mod tests {
         assert_eq!(
             rec.only_call().args_str(),
             ["mr", "list", "--per-page", "100", "--output", "json"]
+        );
+    }
+
+    // Source-branch lookup covers open, closed, and merged MRs, and refuses a
+    // flag-like untrusted branch before a process is spawned.
+    #[tokio::test]
+    async fn mr_list_for_source_branch_builds_all_states_argv_and_guards_branch() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_list_for_source_branch(Path::new("/repo"), "feat/x")
+            .await
+            .expect("mr_list_for_source_branch");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "mr",
+                "list",
+                "--source-branch",
+                "feat/x",
+                "--all",
+                "--per-page",
+                "100",
+                "--output",
+                "json"
+            ]
+        );
+
+        let guarded = GitLab::with_runner(ScriptedRunner::new());
+        assert!(
+            guarded
+                .mr_list_for_source_branch(Path::new("/repo"), "--all")
+                .await
+                .is_err()
         );
     }
 

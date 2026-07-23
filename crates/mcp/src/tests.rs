@@ -464,6 +464,41 @@ async fn forge_tools_error_without_a_forge() {
         format!("{err:?}").contains("no forge"),
         "should mention no forge: {err:?}"
     );
+    let err = server
+        .forge_pr_for_branch(Parameters(PrForBranchParams {
+            source_branch: "feat/x".into(),
+        }))
+        .await
+        .expect_err("no forge");
+    assert!(format!("{err:?}").contains("no forge"), "{err:?}");
+}
+
+// Source-branch lookup is an ungated read that returns any-state PRs through
+// the forge facade.
+#[tokio::test]
+async fn forge_pr_for_branch_routes_without_write_access() {
+    let json = r#"[{"number":3,"title":"Bug","state":"MERGED","isDraft":false,"headRefName":"feat/x","baseRefName":"main","url":"u"}]"#;
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+    let out = server
+        .forge_pr_for_branch(Parameters(PrForBranchParams {
+            source_branch: "feat/x".into(),
+        }))
+        .await
+        .expect("branch lookup");
+    assert!(
+        result_json(&out).contains("Merged"),
+        "{}",
+        result_json(&out)
+    );
 }
 
 // The forge issue tools route to the forge handle: the read tool works in
@@ -1643,6 +1678,17 @@ fn truly_read_only_tools_keep_read_only_hint() {
     }
 }
 
+// This query calls a forge CLI and is intentionally classified with the K-017
+// non-destructive/idempotent pair rather than `readOnlyHint`.
+#[test]
+fn forge_pr_for_branch_annotation_is_non_destructive_and_idempotent() {
+    let tool = VcsMcpServer::forge_pr_for_branch_tool_attr();
+    let annotations = tool.annotations.expect("annotations present");
+    assert_eq!(annotations.read_only_hint, None);
+    assert_eq!(annotations.destructive_hint, Some(false));
+    assert_eq!(annotations.idempotent_hint, Some(true));
+}
+
 // T-068: reclassifying the jj-snapshotting reads must NOT change their
 // availability — they stay ordinary read tools, callable in the default
 // read-only mode. An op-log snapshot mutates neither tracked content nor refs, so
@@ -1731,6 +1777,7 @@ async fn in_process_client_lists_and_calls_tools() {
     assert!(names.contains(&"repo_snapshot"), "{names:?}");
     assert!(names.contains(&"repo_commit"), "{names:?}");
     assert!(names.contains(&"forge_pr_list"), "{names:?}");
+    assert!(names.contains(&"forge_pr_for_branch"), "{names:?}");
     assert!(names.contains(&"forge_pr_comment"), "{names:?}");
     assert!(names.contains(&"forge_pr_edit"), "{names:?}");
     assert!(names.contains(&"forge_pr_approve"), "{names:?}");

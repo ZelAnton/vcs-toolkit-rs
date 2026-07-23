@@ -489,6 +489,19 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// Pull/merge requests whose source branch matches `source_branch`, in any
+    /// state and regardless of their target branch. An empty list means there is
+    /// currently no PR/MR for that branch. **[`Unsupported`](Error::Unsupported)
+    /// on Gitea**, whose CLI has no source-branch filter.
+    pub async fn pr_for_branch(&self, source_branch: &str) -> Result<Vec<ForgePr>> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::pr_for_branch(c, &self.cwd, source_branch).await,
+            Backend::GitLab(c) => gitlab_forge::pr_for_branch(c, &self.cwd, source_branch).await,
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_for_branch")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_for_branch")),
+        }
+    }
+
     /// A single PR/MR by number (GitLab `iid`). On Gitea this **pages** a listing and
     /// filters (`tea` has no single-PR view), so it finds a PR past the ~50-row server
     /// page cap — a very large Gitea repo may issue several `tea` calls.
@@ -1065,6 +1078,13 @@ pub trait ForgeApi: Send + Sync {
     async fn repo_view(&self) -> Result<ForgeRepo>;
     /// See [`Forge::pr_list`](crate::Forge::pr_list).
     async fn pr_list(&self) -> Result<Vec<ForgePr>>;
+    /// See [`Forge::pr_for_branch`](crate::Forge::pr_for_branch). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_for_branch(&self, source_branch: &str) -> Result<Vec<ForgePr>> {
+        Err(Error::unsupported(self.kind(), "pr_for_branch"))
+    }
     /// See [`Forge::pr_view`](crate::Forge::pr_view).
     async fn pr_view(&self, number: u64) -> Result<ForgePr>;
     /// See [`Forge::pr_create`](crate::Forge::pr_create).
@@ -1188,6 +1208,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn pr_list(&self) -> Result<Vec<ForgePr>> {
         self.pr_list().await
+    }
+    async fn pr_for_branch(&self, source_branch: &str) -> Result<Vec<ForgePr>> {
+        self.pr_for_branch(source_branch).await
     }
     async fn pr_view(&self, number: u64) -> Result<ForgePr> {
         self.pr_view(number).await
@@ -1365,6 +1388,36 @@ mod tests {
         assert_eq!(prs[0].draft, Some(true));
         assert_eq!(prs[0].labels, Some(Vec::new()));
         assert_eq!(prs[0].assignees, Some(Vec::new()));
+    }
+
+    // Branch lookup is intentionally independent of the target branch and
+    // includes a closed PR; it is the post-push "does this branch already have a
+    // PR?" query rather than the open-list view.
+    #[tokio::test]
+    async fn pr_for_branch_maps_github_all_states() {
+        let json = r#"[{"number":7,"title":"X","state":"CLOSED","isDraft":false,"headRefName":"feat","baseRefName":"release","url":"u"}]"#;
+        let forge = github(ScriptedRunner::new().on(["gh", "pr", "list"], Reply::ok(json)));
+        let prs = forge.pr_for_branch("feat").await.unwrap();
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].state, ForgePrState::Closed);
+        assert_eq!(prs[0].target_branch, "release");
+    }
+
+    #[tokio::test]
+    async fn pr_for_branch_maps_gitlab_and_gitea_is_unsupported_without_spawn() {
+        let json = r#"[{"iid":12,"title":"X","state":"merged","source_branch":"feat","target_branch":"main","web_url":"u","draft":false}]"#;
+        let forge = gitlab(ScriptedRunner::new().on(["glab", "mr", "list"], Reply::ok(json)));
+        let prs = forge.pr_for_branch("feat").await.unwrap();
+        assert_eq!(prs[0].state, ForgePrState::Merged);
+
+        let forge = gitea(ScriptedRunner::new());
+        assert!(
+            forge
+                .pr_for_branch("feat")
+                .await
+                .unwrap_err()
+                .is_unsupported()
+        );
     }
 
     // GitLab `repo_view` maps a known "public" visibility to private == false.

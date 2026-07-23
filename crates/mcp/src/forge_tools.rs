@@ -41,6 +41,23 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Pull/merge requests whose source branch matches source_branch, in any state and regardless of target branch (Unsupported on Gitea).",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    pub async fn forge_pr_for_branch(
+        &self,
+        Parameters(p): Parameters<PrForBranchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .forge()?
+                .pr_for_branch(&p.source_branch)
+                .await
+                .map_err(forge_err)?,
+        )
+    }
+
+    #[tool(
         description = "A single pull/merge request by number.",
         annotations(read_only_hint = true)
     )]

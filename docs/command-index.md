@@ -6,9 +6,9 @@ CLI command inward** — "I know `git rebase --onto` / `jj parallelize` / `gh
 api`; is it covered by a typed method, or do I need the escape hatch?" Each
 table row is one typed method and the exact subcommand/flags it runs, sourced
 from the crate's trait definition (`GitApi`/`JjApi`/`GitHubApi`/`GitLabApi`/
-`GiteaApi` in `crates/*/src/lib.rs`) — the same source the per-crate guides
-document, cross-checked directly against the trait so a method the prose guide
-hasn't caught up to yet still shows up here.
+`GiteaApi` in `crates/*/src/lib.rs`) or, when labelled `Forge`, the portable
+`Forge` facade. The public methods are literally enumerated against these
+tables so a method the prose guide hasn't caught up to yet still shows up here.
 
 This index doubles as a **map of the untyped surface**: everything a wrapper's
 `run`/`run_raw` escape hatch reaches but no typed method models yet is a
@@ -320,7 +320,9 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `repo_view` | `repo view --json …` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
 | `pr_list` | `pr list --limit 100 --json …` | open PRs, ≤100 |
+| `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only |
 | `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state |
+| `Forge::pr_for_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; independent of target |
 | `pr_view` | `pr view <n> --json …` | |
 | `pr_create` | `pr create` | via `PrCreate`; returns URL |
 | `pr_merge` | `pr merge <n> --merge\|--squash\|--rebase [--auto] [--delete-branch]` | via `PrMerge` |
@@ -378,6 +380,8 @@ breadth.
 | `repo_view` | `repo view --output json` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
 | `mr_list` | `mr list --per-page 100 --output json` | ≤100 |
+| `mr_list_for_source_branch` | `mr list --source-branch <source_branch> --all --per-page 100 --output json` | any state; source branch only |
+| `Forge::pr_for_branch` | `mr list --source-branch <source_branch> --all --per-page 100 --output json` | any state; independent of target |
 | `mr_view` | `mr view <number> --output json` | `number` is GitLab's `iid` |
 | `mr_create` | `mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | via `MrCreate`; returns URL |
 | `mr_merge` | `mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | via `MrMerge` |
@@ -428,6 +432,7 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 |---|---|---|
 | `auth_status` | `login list --output json`, non-empty | `tea` has no per-instance auth status |
 | `pr_list` | `pr list --output json` | ≤~50 (Gitea server page cap) |
+| `Forge::pr_for_branch` | Unsupported | `tea` has no source-branch filter |
 | `pr_view` | `pr list --state all` (paged) + filter | synthesized — `tea` has no single-PR view |
 | `pr_create` | `pr create --title … --description … [--head …] [--base …]` | via `PrCreate`; returns tea's text output, **not** a URL |
 | `pr_merge` | `pr merge <number> --style merge\|rebase\|squash` | via `PrMerge`; no `auto`/`delete_branch` (`Unsupported`) |

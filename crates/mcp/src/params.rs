@@ -137,6 +137,13 @@ pub struct PrNumberParams {
     pub number: u64,
 }
 
+/// Pull/merge requests whose source branch matches this branch.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PrForBranchParams {
+    /// Source/head branch to query, independent of the target branch and state.
+    pub source_branch: String,
+}
+
 /// Open a pull/merge request.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrCreateParams {

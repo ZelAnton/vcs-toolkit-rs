@@ -10,6 +10,12 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Source-branch PR/MR lookup.** `Forge::pr_for_branch(source_branch)` returns
+  every GitHub PR / GitLab MR for that source branch regardless of target or
+  state (`gh pr list --head … --state all` / `glab mr list --source-branch …
+  --all`); an empty list means none exist. Gitea returns `Unsupported` before
+  spawning because `tea` has no source-branch filter. The operation is also on
+  `ForgeApi`, defaulted to `Unsupported` for external implementers.
 - **Variant-grain capability introspection.** The whole set of `Unsupported`
   outcomes is now predictable *before* the call, not just the whole-operation ones
   `Forge::supports(ForgeOp)` already covered. New probes:

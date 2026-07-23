@@ -27,6 +27,7 @@
 //!   ([`repo_snapshot`](VcsMcpServer::repo_snapshot),
 //!   [`repo_commit`](VcsMcpServer::repo_commit), …) over the `Repo` facade, and
 //!   the `forge_*` group ([`forge_pr_list`](VcsMcpServer::forge_pr_list),
+//!   [`forge_pr_for_branch`](VcsMcpServer::forge_pr_for_branch),
 //!   [`forge_pr_create`](VcsMcpServer::forge_pr_create), …) over the `Forge` one.
 //! - **Parameter structs** — one `Deserialize` + `JsonSchema` struct per
 //!   tool-with-arguments ([`CommitParams`], [`PrCreateParams`],

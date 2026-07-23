@@ -43,6 +43,19 @@ pub(crate) async fn pr_list<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> Res
     Ok(gh.pr_list(dir).await?.into_iter().map(map_pr).collect())
 }
 
+pub(crate) async fn pr_for_branch<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    source_branch: &str,
+) -> Result<Vec<ForgePr>> {
+    Ok(gh
+        .pr_list_for_source_branch(dir, source_branch)
+        .await?
+        .into_iter()
+        .map(map_pr)
+        .collect())
+}
+
 pub(crate) async fn pr_view<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
