@@ -1408,8 +1408,8 @@ mod tests {
     async fn gitea_pr_view_filters_and_maps_merged() {
         // tea's table shape: all-string values, flat head/base, merge folded
         // into the `state` column.
-        let json =
-            r#"[{"index":"9","title":"Nine","state":"merged","head":"f","base":"main","url":"u"}]"#;
+        let json = r#""index","title","state","head","base","url"
+"9","Nine","merged","f","main","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
         let pr = forge.pr_view(9).await.unwrap();
         assert_eq!(pr.state, ForgePrState::Merged);
@@ -1698,7 +1698,11 @@ mod tests {
         let forge = gitea(
             ScriptedRunner::new()
                 .on(["tea", "--version"], Reply::ok("tea version 0.9.2\n"))
-                .on(["tea", "login", "list"], Reply::ok(r#"[{"name":"a"}]"#)),
+                .on(
+                    ["tea", "login", "list"],
+                    Reply::ok(r#""Name","URL","SSHHost","User","Default"
+"a","","","","""#),
+                ),
         );
         let caps = forge.capabilities().await.unwrap();
         assert!(caps.authed, "gitea authed");
@@ -1937,7 +1941,8 @@ mod tests {
         assert_eq!(issues[0].body, "d");
 
         // tea's table shape: all-string values, `index` column.
-        let json = r#"[{"index":"9","title":"Y","state":"open","body":"b","url":"u"}]"#;
+        let json = r#""index","title","state","body","url"
+"9","Y","open","b","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].number, 9);
@@ -1979,7 +1984,8 @@ mod tests {
 
         // tea's release table: `toSnakeCase`d string keys (`tag-_name`,
         // `published _at`), no release-page URL column.
-        let json = r#"[{"tag-_name":"v1","title":"One","status":"prerelease","published _at":"2026-01-01T00:00:00Z"}]"#;
+        let json = r#""Tag-Name","Title","Published At","Status","Tar URL"
+"v1","One","2026-01-01T00:00:00Z","prerelease","""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].tag, "v1");
@@ -2000,8 +2006,8 @@ mod tests {
     async fn support_contract_unknown_vs_confirmed_per_backend() {
         // Gitea PR: draft/labels/assignees are all unknown (tea has no such
         // columns) — on both the list and the paged view path (same mapper).
-        let json =
-            r#"[{"index":"3","title":"T","state":"open","head":"f","base":"main","url":"u"}]"#;
+        let json = r#""index","title","state","head","base","url"
+"3","T","open","f","main","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(prs[0].draft, None, "tea PR draft is unknown");
@@ -2012,7 +2018,8 @@ mod tests {
         assert_eq!((pr.draft, pr.labels, pr.assignees), (None, None, None));
 
         // Gitea issue: labels/assignees unknown on the list path.
-        let list = r#"[{"index":"5","title":"I","state":"open","body":"b","url":"u"}]"#;
+        let list = r#""index","title","state","body","url"
+"5","I","open","b","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(list)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].labels, None);
@@ -2131,8 +2138,8 @@ mod tests {
 
         // Gitea PR/issue/release: author/timestamps/milestone are all unknown
         // (`None`) — `tea` has no such columns.
-        let json =
-            r#"[{"index":"3","title":"T","state":"open","head":"f","base":"main","url":"u"}]"#;
+        let json = r#""index","title","state","head","base","url"
+"3","T","open","f","main","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "pr", "list"], Reply::ok(json)));
         let prs = forge.pr_list().await.unwrap();
         assert_eq!(
@@ -2145,14 +2152,15 @@ mod tests {
             (None, None, None, None)
         );
 
-        let json = r#"[{"index":"5","title":"I","state":"open","body":"b","url":"u"}]"#;
+        let json = r#""index","title","state","body","url"
+"5","I","open","b","u""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "issues", "list"], Reply::ok(json)));
         let issues = forge.issue_list().await.unwrap();
         assert_eq!(issues[0].author, None);
         assert_eq!(issues[0].milestone, None);
 
-        let json = r#"[{"tag-_name":"v1","title":"One","status":"released",
-            "published _at":"2026-07-01T00:00:00Z"}]"#;
+        let json = r#""Tag-Name","Title","Published At","Status","Tar URL"
+"v1","One","2026-07-01T00:00:00Z","released","""#;
         let forge = gitea(ScriptedRunner::new().on(["tea", "releases", "list"], Reply::ok(json)));
         let rels = forge.release_list().await.unwrap();
         assert_eq!(rels[0].author, None, "tea releases have no author column");
