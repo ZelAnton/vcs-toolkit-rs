@@ -49,7 +49,12 @@ crates; tag releases as `vcs-core-v<version>`.
   consumer must not expose jj-specific API types. (T-108.)
 
 ### Changed
--
+- **Breaking:** `Error` is now an opaque struct wrapping `Box<ErrorKind>`.
+  `size_of::<Error>()` had grown to 120 bytes, bloating every `Result<T>`
+  and triggering clippy lints (see [issue #21](https://github.com/ZelAnton/vcs-toolkit-rs/issues/21)).
+  All previous `Error` variants are available in the new, `#[non_exhaustive]`
+  `ErrorKind` accessible through `err.kind()` or `err.into_kind()`.
+  The `is_*` classifiers are available on both `Error` and `ErrorKind`.
 
 ### Fixed
 - `Repo::at`, `Repo::from_git` and `Repo::from_jj` now **absolutise** the `root`/`cwd`

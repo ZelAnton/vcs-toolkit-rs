@@ -79,8 +79,8 @@ impl Repo<JobRunner> {
 
 `Repo::discover` detects the repository at or above `dir` and opens a handle
 **bound to `dir`**, using the real job-backed process runner. It errors with
-`Error::NotARepository(dir)` when no `.git`/`.jj` is found from the start dir up
-to the filesystem root, or with `Error::BareRepository(path)` when the walk
+`ErrorKind::NotARepository(dir)` when no `.git`/`.jj` is found from the start dir up
+to the filesystem root, or with `ErrorKind::BareRepository(path)` when the walk
 instead reaches a bare git repository (`git init --bare`) before finding a
 `.jj`/`.git` marker.
 
@@ -88,7 +88,7 @@ instead reaches a bare git repository (`git init --bare`) before finding a
 gitoxide (`gix::discover`/`gix::open`) and libgit2
 (`git_repository_discover`/`git_repository_open`). It checks **only** `dir`
 itself, with no ancestor walk: `dir` must directly hold the `.jj`/`.git` marker,
-or it errors with `Error::NotARepository(dir)` even if a repository exists
+or it errors with `ErrorKind::NotARepository(dir)` even if a repository exists
 somewhere above `dir`.
 
 For tests or a pre-configured client, build a handle from an explicit client —
@@ -114,7 +114,7 @@ where
 
 Reach for it when the handle needs a pre-configured client — a hardened `Git`, a
 per-command timeout, a custom runner — but you still want `discover`'s ancestor
-walk and its `Error::NotARepository` / `Error::BareRepository` classification
+walk and its `ErrorKind::NotARepository` / `ErrorKind::BareRepository` classification
 rather than rebuilding that logic. Because the `BackendKind` match lives inside
 `vcs-core` (where the enum is `#[non_exhaustive]`), the caller needs no
 wildcard/catch-all arm to maintain as backends are added.
@@ -457,7 +457,7 @@ a merge change probed and rolled back through the concurrency-safe
   that would misdescribe the on-disk state. On the jj backend this includes a
   rollback **refused** because a concurrent jj process advanced the operation log
   during the trial merge (reverting would clobber that work): it surfaces as
-  `Error::Rollback` rather than a stale `MergeProbe::Clean`/`Conflicts`.
+  `ErrorKind::Rollback` rather than a stale `MergeProbe::Clean`/`Conflicts`.
 
 ```rust,ignore
 # use vcs_core::MergeProbe;
@@ -488,13 +488,13 @@ on one would be wrong. On jj, which has no paused op, it reports `Conflict` dire
 `continue_in_progress` continues after conflict resolution (git: `commit --no-edit`
 for a merge / `rebase --continue` / `am --continue` / `cherry-pick --continue` /
 `revert --continue`; jj: a **no-op** — resolving the files *is* the continuation). A
-`git bisect` has no `--continue`, so it is refused with `Error::Unsupported` rather
+`git bisect` has no `--continue`, so it is refused with `ErrorKind::Unsupported` rather
 than silently reported still in progress. It returns the fresh *post-call* state:
 - `Conflict` when unresolved paths still block continuing (and **here git
   *does* report `Conflict`**, unlike `in_progress_state`), or when a continued
   rebase/cherry-pick/revert stops on the next commit's conflict.
 - `Clear` when the operation finished.
-- A `Bisect` has no continue step, so it returns `Error::Unsupported`
+- A `Bisect` has no continue step, so it returns `ErrorKind::Unsupported`
   (`is_unsupported()`) instead of a misleading success — end it with
   `abort_in_progress`, or mark commits with `git bisect good`/`bad` directly.
 
@@ -524,22 +524,22 @@ failed bookmark step **rolls back**: the workspace directory is removed only whe
 `workspace add` created it (a pre-existing directory the caller already had is
 left intact), then the workspace is forgotten. The rollback no longer discards its
 own residue — if it can't remove that directory or can't `forget` the workspace,
-the call fails with a composite `Error::Io` that **names** what still needs
+the call fails with a composite `ErrorKind::Io` that **names** what still needs
 cleaning up (and is safe to re-run) instead of hiding it. A **clean** rollback
 instead surfaces the original bookmark-step error unchanged (keeping its
-`Error::Vcs` classification) — so a failed call never silently leaks a half-made
+`ErrorKind::Vcs` classification) — so a failed call never silently leaks a half-made
 worktree.
 
 `remove_worktree` removes the worktree/workspace at `path`. For jj this resolves
 the workspace name by matching `path`, deletes the directory, then forgets it; a
-directory that can't be deleted is **reported** — an `Error::Io` naming the jj
+directory that can't be deleted is **reported** — an `ErrorKind::Io` naming the jj
 workspace still registered, so the retry is obvious, with the `forget` deferred to
 that retry rather than orphaning the directory. Path resolution has two failure
 shapes: a `path` that matches none of the **resolvable** workspaces — every
-registered workspace resolved and none matched — returns `Error::WorktreeNotFound`
+registered workspace resolved and none matched — returns `ErrorKind::WorktreeNotFound`
 (`is_resource_not_found() == true`); but when some registered workspace can **not**
 be resolved via `jj workspace root --name`, the path's absence can't be proven, so
-a **distinct** diagnosable `Error::Io` (naming the unresolved workspaces;
+a **distinct** diagnosable `ErrorKind::Io` (naming the unresolved workspaces;
 `is_resource_not_found()` stays `false`) is returned instead of a misleading
 `WorktreeNotFound`. (Contrast `cleanup_worktree_blocking` below, where a genuine
 no-match is an `Ok` no-op.)
@@ -656,7 +656,7 @@ Unifies the backends' different models of "mid-operation":
 | `ApplyMailbox` | A git `am` (mailbox patch apply) is in progress (`rebase-apply/applying`). Distinct from `Rebase` because it aborts/continues with `am --abort` / `am --continue`. git only. |
 | `CherryPick` | A git cherry-pick is in progress (`CHERRY_PICK_HEAD` present). Aborts with `cherry-pick --abort`, continues with `cherry-pick --continue`. A cherry-pick conflict writes `CHERRY_PICK_HEAD`, *not* `MERGE_HEAD`, so it's never read as a `Merge`. git only. |
 | `Revert`   | A git revert is in progress (`REVERT_HEAD` present). Aborts with `revert --abort`, continues with `revert --continue`. git only. |
-| `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `Error::Unsupported`. git only. |
+| `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `ErrorKind::Unsupported`. git only. |
 | `Conflict` | The working copy has an unresolved conflict — chiefly jj, which records conflicts on the change rather than pausing an operation. On git this surfaces from `continue_in_progress`, not `in_progress_state`. |
 
 ### `RepoSnapshot`

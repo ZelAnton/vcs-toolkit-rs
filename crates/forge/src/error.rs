@@ -145,7 +145,7 @@ impl Error {
     /// [`processkit::Error::is_transient`]. Narrower than
     /// [`is_transient_fetch_error`](Error::is_transient_fetch_error) (which also
     /// treats the network markers as retryable — but not a timeout). Mirrors
-    /// [`vcs_core::Error::is_transient`](https://docs.rs/vcs-core/latest/vcs_core/enum.Error.html#method.is_transient)
+    /// [`vcs_core::Error::is_transient`](https://docs.rs/vcs-core/latest/vcs_core/struct.Error.html#method.is_transient)
     /// so the classifier family is the same on both facades.
     pub fn is_transient(&self) -> bool {
         matches!(self, Error::Forge(e) if e.is_transient())
@@ -155,7 +155,7 @@ impl Error {
     /// a setup problem (the tool isn't installed or isn't on `PATH`), not a usage or
     /// network error. Delegates to [`processkit::Error::is_not_found`]; lets a caller
     /// surface a "please install gh/glab/tea" hint. Mirrors
-    /// [`vcs_core::Error::is_not_found`](https://docs.rs/vcs-core/latest/vcs_core/enum.Error.html#method.is_not_found).
+    /// [`vcs_core::Error::is_not_found`](https://docs.rs/vcs-core/latest/vcs_core/struct.Error.html#method.is_not_found).
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::Forge(e) if e.is_not_found())
     }

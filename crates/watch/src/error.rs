@@ -69,15 +69,16 @@ impl Error {
 
     /// The structured underlying [`processkit::Error`], if this error came from a
     /// VCS subprocess — flattening the two-level
-    /// `Vcs(`[`vcs_core::Error::Vcs`]`(_))` nesting so a caller (or a language
+    /// `Vcs(`[`vcs_core::ErrorKind::Vcs`]`(_))` nesting so a caller (or a language
     /// binding) can read its structured fields (`program`, plus `code`/`stdout`/
     /// `stderr` on an `Exit`) without hand-walking it. `None` for a `Notify`/`Io`
     /// failure or a non-subprocess `vcs-core` error (e.g. "not a repository").
     pub fn processkit_error(&self) -> Option<&processkit::Error> {
-        match self {
-            Error::Vcs(vcs_core::Error::Vcs(e)) => Some(e),
-            _ => None,
-        }
+        let Error::Vcs(e) = self else { return None };
+        let vcs_core::ErrorKind::Vcs(cause) = e.kind() else {
+            return None;
+        };
+        Some(cause)
     }
 }
 
@@ -203,7 +204,7 @@ mod tests {
     #[test]
     fn classifiers_and_accessor_reach_through_the_vcs_layer() {
         // A transient io/spawn hiccup from the underlying vcs-core query.
-        let transient = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::spawn(
+        let transient = Error::Vcs(vcs_core::Error::from(processkit::Error::spawn(
             "git",
             std::io::Error::from(std::io::ErrorKind::Interrupted),
         )));
@@ -219,7 +220,7 @@ mod tests {
         );
 
         // The VCS binary wasn't found (setup problem), not transient.
-        let missing = Error::Vcs(vcs_core::Error::Vcs(processkit::Error::not_found(
+        let missing = Error::Vcs(vcs_core::Error::from(processkit::Error::not_found(
             "jj", None,
         )));
         assert!(missing.is_not_found(), "missing binary is not-found");

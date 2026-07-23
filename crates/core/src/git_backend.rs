@@ -13,7 +13,7 @@ use crate::dto::{
     AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
     OperationState, Remote, RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 
 pub(crate) async fn current_branch<R: ProcessRunner>(
     git: &Git<R>,
@@ -472,11 +472,12 @@ pub(crate) async fn continue_in_progress<R: ProcessRunner>(
             }
         }
         OperationState::Bisect => {
-            return Err(Error::Unsupported(
+            return Err(ErrorKind::Unsupported(
                 "a git bisect has no continue step — mark commits with `git bisect \
                  good`/`bad`, or end it with abort_in_progress (`bisect reset`)"
                     .to_string(),
-            ));
+            )
+            .into());
         }
         OperationState::Clear | OperationState::Conflict => {}
     }
