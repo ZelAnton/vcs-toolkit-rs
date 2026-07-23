@@ -692,7 +692,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// unavailable) rather than failing the whole probe; a genuine spawn/timeout
     /// failure still propagates. The Unknown handle's map is the all-`false` shape
     /// (no spawn). The version probe is the same per-handle cache the mutating
-    /// version gate reads ([`VersionProbe`]), so `capabilities()` and a gated call
+    /// version gate reads (`VersionProbe`), so `capabilities()` and a gated call
     /// never probe `--version` twice on one handle; auth is always re-probed.
     pub async fn capabilities(&self) -> Result<ForgeCapabilities> {
         match &self.backend {
