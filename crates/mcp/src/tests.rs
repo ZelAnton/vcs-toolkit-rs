@@ -1678,15 +1678,15 @@ fn truly_read_only_tools_keep_read_only_hint() {
     }
 }
 
-// This query calls a forge CLI and is intentionally classified with the K-017
-// non-destructive/idempotent pair rather than `readOnlyHint`.
+// This query calls a forge CLI without touching the jj working copy, so it is
+// genuinely read-only and must advertise `readOnlyHint`.
 #[test]
-fn forge_pr_for_branch_annotation_is_non_destructive_and_idempotent() {
+fn forge_pr_for_branch_annotation_is_read_only() {
     let tool = VcsMcpServer::forge_pr_for_branch_tool_attr();
     let annotations = tool.annotations.expect("annotations present");
-    assert_eq!(annotations.read_only_hint, None);
-    assert_eq!(annotations.destructive_hint, Some(false));
-    assert_eq!(annotations.idempotent_hint, Some(true));
+    assert_eq!(annotations.read_only_hint, Some(true));
+    assert_eq!(annotations.destructive_hint, None);
+    assert_eq!(annotations.idempotent_hint, None);
 }
 
 // T-068: reclassifying the jj-snapshotting reads must NOT change their

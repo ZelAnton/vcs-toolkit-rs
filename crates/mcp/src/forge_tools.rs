@@ -42,7 +42,7 @@ impl VcsMcpServer {
 
     #[tool(
         description = "Pull/merge requests whose source branch matches source_branch, in any state and regardless of target branch (Unsupported on Gitea).",
-        annotations(destructive_hint = false, idempotent_hint = true)
+        annotations(read_only_hint = true)
     )]
     pub async fn forge_pr_for_branch(
         &self,

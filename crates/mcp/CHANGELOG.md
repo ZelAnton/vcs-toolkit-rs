@@ -13,7 +13,6 @@ crates; tag releases as `vcs-mcp-v<version>`.
 - `forge_pr_for_branch` read tool (`{ source_branch }`): returns every GitHub PR
   / GitLab MR for that source branch regardless of target or state through
   `Forge::pr_for_branch`; Gitea reports `Unsupported`. It is ungated and uses
-  `destructiveHint = false` plus `idempotentHint = true`, rather than
   `readOnlyHint`.
 - `repo_remotes`: read query returning configured remotes and fetch URLs through
   `Repo::remotes`. It uses `destructiveHint = false` plus `idempotentHint = true`,
