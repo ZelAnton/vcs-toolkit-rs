@@ -44,6 +44,9 @@ crates; tag releases as `vcs-mcp-v<version>`.
   (T-117.)
 
 ### Fixed
+- **`forge_pr_edit` now reports Gitea as unsupported.** Its tool and capability-map
+  descriptions no longer claim Gitea support: `tea` has no `pr edit` subcommand, so
+  calls return the facade's pre-spawn `Unsupported` error; use the Gitea REST API.
 - Forge auto-detection now reads `origin` through backend-agnostic
   `Repo::remotes`, so it works for non-colocated jj repositories as well as git
   and colocated jj checkouts. (T-109.)

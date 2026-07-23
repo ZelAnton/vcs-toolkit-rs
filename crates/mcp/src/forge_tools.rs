@@ -335,7 +335,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Edit a pull/merge request's title and/or body. At least one of `title` or `body` must be set; both absent is rejected up front as an invalid-params error. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        description = "Edit a GitHub pull request or GitLab merge request's title and/or body. Gitea is unsupported because tea has no pr edit command; use its REST API instead. On supported forges, at least one of `title` or `body` must be set; both absent is rejected up front as an invalid-params error. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
     pub async fn forge_pr_edit(
@@ -343,13 +343,13 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrEditParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_edit")?;
-        // No MCP-layer argv guard on `title`/`body` (see `forge_pr_comment`): every
-        // backend passes both in a flag-VALUE slot (`gh`/`tea` `--title`/`--body`/
-        // `--description`, `glab mr update --title`/`--description`), so a leading
+        // No MCP-layer argv guard on `title`/`body` (see `forge_pr_comment`): supported
+        // backends pass both in a flag-VALUE slot (`gh --title`/`--body`, `glab mr
+        // update --title`/`--description`), so a leading
         // `-` is safe here — refusing it wrongly rejected legitimate Markdown
-        // titles/bodies (T-013). The facade still rejects both-`None` with
-        // `InvalidInput` before spawning — a backstop the MCP tool surfaces as
-        // `invalid_params`.
+        // titles/bodies (T-013). The facade rejects Gitea structurally before this
+        // validation or any version probe; supported backends reject both-`None` with
+        // `InvalidInput`, which the MCP tool surfaces as `invalid_params`.
         let mut edit = vcs_forge::PrEdit::new();
         if let Some(title) = p.title {
             edit = edit.title(title);
@@ -477,7 +477,7 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, issue_close, issue_reopen, issue_comment, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, issue_close, issue_reopen, issue_comment, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_edit` and `pr_checks` are always false for Gitea; `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {

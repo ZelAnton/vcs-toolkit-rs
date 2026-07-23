@@ -32,8 +32,8 @@ pub enum Error {
         operation: &'static str,
     },
     /// The caller's input was refused by the facade before any CLI spawn —
-    /// e.g. [`crate::Forge::pr_edit`] with both `title` and `body` set to
-    /// `None`. Carries a short message naming what was wrong; surfaced by the
+    /// e.g. [`crate::Forge::pr_edit`] on a supported backend with both `title`
+    /// and `body` set to `None`. Carries a short message naming what was wrong; surfaced by the
     /// MCP layer as `ErrorData::invalid_params` so a client can fix the call.
     InvalidInput(String),
     /// A **mutating** operation was refused **before spawning** because the
@@ -239,7 +239,8 @@ impl Error {
 
     /// Whether this is an **input rejection** — a bad argument the facade refused
     /// before/without a useful CLI call: the facade's own
-    /// [`InvalidInput`](Error::InvalidInput) (e.g. `pr_edit` with nothing to change),
+    /// [`InvalidInput`](Error::InvalidInput) (e.g. `pr_edit` with nothing to change on
+    /// a supported backend),
     /// or a wrapper argument guard (`reject_flag_like`, e.g. a flag-like Gitea
     /// comment body). A caller bug, distinct from a forge/network failure; a binding
     /// maps it to a `ValueError`.

@@ -179,7 +179,8 @@ fn host_of(url: &str) -> Option<&str> {
 ///
 /// Most of these **vary by backend** — a backend may return
 /// [`Unsupported`](crate::Error::Unsupported) (Gitea's `tea` lacks a current-repo
-/// view, draft toggle, checks command, single-release view, and diff view; GitLab
+/// view, PR edit or draft-toggle command, checks command, single-release view, and diff
+/// view; GitLab
 /// has no "request changes" review action). [`PrCheckout`](ForgeOp::PrCheckout),
 /// [`PrApprove`](ForgeOp::PrApprove), and the three issue-lifecycle ops
 /// [`IssueClose`](ForgeOp::IssueClose) / [`IssueReopen`](ForgeOp::IssueReopen) /
@@ -213,6 +214,9 @@ fn host_of(url: &str) -> Option<&str> {
 pub enum ForgeOp {
     /// [`repo_view`](crate::Forge::repo_view) — current repo/project metadata.
     RepoView,
+    /// [`pr_edit`](crate::Forge::pr_edit) — edit a PR/MR title and/or body.
+    /// Unsupported on Gitea because `tea` has no `pr edit` subcommand.
+    PrEdit,
     /// [`pr_mark_ready`](crate::Forge::pr_mark_ready) — flip a draft PR to ready.
     PrMarkReady,
     /// [`pr_checks`](crate::Forge::pr_checks) — coarse CI status for a PR.
@@ -269,6 +273,7 @@ impl ForgeOp {
     /// are available on every real backend.
     pub const ALL: &'static [ForgeOp] = &[
         ForgeOp::RepoView,
+        ForgeOp::PrEdit,
         ForgeOp::PrMarkReady,
         ForgeOp::PrChecks,
         ForgeOp::ReleaseView,
@@ -1115,15 +1120,15 @@ impl PrMerge {
 }
 
 /// Options for [`pr_edit`](crate::ForgeApi::pr_edit) — the unified
-/// edit-a-PR/MR spec, mapped to each CLI's own flags
-/// (gh `--title`/`--body`, glab `--title`/`--description`, tea
-/// `--title`/`--description`).
+/// edit-a-PR/MR spec, mapped to each supported CLI's own flags
+/// (gh `--title`/`--body`, glab `--title`/`--description`). Gitea returns
+/// `Unsupported` because `tea` has no `pr edit` subcommand.
 ///
 /// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
-/// setters rather than a struct literal. At least one of `title` or `body` must
-/// be `Some`; both `None` is rejected by the facade before spawning (an explicit
-/// error, not a silent no-op). An empty string is a real value (clears the
-/// field) — not a `None`.
+/// setters rather than a struct literal. On supported backends, at least one of
+/// `title` or `body` must be `Some`; both `None` is rejected by the facade before
+/// spawning (an explicit error, not a silent no-op). An empty string is a real
+/// value (clears the field) — not a `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -1136,9 +1141,9 @@ pub struct PrEdit {
 }
 
 impl PrEdit {
-    /// An edit that leaves both fields alone (the facade rejects both-`None`
-    /// before reaching the wrapper). Start with this and add what you want to
-    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body).
+    /// Start an edit specification. On supported backends, add the fields to
+    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body); Gitea
+    /// always returns `Unsupported`.
     pub fn new() -> Self {
         Self {
             title: None,

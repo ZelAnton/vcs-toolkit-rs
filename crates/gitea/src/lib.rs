@@ -43,8 +43,8 @@
 //!   `tea.pr_list(dir)` — handy when one client drives one checkout.
 //! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
 //!   chained `.head` / `.base` setters named after the flags they emit),
-//!   [`PrEdit`] (optional `title` and/or `body` for `pr edit`), [`MergeStrategy`]
-//!   (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`), and [`PrMerge`]
+//!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`),
+//!   and [`PrMerge`]
 //!   (that strategy plus the gh-style `auto`/`delete_branch` options, which `tea`
 //!   reports `Unsupported` rather than silently drop).
 //!
@@ -53,8 +53,8 @@
 //! ([list](GiteaApi::pr_list) / [view](GiteaApi::pr_view) /
 //! [create](GiteaApi::pr_create) / [merge](GiteaApi::pr_merge) /
 //! [close](GiteaApi::pr_close) / [checkout](GiteaApi::pr_checkout) /
-//! [comment](GiteaApi::pr_comment) / [edit](GiteaApi::pr_edit) /
-//! [approve](GiteaApi::pr_approve) / [reject](GiteaApi::pr_reject)), issues
+//! [comment](GiteaApi::pr_comment) / [approve](GiteaApi::pr_approve) /
+//! [reject](GiteaApi::pr_reject)), issues
 //! ([list](GiteaApi::issue_list) / [view](GiteaApi::issue_view) /
 //! [create](GiteaApi::issue_create)), and [release listing](GiteaApi::release_list).
 //! It is deliberately narrower than
@@ -184,27 +184,25 @@ impl PrCreate {
     }
 }
 
-/// Options for [`GiteaApi::pr_edit`] (`tea pr edit`).
+/// Compatibility options for [`GiteaApi::pr_edit`].
 ///
 /// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
 /// [`title`](PrEdit::title) / [`body`](PrEdit::body) setters rather than a
-/// struct literal. At least one of `title` or `body` must be `Some`; both
-/// `None` is rejected by the facade before spawning (an explicit error, not a
-/// silent no-op). An empty string is a real value — tea clears the field on
-/// `--title ""` / `--description ""` — not a `None`.
+/// struct literal. `tea` has no `pr edit` subcommand, so the Gitea client and
+/// facade always return `Error::Unsupported` without spawning. This public type
+/// remains for source compatibility with the defaulted trait method.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PrEdit {
-    /// The new title (`--title`); `None` leaves the title alone.
+    /// The requested new title; retained for compatibility.
     pub title: Option<String>,
-    /// The new description (`--description`); `None` leaves the description alone.
+    /// The requested new description; retained for compatibility.
     pub body: Option<String>,
 }
 
 impl PrEdit {
-    /// An edit that leaves both fields alone (the facade rejects both-`None`
-    /// before reaching the wrapper). Start with this and add what you want to
-    /// change via [`title`](PrEdit::title) / [`body`](PrEdit::body).
+    /// Start a compatibility edit specification. Gitea always rejects it as
+    /// unsupported; use the Gitea REST API for edits instead.
     pub fn new() -> Self {
         Self {
             title: None,
@@ -212,13 +210,13 @@ impl PrEdit {
         }
     }
 
-    /// Set the new title (`--title`).
+    /// Set the requested new title.
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self
     }
 
-    /// Set the new description (`--description`).
+    /// Set the requested new description.
     pub fn body(mut self, body: impl Into<String>) -> Self {
         self.body = Some(body.into());
         self
@@ -618,13 +616,11 @@ pub trait GiteaApi: Send + Sync {
             operation: "pr_comment".into(),
         })
     }
-    /// Edit a pull request's title and/or description
-    /// (`tea pr edit [--title <title>] [--description <body>] <index>`). At
-    /// least one of `title` or `body` must be `Some` — the facade rejects
-    /// both-`None` before reaching the wrapper. **Defaulted** to
-    /// `Error::Unsupported`.
-    #[allow(unused_variables)]
-    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
+    /// `tea` has no `pr edit` subcommand, so editing a pull request's title or
+    /// description is unsupported by this client. This defaulted compatibility
+    /// method returns `Error::Unsupported` before any process spawns; use the
+    /// Gitea REST API instead.
+    async fn pr_edit(&self, _dir: &Path, _number: u64, _edit: PrEdit) -> Result<()> {
         Err(Error::Unsupported {
             operation: "pr_edit".into(),
         })
@@ -973,24 +969,6 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         self.core
             .run(self.core.command_in(dir, ["comment", n.as_str(), body]))
             .await
-    }
-
-    async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
-        // `--title` and `--description` are flag-VALUE positions: no argv-guard
-        // needed. The facade rejects both-`None` before reaching here; an empty
-        // string is intentional (clears the field).
-        let n = number.to_string();
-        let mut args = vec!["pr", "edit"];
-        if let Some(title) = edit.title.as_deref() {
-            args.push("--title");
-            args.push(title);
-        }
-        if let Some(body) = edit.body.as_deref() {
-            args.push("--description");
-            args.push(body);
-        }
-        args.push(n.as_str());
-        self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn pr_approve(&self, dir: &Path, number: u64) -> Result<()> {
@@ -1756,50 +1734,21 @@ mod tests {
         assert!(tea.pr_reject(Path::new("."), 7, "").await.is_err());
     }
 
-    // pr_edit emits only the flags the caller set. Flag-VALUE positions pass
-    // through verbatim — the facade rejects both-`None` before reaching here.
+    // tea has no `pr edit` subcommand. The compatibility method returns
+    // Unsupported through the trait default and must not spawn a degraded
+    // `tea pr list` command.
     #[tokio::test]
-    async fn pr_edit_emits_only_provided_fields() {
+    async fn pr_edit_is_unsupported_without_spawning() {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
-
-        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title("New title"))
+        let err = tea
+            .pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
             .await
-            .expect("title-only edit");
-        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().body("New body"))
-            .await
-            .expect("body-only edit");
-        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
-            .await
-            .expect("both-fields edit");
-
-        let calls = rec.calls();
-        assert_eq!(
-            calls[0].args_str(),
-            ["pr", "edit", "--title", "New title", "7"]
-        );
-        assert_eq!(
-            calls[1].args_str(),
-            ["pr", "edit", "--description", "New body", "7"]
-        );
-        assert_eq!(
-            calls[2].args_str(),
-            ["pr", "edit", "--title", "T", "--description", "B", "7"]
-        );
-    }
-
-    // An empty string is a real value (clears the field) — the argv must
-    // carry `--title ""` literally, not silently drop it.
-    #[tokio::test]
-    async fn pr_edit_some_empty_string_clears_field() {
-        let rec = RecordingRunner::replying(Reply::ok(""));
-        let tea = Gitea::with_runner(&rec);
-        tea.pr_edit(Path::new("/r"), 7, PrEdit::new().title(""))
-            .await
-            .expect("empty title");
-        assert_eq!(
-            rec.only_call().args_str(),
-            ["pr", "edit", "--title", "", "7"]
+            .unwrap_err();
+        assert!(matches!(err, Error::Unsupported { .. }), "{err:?}");
+        assert!(
+            rec.calls().is_empty(),
+            "unsupported operation must not spawn"
         );
     }
 

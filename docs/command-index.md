@@ -439,7 +439,7 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | `pr_close` | `pr close <number>` | |
 | `pr_checkout` | `pr checkout <number>` | mutates the working copy |
 | `pr_comment` | `comment <number> <body>` | shared with issues; flag-guarded body |
-| `pr_edit` | `pr edit <number> [--title …] [--description …]` | via `PrEdit`; ≥1 field required |
+| `pr_edit` | **Unsupported** (`tea` has no `pr edit` subcommand) | Use the Gitea REST API to edit title or description. |
 | `pr_approve` | `pr approve <number>` | |
 | `pr_reject` | `pr reject <number> <reason>` | required reason; flag-guarded |
 | `issue_list` | `issues list --output json` | ≤~50 |
@@ -468,8 +468,9 @@ hatch](../crates/gitea/docs/gitea.md#escape-hatch).
 `admin`, `issues comment`/`labels`, `label`, `login add`/`edit`/`delete`
 (only `login list`, internally, via `auth_status`), `milestone`,
 `notification`, `organization`, `releases assets`, `repos create`/`list`/
-`delete`, `times`, `whoami`. Reach any of these through `run`/`run_raw` —
-e.g. flipping a Gitea draft (a `WIP:` title prefix) via `pr edit`.
+`delete`, `times`, `whoami`. Reach any of these through `run`/`run_raw`; editing
+a Gitea PR title/description (including its `WIP:` draft prefix) instead requires
+the Gitea REST API because `tea` has no `pr edit` subcommand.
 
 ## Facade escape-hatch routers
 

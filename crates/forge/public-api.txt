@@ -132,6 +132,7 @@ pub vcs_forge::ForgeOp::PrApprove
 pub vcs_forge::ForgeOp::PrCheckout
 pub vcs_forge::ForgeOp::PrChecks
 pub vcs_forge::ForgeOp::PrDiff
+pub vcs_forge::ForgeOp::PrEdit
 pub vcs_forge::ForgeOp::PrMarkReady
 pub vcs_forge::ForgeOp::PrRequestChanges
 pub vcs_forge::ForgeOp::ReleaseCreate

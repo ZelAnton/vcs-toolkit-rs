@@ -99,7 +99,7 @@ configured.
 | `pr_merge(dir, number, merge)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
 | `pr_comment(dir, number, body)` | `tea comment <number> <body>` | `String` |
-| `pr_edit(dir, number, spec)` | `tea pr edit <number> [--title …] [--description …]` | `()` |
+| `pr_edit(dir, number, spec)` | **Unsupported** (`tea` has no `pr edit` subcommand) | Use the Gitea REST API. |
 | `pr_approve(dir, number)` | `tea pr approve <number>` | `()` |
 | `pr_reject(dir, number, body)` | `tea pr reject <number> <reason>` | `()` |
 
@@ -215,8 +215,8 @@ for rel in tea.release_list(repo).await? {
 ## Escape hatch
 
 `run`/`run_raw` (and the inherent `run_args`/`run_raw_args`) drive any unmodelled
-`tea` command — e.g. flipping a Gitea draft (a `WIP:` title prefix) via
-`tea pr edit`.
+`tea` command. Editing a Gitea PR title or description (including a `WIP:` draft
+prefix) requires the Gitea REST API because `tea` has no `pr edit` subcommand.
 
 **cwd (T-035).** On the **client** (`tea.run(…)`) these run in the **process's
 current directory**. On the **bound view** (`tea.at(dir).run(…)`) they are instead

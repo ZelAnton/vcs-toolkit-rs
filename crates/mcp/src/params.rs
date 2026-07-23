@@ -197,7 +197,8 @@ pub struct PrCommentParams {
     pub body: String,
 }
 
-/// Edit a pull/merge request's title and/or body.
+/// Edit a GitHub pull request or GitLab merge request's title and/or body.
+/// Gitea is unsupported because `tea` has no `pr edit` subcommand.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrEditParams {
     /// The PR/MR number.

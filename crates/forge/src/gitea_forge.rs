@@ -1,8 +1,8 @@
 //! Gitea-backed implementations of the facade operations: thin calls to the
 //! `vcs-gitea` client plus pure mappers from its types into the unified DTOs.
 //!
-//! `tea` has no current-repo view, draft toggle, PR-checks command, or
-//! single-release view, so `repo_view` / `pr_mark_ready` / `pr_checks` /
+//! `tea` has no current-repo view, PR edit, draft toggle, PR-checks command, or
+//! single-release view, so `repo_view` / `pr_edit` / `pr_mark_ready` / `pr_checks` /
 //! `release_view` have no function here — the [`Forge`](crate::Forge) dispatch
 //! returns [`Unsupported`](crate::Error::Unsupported) for the Gitea backend
 //! instead.
@@ -11,13 +11,13 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrEdit as GtPrEdit, PrMerge as GtPrMerge,
-    PullRequest, Release, ReleaseCreate as GtReleaseCreate,
+    Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrMerge as GtPrMerge, PullRequest, Release,
+    ReleaseCreate as GtReleaseCreate,
 };
 
 use crate::dto::{
     ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
-    PrEdit, PrMerge, ReleaseCreate,
+    PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -75,23 +75,6 @@ pub(crate) async fn pr_comment<R: ProcessRunner>(
     body: &str,
 ) -> Result<String> {
     Ok(tea.pr_comment(dir, number, body).await?)
-}
-
-pub(crate) async fn pr_edit<R: ProcessRunner>(
-    tea: &Gitea<R>,
-    dir: &Path,
-    number: u64,
-    edit: PrEdit,
-) -> Result<()> {
-    let mut t_edit = GtPrEdit::new();
-    if let Some(title) = edit.title {
-        t_edit = t_edit.title(title);
-    }
-    if let Some(body) = edit.body {
-        t_edit = t_edit.body(body);
-    }
-    tea.pr_edit(dir, number, t_edit).await?;
-    Ok(())
 }
 
 pub(crate) async fn pr_merge<R: ProcessRunner>(

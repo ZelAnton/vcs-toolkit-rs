@@ -9,6 +9,14 @@ crates; tag releases as `vcs-forge-v<version>`.
 
 ## [Unreleased]
 
+### Fixed
+- **Gitea `Forge::pr_edit` is now structurally unsupported.** `tea` 0.9.2 has no
+  `pr edit` subcommand and silently falls back to `pr list`; the facade now returns
+  `Error::Unsupported { forge: Gitea, operation: "pr_edit" }` before validating the
+  edit fields or probing the CLI, so it cannot report a no-op as success. Gitea's
+  `pr_edit` capability flag is now `false`; the added `ForgeOp::PrEdit` reports
+  `false` through `Forge::supports` for Gitea.
+
 ### Added
 - **Pre-spawn CLI-version gate on mutating operations.** New
   `Error::VersionUnsupported { forge, operation, found, minimum }` variant (on the
@@ -17,7 +25,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   `pr_comment`, `pr_edit`, `pr_merge`, `pr_approve`, `pr_request_changes`,
   `pr_mark_ready`, `pr_close`, `pr_checkout`, `issue_create`, `issue_close`,
   `issue_reopen`, `issue_comment`, `release_create`, `release_delete`) now refuses
-  with this typed error **before spawning** when the installed `gh`/`glab`/`tea` is
+  with this typed error **before spawning** when the operation is supported by its
+  backend and the installed `gh`/`glab`/`tea` is
   **confirmed** below the crate's version floor (gh ≥ 2.0, glab ≥ 1.25, tea ≥ 0.9) —
   an actionable "upgrade the CLI" signal instead of a cryptic deep-CLI failure. A
   version that can't be obtained or parsed is **fail-open** (the call proceeds as

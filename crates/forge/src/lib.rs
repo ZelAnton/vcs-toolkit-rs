@@ -409,8 +409,8 @@ impl<R: ProcessRunner> Forge<R> {
     /// [`ReleaseCreate`](ForgeOp::ReleaseCreate), [`ReleaseDelete`](ForgeOp::ReleaseDelete),
     /// and the three issue-lifecycle ops [`IssueClose`](ForgeOp::IssueClose) /
     /// [`IssueReopen`](ForgeOp::IssueReopen) / [`IssueComment`](ForgeOp::IssueComment)
-    /// but has no current-repo view, draft toggle, PR-checks command, single-release
-    /// view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
+    /// but has no current-repo view, PR edit or draft-toggle command, PR checks,
+    /// single-release view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
     /// classified CLI) supports nothing at all (every operation returns
     /// `Unsupported`). Every other facade operation works on all three real backends.
     /// (`release_create` is supported on all three even though its `draft`/`prerelease`
@@ -431,11 +431,12 @@ impl<R: ProcessRunner> Forge<R> {
             // `true` here made a UI render every op as available, each click then
             // failing with `Unsupported`.)
             (ForgeKind::Unknown, _) => false,
-            // The five operations `tea` can't do (it *does* ship approve/reject and
+            // The six operations `tea` can't do (it *does* ship approve/reject and
             // checkout); GitHub does everything.
             (
                 ForgeKind::Gitea,
                 ForgeOp::RepoView
+                | ForgeOp::PrEdit
                 | ForgeOp::PrMarkReady
                 | ForgeOp::PrChecks
                 | ForgeOp::ReleaseView
@@ -601,20 +602,31 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
-    /// Edit a PR/MR's title and/or body (see [`PrEdit`]). At least one of
-    /// `title` or `body` must be `Some` — both-`None` is rejected by the
-    /// facade before any CLI is spawned.
+    /// Edit a GitHub PR or GitLab MR's title and/or body (see [`PrEdit`]).
+    /// **[`Unsupported`](Error::Unsupported) on Gitea** because `tea` has no
+    /// `pr edit` subcommand; use the Gitea REST API instead. Gitea rejects every
+    /// spec before validating its fields or probing the CLI version.
     pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
-        if edit.title.is_none() && edit.body.is_none() {
-            return Err(Error::InvalidInput(
-                "pr_edit: at least one of title or body must be set".into(),
-            ));
-        }
-        self.gate_version("pr_edit").await?;
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_edit(c, &self.cwd, number, edit).await,
-            Backend::GitLab(c) => gitlab_forge::mr_edit(c, &self.cwd, number, edit).await,
-            Backend::Gitea(c) => gitea_forge::pr_edit(c, &self.cwd, number, edit).await,
+            Backend::GitHub(c) => {
+                if edit.title.is_none() && edit.body.is_none() {
+                    return Err(Error::InvalidInput(
+                        "pr_edit: at least one of title or body must be set".into(),
+                    ));
+                }
+                self.gate_version("pr_edit").await?;
+                github_forge::pr_edit(c, &self.cwd, number, edit).await
+            }
+            Backend::GitLab(c) => {
+                if edit.title.is_none() && edit.body.is_none() {
+                    return Err(Error::InvalidInput(
+                        "pr_edit: at least one of title or body must be set".into(),
+                    ));
+                }
+                self.gate_version("pr_edit").await?;
+                gitlab_forge::mr_edit(c, &self.cwd, number, edit).await
+            }
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_edit")),
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_edit")),
         }
     }
@@ -1132,8 +1144,8 @@ fn static_gitlab_caps() -> ForgeCapabilities {
     }
 }
 
-/// The "what the CLI ships" map for Gitea. `pr_checks` is `false` (no `tea`
-/// checks command), and `pr_comment` depends on Q3-R: `tea comment <index>`
+/// The "what the CLI ships" map for Gitea. `pr_edit` and `pr_checks` are `false`
+/// (no `tea pr edit` or checks command), and `pr_comment` depends on Q3-R: `tea comment <index>`
 /// is documented to hit both issues and PRs (the `index` space is shared).
 /// The capability table reports `true`; the wrapper layer is the source of
 /// truth, and a future `tea` that drops PR-comment support would return
@@ -1143,7 +1155,7 @@ fn static_gitea_caps() -> ForgeCapabilities {
     ForgeCapabilities {
         pr_create: true,
         pr_comment: true,
-        pr_edit: true,
+        pr_edit: false,
         pr_checks: false,
         pr_merge: true,
         // `tea` ships both `pr approve` and `pr reject` (request-changes).
@@ -1238,8 +1250,8 @@ pub trait ForgeApi: Send + Sync {
         Err(Error::unsupported(self.kind(), "pr_comment"))
     }
     /// See [`Forge::pr_edit`](crate::Forge::pr_edit). **Defaulted** to
-    /// `Error::Unsupported` (the real impl rejects both-`None` with
-    /// `Error::InvalidInput` before any spawn).
+    /// `Error::Unsupported` (the real implementation rejects both-`None` with
+    /// `Error::InvalidInput` on supported backends before any spawn).
     #[allow(unused_variables)]
     async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()> {
         Err(Error::unsupported(self.kind(), "pr_edit"))
@@ -1631,7 +1643,7 @@ mod tests {
         assert_eq!(pr.target_branch, "main");
     }
 
-    // The Gitea backend reports the five unmodelled ops as Unsupported, naming
+    // The Gitea backend reports the six unmodelled ops as Unsupported, naming
     // the operation — and without spawning anything.
     #[tokio::test]
     async fn gitea_unsupported_ops_error_without_spawning() {
@@ -1639,6 +1651,10 @@ mod tests {
         let forge = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
         for err in [
             forge.repo_view().await.unwrap_err(),
+            forge
+                .pr_edit(1, PrEdit::new().title("T").body("B"))
+                .await
+                .unwrap_err(),
             forge.pr_mark_ready(1).await.unwrap_err(),
             forge.pr_checks(1).await.unwrap_err(),
             forge.release_view("v1.0.0").await.unwrap_err(),
@@ -1741,10 +1757,9 @@ mod tests {
         }
     }
 
-    // pr_edit rejects both-None with InvalidInput BEFORE any spawn — the
-    // explicit-error path per spec §2.
+    // A supported backend rejects both-None with InvalidInput before any spawn.
     #[tokio::test]
-    async fn pr_edit_both_none_is_invalid_input_not_unsupported() {
+    async fn pr_edit_both_none_is_invalid_input_on_supported_backend() {
         let forge = github(ScriptedRunner::new()); // no scripted rules: a spawn would error
         let err = forge.pr_edit(7, PrEdit::new()).await.unwrap_err();
         assert!(
@@ -1901,12 +1916,12 @@ mod tests {
         assert!(!caps.pr_create && !caps.issue_create, "ops zeroed");
     }
 
-    // Gitea's static map is the intersection of its CLI: `pr_checks` is the
-    // only false when authed on a modern `tea` (no `tea` checks command).
+    // Gitea's static map is the intersection of its CLI: `pr_edit` and `pr_checks`
+    // are false when authed on a modern `tea` (no such tea commands).
     // Everything else is `true` post-fork. `capabilities()` probes `tea --version`
     // too, so script a modern banner above the 0.9 floor.
     #[tokio::test]
-    async fn gitea_capabilities_authed_has_only_pr_checks_false() {
+    async fn gitea_capabilities_authed_has_pr_edit_and_pr_checks_false() {
         // Gitea's auth probe parses `tea login list --output json` on a zero
         // exit and reports authed = (the array is non-empty). Script a non-empty
         // array so the probe reports authed; `[]` would read as not-authed.
@@ -1935,7 +1950,8 @@ mod tests {
         assert!(!caps.pr_checks, "gitea has no checks command");
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
-        assert!(caps.pr_edit);
+        assert!(!caps.pr_edit, "gitea has no pr edit command");
+        assert!(!forge.supports(ForgeOp::PrEdit));
         assert!(caps.pr_merge);
         assert!(caps.pr_approve, "tea ships `pr approve`");
         assert!(caps.pr_request_changes, "tea ships `pr reject`");
@@ -2927,8 +2943,9 @@ mod tests {
     // A CLI **confirmed** below the crate's version floor refuses every mutating op
     // with `VersionUnsupported` BEFORE the mutating command spawns — only the
     // `--version` probe runs, never the mutation. Covers the four core mutating ops
-    // (pr_create / pr_edit / pr_merge / issue_create) on one backend of each type
-    // (GitHub 1.14 < 2.0, GitLab 1.20 < 1.25, Gitea 0.8 < 0.9).
+    // (pr_create / pr_edit / pr_merge / issue_create) on GitHub and GitLab, plus the
+    // Gitea operations that tea can actually perform (GitHub 1.14 < 2.0, GitLab
+    // 1.20 < 1.25, Gitea 0.8 < 0.9).
     #[tokio::test]
     async fn mutating_ops_gated_below_version_floor_without_spawn() {
         // One gated mutating call: `VersionUnsupported` (not a structural
@@ -3005,9 +3022,6 @@ mod tests {
         let rec = old_tea();
         let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
         assert_gated(&rec, f.pr_create(PrCreate::new("T", "B")).await.map(|_| ()));
-        let rec = old_tea();
-        let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
-        assert_gated(&rec, f.pr_edit(7, PrEdit::new().title("X")).await);
         let rec = old_tea();
         let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
         assert_gated(&rec, f.pr_merge(7, PrMerge::merge()).await);
