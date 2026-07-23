@@ -585,7 +585,7 @@ pub trait GiteaApi: Send + Sync {
     /// body, and the optional head (`None` = the current branch) and base
     /// (`None` = the repo default) branches.
     async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
-    /// Merge a pull request (`tea pr merge <number> --style merge|rebase|squash`).
+    /// Merge a pull request (`tea pr merge --style merge|rebase|squash <number>`).
     /// Takes a [`PrMerge`] spec (the [`MergeStrategy`] plus the gh-style
     /// `auto`/`delete_branch` options). `tea` can express **neither** `auto` nor
     /// `delete_branch` through this wrapper, so requesting either returns a
@@ -619,7 +619,7 @@ pub trait GiteaApi: Send + Sync {
         })
     }
     /// Edit a pull request's title and/or description
-    /// (`tea pr edit <index> [--title <title>] [--description <body>]`). At
+    /// (`tea pr edit [--title <title>] [--description <body>] <index>`). At
     /// least one of `title` or `body` must be `Some` — the facade rejects
     /// both-`None` before reaching the wrapper. **Defaulted** to
     /// `Error::Unsupported`.
@@ -942,7 +942,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         self.core
             .run_unit(self.core.command_in(
                 dir,
-                ["pr", "merge", n.as_str(), "--style", merge.strategy.style()],
+                ["pr", "merge", "--style", merge.strategy.style(), n.as_str()],
             ))
             .await
     }
@@ -980,7 +980,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         // needed. The facade rejects both-`None` before reaching here; an empty
         // string is intentional (clears the field).
         let n = number.to_string();
-        let mut args = vec!["pr", "edit", n.as_str()];
+        let mut args = vec!["pr", "edit"];
         if let Some(title) = edit.title.as_deref() {
             args.push("--title");
             args.push(title);
@@ -989,6 +989,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             args.push("--description");
             args.push(body);
         }
+        args.push(n.as_str());
         self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
@@ -1640,7 +1641,7 @@ mod tests {
             .expect("merge");
         assert_eq!(
             rec.only_call().args_str(),
-            ["pr", "merge", "5", "--style", "squash"]
+            ["pr", "merge", "--style", "squash", "5"]
         );
 
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -1775,15 +1776,15 @@ mod tests {
         let calls = rec.calls();
         assert_eq!(
             calls[0].args_str(),
-            ["pr", "edit", "7", "--title", "New title"]
+            ["pr", "edit", "--title", "New title", "7"]
         );
         assert_eq!(
             calls[1].args_str(),
-            ["pr", "edit", "7", "--description", "New body"]
+            ["pr", "edit", "--description", "New body", "7"]
         );
         assert_eq!(
             calls[2].args_str(),
-            ["pr", "edit", "7", "--title", "T", "--description", "B"]
+            ["pr", "edit", "--title", "T", "--description", "B", "7"]
         );
     }
 
@@ -1798,7 +1799,7 @@ mod tests {
             .expect("empty title");
         assert_eq!(
             rec.only_call().args_str(),
-            ["pr", "edit", "7", "--title", ""]
+            ["pr", "edit", "--title", "", "7"]
         );
     }
 

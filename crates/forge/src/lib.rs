@@ -2583,7 +2583,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             only_mutation(&rec).args_str(),
-            ["pr", "merge", "5", "--style", "merge"]
+            ["pr", "merge", "--style", "merge", "5"]
         );
     }
 

@@ -62,6 +62,10 @@ crates; tag releases as `vcs-gitea-v<version>`.
   and the `Issue` DTO are **unchanged**; a genuine absence is an `Error::Parse`.
 
 ### Fixed
+- **PR mutation argv now puts flags before the index.** `GiteaApi::pr_merge` emits
+  `tea pr merge --style <style> <index>`, and `GiteaApi::pr_edit` emits optional
+  `--title`/`--description` flags before `<index>`. This is required by tea 0.9.x's
+  urfave-cli parser, which stops parsing flags after the first bare positional.
 - **Empty/header-only reads parse as an empty list; `unknown output type` is a loud
   error.** tea always prints a DSV header even for zero rows, and some builds print
   nothing — both now read as an empty list rather than an error, while the
