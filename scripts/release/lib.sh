@@ -78,7 +78,7 @@ crate_deps() {
     vcs-forge)           echo "vcs-cli-support vcs-github vcs-gitlab vcs-gitea vcs-diff" ;;
     vcs-core)            echo "vcs-git vcs-jj vcs-diff vcs-cli-support" ;;
     vcs-watch)           echo "vcs-core" ;;
-    vcs-mcp)             echo "vcs-core vcs-forge" ;;
+    vcs-mcp)             echo "vcs-core vcs-forge vcs-cli-support" ;;
     *) echo "crate_deps: unknown crate '$1'" >&2; return 1 ;;
   esac
 }

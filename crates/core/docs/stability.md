@@ -89,6 +89,18 @@ feature requires it — not casually.
 
 ## Public-API review checklist (the 1.0 gate)
 
+This checklist is backed by an automatic **snapshot gate** so accidental drift
+can't depend on a reviewer noticing it: the
+[`public-api` CI job](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/.github/workflows/ci.yml)
+diffs every published crate's exported surface against its committed
+`crates/<crate>/public-api.txt` and fails — printing the diff — on any change.
+The machine mechanically catches *that* the surface moved *and what* moved; the
+review below is the human *judgment* each change still needs (is it intended,
+additive vs. breaking, changelog-worthy?). See the "Public-API snapshots" section
+of
+[CONTRIBUTING.md](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/CONTRIBUTING.md)
+for how to update a snapshot deliberately.
+
 Before any crate is tagged `1.0`, its public surface is reviewed against the
 invariants this workspace already holds (most are enforced today; 1.0 makes them
 a promise):

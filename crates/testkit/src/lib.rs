@@ -458,6 +458,29 @@ impl JjSandbox {
         JjSandbox { dir }
     }
 
+    /// Create a **non**-colocated jj-only workspace (no `.git`), forcing
+    /// non-colocation via a `--config git.colocate=false` override at init
+    /// time, with the same deterministic jj identity as [`Self::init`].
+    ///
+    /// The override is deliberately explicit: like [`Self::colocated`]'s
+    /// `--colocate` flag, jj's default varies by version and can be changed
+    /// by `git.colocate` config — a host/CI with `git.colocate = true` set
+    /// globally would otherwise make plain `jj git init` create a `.git`
+    /// directory too, silently turning a "non-colocated" fixture into a
+    /// colocated one. `--config key=value` (rather than the older
+    /// `--config-toml` form) is used because it is the form supported across
+    /// the whole jj range this crate targets.
+    pub fn init_non_colocated(tag: &str) -> Self {
+        let dir = TempDir::new(tag);
+        run(
+            "jj",
+            dir.path(),
+            &["--config", "git.colocate=false", "git", "init"],
+        );
+        configure_jj_identity(dir.path());
+        JjSandbox { dir }
+    }
+
     /// Create a colocated jj/git workspace (`jj git init --colocate`) with
     /// deterministic jj and git identities.
     ///

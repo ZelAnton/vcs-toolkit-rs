@@ -9,8 +9,9 @@
 # the doctest run and, if a `nightly` toolchain is installed, the `docsrs`-cfg
 # build), the MSRV check (if the pinned toolchain is installed), per-feature
 # isolation checks, the test suite, `cargo deny check` (if `cargo-deny` is
-# installed), and `cargo package` for the crates that can be packaged
-# pre-publish.
+# installed), `cargo package` for the crates that can be packaged pre-publish,
+# and the public-api snapshot diff (Windows-only, when the pinned nightly and
+# cargo-public-api are installed — the committed baselines are Windows-shaped).
 #
 # Two jobs are deliberately NOT reproduced here and are reported as skipped:
 #   - `integration`: needs several *specific* `jj` versions plus `glab`/`tea`
@@ -53,18 +54,22 @@ Runs the locally-reproducible part of the CI gate.
                docsrs build when available), MSRV check (when the pinned
                toolchain is installed), per-feature isolation checks, the
                test suite, `cargo deny check` (when cargo-deny is installed),
-               and `cargo package` for the packageable crates.
+               `cargo package` for the packageable crates, and the public-api
+               snapshot diff (Windows-only, when the pinned nightly and
+               cargo-public-api are installed).
 
   --fast       Fast gate: fmt, clippy (both configurations), and the test
                suite only — skips doc, msrv, feature isolation, cargo-deny,
-               and cargo package.
+               cargo package, and the public-api snapshot.
 
   --help, -h   Show this help and exit.
 
 Steps that need tooling not installed locally (a `nightly` toolchain, the
-pinned MSRV toolchain, or `cargo-deny`) are skipped with an explicit message
-rather than failing. The `integration` and `semver` CI jobs are never run
-here — see the comment at the top of this script for why.
+pinned MSRV toolchain, `cargo-deny`, or `cargo-public-api`) are skipped with an
+explicit message rather than failing; so is the public-api snapshot on a
+non-Windows host, since its baselines are Windows-shaped (the authoritative
+check is CI's windows-latest `public-api` job). The `integration` and `semver`
+CI jobs are never run here — see the comment at the top of this script for why.
 EOF
 }
 
@@ -241,6 +246,68 @@ if [ "$FAST" -eq 1 ]; then
   skip "cargo package" "--fast mode"
 else
   step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit --locked
+fi
+
+# --- public-api snapshot (mirrors the `public-api` CI job) --------------
+# Diffs each crate's actual public surface against its committed
+# crates/*/public-api.txt baseline. The baselines are Windows-shaped (a few
+# public items are `#[cfg(unix)]`/`#[cfg(windows)]`-gated) and the tool needs a
+# nightly rustdoc, so the AUTHORITATIVE gate is CI's windows-latest `public-api`
+# job — reproduce it locally only when it can actually match (on Windows, with
+# the pinned nightly and cargo-public-api installed); otherwise skip explicitly.
+# Keep PA_NIGHTLY in lockstep with .github/workflows/ci.yml and CONTRIBUTING.md.
+PA_NIGHTLY=nightly-2026-06-25
+public_api_check() {
+  local tmp rc=0 dir name baseline
+  tmp="$(mktemp -d)"
+  # `<crate-dir> <package-name>` pairs — mirrors the CI job's list.
+  local pairs="
+  diff vcs-diff
+  cli-support vcs-cli-support
+  git vcs-git
+  jj vcs-jj
+  github vcs-github
+  gitlab vcs-gitlab
+  gitea vcs-gitea
+  forge vcs-forge
+  core vcs-core
+  testkit vcs-testkit
+  watch vcs-watch
+  mcp vcs-mcp
+  "
+  while read -r dir name; do
+    [ -z "$dir" ] && continue
+    baseline="crates/$dir/public-api.txt"
+    echo "    -- $name"
+    if ! cargo "+$PA_NIGHTLY" public-api -p "$name" --simplified --all-features \
+         </dev/null > "$tmp/$name.txt"; then
+      echo "!!  cargo public-api failed for $name" >&2
+      rc=1
+      continue
+    fi
+    if ! diff -u "$baseline" "$tmp/$name.txt"; then
+      echo "!!  public API of $name drifted from $baseline (regenerate per CONTRIBUTING.md if intended)" >&2
+      rc=1
+    fi
+  done <<< "$pairs"
+  return "$rc"
+}
+
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) PA_ON_WINDOWS=1 ;;
+  *)                    PA_ON_WINDOWS=0 ;;
+esac
+
+if [ "$FAST" -eq 1 ]; then
+  skip "public-api snapshot" "--fast mode"
+elif [ "$PA_ON_WINDOWS" -ne 1 ]; then
+  skip "public-api snapshot" "baselines are Windows-shaped; authoritative check is CI's windows-latest 'public-api' job"
+elif ! has_toolchain "$PA_NIGHTLY"; then
+  skip "public-api snapshot" "toolchain $PA_NIGHTLY not installed (rustup toolchain install $PA_NIGHTLY)"
+elif ! cargo public-api --version >/dev/null 2>&1; then
+  skip "public-api snapshot" "cargo-public-api not installed (cargo install cargo-public-api@0.52.0 --locked)"
+else
+  step "public-api snapshot" public_api_check
 fi
 
 echo

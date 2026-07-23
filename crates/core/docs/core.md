@@ -132,6 +132,66 @@ let repo = Repo::discover_with(
 # Ok(()) }
 ```
 
+## Cloning a repository
+
+```rust,ignore
+impl Repo<JobRunner> {
+    pub async fn clone(
+        backend: BackendKind,
+        url: &str,
+        dest: &Path,
+        spec: CloneSpec,
+    ) -> Result<Self>;
+}
+```
+
+Clone is the one facade operation with **no repository yet** — there is no handle to
+call a method on — so it is an **associated constructor** (like `discover` / `open`)
+that takes the `backend` explicitly, via the existing `BackendKind`, and returns a
+`Repo` bound to the freshly-cloned `dest`. It dispatches through the same per-backend
+adapters as everything else — `GitApi::clone_repo` on git, `JjApi::git_clone` on jj.
+
+`CloneSpec` unifies the two tools' clone options; the backends share **no** clone
+option, so each field is meaningful for exactly one backend and an option meant for the
+other is **rejected structurally** with `Error::Unsupported` *before anything spawns*
+(rather than silently dropped or surfaced as a raw CLI error):
+
+| Option | Backend | On the other backend |
+|---|---|---|
+| `branch(name)` — check out one branch (`--branch`) | git | jj → `Unsupported` |
+| `depth(n)` — shallow clone (`--depth`) | git | jj → `Unsupported` |
+| `bare()` — bare repository (`--bare`) | git | jj → `Unsupported` |
+| `colocate(bool)` — `.git` beside `.jj` (`--colocate`/`--no-colocate`) | jj | git → `Unsupported` |
+
+jj's colocate flag is always passed explicitly (its CLI default flipped across versions
+and is overridable via `git.colocate` config); when unset, the facade defaults a jj
+clone to a non-colocated (jj-only) checkout.
+
+`dest` is absolutised up front — the clone runs with no working directory and creates
+`dest` itself, so a relative path would resolve against the process cwd. A **non-empty**
+`dest` is refused by the backend; a **failed** clone cleans only a `dest` it *could have
+created* (absent/empty), never pre-existing caller data — this constructor delegates
+that "delete only a directory we could have created" guarantee to the clients and adds
+no cleanup of its own. It returns `Result<Repo>` because a clone can genuinely fail
+(network, auth, an occupied `dest`), unlike the infallible handle-builders above. There
+is intentionally **no MCP tool** for clone: an MCP server is bound to a single
+repository, and cloning sits outside that model.
+
+```rust,no_run
+# use std::path::Path;
+# use vcs_core::{BackendKind, CloneSpec, Repo};
+# async fn f() -> vcs_core::Result<()> {
+let repo = Repo::clone(
+    BackendKind::Git,
+    "https://example.com/r.git",
+    Path::new("/tmp/r"),
+    CloneSpec::new().branch("main"),
+)
+.await?;
+assert_eq!(repo.kind(), BackendKind::Git);
+# Ok(()) }
+```
+
 ### Properties and re-anchoring
 
 ```rust,ignore

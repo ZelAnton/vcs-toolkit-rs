@@ -151,6 +151,17 @@ impl VcsMcpServer {
         ok_json(&self.repo.local_branches().await.map_err(core_err)?)
     }
 
+    // `jj git remote list` ignores the working copy because it only reads static
+    // configuration. Keep the established backend-agnostic non-destructive,
+    // idempotent annotation rather than claiming a narrower readOnlyHint.
+    #[tool(
+        description = "Configured remotes with their fetch URLs. Does not snapshot jj's working copy; annotated non-destructive and idempotent, not readOnlyHint.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    pub async fn repo_remotes(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(&self.repo.remotes().await.map_err(core_err)?)
+    }
+
     // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
     // NOT readOnlyHint; still callable without a write gate).
     #[tool(

@@ -1,0 +1,73 @@
+pub mod vcs_testkit
+pub mod vcs_testkit::guide
+pub mod vcs_testkit::guide::testing
+pub struct vcs_testkit::BareRemote
+impl vcs_testkit::BareRemote
+pub fn vcs_testkit::BareRemote::path(&self) -> &std::path::Path
+pub fn vcs_testkit::BareRemote::seeded(&str) -> Self
+pub fn vcs_testkit::BareRemote::temp_dir(&self) -> &std::path::Path
+pub fn vcs_testkit::BareRemote::url(&self) -> alloc::string::String
+impl core::marker::Freeze for vcs_testkit::BareRemote
+impl core::marker::Send for vcs_testkit::BareRemote
+impl core::marker::Sync for vcs_testkit::BareRemote
+impl core::marker::Unpin for vcs_testkit::BareRemote
+impl core::marker::UnsafeUnpin for vcs_testkit::BareRemote
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::BareRemote
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::BareRemote
+pub struct vcs_testkit::GitSandbox
+impl vcs_testkit::GitSandbox
+pub fn vcs_testkit::GitSandbox::add_all(&self)
+pub fn vcs_testkit::GitSandbox::add_submodule(&self, &std::path::Path, &str)
+pub fn vcs_testkit::GitSandbox::branch(&self, &str)
+pub fn vcs_testkit::GitSandbox::checkout(&self, &str)
+pub fn vcs_testkit::GitSandbox::commit(&self, &str)
+pub fn vcs_testkit::GitSandbox::commit_file(&self, &str, &str, &str)
+pub fn vcs_testkit::GitSandbox::git(&self, &[&str])
+pub fn vcs_testkit::GitSandbox::init(&str) -> Self
+pub fn vcs_testkit::GitSandbox::path(&self) -> &std::path::Path
+pub fn vcs_testkit::GitSandbox::rev_parse(&self, &str) -> alloc::string::String
+pub fn vcs_testkit::GitSandbox::write(&self, &str, &str)
+impl core::marker::Freeze for vcs_testkit::GitSandbox
+impl core::marker::Send for vcs_testkit::GitSandbox
+impl core::marker::Sync for vcs_testkit::GitSandbox
+impl core::marker::Unpin for vcs_testkit::GitSandbox
+impl core::marker::UnsafeUnpin for vcs_testkit::GitSandbox
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::GitSandbox
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::GitSandbox
+pub struct vcs_testkit::JjSandbox
+impl vcs_testkit::JjSandbox
+pub fn vcs_testkit::JjSandbox::at_commit(&self) -> alloc::string::String
+pub fn vcs_testkit::JjSandbox::bookmark(&self, &str)
+pub fn vcs_testkit::JjSandbox::colocated(&str) -> Self
+pub fn vcs_testkit::JjSandbox::describe(&self, &str)
+pub fn vcs_testkit::JjSandbox::init(&str) -> Self
+pub fn vcs_testkit::JjSandbox::init_non_colocated(&str) -> Self
+pub fn vcs_testkit::JjSandbox::jj(&self, &[&str])
+pub fn vcs_testkit::JjSandbox::jj_capture(&self, &[&str]) -> alloc::string::String
+pub fn vcs_testkit::JjSandbox::new_change(&self, &str)
+pub fn vcs_testkit::JjSandbox::op_head(&self) -> alloc::string::String
+pub fn vcs_testkit::JjSandbox::path(&self) -> &std::path::Path
+pub fn vcs_testkit::JjSandbox::write(&self, &str, &str)
+impl core::marker::Freeze for vcs_testkit::JjSandbox
+impl core::marker::Send for vcs_testkit::JjSandbox
+impl core::marker::Sync for vcs_testkit::JjSandbox
+impl core::marker::Unpin for vcs_testkit::JjSandbox
+impl core::marker::UnsafeUnpin for vcs_testkit::JjSandbox
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::JjSandbox
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::JjSandbox
+pub struct vcs_testkit::TempDir(_)
+impl vcs_testkit::TempDir
+pub fn vcs_testkit::TempDir::new(&str) -> Self
+pub fn vcs_testkit::TempDir::path(&self) -> &std::path::Path
+impl core::ops::drop::Drop for vcs_testkit::TempDir
+pub fn vcs_testkit::TempDir::drop(&mut self)
+impl core::marker::Freeze for vcs_testkit::TempDir
+impl core::marker::Send for vcs_testkit::TempDir
+impl core::marker::Sync for vcs_testkit::TempDir
+impl core::marker::Unpin for vcs_testkit::TempDir
+impl core::marker::UnsafeUnpin for vcs_testkit::TempDir
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::TempDir
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::TempDir
+pub fn vcs_testkit::configure_identity(&std::path::Path)
+pub fn vcs_testkit::git(&std::path::Path, &[&str])
+pub fn vcs_testkit::jj(&std::path::Path, &[&str])

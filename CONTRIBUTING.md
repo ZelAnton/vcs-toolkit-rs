@@ -97,6 +97,110 @@ too noisy for performance conclusions.
 - **[Extending vcs-toolkit-rs](docs/extending.md)** — the full contributor workflow for
   adding capabilities: CLI methods, facade operations, MCP tools, and decision records.
 
+### Updating a `gh` CLI cassette
+
+A pilot in `vcs-github` replaces some hand-invented parser fixtures with
+**recorded cassettes**: `processkit`'s `RecordReplayRunner` (the `record`
+feature, enabled only for that crate's dev/test profile —
+`crates/github/Cargo.toml`'s `[dev-dependencies]`, no effect on the published
+library or any other workspace crate) runs the real `gh` **once** and captures
+every `Invocation → ProcessResult` pair to a human-diffable JSON file under
+`crates/github/tests/cassettes/`; the ordinary hermetic test suite then
+replays that file — no subprocess, no network, deterministic. See the
+[`processkit::cassette`](https://docs.rs/processkit) module docs for the
+mechanism (portable match key, `match_on_cwd`/`match_on_env` opt-ins,
+durability/concurrency of `save`).
+
+Re-record a cassette when the wrapped `gh` subcommand's output shape changes
+(a new/renamed `--json` field, a reshaped error) or you add a scenario:
+
+```bash
+# Requires network and an authenticated `gh` (`gh auth status`) against
+# ZelAnton/vcs-toolkit-rs, whose real releases/Actions runs the cassettes
+# capture. Re-run the specific `record_*` test(s) that cover the changed
+# subcommand — this overwrites only that cassette file.
+cargo test -p vcs-github -- --ignored record_release_round_trip
+cargo test -p vcs-github -- --ignored record_run_round_trip
+```
+
+Then run `cargo test -p vcs-github` (no `--ignored`) to confirm the replaying
+unit tests still pass against the freshly recorded file, and commit the
+cassette alongside the code/test change that motivated re-recording — never on
+its own in an unrelated PR.
+
+**A cassette diff is a change to an external contract, not a routine data
+update — review it explicitly, the way a `public-api.txt` diff is reviewed
+below.** The cassette *is* "what `gh` actually printed" on the recording run;
+a diff means that output changed (a new field, a reordered/renamed one, a
+different error shape) and whoever reviews it must confirm the wrapper's
+parser and any hermetic assertions still agree with the new shape before
+approving — never accept a re-recorded cassette as a silent, pass-through
+diff. A cassette also stores its invocation `program`/`args`/`cwd`/`stdout`/
+`stderr` verbatim (only env *values* are redacted, kept as variable names
+only) — skim a freshly recorded file for anything sensitive before committing
+it, same as reviewing any other fixture that touched a real service.
+
+**This is a distinct mechanism from the [scheduled CLI-drift
+lane](.github/workflows/scheduled-cli-drift.yml)**, which this pilot does not
+touch: a cassette answers "what did `gh` print when we last recorded", so it
+must fail loudly (not skip) when it's missing or stale relative to the code
+that expects it — replay's `Error::CassetteMiss` on an unmatched invocation
+does exactly that. The scheduled lane answers a different question, "has the
+*live* CLI's behavior drifted since then", running the real, latest binaries
+on a schedule and reporting drift as a tracking issue rather than failing a
+PR. Neither substitutes for the other, and neither may silently degrade into
+an environment-skip.
+
+### Public-API snapshots
+
+Every published crate carries a committed **`crates/<crate>/public-api.txt`** — a
+snapshot of its exported surface (public items, signatures, and the `Send`/`Sync`
+auto-trait impls), generated with
+[`cargo public-api`](https://github.com/cargo-public-api/cargo-public-api). The
+`public-api` CI job (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml))
+regenerates each crate's surface and **diffs it against the committed snapshot**,
+failing — and printing the unified diff — on any drift. This turns the pre-1.0
+public-API review in
+[`crates/core/docs/stability.md`](crates/core/docs/stability.md) into a
+*mechanical* gate: a new trait method, error variant, DTO field, or a changed
+signature can no longer slip in unnoticed, and the diff in the job log is exactly
+what to cross-check against that checklist.
+
+**A surface change is accepted deliberately, never auto-generated.** When a change
+moves the public API, CI fails against the now-stale snapshot. Do **not** blindly
+regenerate: first read the diff the job prints (or run the command below and
+inspect it), confirm every added/removed/changed item is intended and
+changelog-worthy, and only then overwrite the snapshot — committing it *in the
+same PR* as the code change so review sees the surface delta next to the code.
+
+Regenerate a crate's snapshot with:
+
+```bash
+cargo +nightly-2026-06-25 public-api -p <crate> \
+  --simplified --all-features > crates/<dir>/public-api.txt
+# e.g. -p vcs-core > crates/core/public-api.txt
+```
+
+Two things about the toolchain:
+
+- **Nightly, pinned.** `cargo public-api` reads rustdoc JSON, which is nightly
+  only, so this is the one job that needs a nightly toolchain. It pins the
+  *dated* `nightly-2026-06-25` (and `cargo-public-api` 0.52.0) **solely for this
+  job** — it does **not** touch the `1.88` MSRV the rest of the workspace holds.
+  Pinning keeps the type/auto-trait rendering reproducible, so a routine nightly
+  bump can't spuriously fail the gate; regenerate with that same nightly
+  (`rustup toolchain install nightly-2026-06-25`). Bumping the pinned nightly or
+  the tool is a deliberate maintenance step: rendering can shift between
+  nightlies, so it regenerates **every** `crates/*/public-api.txt` in one commit
+  and updates the pin in both [`ci.yml`](.github/workflows/ci.yml) and
+  [`scripts/gate`](scripts/gate).
+- **Windows-shaped.** A few public items are OS-gated (e.g.
+  `vcs-testkit::non_utf8_filename` is `#[cfg(unix)]`), so the surface differs by
+  OS. The baselines are generated on **Windows** and CI checks them on
+  `windows-latest`; regenerate on Windows (or let the CI job show you the diff) so
+  the checking OS matches the generating one. `scripts/gate` runs this check only
+  on Windows and skips it with a message elsewhere.
+
 ## Releasing
 
 Maintainer-only, via the **Release** GitHub Actions workflow (manual

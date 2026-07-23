@@ -10,6 +10,10 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `GitApi::remote_list` (also on `GitAt`): typed `git remote -v` listing. Its
+  tolerant parser coalesces fetch/push display rows to one `Remote { name, url }`
+  per configured remote and prefers the fetch URL, while malformed rows are
+  skipped without discarding valid remotes. (T-108.)
 - feat: working-tree management round-out — `GitApi::stash_list`, `stash_apply`,
   `stash_drop`, and `clean` (mirrored on the `GitAt` cwd-bound view). `stash_list`
   machine-parses `stash list -z --format=%gd%x1f%H%x1f%gs` into typed `StashEntry`

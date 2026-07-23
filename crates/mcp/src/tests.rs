@@ -246,19 +246,34 @@ async fn repo_diff_honours_inherited_output_budget() {
 // covers the non-UTF-8 fail-closed case).
 #[tokio::test]
 async fn repo_info_returns_utf8_paths() {
+    // `/repo` and `/repo/sub` are Unix-absolute but Windows-drive-relative;
+    // `Repo::from_git` absolutises `root`/`cwd` at construction (T-114), so
+    // `repo_info` reports the absolutised forms (drive-qualified on Windows).
+    let root = std::path::absolute("/repo").unwrap();
+    let cwd = std::path::absolute("/repo/sub").unwrap();
     let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
-        "/repo",
-        "/repo/sub",
+        root.clone(),
+        cwd.clone(),
         Git::with_runner(ScriptedRunner::new()),
     ));
     let server = VcsMcpServer::from_handles(repo, None, WriteGate::None);
     let out = server.repo_info().await.expect("repo_info ok");
-    let json = result_json(&out);
-    assert!(json.contains("backend"), "{json}");
-    assert!(json.contains("git"), "{json}");
-    assert!(json.contains("/repo"), "{json}");
-    assert!(json.contains("/repo/sub"), "{json}");
-    assert!(json.contains("forge"), "{json}");
+    // Parse the tool's own JSON body rather than substring-matching the escaped
+    // outer wire form: a Windows path's backslashes are JSON-escaped (and doubly
+    // so through the `CallToolResult` envelope), which a raw `contains` on the
+    // path can't reliably match. Parsing un-escapes both, keeping the check
+    // portable.
+    let text = out
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.clone())
+        .expect("text content");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("repo_info JSON");
+    assert_eq!(value["backend"], "git", "{text}");
+    assert_eq!(value["root"].as_str(), root.to_str(), "{text}");
+    assert_eq!(value["cwd"].as_str(), cwd.to_str(), "{text}");
+    assert!(value.get("forge").is_some(), "forge field present: {text}");
 }
 
 // T-062: `repo_info`'s `root`/`cwd` used to serialise through
@@ -1545,6 +1560,7 @@ fn jj_snapshotting_read_tools_are_not_read_only_but_non_destructive() {
         ("repo_log", VcsMcpServer::repo_log_tool_attr()),
         ("repo_show_file", VcsMcpServer::repo_show_file_tool_attr()),
         ("repo_branches", VcsMcpServer::repo_branches_tool_attr()),
+        ("repo_remotes", VcsMcpServer::repo_remotes_tool_attr()),
         ("repo_annotate", VcsMcpServer::repo_annotate_tool_attr()),
         (
             "repo_current_branch",
@@ -1645,6 +1661,7 @@ async fn reclassified_reads_stay_ungated_and_callable() {
         "repo_show_file",
         "repo_annotate",
         "repo_branches",
+        "repo_remotes",
         "repo_current_branch",
         "repo_conflicts",
         "repo_worktrees",

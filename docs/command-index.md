@@ -62,6 +62,7 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 | `remote_branch_exists` | `ls-remote origin refs/heads/<name>` | fully-qualified ref, 10s timeout |
 | `remote_head_branch` | `symbolic-ref refs/remotes/origin/HEAD` | `None` when unset |
 | `remote_url` | `remote get-url <remote>` | |
+| `remote_list` | `remote -v` | parsed `Vec<Remote>`; one fetch-URL row per remote |
 | `upstream` | `symbolic-ref --quiet --short HEAD` then `rev-parse --abbrev-ref --symbolic-full-name @{u}` | `None` on no upstream; error on detached |
 | `remote_branches` | `ls-remote --heads <remote>` | no fetch |
 | `rev_list_count` | `rev-list --count <range>` | |
@@ -226,7 +227,7 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `commit_count` | `log -r <revset> --no-graph` | one id per line |
 | `is_conflicted` | template query on the revset | |
 | `has_workingcopy_conflict` | `is_conflicted(dir, "@")` | |
-| `resolve_list` | `resolve --list -r <revset>` | lossless paths |
+| `resolve_list` | `file list -r <revset> -T 'if(conflict, path ++ "\0")'` | lossless paths |
 | `template_query` | `log -r <revset> --no-graph [--limit n] -T <template>` | snapshots the WC first |
 | `template_query_ignoring_working_copy` | adds `--ignore-working-copy` | read-only twin |
 | `description` | (template query) | trimmed, newest commit of a multi-commit revset |
@@ -298,7 +299,8 @@ hatches](../crates/jj/docs/jj.md#raw-escape-hatches).
 
 `config` (`list`/`edit`; only `get`/`set` are typed), `debug`, `file chmod`/
 `file track`/`file untrack`, `fix`, `git init`, `interdiff`, `next`/`prev`,
-`resolve` (interactive; only `resolve --list` via `resolve_list`),
+`resolve` (interactive; `resolve_list` reads conflicted paths via `file list`
+with a conflict template instead),
 `simplify-parents`, `util`. (`backout` was jj's older, since-removed name for
 `revert`, which is now typed — see [`revert`](#rebase-squashsplit-merging-sparse)
 above.) Reach any of these through `run`/`run_raw` — note the trait doc
@@ -473,7 +475,13 @@ dependency:
 
 - **`vcs-core`** — `Repo::git()` / `Repo::jj()` (the raw client, still
   `dir`-taking) and `Repo::git_at()` / `Repo::jj_at()` (the cwd-bound view,
-  `None` for the other backend). See [Escape hatches to the underlying
+  `None` for the other backend). Its portable `Repo::remotes()` wraps either
+  `GitApi::remote_list` or `JjApi::remote_list` and returns a facade-owned
+  name/URL DTO. Its portable `Repo::clone(backend, url, dest, spec)` — the one
+  associated constructor, since there is no handle yet — wraps either
+  `GitApi::clone_repo` or `JjApi::git_clone` under a unified `CloneSpec` (git's
+  `branch`/`depth`/`bare`, jj's `colocate`), structurally rejecting a
+  cross-backend option with `Error::Unsupported`. See [Escape hatches to the underlying
   client](../crates/core/docs/core.md#escape-hatches-to-the-underlying-client).
 - **`vcs-forge`** — the wrapper client directly (`GitHub::new().run_list(dir)…`),
   or the wrapper's `api`/`run` for anything beyond that. See [When to drop to

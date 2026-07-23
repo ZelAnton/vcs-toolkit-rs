@@ -1,0 +1,634 @@
+pub mod vcs_core
+pub use vcs_core::CancellationToken
+pub use vcs_core::ChangeKind
+pub use vcs_core::DiffStat
+pub use vcs_core::FileDiff
+pub use vcs_core::OutputBudget
+pub use vcs_core::processkit
+pub use vcs_core::vcs_git
+pub use vcs_core::vcs_jj
+pub mod vcs_core::guide
+pub mod vcs_core::guide::cookbook
+pub mod vcs_core::guide::positioning
+pub mod vcs_core::guide::process_model
+pub mod vcs_core::guide::stability
+#[non_exhaustive] pub enum vcs_core::BackendKind
+pub vcs_core::BackendKind::Git
+pub vcs_core::BackendKind::Jj
+impl vcs_core::BackendKind
+pub fn vcs_core::BackendKind::as_str(self) -> &'static str
+impl core::clone::Clone for vcs_core::BackendKind
+pub fn vcs_core::BackendKind::clone(&self) -> vcs_core::BackendKind
+impl core::cmp::Eq for vcs_core::BackendKind
+impl core::cmp::PartialEq for vcs_core::BackendKind
+pub fn vcs_core::BackendKind::eq(&self, &vcs_core::BackendKind) -> bool
+impl core::fmt::Debug for vcs_core::BackendKind
+pub fn vcs_core::BackendKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_core::BackendKind
+impl core::marker::StructuralPartialEq for vcs_core::BackendKind
+impl serde_core::ser::Serialize for vcs_core::BackendKind
+pub fn vcs_core::BackendKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::BackendKind
+impl core::marker::Send for vcs_core::BackendKind
+impl core::marker::Sync for vcs_core::BackendKind
+impl core::marker::Unpin for vcs_core::BackendKind
+impl core::marker::UnsafeUnpin for vcs_core::BackendKind
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::BackendKind
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::BackendKind
+#[non_exhaustive] pub enum vcs_core::CreateOutcome
+pub vcs_core::CreateOutcome::CowCloned
+pub vcs_core::CreateOutcome::Plain
+impl core::clone::Clone for vcs_core::CreateOutcome
+pub fn vcs_core::CreateOutcome::clone(&self) -> vcs_core::CreateOutcome
+impl core::cmp::Eq for vcs_core::CreateOutcome
+impl core::cmp::PartialEq for vcs_core::CreateOutcome
+pub fn vcs_core::CreateOutcome::eq(&self, &vcs_core::CreateOutcome) -> bool
+impl core::fmt::Debug for vcs_core::CreateOutcome
+pub fn vcs_core::CreateOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_core::CreateOutcome
+impl core::marker::StructuralPartialEq for vcs_core::CreateOutcome
+impl serde_core::ser::Serialize for vcs_core::CreateOutcome
+pub fn vcs_core::CreateOutcome::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::CreateOutcome
+impl core::marker::Send for vcs_core::CreateOutcome
+impl core::marker::Sync for vcs_core::CreateOutcome
+impl core::marker::Unpin for vcs_core::CreateOutcome
+impl core::marker::UnsafeUnpin for vcs_core::CreateOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::CreateOutcome
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::CreateOutcome
+#[non_exhaustive] pub enum vcs_core::Error
+pub vcs_core::Error::BareRepository(std::path::PathBuf)
+pub vcs_core::Error::Io(std::io::error::Error)
+pub vcs_core::Error::NotARepository(std::path::PathBuf)
+pub vcs_core::Error::Rollback(vcs_jj::Rollback)
+pub vcs_core::Error::Unsupported(alloc::string::String)
+pub vcs_core::Error::Vcs(processkit::error::Error)
+pub vcs_core::Error::WorktreeNotFound(std::path::PathBuf)
+impl vcs_core::Error
+pub fn vcs_core::Error::is_invalid_input(&self) -> bool
+pub fn vcs_core::Error::is_merge_conflict(&self) -> bool
+pub fn vcs_core::Error::is_not_found(&self) -> bool
+pub fn vcs_core::Error::is_nothing_to_commit(&self) -> bool
+pub fn vcs_core::Error::is_resource_not_found(&self) -> bool
+pub fn vcs_core::Error::is_transient(&self) -> bool
+pub fn vcs_core::Error::is_transient_fetch_error(&self) -> bool
+pub fn vcs_core::Error::is_unsupported(&self) -> bool
+impl core::convert::From<processkit::error::Error> for vcs_core::Error
+pub fn vcs_core::Error::from(processkit::error::Error) -> Self
+impl core::convert::From<std::io::error::Error> for vcs_core::Error
+pub fn vcs_core::Error::from(std::io::error::Error) -> Self
+impl core::error::Error for vcs_core::Error
+pub fn vcs_core::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for vcs_core::Error
+pub fn vcs_core::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for vcs_core::Error
+pub fn vcs_core::Error::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_core::Error
+impl core::marker::Send for vcs_core::Error
+impl core::marker::Sync for vcs_core::Error
+impl core::marker::Unpin for vcs_core::Error
+impl core::marker::UnsafeUnpin for vcs_core::Error
+impl !core::panic::unwind_safe::RefUnwindSafe for vcs_core::Error
+impl !core::panic::unwind_safe::UnwindSafe for vcs_core::Error
+#[non_exhaustive] pub enum vcs_core::MergeProbe
+pub vcs_core::MergeProbe::Clean
+pub vcs_core::MergeProbe::Conflicts(alloc::vec::Vec<std::path::PathBuf>)
+impl vcs_core::MergeProbe
+pub fn vcs_core::MergeProbe::is_clean(&self) -> bool
+impl core::clone::Clone for vcs_core::MergeProbe
+pub fn vcs_core::MergeProbe::clone(&self) -> vcs_core::MergeProbe
+impl core::cmp::Eq for vcs_core::MergeProbe
+impl core::cmp::PartialEq for vcs_core::MergeProbe
+pub fn vcs_core::MergeProbe::eq(&self, &vcs_core::MergeProbe) -> bool
+impl core::fmt::Debug for vcs_core::MergeProbe
+pub fn vcs_core::MergeProbe::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::MergeProbe
+impl serde_core::ser::Serialize for vcs_core::MergeProbe
+pub fn vcs_core::MergeProbe::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::MergeProbe
+impl core::marker::Send for vcs_core::MergeProbe
+impl core::marker::Sync for vcs_core::MergeProbe
+impl core::marker::Unpin for vcs_core::MergeProbe
+impl core::marker::UnsafeUnpin for vcs_core::MergeProbe
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::MergeProbe
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::MergeProbe
+#[non_exhaustive] pub enum vcs_core::OperationState
+pub vcs_core::OperationState::ApplyMailbox
+pub vcs_core::OperationState::Bisect
+pub vcs_core::OperationState::CherryPick
+pub vcs_core::OperationState::Clear
+pub vcs_core::OperationState::Conflict
+pub vcs_core::OperationState::Merge
+pub vcs_core::OperationState::Rebase
+pub vcs_core::OperationState::Revert
+impl core::clone::Clone for vcs_core::OperationState
+pub fn vcs_core::OperationState::clone(&self) -> vcs_core::OperationState
+impl core::cmp::Eq for vcs_core::OperationState
+impl core::cmp::PartialEq for vcs_core::OperationState
+pub fn vcs_core::OperationState::eq(&self, &vcs_core::OperationState) -> bool
+impl core::fmt::Debug for vcs_core::OperationState
+pub fn vcs_core::OperationState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_core::OperationState
+impl core::marker::StructuralPartialEq for vcs_core::OperationState
+impl serde_core::ser::Serialize for vcs_core::OperationState
+pub fn vcs_core::OperationState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::OperationState
+impl core::marker::Send for vcs_core::OperationState
+impl core::marker::Sync for vcs_core::OperationState
+impl core::marker::Unpin for vcs_core::OperationState
+impl core::marker::UnsafeUnpin for vcs_core::OperationState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::OperationState
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::OperationState
+#[non_exhaustive] pub struct vcs_core::AnnotationLine
+pub vcs_core::AnnotationLine::author: core::option::Option<alloc::string::String>
+pub vcs_core::AnnotationLine::content: alloc::string::String
+pub vcs_core::AnnotationLine::date: core::option::Option<i64>
+pub vcs_core::AnnotationLine::id: alloc::string::String
+pub vcs_core::AnnotationLine::line: u32
+impl vcs_core::AnnotationLine
+pub fn vcs_core::AnnotationLine::author(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::AnnotationLine::date(self, i64) -> Self
+pub fn vcs_core::AnnotationLine::new(impl core::convert::Into<alloc::string::String>, u32, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_core::AnnotationLine
+pub fn vcs_core::AnnotationLine::clone(&self) -> vcs_core::AnnotationLine
+impl core::cmp::Eq for vcs_core::AnnotationLine
+impl core::cmp::PartialEq for vcs_core::AnnotationLine
+pub fn vcs_core::AnnotationLine::eq(&self, &vcs_core::AnnotationLine) -> bool
+impl core::fmt::Debug for vcs_core::AnnotationLine
+pub fn vcs_core::AnnotationLine::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::AnnotationLine
+impl serde_core::ser::Serialize for vcs_core::AnnotationLine
+pub fn vcs_core::AnnotationLine::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::AnnotationLine
+impl core::marker::Send for vcs_core::AnnotationLine
+impl core::marker::Sync for vcs_core::AnnotationLine
+impl core::marker::Unpin for vcs_core::AnnotationLine
+impl core::marker::UnsafeUnpin for vcs_core::AnnotationLine
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::AnnotationLine
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::AnnotationLine
+#[non_exhaustive] pub struct vcs_core::BranchDelete
+pub vcs_core::BranchDelete::force: bool
+pub vcs_core::BranchDelete::name: alloc::string::String
+impl vcs_core::BranchDelete
+pub fn vcs_core::BranchDelete::force(self) -> Self
+pub fn vcs_core::BranchDelete::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_core::BranchDelete
+pub fn vcs_core::BranchDelete::clone(&self) -> vcs_core::BranchDelete
+impl core::cmp::Eq for vcs_core::BranchDelete
+impl core::cmp::PartialEq for vcs_core::BranchDelete
+pub fn vcs_core::BranchDelete::eq(&self, &vcs_core::BranchDelete) -> bool
+impl core::fmt::Debug for vcs_core::BranchDelete
+pub fn vcs_core::BranchDelete::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::BranchDelete
+impl core::marker::Freeze for vcs_core::BranchDelete
+impl core::marker::Send for vcs_core::BranchDelete
+impl core::marker::Sync for vcs_core::BranchDelete
+impl core::marker::Unpin for vcs_core::BranchDelete
+impl core::marker::UnsafeUnpin for vcs_core::BranchDelete
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::BranchDelete
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::BranchDelete
+#[non_exhaustive] pub struct vcs_core::CloneSpec
+pub vcs_core::CloneSpec::bare: bool
+pub vcs_core::CloneSpec::branch: core::option::Option<alloc::string::String>
+pub vcs_core::CloneSpec::colocate: core::option::Option<bool>
+pub vcs_core::CloneSpec::depth: core::option::Option<u32>
+impl vcs_core::CloneSpec
+pub fn vcs_core::CloneSpec::bare(self) -> Self
+pub fn vcs_core::CloneSpec::branch(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::CloneSpec::colocate(self, bool) -> Self
+pub fn vcs_core::CloneSpec::depth(self, u32) -> Self
+pub fn vcs_core::CloneSpec::new() -> Self
+impl core::clone::Clone for vcs_core::CloneSpec
+pub fn vcs_core::CloneSpec::clone(&self) -> vcs_core::CloneSpec
+impl core::default::Default for vcs_core::CloneSpec
+pub fn vcs_core::CloneSpec::default() -> vcs_core::CloneSpec
+impl core::fmt::Debug for vcs_core::CloneSpec
+pub fn vcs_core::CloneSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_core::CloneSpec
+impl core::marker::Send for vcs_core::CloneSpec
+impl core::marker::Sync for vcs_core::CloneSpec
+impl core::marker::Unpin for vcs_core::CloneSpec
+impl core::marker::UnsafeUnpin for vcs_core::CloneSpec
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::CloneSpec
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::CloneSpec
+#[non_exhaustive] pub struct vcs_core::Commit
+pub vcs_core::Commit::author: core::option::Option<alloc::string::String>
+pub vcs_core::Commit::date: core::option::Option<alloc::string::String>
+pub vcs_core::Commit::description: alloc::string::String
+pub vcs_core::Commit::id: alloc::string::String
+impl vcs_core::Commit
+pub fn vcs_core::Commit::author(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::Commit::date(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::Commit::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_core::Commit
+pub fn vcs_core::Commit::clone(&self) -> vcs_core::Commit
+impl core::cmp::Eq for vcs_core::Commit
+impl core::cmp::PartialEq for vcs_core::Commit
+pub fn vcs_core::Commit::eq(&self, &vcs_core::Commit) -> bool
+impl core::fmt::Debug for vcs_core::Commit
+pub fn vcs_core::Commit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::Commit
+impl serde_core::ser::Serialize for vcs_core::Commit
+pub fn vcs_core::Commit::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::Commit
+impl core::marker::Send for vcs_core::Commit
+impl core::marker::Sync for vcs_core::Commit
+impl core::marker::Unpin for vcs_core::Commit
+impl core::marker::UnsafeUnpin for vcs_core::Commit
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::Commit
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::Commit
+#[non_exhaustive] pub struct vcs_core::FileChange
+pub vcs_core::FileChange::kind: vcs_diff::diff::ChangeKind
+pub vcs_core::FileChange::old_path: core::option::Option<std::path::PathBuf>
+pub vcs_core::FileChange::path: std::path::PathBuf
+impl vcs_core::FileChange
+pub fn vcs_core::FileChange::new(impl core::convert::Into<std::path::PathBuf>, vcs_diff::diff::ChangeKind) -> Self
+pub fn vcs_core::FileChange::old_path(self, impl core::convert::Into<std::path::PathBuf>) -> Self
+impl core::clone::Clone for vcs_core::FileChange
+pub fn vcs_core::FileChange::clone(&self) -> vcs_core::FileChange
+impl core::cmp::Eq for vcs_core::FileChange
+impl core::cmp::PartialEq for vcs_core::FileChange
+pub fn vcs_core::FileChange::eq(&self, &vcs_core::FileChange) -> bool
+impl core::fmt::Debug for vcs_core::FileChange
+pub fn vcs_core::FileChange::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::FileChange
+impl serde_core::ser::Serialize for vcs_core::FileChange
+pub fn vcs_core::FileChange::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::FileChange
+impl core::marker::Send for vcs_core::FileChange
+impl core::marker::Sync for vcs_core::FileChange
+impl core::marker::Unpin for vcs_core::FileChange
+impl core::marker::UnsafeUnpin for vcs_core::FileChange
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::FileChange
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::FileChange
+#[non_exhaustive] pub struct vcs_core::Located
+pub vcs_core::Located::kind: vcs_core::BackendKind
+pub vcs_core::Located::root: std::path::PathBuf
+impl core::clone::Clone for vcs_core::Located
+pub fn vcs_core::Located::clone(&self) -> vcs_core::Located
+impl core::cmp::Eq for vcs_core::Located
+impl core::cmp::PartialEq for vcs_core::Located
+pub fn vcs_core::Located::eq(&self, &vcs_core::Located) -> bool
+impl core::fmt::Debug for vcs_core::Located
+pub fn vcs_core::Located::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::Located
+impl core::marker::Freeze for vcs_core::Located
+impl core::marker::Send for vcs_core::Located
+impl core::marker::Sync for vcs_core::Located
+impl core::marker::Unpin for vcs_core::Located
+impl core::marker::UnsafeUnpin for vcs_core::Located
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::Located
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::Located
+#[non_exhaustive] pub struct vcs_core::Remote
+pub vcs_core::Remote::name: alloc::string::String
+pub vcs_core::Remote::url: alloc::string::String
+impl vcs_core::Remote
+pub fn vcs_core::Remote::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_core::Remote
+pub fn vcs_core::Remote::clone(&self) -> vcs_core::Remote
+impl core::cmp::Eq for vcs_core::Remote
+impl core::cmp::PartialEq for vcs_core::Remote
+pub fn vcs_core::Remote::eq(&self, &vcs_core::Remote) -> bool
+impl core::fmt::Debug for vcs_core::Remote
+pub fn vcs_core::Remote::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::Remote
+impl serde_core::ser::Serialize for vcs_core::Remote
+pub fn vcs_core::Remote::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::Remote
+impl core::marker::Send for vcs_core::Remote
+impl core::marker::Sync for vcs_core::Remote
+impl core::marker::Unpin for vcs_core::Remote
+impl core::marker::UnsafeUnpin for vcs_core::Remote
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::Remote
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::Remote
+pub struct vcs_core::Repo<R: processkit::runner::ProcessRunner>
+impl vcs_core::Repo<processkit::runner::JobRunner>
+pub async fn vcs_core::Repo<processkit::runner::JobRunner>::clone(vcs_core::BackendKind, &str, &std::path::Path, vcs_core::CloneSpec) -> vcs_core::Result<Self>
+pub fn vcs_core::Repo<processkit::runner::JobRunner>::discover(impl core::convert::AsRef<std::path::Path>) -> vcs_core::Result<Self>
+pub fn vcs_core::Repo<processkit::runner::JobRunner>::open(impl core::convert::AsRef<std::path::Path>) -> vcs_core::Result<Self>
+impl<R: processkit::runner::ProcessRunner> vcs_core::Repo<R>
+pub async fn vcs_core::Repo<R>::abort_in_progress(&self) -> vcs_core::Result<vcs_core::OperationState>
+pub async fn vcs_core::Repo<R>::annotate(&self, &str, core::option::Option<&str>) -> vcs_core::Result<alloc::vec::Vec<vcs_core::AnnotationLine>>
+pub fn vcs_core::Repo<R>::at(&self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub async fn vcs_core::Repo<R>::branch_exists(&self, &str) -> vcs_core::Result<bool>
+pub async fn vcs_core::Repo<R>::changed_files(&self) -> vcs_core::Result<alloc::vec::Vec<vcs_core::FileChange>>
+pub async fn vcs_core::Repo<R>::checkout(&self, &str) -> vcs_core::Result<()>
+pub fn vcs_core::Repo<R>::cleanup_worktree_blocking(&self, &std::path::Path) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::commit_paths(&self, &[std::path::PathBuf], &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::conflicted_files(&self) -> vcs_core::Result<alloc::vec::Vec<std::path::PathBuf>>
+pub async fn vcs_core::Repo<R>::continue_in_progress(&self) -> vcs_core::Result<vcs_core::OperationState>
+pub async fn vcs_core::Repo<R>::create_branch(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::create_worktree(&self, vcs_core::WorktreeCreate) -> vcs_core::Result<vcs_core::CreateOutcome>
+pub async fn vcs_core::Repo<R>::current_branch(&self) -> vcs_core::Result<core::option::Option<alloc::string::String>>
+pub fn vcs_core::Repo<R>::cwd(&self) -> &std::path::Path
+pub async fn vcs_core::Repo<R>::delete_branch(&self, vcs_core::BranchDelete) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::diff(&self) -> vcs_core::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>
+pub async fn vcs_core::Repo<R>::diff_stat(&self) -> vcs_core::Result<vcs_diff::diff::DiffStat>
+pub fn vcs_core::Repo<R>::discover_with<G, J>(impl core::convert::AsRef<std::path::Path>, G, J) -> vcs_core::Result<Self> where G: core::ops::function::FnOnce() -> vcs_git::Git<R>, J: core::ops::function::FnOnce() -> vcs_jj::Jj<R>
+pub async fn vcs_core::Repo<R>::fetch(&self) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::fetch_branch(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::fetch_from(&self, &str) -> vcs_core::Result<()>
+pub fn vcs_core::Repo<R>::from_git(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<std::path::PathBuf>, vcs_git::Git<R>) -> Self
+pub fn vcs_core::Repo<R>::from_jj(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<std::path::PathBuf>, vcs_jj::Jj<R>) -> Self
+pub fn vcs_core::Repo<R>::git(&self) -> core::option::Option<&vcs_git::Git<R>>
+pub fn vcs_core::Repo<R>::git_at(&self) -> core::option::Option<vcs_git::GitAt<'_, R>>
+pub async fn vcs_core::Repo<R>::has_tracked_changes(&self) -> vcs_core::Result<bool>
+pub async fn vcs_core::Repo<R>::has_uncommitted_changes(&self) -> vcs_core::Result<bool>
+pub async fn vcs_core::Repo<R>::in_progress_state(&self) -> vcs_core::Result<vcs_core::OperationState>
+pub fn vcs_core::Repo<R>::jj(&self) -> core::option::Option<&vcs_jj::Jj<R>>
+pub fn vcs_core::Repo<R>::jj_at(&self) -> core::option::Option<vcs_jj::JjAt<'_, R>>
+pub fn vcs_core::Repo<R>::kind(&self) -> vcs_core::BackendKind
+pub async fn vcs_core::Repo<R>::list_worktrees(&self) -> vcs_core::Result<alloc::vec::Vec<vcs_core::WorktreeInfo>>
+pub async fn vcs_core::Repo<R>::local_branches(&self) -> vcs_core::Result<alloc::vec::Vec<alloc::string::String>>
+pub async fn vcs_core::Repo<R>::local_branches_readonly(&self) -> vcs_core::Result<alloc::vec::Vec<alloc::string::String>>
+pub async fn vcs_core::Repo<R>::log(&self, &str, usize) -> vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>
+pub async fn vcs_core::Repo<R>::new_child(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::push(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::rebase(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::remotes(&self) -> vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>
+pub async fn vcs_core::Repo<R>::remove_worktree(&self, vcs_core::WorktreeRemove) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::rename_branch(&self, &str, &str) -> vcs_core::Result<()>
+pub fn vcs_core::Repo<R>::root(&self) -> &std::path::Path
+pub async fn vcs_core::Repo<R>::show_file(&self, &str, &str) -> vcs_core::Result<alloc::string::String>
+pub async fn vcs_core::Repo<R>::show_file_within(&self, &str, &str, vcs_cli_support::OutputBudget) -> vcs_core::Result<alloc::string::String>
+pub async fn vcs_core::Repo<R>::snapshot(&self) -> vcs_core::Result<vcs_core::RepoSnapshot>
+pub async fn vcs_core::Repo<R>::snapshot_readonly(&self) -> vcs_core::Result<vcs_core::RepoSnapshot>
+pub async fn vcs_core::Repo<R>::trunk(&self) -> vcs_core::Result<core::option::Option<alloc::string::String>>
+pub async fn vcs_core::Repo<R>::try_merge(&self, &str) -> vcs_core::Result<vcs_core::MergeProbe>
+impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_core::Repo<R>
+pub fn vcs_core::Repo<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: processkit::runner::ProcessRunner> vcs_core::VcsRepo for vcs_core::Repo<R>
+pub fn vcs_core::Repo<R>::abort_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::annotate<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, core::option::Option<&'life2 str>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::AnnotationLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::branch_exists<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::changed_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::FileChange>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::cleanup_worktree_blocking(&self, &std::path::Path) -> vcs_core::Result<()>
+pub fn vcs_core::Repo<R>::commit_paths<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 [std::path::PathBuf], &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::conflicted_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<std::path::PathBuf>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::continue_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::create_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::create_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::CreateOutcome>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::current_branch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::cwd(&self) -> &std::path::Path
+pub fn vcs_core::Repo<R>::delete_branch<'life0, 'async_trait>(&'life0 self, vcs_core::BranchDelete) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::diff<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::diff_stat<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_diff::diff::DiffStat>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::kind(&self) -> vcs_core::BackendKind
+pub fn vcs_core::Repo<R>::list_worktrees<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::WorktreeInfo>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::local_branches<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::local_branches_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::rename_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::root(&self) -> &std::path::Path
+pub fn vcs_core::Repo<R>::show_file<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::show_file_within<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str, vcs_cli_support::OutputBudget) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::snapshot<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::snapshot_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::trunk<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::try_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::MergeProbe>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl<R> core::marker::Freeze for vcs_core::Repo<R>
+impl<R> core::marker::Send for vcs_core::Repo<R>
+impl<R> core::marker::Sync for vcs_core::Repo<R>
+impl<R> core::marker::Unpin for vcs_core::Repo<R>
+impl<R> core::marker::UnsafeUnpin for vcs_core::Repo<R>
+impl<R> !core::panic::unwind_safe::RefUnwindSafe for vcs_core::Repo<R>
+impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_core::Repo<R>
+#[non_exhaustive] pub struct vcs_core::RepoSnapshot
+pub vcs_core::RepoSnapshot::branch: core::option::Option<alloc::string::String>
+pub vcs_core::RepoSnapshot::change_count: usize
+pub vcs_core::RepoSnapshot::conflicted: bool
+pub vcs_core::RepoSnapshot::dirty: bool
+pub vcs_core::RepoSnapshot::head: core::option::Option<alloc::string::String>
+pub vcs_core::RepoSnapshot::operation: vcs_core::OperationState
+pub vcs_core::RepoSnapshot::tracking: core::option::Option<vcs_core::UpstreamTracking>
+impl vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::branch(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::RepoSnapshot::conflicted(self) -> Self
+pub fn vcs_core::RepoSnapshot::dirty(self, usize) -> Self
+pub fn vcs_core::RepoSnapshot::head(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::RepoSnapshot::new() -> Self
+pub fn vcs_core::RepoSnapshot::operation(self, vcs_core::OperationState) -> Self
+pub fn vcs_core::RepoSnapshot::tracking(self, vcs_core::UpstreamTracking) -> Self
+impl core::clone::Clone for vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::clone(&self) -> vcs_core::RepoSnapshot
+impl core::cmp::Eq for vcs_core::RepoSnapshot
+impl core::cmp::PartialEq for vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::eq(&self, &vcs_core::RepoSnapshot) -> bool
+impl core::default::Default for vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::default() -> Self
+impl core::fmt::Debug for vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::RepoSnapshot
+impl serde_core::ser::Serialize for vcs_core::RepoSnapshot
+pub fn vcs_core::RepoSnapshot::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::RepoSnapshot
+impl core::marker::Send for vcs_core::RepoSnapshot
+impl core::marker::Sync for vcs_core::RepoSnapshot
+impl core::marker::Unpin for vcs_core::RepoSnapshot
+impl core::marker::UnsafeUnpin for vcs_core::RepoSnapshot
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::RepoSnapshot
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::RepoSnapshot
+#[non_exhaustive] pub struct vcs_core::UpstreamTracking
+pub vcs_core::UpstreamTracking::ahead: core::option::Option<usize>
+pub vcs_core::UpstreamTracking::behind: core::option::Option<usize>
+pub vcs_core::UpstreamTracking::branch: alloc::string::String
+impl vcs_core::UpstreamTracking
+pub fn vcs_core::UpstreamTracking::ahead(self, usize) -> Self
+pub fn vcs_core::UpstreamTracking::behind(self, usize) -> Self
+pub fn vcs_core::UpstreamTracking::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_core::UpstreamTracking
+pub fn vcs_core::UpstreamTracking::clone(&self) -> vcs_core::UpstreamTracking
+impl core::cmp::Eq for vcs_core::UpstreamTracking
+impl core::cmp::PartialEq for vcs_core::UpstreamTracking
+pub fn vcs_core::UpstreamTracking::eq(&self, &vcs_core::UpstreamTracking) -> bool
+impl core::fmt::Debug for vcs_core::UpstreamTracking
+pub fn vcs_core::UpstreamTracking::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::UpstreamTracking
+impl serde_core::ser::Serialize for vcs_core::UpstreamTracking
+pub fn vcs_core::UpstreamTracking::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::UpstreamTracking
+impl core::marker::Send for vcs_core::UpstreamTracking
+impl core::marker::Sync for vcs_core::UpstreamTracking
+impl core::marker::Unpin for vcs_core::UpstreamTracking
+impl core::marker::UnsafeUnpin for vcs_core::UpstreamTracking
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::UpstreamTracking
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::UpstreamTracking
+#[non_exhaustive] pub struct vcs_core::WorktreeCreate
+pub vcs_core::WorktreeCreate::base: alloc::string::String
+pub vcs_core::WorktreeCreate::branch: alloc::string::String
+pub vcs_core::WorktreeCreate::path: std::path::PathBuf
+impl vcs_core::WorktreeCreate
+pub fn vcs_core::WorktreeCreate::new(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<alloc::string::String>) -> vcs_core::WorktreeCreatePartial
+impl core::clone::Clone for vcs_core::WorktreeCreate
+pub fn vcs_core::WorktreeCreate::clone(&self) -> vcs_core::WorktreeCreate
+impl core::cmp::Eq for vcs_core::WorktreeCreate
+impl core::cmp::PartialEq for vcs_core::WorktreeCreate
+pub fn vcs_core::WorktreeCreate::eq(&self, &vcs_core::WorktreeCreate) -> bool
+impl core::fmt::Debug for vcs_core::WorktreeCreate
+pub fn vcs_core::WorktreeCreate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::WorktreeCreate
+impl core::marker::Freeze for vcs_core::WorktreeCreate
+impl core::marker::Send for vcs_core::WorktreeCreate
+impl core::marker::Sync for vcs_core::WorktreeCreate
+impl core::marker::Unpin for vcs_core::WorktreeCreate
+impl core::marker::UnsafeUnpin for vcs_core::WorktreeCreate
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::WorktreeCreate
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::WorktreeCreate
+pub struct vcs_core::WorktreeCreatePartial
+impl vcs_core::WorktreeCreatePartial
+pub fn vcs_core::WorktreeCreatePartial::base(self, impl core::convert::Into<alloc::string::String>) -> vcs_core::WorktreeCreate
+impl core::clone::Clone for vcs_core::WorktreeCreatePartial
+pub fn vcs_core::WorktreeCreatePartial::clone(&self) -> vcs_core::WorktreeCreatePartial
+impl core::fmt::Debug for vcs_core::WorktreeCreatePartial
+pub fn vcs_core::WorktreeCreatePartial::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_core::WorktreeCreatePartial
+impl core::marker::Send for vcs_core::WorktreeCreatePartial
+impl core::marker::Sync for vcs_core::WorktreeCreatePartial
+impl core::marker::Unpin for vcs_core::WorktreeCreatePartial
+impl core::marker::UnsafeUnpin for vcs_core::WorktreeCreatePartial
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::WorktreeCreatePartial
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::WorktreeCreatePartial
+#[non_exhaustive] pub struct vcs_core::WorktreeInfo
+pub vcs_core::WorktreeInfo::branch: core::option::Option<alloc::string::String>
+pub vcs_core::WorktreeInfo::commit: core::option::Option<alloc::string::String>
+pub vcs_core::WorktreeInfo::is_bare: bool
+pub vcs_core::WorktreeInfo::path: std::path::PathBuf
+impl vcs_core::WorktreeInfo
+pub fn vcs_core::WorktreeInfo::bare(self) -> Self
+pub fn vcs_core::WorktreeInfo::branch(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::WorktreeInfo::commit(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::WorktreeInfo::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+impl core::clone::Clone for vcs_core::WorktreeInfo
+pub fn vcs_core::WorktreeInfo::clone(&self) -> vcs_core::WorktreeInfo
+impl core::cmp::Eq for vcs_core::WorktreeInfo
+impl core::cmp::PartialEq for vcs_core::WorktreeInfo
+pub fn vcs_core::WorktreeInfo::eq(&self, &vcs_core::WorktreeInfo) -> bool
+impl core::fmt::Debug for vcs_core::WorktreeInfo
+pub fn vcs_core::WorktreeInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::WorktreeInfo
+impl serde_core::ser::Serialize for vcs_core::WorktreeInfo
+pub fn vcs_core::WorktreeInfo::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_core::WorktreeInfo
+impl core::marker::Send for vcs_core::WorktreeInfo
+impl core::marker::Sync for vcs_core::WorktreeInfo
+impl core::marker::Unpin for vcs_core::WorktreeInfo
+impl core::marker::UnsafeUnpin for vcs_core::WorktreeInfo
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::WorktreeInfo
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::WorktreeInfo
+#[non_exhaustive] pub struct vcs_core::WorktreeRemove
+pub vcs_core::WorktreeRemove::force: bool
+pub vcs_core::WorktreeRemove::path: std::path::PathBuf
+impl vcs_core::WorktreeRemove
+pub fn vcs_core::WorktreeRemove::force(self) -> Self
+pub fn vcs_core::WorktreeRemove::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+impl core::clone::Clone for vcs_core::WorktreeRemove
+pub fn vcs_core::WorktreeRemove::clone(&self) -> vcs_core::WorktreeRemove
+impl core::cmp::Eq for vcs_core::WorktreeRemove
+impl core::cmp::PartialEq for vcs_core::WorktreeRemove
+pub fn vcs_core::WorktreeRemove::eq(&self, &vcs_core::WorktreeRemove) -> bool
+impl core::fmt::Debug for vcs_core::WorktreeRemove
+pub fn vcs_core::WorktreeRemove::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_core::WorktreeRemove
+impl core::marker::Freeze for vcs_core::WorktreeRemove
+impl core::marker::Send for vcs_core::WorktreeRemove
+impl core::marker::Sync for vcs_core::WorktreeRemove
+impl core::marker::Unpin for vcs_core::WorktreeRemove
+impl core::marker::UnsafeUnpin for vcs_core::WorktreeRemove
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_core::WorktreeRemove
+impl core::panic::unwind_safe::UnwindSafe for vcs_core::WorktreeRemove
+pub trait vcs_core::VcsRepo: core::marker::Send + core::marker::Sync
+pub fn vcs_core::VcsRepo::abort_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::annotate<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, core::option::Option<&'life2 str>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::AnnotationLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::VcsRepo::branch_exists<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::changed_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::FileChange>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::cleanup_worktree_blocking(&self, &std::path::Path) -> vcs_core::Result<()>
+pub fn vcs_core::VcsRepo::commit_paths<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 [std::path::PathBuf], &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::VcsRepo::conflicted_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<std::path::PathBuf>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::continue_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::create_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::create_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::CreateOutcome>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::current_branch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::cwd(&self) -> &std::path::Path
+pub fn vcs_core::VcsRepo::delete_branch<'life0, 'async_trait>(&'life0 self, vcs_core::BranchDelete) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::diff<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::diff_stat<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_diff::diff::DiffStat>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::kind(&self) -> vcs_core::BackendKind
+pub fn vcs_core::VcsRepo::list_worktrees<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::WorktreeInfo>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::local_branches<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::local_branches_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::rename_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::VcsRepo::root(&self) -> &std::path::Path
+pub fn vcs_core::VcsRepo::show_file<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::VcsRepo::show_file_within<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str, vcs_cli_support::OutputBudget) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::VcsRepo::snapshot<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::snapshot_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::trunk<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::VcsRepo::try_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::MergeProbe>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+impl<R: processkit::runner::ProcessRunner> vcs_core::VcsRepo for vcs_core::Repo<R>
+pub fn vcs_core::Repo<R>::abort_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::annotate<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, core::option::Option<&'life2 str>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::AnnotationLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::branch_exists<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::changed_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::FileChange>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::cleanup_worktree_blocking(&self, &std::path::Path) -> vcs_core::Result<()>
+pub fn vcs_core::Repo<R>::commit_paths<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 [std::path::PathBuf], &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::conflicted_files<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<std::path::PathBuf>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::continue_in_progress<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::create_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::create_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::CreateOutcome>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::current_branch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::cwd(&self) -> &std::path::Path
+pub fn vcs_core::Repo<R>::delete_branch<'life0, 'async_trait>(&'life0 self, vcs_core::BranchDelete) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::diff<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::diff_stat<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_diff::diff::DiffStat>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::kind(&self) -> vcs_core::BackendKind
+pub fn vcs_core::Repo<R>::list_worktrees<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::WorktreeInfo>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::local_branches<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::local_branches_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::rename_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::root(&self) -> &std::path::Path
+pub fn vcs_core::Repo<R>::show_file<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::show_file_within<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str, vcs_cli_support::OutputBudget) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_core::Repo<R>::snapshot<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::snapshot_readonly<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::RepoSnapshot>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::trunk<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_core::Repo<R>::try_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::MergeProbe>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::discover(&std::path::Path) -> core::option::Option<vcs_core::Located>
+pub type vcs_core::Result<T> = core::result::Result<T, vcs_core::Error>

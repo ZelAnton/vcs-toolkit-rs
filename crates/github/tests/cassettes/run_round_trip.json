@@ -1,0 +1,40 @@
+{
+  "version": 4,
+  "entries": [
+    {
+      "program": "gh",
+      "args": [
+        "run",
+        "list",
+        "--limit",
+        "3",
+        "--json",
+        "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt"
+      ],
+      "cwd": ".",
+      "stdout": "[{\"conclusion\":\"failure\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704478,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704478\",\"workflowName\":\"CI\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704419,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704419\",\"workflowName\":\"Nix\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-07-22T18:52:18Z\",\"databaseId\":29948559300,\"displayTitle\":\"Demote Remote doc reference to parse_remotes from an intra-doc link t…\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"Nix\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29948559300\",\"workflowName\":\"Nix\"}]",
+      "stderr": "",
+      "code": 0,
+      "total_lines": 1,
+      "total_bytes": 1000,
+      "duration_ms": 959
+    },
+    {
+      "program": "gh",
+      "args": [
+        "run",
+        "view",
+        "29956704478",
+        "--json",
+        "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt"
+      ],
+      "cwd": ".",
+      "stdout": "{\"conclusion\":\"failure\",\"createdAt\":\"2026-07-22T20:49:08Z\",\"databaseId\":29956704478,\"displayTitle\":\"Pilot record/replay cassettes for vcs-github CLI parser tests\",\"event\":\"push\",\"headBranch\":\"main\",\"name\":\"CI\",\"status\":\"completed\",\"url\":\"https://github.com/ZelAnton/vcs-toolkit-rs/actions/runs/29956704478\",\"workflowName\":\"CI\"}",
+      "stderr": "",
+      "code": 0,
+      "total_lines": 1,
+      "total_bytes": 327,
+      "duration_ms": 905
+    }
+  ]
+}

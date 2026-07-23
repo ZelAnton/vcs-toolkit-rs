@@ -10,6 +10,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `repo_remotes`: read query returning configured remotes and fetch URLs through
+  `Repo::remotes`. It uses `destructiveHint = false` plus `idempotentHint = true`,
+  not `readOnlyHint`; jj's `git remote list` reads static configuration without
+  snapshotting the working copy. (T-108, T-109.)
 - Three write-gated forge mutation tools: `forge_issue_close` (`{ number }`),
   `forge_issue_reopen` (`{ number }`), and `forge_issue_comment` (`{ number, body }`),
   exposing `Forge::issue_close`/`issue_reopen`/`issue_comment` over MCP. All three
@@ -18,12 +22,27 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `idempotentHint` pattern); they are added to `WRITE_TOOLS`. `forge_issue_comment`
   rejects an empty body up front as `invalid_params`. `forge_info`'s capability map
   gains the `issue_close`/`issue_reopen`/`issue_comment` flags.
+- `--log-commands` flag: wraps the git/jj/forge clients in a command-logging
+  `ProcessRunner` (`vcs_cli_support::logging::LoggingRunner`) that reports every
+  spawn — program, argv, working directory, exit code, duration — to **stderr**,
+  for diagnosing what the server actually runs. stdout stays a clean JSON-RPC
+  transport (the log goes to stderr only), and argv values that could carry a
+  secret are redacted (the existing "token never in argv" contract is not
+  weakened). Off by default. (T-117.)
 
 ### Changed
--
+- `VcsMcpServer::new` is now generic over the clients' `ProcessRunner`
+  (`new<R: ProcessRunner + 'static>(Repo<R>, Option<Forge<R>>, WriteGate)`), so a
+  caller can inject a non-default runner — e.g. the `--log-commands`
+  `LoggingRunner` over a `Box<dyn ProcessRunner>`. The handles are erased to
+  `dyn VcsRepo`/`dyn ForgeApi` immediately, so the server stays runner-agnostic;
+  existing `new(repo, forge, writes)` calls infer `R = JobRunner` unchanged.
+  (T-117.)
 
 ### Fixed
--
+- Forge auto-detection now reads `origin` through backend-agnostic
+  `Repo::remotes`, so it works for non-colocated jj repositories as well as git
+  and colocated jj checkouts. (T-109.)
 
 ## [0.7.0] - 2026-07-19
 

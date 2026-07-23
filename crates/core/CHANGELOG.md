@@ -10,13 +10,77 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `Repo::clone(backend, url, dest, spec)` and the unified `CloneSpec` DTO:
+  backend-agnostic repository cloning on the facade. Clone is the one operation with
+  **no repository yet** (nothing to hang a `Repo` method off), so it is an associated
+  constructor — like `Repo::discover` / `Repo::open` — taking the backend explicitly
+  via the existing `BackendKind` (not a second parallel enum) and returning a `Repo`
+  bound to the freshly-cloned `dest`. It dispatches through the per-backend adapters
+  (`git_backend`/`jj_backend`) to the existing `GitApi::clone_repo` / `JjApi::git_clone`,
+  never bypassing that layer.
+  - **Unified spec, structural rejection.** `CloneSpec` unifies the two tools' clone
+    options — git's `branch`/`depth`/`bare` (`vcs_git::CloneSpec`) and jj's `colocate`
+    (`vcs_jj::GitClone`). The backends share no clone option, so an option meant for the
+    *other* backend is **rejected structurally** with a typed `Error::Unsupported`
+    *before anything spawns* (git-only `branch`/`depth`/`bare` on a jj clone; jj-only
+    `colocate` on a git clone) — never silently dropped nor surfaced as a raw CLI error.
+    jj's colocate flag is always passed explicitly (its CLI default varies by
+    version/config); when unset the facade defaults a jj clone to non-colocated
+    (`--no-colocate`).
+  - **Destination contract.** `dest` is absolutised up front (the clone runs with no
+    working directory and creates `dest` itself). A non-empty `dest` is refused by the
+    backend; a failed clone cleans only a `dest` it *could have created* (absent/empty),
+    never pre-existing caller data. That "delete only a directory we could have created"
+    guarantee lives in the clients — the facade **delegates** to it and adds no cleanup
+    of its own, so the single well-tested contract is neither weakened nor re-implemented.
+  - **`Result<Repo>` signature (deliberate).** A clone can genuinely fail (network,
+    auth, an occupied `dest`), so this returns `Result<Repo>` — unlike the
+    infallible-where-possible `open`/`at`/`from_*` handle-builders. That asymmetry is
+    intentional here and independent of any separate `open`/`at`/`from_git`/`from_jj`
+    signature cleanup.
+  - **No MCP tool (by design).** An MCP server is bound to a single repository, and
+    cloning is an out-of-repository operation outside that model — so no clone tool is
+    added, noted here so the omission reads as a decision rather than an oversight.
+  (T-110.)
+- `Repo::remotes` (and `VcsRepo::remotes`): backend-agnostic configured remote
+  listing, dispatching to `git remote -v` or `jj git remote list`. The returned
+  `vcs_core::Remote { name, url }` is a new facade-owned DTO rather than a
+  re-export of `vcs_jj::Remote`: both backends share this contract and a Git
+  consumer must not expose jj-specific API types. (T-108.)
 
 ### Changed
 -
 
 ### Fixed
--
+- `Repo::at`, `Repo::from_git` and `Repo::from_jj` now **absolutise** the `root`/`cwd`
+  they store at construction — via the same `std::path::absolute` normalisation
+  `Repo::open`/`Repo::discover` already apply — so a handle built from a **relative**
+  path no longer depends on the process's current directory. Previously these three
+  factories stored the caller's path verbatim (`impl Into<PathBuf>`), so a handle
+  created from a relative path silently re-pointed at a different location after the
+  process changed its current directory, while `Repo::open` (which absolutises) did
+  not. The contract of a single type is now honoured on all four creation paths
+  (`open`/`at`/`from_git`/`from_jj`). The same asymmetry was found and fixed in the
+  sibling F# port. (T-114.)
+  - **Signature decision — kept infallible (non-breaking), per
+    `crates/core/docs/stability.md`.** `std::path::absolute` is fallible, and `open`
+    already returns `Result`, so one option was to switch `at`/`from_git`/`from_jj`
+    to `Result` as well. We deliberately did **not**: unlike `open`/`discover`/`clone`
+    — which do filesystem work and are legitimately fallible — these three are **pure
+    in-memory constructors** whose only failure mode is a degenerate **empty** path
+    (`std::path::absolute` rejects nothing else). `from_git`/`from_jj` are also the
+    documented **facade test seam** (see stability.md's object-safety/mockability note)
+    and `at` is a pervasive cheap re-anchor, so a `Result` return would force
+    `.unwrap()` across every consumer and test for a failure that a valid path can
+    never trigger — a large ergonomic regression with no safety gain. Keeping the
+    signatures identical also means the public API surface is unchanged (the
+    `public-api` snapshot gate is unaffected) and this is a non-breaking, patch-level
+    change. This matches the "infallible-where-possible handle-builders" framing the
+    `Repo::clone` entry already uses and the sibling F# port's identical choice.
+  - **Degenerate input (documented).** On the one input `std::path::absolute` rejects
+    — an empty path (`""`), which has no absolute form and names no repository — the
+    constructor falls back to the path as given, exactly preserving the prior behaviour
+    for that degenerate case. Every non-empty path (relative or absolute) is absolutised.
 
 ## [0.9.0] - 2026-07-19
 

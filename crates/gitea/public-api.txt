@@ -1,0 +1,1064 @@
+pub mod vcs_gitea
+pub use vcs_gitea::CancellationToken
+pub use vcs_gitea::Error
+pub use vcs_gitea::GiteaVersion
+pub use vcs_gitea::JobRunner
+pub use vcs_gitea::ProcessResult
+pub use vcs_gitea::ProcessRunner
+pub use vcs_gitea::Result
+pub mod vcs_gitea::__mock_MockGiteaApi
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<bool>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<bool>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<bool> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<bool> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<bool> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<bool> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::with(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::GiteaCapabilities>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<vcs_gitea::GiteaCapabilities> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<vcs_gitea::GiteaCapabilities> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<vcs_gitea::GiteaCapabilities> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<vcs_gitea::GiteaCapabilities> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::with(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<str> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str, &str) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::Issue>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::Issue> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::Issue> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::Issue> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::Issue> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_gitea::PrCreate> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::PrCreate) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::PrCreate) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<vcs_gitea::PrEdit> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &vcs_gitea::PrEdit) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &vcs_gitea::PrEdit) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<vcs_gitea::PrMerge> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &vcs_gitea::PrMerge) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &vcs_gitea::PrMerge) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64, &str) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64, &str) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64, &str) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_gitea::PullRequest>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::PullRequest> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::PullRequest> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::PullRequest> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, u64) -> processkit::error::Result<vcs_gitea::PullRequest> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<u64> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &u64) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::ReleaseCreate) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::ReleaseCreate) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::ReleaseCreate) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::ReleaseCreate) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_gitea::ReleaseCreate> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::ReleaseCreate) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::ReleaseCreate) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str) -> processkit::error::Result<()> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&[alloc::string::String]) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&[alloc::string::String]) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&[alloc::string::String]) -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&[alloc::string::String]) -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<[alloc::string::String]> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&[alloc::string::String]) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&[alloc::string::String]) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<[alloc::string::String]> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&[alloc::string::String]) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&[alloc::string::String]) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::string::String>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce() -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<alloc::string::String> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut() -> processkit::error::Result<alloc::string::String> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::with(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn() -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+pub mod vcs_gitea::guide
+#[non_exhaustive] pub enum vcs_gitea::MergeStrategy
+pub vcs_gitea::MergeStrategy::Merge
+pub vcs_gitea::MergeStrategy::Rebase
+pub vcs_gitea::MergeStrategy::Squash
+impl core::clone::Clone for vcs_gitea::MergeStrategy
+pub fn vcs_gitea::MergeStrategy::clone(&self) -> vcs_gitea::MergeStrategy
+impl core::cmp::Eq for vcs_gitea::MergeStrategy
+impl core::cmp::PartialEq for vcs_gitea::MergeStrategy
+pub fn vcs_gitea::MergeStrategy::eq(&self, &vcs_gitea::MergeStrategy) -> bool
+impl core::fmt::Debug for vcs_gitea::MergeStrategy
+pub fn vcs_gitea::MergeStrategy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_gitea::MergeStrategy
+impl core::marker::StructuralPartialEq for vcs_gitea::MergeStrategy
+impl core::marker::Freeze for vcs_gitea::MergeStrategy
+impl core::marker::Send for vcs_gitea::MergeStrategy
+impl core::marker::Sync for vcs_gitea::MergeStrategy
+impl core::marker::Unpin for vcs_gitea::MergeStrategy
+impl core::marker::UnsafeUnpin for vcs_gitea::MergeStrategy
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::MergeStrategy
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::MergeStrategy
+pub struct vcs_gitea::Gitea<R: processkit::runner::ProcessRunner>
+impl vcs_gitea::Gitea<processkit::runner::JobRunner>
+pub fn vcs_gitea::Gitea<processkit::runner::JobRunner>::new() -> Self
+impl<R: processkit::runner::ProcessRunner> vcs_gitea::Gitea<R>
+pub fn vcs_gitea::Gitea<R>::at<'a>(&'a self, &'a std::path::Path) -> vcs_gitea::GiteaAt<'a, R>
+impl<R: processkit::runner::ProcessRunner> vcs_gitea::Gitea<R>
+pub fn vcs_gitea::Gitea<R>::default_cancel_on(self, tokio_util::sync::cancellation_token::CancellationToken) -> Self
+pub fn vcs_gitea::Gitea<R>::default_env(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+pub fn vcs_gitea::Gitea<R>::default_env_remove(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+pub fn vcs_gitea::Gitea<R>::default_output_budget(self, vcs_cli_support::OutputBudget) -> Self
+pub fn vcs_gitea::Gitea<R>::default_timeout(self, core::time::Duration) -> Self
+pub fn vcs_gitea::Gitea<R>::with_runner(R) -> Self
+impl<R: processkit::runner::ProcessRunner> vcs_gitea::Gitea<R>
+pub async fn vcs_gitea::Gitea<R>::run_args(&self, &[&str]) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::Gitea<R>::run_args_in(&self, &std::path::Path, &[&str]) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::Gitea<R>::run_in(&self, &std::path::Path, &[alloc::string::String]) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::Gitea<R>::run_raw_args(&self, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+pub async fn vcs_gitea::Gitea<R>::run_raw_args_in(&self, &std::path::Path, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+pub async fn vcs_gitea::Gitea<R>::run_raw_in(&self, &std::path::Path, &[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+impl core::default::Default for vcs_gitea::Gitea<processkit::runner::JobRunner>
+pub fn vcs_gitea::Gitea<processkit::runner::JobRunner>::default() -> Self
+impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_gitea::Gitea<R>
+pub fn vcs_gitea::Gitea<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: processkit::runner::ProcessRunner> vcs_gitea::GiteaApi for vcs_gitea::Gitea<R>
+pub fn vcs_gitea::Gitea<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::Gitea<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_delete<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl<R> core::marker::Freeze for vcs_gitea::Gitea<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for vcs_gitea::Gitea<R>
+impl<R> core::marker::Sync for vcs_gitea::Gitea<R>
+impl<R> core::marker::Unpin for vcs_gitea::Gitea<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for vcs_gitea::Gitea<R> where R: core::marker::UnsafeUnpin
+impl<R> !core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::Gitea<R>
+impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_gitea::Gitea<R>
+pub struct vcs_gitea::GiteaAt<'a, R: processkit::runner::ProcessRunner>
+impl<'a, R: processkit::runner::ProcessRunner> vcs_gitea::GiteaAt<'a, R>
+pub async fn vcs_gitea::GiteaAt<'a, R>::auth_status(&self) -> processkit::error::Result<bool>
+pub async fn vcs_gitea::GiteaAt<'a, R>::capabilities(&self) -> processkit::error::Result<vcs_gitea::GiteaCapabilities>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_close(&self, u64) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_comment(&self, u64, &str) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_create(&self, &str, &str) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_reopen(&self, u64) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_view(&self, u64) -> processkit::error::Result<vcs_gitea::Issue>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_approve(&self, u64) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_checkout(&self, u64) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_close(&self, u64) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_comment(&self, u64, &str) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_create(&self, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_edit(&self, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_merge(&self, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_reject(&self, u64, &str) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_view(&self, u64) -> processkit::error::Result<vcs_gitea::PullRequest>
+pub async fn vcs_gitea::GiteaAt<'a, R>::release_create(&self, vcs_gitea::ReleaseCreate) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::release_delete(&self, &str) -> processkit::error::Result<()>
+pub async fn vcs_gitea::GiteaAt<'a, R>::release_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::run(&self, &[alloc::string::String]) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::run_args(&self, &[&str]) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_gitea::GiteaAt<'a, R>::run_raw(&self, &[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::run_raw_args(&self, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::version(&self) -> processkit::error::Result<alloc::string::String>
+impl<R: processkit::runner::ProcessRunner> core::clone::Clone for vcs_gitea::GiteaAt<'_, R>
+pub fn vcs_gitea::GiteaAt<'_, R>::clone(&self) -> Self
+impl<R: processkit::runner::ProcessRunner> core::marker::Copy for vcs_gitea::GiteaAt<'_, R>
+impl<'a, R> core::marker::Freeze for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> core::marker::Send for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> core::marker::Sync for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> core::marker::Unpin for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> core::marker::UnsafeUnpin for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> !core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::GiteaAt<'a, R>
+impl<'a, R> !core::panic::unwind_safe::UnwindSafe for vcs_gitea::GiteaAt<'a, R>
+#[non_exhaustive] pub struct vcs_gitea::GiteaCapabilities
+pub vcs_gitea::GiteaCapabilities::version: vcs_diff::version::Version
+impl vcs_gitea::GiteaCapabilities
+pub fn vcs_gitea::GiteaCapabilities::ensure_supported(&self) -> processkit::error::Result<()>
+pub fn vcs_gitea::GiteaCapabilities::is_supported(&self) -> bool
+impl core::clone::Clone for vcs_gitea::GiteaCapabilities
+pub fn vcs_gitea::GiteaCapabilities::clone(&self) -> vcs_gitea::GiteaCapabilities
+impl core::cmp::Eq for vcs_gitea::GiteaCapabilities
+impl core::cmp::PartialEq for vcs_gitea::GiteaCapabilities
+pub fn vcs_gitea::GiteaCapabilities::eq(&self, &vcs_gitea::GiteaCapabilities) -> bool
+impl core::fmt::Debug for vcs_gitea::GiteaCapabilities
+pub fn vcs_gitea::GiteaCapabilities::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_gitea::GiteaCapabilities
+impl core::marker::StructuralPartialEq for vcs_gitea::GiteaCapabilities
+impl core::marker::Freeze for vcs_gitea::GiteaCapabilities
+impl core::marker::Send for vcs_gitea::GiteaCapabilities
+impl core::marker::Sync for vcs_gitea::GiteaCapabilities
+impl core::marker::Unpin for vcs_gitea::GiteaCapabilities
+impl core::marker::UnsafeUnpin for vcs_gitea::GiteaCapabilities
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::GiteaCapabilities
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::GiteaCapabilities
+#[non_exhaustive] pub struct vcs_gitea::Issue
+pub vcs_gitea::Issue::body: alloc::string::String
+pub vcs_gitea::Issue::number: u64
+pub vcs_gitea::Issue::state: alloc::string::String
+pub vcs_gitea::Issue::title: alloc::string::String
+pub vcs_gitea::Issue::url: alloc::string::String
+impl core::clone::Clone for vcs_gitea::Issue
+pub fn vcs_gitea::Issue::clone(&self) -> vcs_gitea::Issue
+impl core::cmp::Eq for vcs_gitea::Issue
+impl core::cmp::PartialEq for vcs_gitea::Issue
+pub fn vcs_gitea::Issue::eq(&self, &vcs_gitea::Issue) -> bool
+impl core::fmt::Debug for vcs_gitea::Issue
+pub fn vcs_gitea::Issue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::Issue
+impl core::marker::Freeze for vcs_gitea::Issue
+impl core::marker::Send for vcs_gitea::Issue
+impl core::marker::Sync for vcs_gitea::Issue
+impl core::marker::Unpin for vcs_gitea::Issue
+impl core::marker::UnsafeUnpin for vcs_gitea::Issue
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::Issue
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::Issue
+pub struct vcs_gitea::MockGiteaApi
+impl vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::checkpoint(&mut self)
+pub fn vcs_gitea::MockGiteaApi::new() -> Self
+impl vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::expect_auth_status(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__auth_status::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_capabilities(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__capabilities::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_close(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_close::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_comment(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_create(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_list(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_reopen(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_view(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_approve(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_checkout(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_checkout::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_close(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_close::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_comment(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_comment::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_create(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_edit(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_list(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_merge(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_reject(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_view(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_release_create(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_create::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_release_delete(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_delete::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_release_list(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__release_list::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_run(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_run_raw(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__run_raw::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_version(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
+impl core::default::Default for vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::default() -> Self
+impl core::fmt::Debug for vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::result::Result<(), core::fmt::Error>
+impl vcs_gitea::GiteaApi for vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_delete<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl core::marker::Freeze for vcs_gitea::MockGiteaApi
+impl core::marker::Send for vcs_gitea::MockGiteaApi
+impl core::marker::Sync for vcs_gitea::MockGiteaApi
+impl core::marker::Unpin for vcs_gitea::MockGiteaApi
+impl core::marker::UnsafeUnpin for vcs_gitea::MockGiteaApi
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::MockGiteaApi
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::MockGiteaApi
+#[non_exhaustive] pub struct vcs_gitea::PrCreate
+pub vcs_gitea::PrCreate::base: core::option::Option<alloc::string::String>
+pub vcs_gitea::PrCreate::body: alloc::string::String
+pub vcs_gitea::PrCreate::head: core::option::Option<alloc::string::String>
+pub vcs_gitea::PrCreate::title: alloc::string::String
+impl vcs_gitea::PrCreate
+pub fn vcs_gitea::PrCreate::base(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_gitea::PrCreate::head(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_gitea::PrCreate::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_gitea::PrCreate
+pub fn vcs_gitea::PrCreate::clone(&self) -> vcs_gitea::PrCreate
+impl core::fmt::Debug for vcs_gitea::PrCreate
+pub fn vcs_gitea::PrCreate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_gitea::PrCreate
+impl core::marker::Send for vcs_gitea::PrCreate
+impl core::marker::Sync for vcs_gitea::PrCreate
+impl core::marker::Unpin for vcs_gitea::PrCreate
+impl core::marker::UnsafeUnpin for vcs_gitea::PrCreate
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrCreate
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrCreate
+#[non_exhaustive] pub struct vcs_gitea::PrEdit
+pub vcs_gitea::PrEdit::body: core::option::Option<alloc::string::String>
+pub vcs_gitea::PrEdit::title: core::option::Option<alloc::string::String>
+impl vcs_gitea::PrEdit
+pub fn vcs_gitea::PrEdit::body(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_gitea::PrEdit::new() -> Self
+pub fn vcs_gitea::PrEdit::title(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_gitea::PrEdit
+pub fn vcs_gitea::PrEdit::clone(&self) -> vcs_gitea::PrEdit
+impl core::cmp::Eq for vcs_gitea::PrEdit
+impl core::cmp::PartialEq for vcs_gitea::PrEdit
+pub fn vcs_gitea::PrEdit::eq(&self, &vcs_gitea::PrEdit) -> bool
+impl core::default::Default for vcs_gitea::PrEdit
+pub fn vcs_gitea::PrEdit::default() -> Self
+impl core::fmt::Debug for vcs_gitea::PrEdit
+pub fn vcs_gitea::PrEdit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::PrEdit
+impl core::marker::Freeze for vcs_gitea::PrEdit
+impl core::marker::Send for vcs_gitea::PrEdit
+impl core::marker::Sync for vcs_gitea::PrEdit
+impl core::marker::Unpin for vcs_gitea::PrEdit
+impl core::marker::UnsafeUnpin for vcs_gitea::PrEdit
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrEdit
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrEdit
+#[non_exhaustive] pub struct vcs_gitea::PrMerge
+pub vcs_gitea::PrMerge::auto: bool
+pub vcs_gitea::PrMerge::delete_branch: bool
+pub vcs_gitea::PrMerge::strategy: vcs_gitea::MergeStrategy
+impl vcs_gitea::PrMerge
+pub fn vcs_gitea::PrMerge::auto(self) -> Self
+pub fn vcs_gitea::PrMerge::delete_branch(self) -> Self
+pub fn vcs_gitea::PrMerge::merge() -> Self
+pub fn vcs_gitea::PrMerge::rebase() -> Self
+pub fn vcs_gitea::PrMerge::squash() -> Self
+impl core::clone::Clone for vcs_gitea::PrMerge
+pub fn vcs_gitea::PrMerge::clone(&self) -> vcs_gitea::PrMerge
+impl core::fmt::Debug for vcs_gitea::PrMerge
+pub fn vcs_gitea::PrMerge::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_gitea::PrMerge
+impl core::marker::Send for vcs_gitea::PrMerge
+impl core::marker::Sync for vcs_gitea::PrMerge
+impl core::marker::Unpin for vcs_gitea::PrMerge
+impl core::marker::UnsafeUnpin for vcs_gitea::PrMerge
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrMerge
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrMerge
+#[non_exhaustive] pub struct vcs_gitea::PullRequest
+pub vcs_gitea::PullRequest::base_branch: alloc::string::String
+pub vcs_gitea::PullRequest::head_branch: alloc::string::String
+pub vcs_gitea::PullRequest::merged: bool
+pub vcs_gitea::PullRequest::number: u64
+pub vcs_gitea::PullRequest::state: alloc::string::String
+pub vcs_gitea::PullRequest::title: alloc::string::String
+pub vcs_gitea::PullRequest::url: alloc::string::String
+impl core::clone::Clone for vcs_gitea::PullRequest
+pub fn vcs_gitea::PullRequest::clone(&self) -> vcs_gitea::PullRequest
+impl core::cmp::Eq for vcs_gitea::PullRequest
+impl core::cmp::PartialEq for vcs_gitea::PullRequest
+pub fn vcs_gitea::PullRequest::eq(&self, &vcs_gitea::PullRequest) -> bool
+impl core::fmt::Debug for vcs_gitea::PullRequest
+pub fn vcs_gitea::PullRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::PullRequest
+impl core::marker::Freeze for vcs_gitea::PullRequest
+impl core::marker::Send for vcs_gitea::PullRequest
+impl core::marker::Sync for vcs_gitea::PullRequest
+impl core::marker::Unpin for vcs_gitea::PullRequest
+impl core::marker::UnsafeUnpin for vcs_gitea::PullRequest
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PullRequest
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PullRequest
+#[non_exhaustive] pub struct vcs_gitea::Release
+pub vcs_gitea::Release::draft: bool
+pub vcs_gitea::Release::prerelease: bool
+pub vcs_gitea::Release::published_at: alloc::string::String
+pub vcs_gitea::Release::tag: alloc::string::String
+pub vcs_gitea::Release::title: alloc::string::String
+pub vcs_gitea::Release::url: alloc::string::String
+impl core::clone::Clone for vcs_gitea::Release
+pub fn vcs_gitea::Release::clone(&self) -> vcs_gitea::Release
+impl core::cmp::Eq for vcs_gitea::Release
+impl core::cmp::PartialEq for vcs_gitea::Release
+pub fn vcs_gitea::Release::eq(&self, &vcs_gitea::Release) -> bool
+impl core::fmt::Debug for vcs_gitea::Release
+pub fn vcs_gitea::Release::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::Release
+impl core::marker::Freeze for vcs_gitea::Release
+impl core::marker::Send for vcs_gitea::Release
+impl core::marker::Sync for vcs_gitea::Release
+impl core::marker::Unpin for vcs_gitea::Release
+impl core::marker::UnsafeUnpin for vcs_gitea::Release
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::Release
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::Release
+#[non_exhaustive] pub struct vcs_gitea::ReleaseCreate
+pub vcs_gitea::ReleaseCreate::draft: bool
+pub vcs_gitea::ReleaseCreate::notes: core::option::Option<alloc::string::String>
+pub vcs_gitea::ReleaseCreate::prerelease: bool
+pub vcs_gitea::ReleaseCreate::tag: alloc::string::String
+pub vcs_gitea::ReleaseCreate::title: core::option::Option<alloc::string::String>
+impl vcs_gitea::ReleaseCreate
+pub fn vcs_gitea::ReleaseCreate::draft(self) -> Self
+pub fn vcs_gitea::ReleaseCreate::new(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_gitea::ReleaseCreate::notes(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_gitea::ReleaseCreate::prerelease(self) -> Self
+pub fn vcs_gitea::ReleaseCreate::title(self, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_gitea::ReleaseCreate
+pub fn vcs_gitea::ReleaseCreate::clone(&self) -> vcs_gitea::ReleaseCreate
+impl core::fmt::Debug for vcs_gitea::ReleaseCreate
+pub fn vcs_gitea::ReleaseCreate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_gitea::ReleaseCreate
+impl core::marker::Send for vcs_gitea::ReleaseCreate
+impl core::marker::Sync for vcs_gitea::ReleaseCreate
+impl core::marker::Unpin for vcs_gitea::ReleaseCreate
+impl core::marker::UnsafeUnpin for vcs_gitea::ReleaseCreate
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::ReleaseCreate
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::ReleaseCreate
+pub const vcs_gitea::BINARY: &str
+pub trait vcs_gitea::GiteaApi: core::marker::Send + core::marker::Sync
+pub fn vcs_gitea::GiteaApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::GiteaApi::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::release_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::release_delete<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::GiteaApi::release_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl vcs_gitea::GiteaApi for vcs_gitea::MockGiteaApi
+pub fn vcs_gitea::MockGiteaApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_delete<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::release_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl<R: processkit::runner::ProcessRunner> vcs_gitea::GiteaApi for vcs_gitea::Gitea<R>
+pub fn vcs_gitea::Gitea<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::Gitea<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::GiteaCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_close<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_delete<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_gitea::Gitea<R>::release_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Release>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait

@@ -45,6 +45,15 @@ tracing = ["processkit/tracing"]
 # `#[tokio::test]` for the async unit/integration tests; `time` + `test-util`
 # back the paused-clock cancellation test (`start_paused`, `time::timeout`).
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+# `processkit::testing::RecordReplayRunner` — record/replay cassettes for a
+# handful of `gh` parser fixtures (crates/github/tests/cassettes/), replayed
+# hermetically by `cargo test -p vcs-github`. Listed only here (not in
+# `[dependencies]`), so the `record` feature — and the `serde`/`serde_json`
+# deps it pulls in on top of processkit's own — is scoped to this crate's
+# dev/test profile and never reaches its published library build or any other
+# workspace crate. See CONTRIBUTING.md, "Updating a `gh` CLI cassette", for
+# the re-recording procedure.
+processkit = { workspace = true, features = ["record"] }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /

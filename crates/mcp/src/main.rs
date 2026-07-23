@@ -4,7 +4,7 @@
 //! ```text
 //! vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 //!         [--allow-tools <name,…>] [--timeout <seconds>]
-//!         [--max-output-bytes <n>]
+//!         [--max-output-bytes <n>] [--log-commands]
 //! ```
 //!
 //! Read tools are always available; `--allow-write` enables every mutating tool,
@@ -13,6 +13,11 @@
 //! overrides it. The git client is **hardened** (repo hooks and config disabled)
 //! so serving a repository you didn't create can't execute its hooks, and every
 //! command carries a `--timeout` so a stalled network call can't hang the server.
+//! `--log-commands` wraps the git/jj/forge clients in a command-logging
+//! [`ProcessRunner`](vcs_cli_support::logging::LoggingRunner) that reports every
+//! spawn (program, redacted argv, working directory, exit code, duration) to
+//! **stderr** — the stdout JSON-RPC transport stays a clean transport, and argv
+//! values that could carry a secret are redacted.
 //! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`) are bounded by an
 //! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
 //! buffered whole into the server's (and then the JSON response's) memory;
@@ -24,15 +29,25 @@ use std::time::Duration;
 
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use vcs_cli_support::logging::LoggingRunner;
 use vcs_core::OutputBudget;
 use vcs_core::Repo;
-use vcs_core::vcs_git::{Git, GitApi};
+use vcs_core::processkit::{JobRunner, ProcessRunner};
+use vcs_core::vcs_git::Git;
 use vcs_core::vcs_jj::Jj;
 use vcs_forge::vcs_gitea::Gitea;
 use vcs_forge::vcs_github::GitHub;
 use vcs_forge::vcs_gitlab::GitLab;
 use vcs_forge::{Forge, ForgeKind};
 use vcs_mcp::{VcsMcpServer, WriteGate};
+
+/// The runner every git/jj/forge client is built over: a `Box<dyn ProcessRunner>`
+/// so the client types are identical whether or not `--log-commands` wrapped a
+/// [`LoggingRunner`] around the real [`JobRunner`] — a runtime choice, one type.
+type Runner = Box<dyn ProcessRunner>;
+
+/// The stderr tag the command log prefixes each line with.
+const LOG_TAG: &str = "vcs-mcp";
 
 /// Default per-command timeout (seconds): a generous ceiling so a stalled fetch
 /// or forge call can't hang a request forever, while leaving headroom for a
@@ -82,6 +97,11 @@ OPTIONS:
                               repo_diff, and forge_pr_diff refuse with an error
                               rather than buffering an oversized blob/diff into
                               memory
+    --log-commands            Log every git/jj/forge command (program, redacted
+                              argv, working dir, exit code, duration) to STDERR
+                              for diagnostics. stdout stays a clean JSON-RPC
+                              transport; argv values that could carry a secret
+                              are redacted. Off by default.
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
@@ -97,6 +117,8 @@ struct Args {
     /// Content-tool output ceiling in bytes; `None` means unlimited
     /// (`--max-output-bytes 0`).
     max_output_bytes: Option<usize>,
+    /// Wrap the clients' runner in a command-logging decorator (`--log-commands`).
+    log_commands: bool,
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,8 +128,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let budget = output_budget(args.max_output_bytes);
-    let repo = open_repo(&args.repo, args.timeout, budget)?;
-    let forge = resolve_forge(&repo, args.forge, args.timeout, budget).await;
+    let repo = open_repo(&args.repo, args.timeout, budget, args.log_commands)?;
+    let forge = resolve_forge(&repo, args.forge, args.timeout, budget, args.log_commands).await;
     let server = VcsMcpServer::new(repo, forge, args.writes);
 
     // Serve MCP over stdio until the client disconnects.
@@ -133,13 +155,26 @@ fn open_repo(
     dir: &Path,
     timeout: Option<Duration>,
     budget: OutputBudget,
-) -> Result<Repo, Box<dyn std::error::Error>> {
+    log_commands: bool,
+) -> Result<Repo<Runner>, Box<dyn std::error::Error>> {
     let repo = Repo::discover_with(
         dir,
-        || hardened_git(timeout, budget),
-        || jj_client(timeout, budget),
+        || hardened_git(timeout, budget, log_commands),
+        || jj_client(timeout, budget, log_commands),
     )?;
     Ok(repo)
+}
+
+/// The [`ProcessRunner`] the clients drive: the real [`JobRunner`], optionally
+/// wrapped in a command-logging [`LoggingRunner`] when `--log-commands` is set.
+/// Boxed so both branches share one type. Each client gets its own runner
+/// instance (both are cheap to construct).
+fn make_runner(log_commands: bool) -> Runner {
+    if log_commands {
+        Box::new(LoggingRunner::new(JobRunner::new(), LOG_TAG))
+    } else {
+        Box::new(JobRunner::new())
+    }
 }
 
 /// The content-tool [`OutputBudget`] for `max_bytes`: [`OutputBudget::unlimited`]
@@ -152,22 +187,28 @@ fn output_budget(max_bytes: Option<usize>) -> OutputBudget {
 }
 
 /// A hardened git client carrying the optional per-command `timeout` and the
-/// content-output `budget`.
-fn hardened_git(timeout: Option<Duration>, budget: OutputBudget) -> Git {
+/// content-output `budget`, driving the (optionally command-logging) runner.
+/// `Git::with_runner(...).harden()` is `Git::hardened()` with the injected runner.
+fn hardened_git(
+    timeout: Option<Duration>,
+    budget: OutputBudget,
+    log_commands: bool,
+) -> Git<Runner> {
+    let git = Git::with_runner(make_runner(log_commands)).harden();
     let git = match timeout {
-        Some(t) => Git::hardened().default_timeout(t),
-        None => Git::hardened(),
+        Some(t) => git.default_timeout(t),
+        None => git,
     };
     git.default_output_budget(budget)
 }
 
 /// A jj client carrying the optional per-command `timeout` and the content-output
-/// `budget`. jj has no repo-local hooks, so (unlike git) it needs no hardening
-/// profile.
-fn jj_client(timeout: Option<Duration>, budget: OutputBudget) -> Jj {
+/// `budget`, driving the (optionally command-logging) runner. jj has no
+/// repo-local hooks, so (unlike git) it needs no hardening profile.
+fn jj_client(timeout: Option<Duration>, budget: OutputBudget, log_commands: bool) -> Jj<Runner> {
     let jj = match timeout {
-        Some(t) => Jj::new().default_timeout(t),
-        None => Jj::new(),
+        Some(t) => Jj::with_runner(make_runner(log_commands)).default_timeout(t),
+        None => Jj::with_runner(make_runner(log_commands)),
     };
     jj.default_output_budget(budget)
 }
@@ -181,6 +222,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut allow_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut timeout = Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
     let mut max_output_bytes = Some(DEFAULT_MAX_OUTPUT_BYTES);
+    let mut log_commands = false;
 
     let mut it = args;
     while let Some(arg) = it.next() {
@@ -190,6 +232,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                 return Ok(None);
             }
             "--allow-write" => allow_write = true,
+            "--log-commands" => log_commands = true,
             "--allow-tools" => {
                 let value = it
                     .next()
@@ -262,6 +305,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         writes,
         timeout,
         max_output_bytes,
+        log_commands,
     }))
 }
 
@@ -281,22 +325,23 @@ fn parse_forge(value: &str) -> Result<ForgeKind, String> {
 /// carry the same per-command `timeout` and content-output `budget` as the repo
 /// client, so `forge_pr_diff` is bounded the same way `repo_show_file` is.
 async fn resolve_forge(
-    repo: &Repo,
+    repo: &Repo<Runner>,
     forced: Option<ForgeKind>,
     timeout: Option<Duration>,
     budget: OutputBudget,
-) -> Option<Forge> {
+    log_commands: bool,
+) -> Option<Forge<Runner>> {
     let cwd = repo.root().to_path_buf();
     let kind = match forced {
         Some(k) => Some(k),
-        None => detect_forge_kind(repo.root(), timeout).await,
+        None => detect_forge_kind(repo).await,
     };
-    // Each forge CLI client exposes the same `default_timeout`/
+    // Each forge CLI client exposes the same `with_runner`/`default_timeout`/
     // `default_output_budget` builders, but they are distinct types with no
     // shared trait — so apply them inline per arm.
     kind.and_then(|k| match k {
         ForgeKind::GitHub => {
-            let c = GitHub::new();
+            let c = GitHub::with_runner(make_runner(log_commands));
             let c = match timeout {
                 Some(t) => c.default_timeout(t),
                 None => c,
@@ -305,7 +350,7 @@ async fn resolve_forge(
             Some(Forge::from_github(&cwd, c))
         }
         ForgeKind::GitLab => {
-            let c = GitLab::new();
+            let c = GitLab::with_runner(make_runner(log_commands));
             let c = match timeout {
                 Some(t) => c.default_timeout(t),
                 None => c,
@@ -314,7 +359,7 @@ async fn resolve_forge(
             Some(Forge::from_gitlab(&cwd, c))
         }
         ForgeKind::Gitea => {
-            let c = Gitea::new();
+            let c = Gitea::with_runner(make_runner(log_commands));
             let c = match timeout {
                 Some(t) => c.default_timeout(t),
                 None => c,
@@ -327,21 +372,27 @@ async fn resolve_forge(
     })
 }
 
-/// Best-effort: read the `origin` remote URL (works on a colocated jj repo too)
-/// and classify its host. `None` when there's no git remote or the host is
-/// unrecognised. Uses the hardened, timeout-bound client; the remote URL isn't a
-/// content read, so the output budget doesn't apply here.
-async fn detect_forge_kind(root: &Path, timeout: Option<Duration>) -> Option<ForgeKind> {
-    let url = hardened_git(timeout, OutputBudget::unlimited())
-        .remote_url(root, "origin")
+/// Best-effort: read the `origin` remote URL through the backend-agnostic repo
+/// facade and classify its host. This works for both colocated and non-colocated
+/// jj repositories. `None` when there is no `origin`, the remote query fails, or
+/// the host is unrecognised.
+async fn detect_forge_kind<R: vcs_core::processkit::ProcessRunner>(
+    repo: &Repo<R>,
+) -> Option<ForgeKind> {
+    let origin = repo
+        .remotes()
         .await
-        .ok()?;
-    ForgeKind::from_remote_url(&url)
+        .ok()?
+        .into_iter()
+        .find(|remote| remote.name == "origin")?;
+    ForgeKind::from_remote_url(&origin.url)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::testing::{RecordingRunner, Reply};
+    use vcs_core::vcs_jj::Jj;
 
     /// Run `parse_args` over a borrowed slice of `&str` args, as if they were argv.
     fn parse(args: &[&str]) -> Result<Option<Args>, String> {
@@ -368,6 +419,15 @@ mod tests {
             Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         );
         assert_eq!(args.max_output_bytes, Some(DEFAULT_MAX_OUTPUT_BYTES));
+        assert!(!args.log_commands, "command logging is off by default");
+    }
+
+    #[test]
+    fn log_commands_flag_enables_it() {
+        let args = parse(&["--log-commands"]).unwrap().unwrap();
+        assert!(args.log_commands);
+        // Absent by default (guards against a flipped default).
+        assert!(!parse(&[]).unwrap().unwrap().log_commands);
     }
 
     // --allow-tools builds a Set gate; the list splits on commas, trims, and is
@@ -522,5 +582,76 @@ mod tests {
     fn output_budget_conversion() {
         assert_eq!(output_budget(None), OutputBudget::unlimited());
         assert_eq!(output_budget(Some(4096)), OutputBudget::bytes(4096));
+    }
+
+    // A `Repo` backed by jj has no need for a colocated `.git`: its remote list
+    // goes through `jj git remote list`. The same facade is selected for a
+    // colocated jj checkout, so this hermetic test pins both code paths without
+    // requiring a real jj binary.
+    #[tokio::test]
+    async fn detect_forge_kind_uses_jj_remotes_without_a_colocated_git_dir() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            "upstream https://gitlab.com/example/ignored.git\norigin git@github.com:example/repo.git\n",
+        ));
+        let repo = Repo::from_jj(
+            "/non-colocated-jj",
+            "/non-colocated-jj",
+            Jj::with_runner(&rec),
+        );
+
+        assert_eq!(detect_forge_kind(&repo).await, Some(ForgeKind::GitHub));
+        assert_eq!(rec.calls().len(), 1);
+        assert_eq!(
+            rec.calls()[0].args_str(),
+            [
+                "git",
+                "remote",
+                "list",
+                "--color",
+                "never",
+                "--ignore-working-copy"
+            ],
+            "jj remote discovery must override ui.color=always and avoid a working-copy snapshot"
+        );
+    }
+
+    // Exercise both jj layouts against the real CLI. The non-colocated case also
+    // sets the user configuration that used to inject ANSI escapes into the
+    // parsed remote-list output; `Jj::cmd_in_wc` must override it with
+    // `--color never`.
+    #[tokio::test]
+    #[ignore = "requires the jj binary"]
+    async fn detect_forge_kind_handles_colocated_and_non_colocated_jj() {
+        let colocated = vcs_testkit::JjSandbox::colocated("mcp-forge-colocated");
+        colocated.jj(&[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/colocated.git",
+        ]);
+        assert!(colocated.path().join(".git").is_dir());
+        let colocated_repo = Repo::discover(colocated.path()).expect("discover colocated jj");
+        assert_eq!(
+            detect_forge_kind(&colocated_repo).await,
+            Some(ForgeKind::GitHub)
+        );
+
+        let non_colocated = vcs_testkit::JjSandbox::init_non_colocated("mcp-forge-non-colocated");
+        non_colocated.jj(&["config", "set", "--repo", "ui.color", "always"]);
+        non_colocated.jj(&[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.com/example/non-colocated.git",
+        ]);
+        assert!(!non_colocated.path().join(".git").exists());
+        let non_colocated_repo =
+            Repo::discover(non_colocated.path()).expect("discover non-colocated jj");
+        assert_eq!(
+            detect_forge_kind(&non_colocated_repo).await,
+            Some(ForgeKind::GitLab)
+        );
     }
 }

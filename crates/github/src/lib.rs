@@ -1870,11 +1870,21 @@ vcs_cli_support::at_forwarders! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{RecordReplayRunner, RecordingRunner, Reply, ScriptedRunner};
 
     #[test]
     fn binary_name_is_gh() {
         assert_eq!(BINARY, "gh");
+    }
+
+    /// Path to a cassette recorded by `crates/github/tests/cli.rs`'s
+    /// `record_*` tests. See CONTRIBUTING.md, "Updating a `gh` CLI cassette",
+    /// for the re-recording procedure — a cassette here is a fixture that
+    /// captures "what `gh` actually printed", not our guess at its shape.
+    fn cassette_path(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/cassettes")
+            .join(name)
     }
 
     // `capabilities()` parses the real `gh --version` banner and gates on the 2.0
@@ -3418,24 +3428,84 @@ mod tests {
         ));
     }
 
+    // Replays a cassette recorded against a live `gh release list`/`release
+    // view` on this very repo (crates/github/tests/cli.rs's
+    // `record_release_round_trip`) instead of a hand-invented JSON payload —
+    // K-037 exists precisely because a hand-picked field set can silently
+    // diverge from what `release view --json` actually returns.
     #[tokio::test]
     async fn release_view_requests_view_fields() {
-        let json = r#"{"tagName":"v1","name":"","body":"notes","url":"u",
-            "publishedAt":"p","isDraft":false,"isPrerelease":false}"#;
-        let rec = RecordingRunner::new(
-            ScriptedRunner::new().on(["gh", "release", "view"], Reply::ok(json)),
-        );
+        let cassette = RecordReplayRunner::replay(cassette_path("release_round_trip.json"))
+            .expect("load recorded release cassette");
+        let rec = RecordingRunner::new(cassette);
         let gh = GitHub::with_runner(&rec);
+        let releases = gh.release_list(Path::new(".")).await.expect("release_list");
+        let tag = releases
+            .first()
+            .expect("recorded cassette has a release")
+            .tag_name
+            .clone();
         let release = gh
-            .release_view(Path::new("."), "v1")
+            .release_view(Path::new("."), &tag)
             .await
             .expect("release_view");
-        assert_eq!(release.tag_name, "v1");
-        assert_eq!(release.body.as_deref(), Some("notes"));
-        assert_eq!(release.url.as_deref(), Some("u"));
+        assert_eq!(release.tag_name, tag);
+        assert!(
+            release.body.as_deref().is_some_and(|b| !b.is_empty()),
+            "release notes were recorded"
+        );
+        assert!(release.url.as_deref().is_some_and(|u| !u.is_empty()));
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
         assert_eq!(
-            rec.only_call().args_str(),
-            ["release", "view", "v1", "--json", RELEASE_VIEW_FIELDS]
+            calls[1].args_str(),
+            [
+                "release",
+                "view",
+                tag.as_str(),
+                "--json",
+                RELEASE_VIEW_FIELDS
+            ]
+        );
+    }
+
+    // Replays a cassette recorded against a live `gh run list`/`run view` on
+    // this very repo (crates/github/tests/cli.rs's `record_run_round_trip`);
+    // see the analogous `release_view_requests_view_fields` above.
+    #[tokio::test]
+    async fn run_list_and_view_replay_recorded_cassette() {
+        let cassette = RecordReplayRunner::replay(cassette_path("run_round_trip.json"))
+            .expect("load recorded run cassette");
+        let rec = RecordingRunner::new(cassette);
+        let gh = GitHub::with_runner(&rec);
+        let runs = gh
+            .run_list(Path::new("."), 3, None)
+            .await
+            .expect("run_list");
+        let first = runs.first().expect("recorded cassette has runs");
+        assert!(first.database_id > 0);
+        assert!(!first.workflow_name.is_empty());
+        let run = gh
+            .run_view(Path::new("."), first.database_id)
+            .await
+            .expect("run_view");
+        assert_eq!(run.database_id, first.database_id);
+        assert_eq!(run.workflow_name, first.workflow_name);
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0].args_str(),
+            ["run", "list", "--limit", "3", "--json", RUN_FIELDS]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "run",
+                "view",
+                first.database_id.to_string().as_str(),
+                "--json",
+                RUN_FIELDS
+            ]
         );
     }
 

@@ -163,7 +163,7 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
         "got {reachable:?}"
     );
 
-    // A clean working copy has no conflicts → empty list (jj exits non-zero).
+    // A clean working copy has no conflicts → the filtered NUL stream is empty.
     assert!(
         jj.resolve_list(dir, &rv("@"))
             .await
@@ -172,8 +172,8 @@ async fn reachable_bookmarks_and_resolve_list_cycle() {
     );
 
     // Build a real conflict: two children of base that edit the same file,
-    // merged. `resolve_list` must return the actual conflicted path (this is the
-    // case the format parser has to get right).
+    // merged. `resolve_list` must return the actual conflicted path from jj's
+    // conflict-filtered, NUL-delimited file-list template.
     std::fs::write(dir.join("c.txt"), "base\n").expect("write base");
     jj_raw(dir, &["new", "root()", "-m", "side-a"]);
     std::fs::write(dir.join("c.txt"), "aaa\n").expect("write a");
@@ -361,6 +361,41 @@ async fn remote_management_round_trip() {
             .any(|remote| remote.name == "t097-upstream"),
         "removed remote should be absent"
     );
+}
+
+// `git remote list` only reads static Git configuration, so the typed query
+// must not snapshot the jj working copy or append an operation-log entry.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn remote_list_does_not_record_an_operation() {
+    let sandbox = JjSandbox::init("remote-list-read-only");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+    sandbox.jj(&[
+        "git",
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
+
+    let before = sandbox.op_head();
+    let remotes = jj.remote_list(dir).await.expect("list remotes");
+    let after = sandbox.op_head();
+
+    // The URL check is intentionally loose: a dev/CI environment may carry a
+    // `url.insteadOf` Git config rewrite (e.g. https://github.com/ ->
+    // git@github.com:), so jj can legitimately store/list a rewritten URL
+    // instead of the literal string we passed to `remote add`. The remote
+    // name is never rewritten, so it is the reliable part of the assertion;
+    // the URL check merely sanity-checks that it still points at the same
+    // repo, regardless of scheme/host rewriting.
+    assert!(
+        remotes
+            .iter()
+            .any(|remote| { remote.name == "origin" && remote.url.ends_with("example/repo.git") })
+    );
+    assert_eq!(after, before, "remote listing must not append an operation");
 }
 
 // absorb folds an edit into the change that introduced the lines; split carves

@@ -5,14 +5,108 @@
 //! Scaffolding (throwaway repos, raw scenario steps) comes from `vcs-testkit`;
 //! the typed facade under test does the rest.
 
-use vcs_core::{BackendKind, ChangeKind, OperationState, Repo, WorktreeCreate};
-use vcs_testkit::{GitSandbox, JjSandbox, git, jj};
+use vcs_core::{BackendKind, ChangeKind, CloneSpec, OperationState, Repo, WorktreeCreate};
+use vcs_testkit::{BareRemote, GitSandbox, JjSandbox, TempDir, git, jj};
 
 /// A git sandbox with the one seed commit the facade tests build on.
 fn seeded_git() -> GitSandbox {
     let repo = GitSandbox::init("facade");
     repo.commit_file("seed.txt", "seed\n", "initial");
     repo
+}
+
+// --- clone ---------------------------------------------------------------
+
+// `Repo::clone` structurally rejects a cross-backend option **before** spawning, so
+// these need no binary: `colocate` is jj-only and must be refused on a git clone, and
+// git's `bare` must be refused on a jj clone — each a typed `Unsupported`, not a raw
+// CLI error or a silently-dropped option.
+#[tokio::test]
+async fn clone_git_rejects_the_jj_only_colocate_option() {
+    let tmp = TempDir::new("t110-reject-colocate");
+    let dest = tmp.path().join("dest"); // never created — the reject is pre-spawn
+    let err = Repo::clone(
+        BackendKind::Git,
+        "https://example.com/r.git",
+        &dest,
+        CloneSpec::new().colocate(true),
+    )
+    .await
+    .expect_err("colocate is jj-only and must be rejected on a git clone");
+    assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+    assert!(!dest.exists(), "a rejected clone must not create the dest");
+}
+
+#[tokio::test]
+async fn clone_jj_rejects_a_git_only_option() {
+    let tmp = TempDir::new("t110-reject-bare");
+    let dest = tmp.path().join("dest");
+    let err = Repo::clone(
+        BackendKind::Jj,
+        "https://example.com/r.git",
+        &dest,
+        CloneSpec::new().bare(),
+    )
+    .await
+    .expect_err("bare is git-only and must be rejected on a jj clone");
+    assert!(err.is_unsupported(), "expected Unsupported, got {err:?}");
+    assert!(!dest.exists(), "a rejected clone must not create the dest");
+}
+
+// A real git clone from a **local** bare source (no network): the returned handle is
+// git-backed, bound to `dest`, and the cloned working tree carries the seed commit.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn clone_git_from_local_source_opens_a_handle() {
+    let remote = BareRemote::seeded("t110-git-clone");
+    let dest = remote.temp_dir().join("git-clone"); // clone creates it
+
+    let repo = Repo::clone(BackendKind::Git, &remote.url(), &dest, CloneSpec::new())
+        .await
+        .expect("clone");
+
+    assert_eq!(repo.kind(), BackendKind::Git);
+    assert!(repo.git().is_some() && repo.jj().is_none());
+    assert_eq!(repo.cwd(), dest.as_path(), "the handle is bound to dest");
+    assert!(
+        dest.join("seed.txt").exists(),
+        "the working tree is populated"
+    );
+    // A fresh clone is clean, and the seed commit is reachable through the facade.
+    assert!(
+        repo.changed_files().await.expect("status").is_empty(),
+        "a fresh clone has no uncommitted changes"
+    );
+    assert!(repo.current_branch().await.expect("branch").is_some());
+}
+
+// A real jj clone from a local bare git source: the returned handle is jj-backed and
+// the seed content is present. `--no-colocate` by default (unset colocate), so no
+// `.git` sits beside `.jj`.
+#[tokio::test]
+#[ignore = "requires the jj and git binaries"]
+async fn clone_jj_from_local_source_opens_a_handle() {
+    let remote = BareRemote::seeded("t110-jj-clone");
+    let dest = remote.temp_dir().join("jj-clone");
+
+    let repo = Repo::clone(BackendKind::Jj, &remote.url(), &dest, CloneSpec::new())
+        .await
+        .expect("clone");
+
+    assert_eq!(repo.kind(), BackendKind::Jj);
+    assert!(repo.jj().is_some() && repo.git().is_none());
+    assert_eq!(repo.cwd(), dest.as_path(), "the handle is bound to dest");
+    assert!(
+        dest.join("seed.txt").exists(),
+        "the working tree is populated"
+    );
+    assert!(dest.join(".jj").exists(), "a jj checkout was created");
+    assert!(
+        !dest.join(".git").exists(),
+        "the default (unset colocate) is a non-colocated checkout — no .git beside .jj"
+    );
+    // jj lays a fresh empty `@` over the imported commit, so the working copy is clean.
+    assert!(repo.changed_files().await.expect("status").is_empty());
 }
 
 // The batched snapshot against real git: branch, a local-tracking upstream with

@@ -44,9 +44,21 @@ crates; tag releases as `vcs-jj-v<version>`.
   branch tip.
 
 ### Changed
--
+- `JjApi::remote_list` now runs `jj git remote list` with
+  `--ignore-working-copy`. Listing static remote configuration no longer
+  snapshots the working copy or records a jj operation; its parsed remotes are
+  otherwise unchanged. (T-109.)
 
 ### Fixed
+- **`resolve_list` now reads jj's machine-oriented `file list` template instead
+  of parsing `resolve --list`'s human-facing table.** It runs `jj file list -r
+  <revset> -T 'if(conflict, path ++ "\0")'`: jj evaluates `conflict` on each
+  `TreeEntry` and emits only conflicted paths, NUL-delimited. The parser keeps
+  the path bytes unchanged, so embedded, leading, and trailing spaces (and
+  non-UTF-8 Unix names) round-trip exactly. A clean revision produces an empty
+  successful stream; every command failure remains an error. `file list -T`
+  was introduced in jj 0.26, before this crate's jj >= 0.38 support floor, so
+  no `resolve --list` fallback is needed. (T-115.)
 - **`JjApi::root` (and the `root_wc` helper feeding `status`/
   `status_ignoring_working_copy`/`diff_summary`) now decodes `jj root`'s stdout
   byte-losslessly**, via `ManagedClient::parse_bytes` +
@@ -71,9 +83,9 @@ crates; tag releases as `vcs-jj-v<version>`.
   guard's existing behaviour. **Breaking for a caller that passed an empty/
   blank or `@`-containing `remote` and relied on the silent `Ok(())`:** it now
   gets an `Err`. (T-086.)
-- **`status`/`diff_summary`/`resolve --list` no longer corrupt or reject a Unix
+- **`status`/`diff_summary`/`resolve_list` no longer corrupt or reject a Unix
   filename containing a literal backslash or colon.** `parse::normalize_slashes`
-  (used by `parse_diff_summary`/`parse_resolve_list`) and
+  (used by `parse_diff_summary`/`parse_conflicted_file_list`) and
   `normalize_workspace_path`'s `\`→`/` rewrite — plus the latter's
   second-byte-`:` drive-letter heuristic — are now **Windows-only**
   (`#[cfg(windows)]`), matching `JjFileset::path`'s existing convention. On
@@ -130,8 +142,8 @@ crates; tag releases as `vcs-jj-v<version>`.
   `ChangedPath.path` / `ChangedPath.old_path` are `PathBuf` / `Option<PathBuf>` (were
   `String` / `Option<String>`), and `JjApi::resolve_list` returns `Vec<PathBuf>` (was
   `Vec<String>`). `status` / `diff_summary` / `resolve_list` now parse `jj diff
-  --summary` / `resolve --list` output from **raw bytes** (`parse_diff_summary` /
-  `parse_resolve_list` consume `&[u8]`) via `ManagedClient::parse_bytes`, so a
+  --summary` / `file list` template output from **raw bytes** (`parse_diff_summary` /
+  `parse_conflicted_file_list` consume `&[u8]`) via `ManagedClient::parse_bytes`, so a
   non-UTF-8 filename (legal on Unix) survives byte-for-byte instead of being flattened
   by `String::from_utf8_lossy`. `workspace_root` / `workspace_roots` likewise now build
   their returned `PathBuf` from raw `jj workspace root` stdout (via `parse_bytes` /
