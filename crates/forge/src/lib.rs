@@ -1700,8 +1700,10 @@ mod tests {
                 .on(["tea", "--version"], Reply::ok("tea version 0.9.2\n"))
                 .on(
                     ["tea", "login", "list"],
-                    Reply::ok(r#""Name","URL","SSHHost","User","Default"
-"a","","","","""#),
+                    Reply::ok(
+                        r#""Name","URL","SSHHost","User","Default"
+"a","","","","""#,
+                    ),
                 ),
         );
         let caps = forge.capabilities().await.unwrap();
