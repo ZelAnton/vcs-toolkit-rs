@@ -2413,7 +2413,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             rec.only_call().args_str(),
-            ["pr", "merge", "5", "--style", "merge"]
+            ["pr", "merge", "--style", "merge", "5"]
         );
     }
 
