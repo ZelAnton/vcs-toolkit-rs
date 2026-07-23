@@ -1665,6 +1665,23 @@ mod tests {
         assert!(rec.calls().is_empty(), "unsupported ops must not spawn");
     }
 
+    // Gitea's structural Unsupported gate runs before `PrEdit` validates its
+    // optional fields: even an empty edit is Unsupported, not InvalidInput,
+    // and never reaches the runner.
+    #[tokio::test]
+    async fn gitea_pr_edit_both_none_is_unsupported_without_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let forge = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+
+        let err = forge.pr_edit(1, PrEdit::new()).await.unwrap_err();
+
+        assert!(
+            err.is_unsupported(),
+            "both-None Gitea pr_edit must be Unsupported, got {err:?}"
+        );
+        assert!(rec.calls().is_empty(), "unsupported pr_edit must not spawn");
+    }
+
     // T-049: the output budget set on the underlying client is INHERITED by the
     // `Forge` facade — a `pr_diff` whose output exceeds it is refused with a
     // `OutputTooLarge`-carrying error (actual + allowed sizes), never a truncated
