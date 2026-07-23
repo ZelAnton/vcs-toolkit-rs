@@ -23,7 +23,7 @@
 
 use std::path::PathBuf;
 
-use vcs_gitea::{Gitea, GiteaApi};
+use vcs_gitea::{Gitea, GiteaApi, is_view_absence};
 
 /// Whether `tea` is on PATH (a successful `--version` spawn).
 async fn tea_present() -> bool {
@@ -43,7 +43,19 @@ fn test_repo() -> PathBuf {
 /// output type` diagnostic, which on `tea` 0.9.x arrived with exit 0 and so used to be
 /// swallowed as a silent empty list. Everything else (no repo, no login, network) is a
 /// genuine environment error we skip on.
+///
+/// **A confirmed resource absence is not drift.** `issue_view`/`pr_view` synthesize a
+/// single-item view by paging `tea … list` (`tea` has no single-item endpoint), so a
+/// number that is genuinely absent is reported as an `Error::Parse` too — the *same
+/// variant* a real drift uses. `vcs_gitea::is_view_absence` recognises that deliberate
+/// sentinel *by structure*, so this gate excludes it **without matching the message
+/// text by hand** — while every other `Error::Parse` (a real parser/`--output`
+/// mismatch) still counts as drift, so a genuine format regression is never masked as a
+/// mere absence.
 fn is_format_drift(err: &processkit::Error) -> bool {
+    if is_view_absence(err) {
+        return false;
+    }
     matches!(err, processkit::Error::Parse { .. })
         || err.to_string().contains("unknown output type")
 }
@@ -183,7 +195,12 @@ async fn list_outputs_match_the_parsers() {
         Err(other) => eprintln!("skipping release_list: {other}"),
     }
 
-    // issue_view pages the same issues list and filters by number; probe #1 (a
-    // non-format-drift error is a fine skip if it simply doesn't exist).
+    // issue_view pages the same issues list and filters by number; probe #1. If issue
+    // #1 simply doesn't exist in the (freshly-seeded) repo, `issue_view` reports a
+    // *confirmed absence* — which `is_format_drift` recognises (via
+    // `vcs_gitea::is_view_absence`) as NOT a drift, so `assert_output_contract` skips it
+    // rather than failing. A real parser/`--output` mismatch on this same call still
+    // fails the gate. This is the regression the weekly `gitea-live` lane hit: an absent
+    // issue #1 must be a safe skip, not a hard "contract drift" panic.
     assert_output_contract("issue_view", tea.issue_view(&dir, 1).await);
 }

@@ -205,3 +205,31 @@ async fn release_list_round_trip() {
         );
     }
 }
+
+/// A genuinely-absent PR view classifies as **resource-not-found**, not a
+/// format-drift/parse failure. `tea` has no single-PR endpoint, so `vcs-gitea` pages
+/// the list and reports a confirmed miss as its recognizable absence sentinel; the
+/// facade's [`Error::is_resource_not_found`](vcs_forge::Error::is_resource_not_found)
+/// keys off exactly that. This locks the signal in end-to-end against a real `tea` —
+/// the vcs-gitea-level twin (`vcs_gitea::is_view_absence`) is unit-tested hermetically,
+/// and this proves the distinction survives against the live CLI, so an "issue/PR #N
+/// doesn't exist" miss is never conflated with tea's format drifting (the T-119
+/// regression the `gitea-live` lane surfaced).
+#[tokio::test]
+#[ignore = "requires a live one-shot Gitea (set VCS_GITEA_LIVE); see scheduled-cli-drift.yml"]
+async fn absent_pr_view_is_resource_not_found() {
+    let Some(dir) = live_repo().await else { return };
+    let forge = Forge::gitea(dir);
+
+    // A PR number no seeded repo will ever have: after a full paged listing this is a
+    // *confirmed* absence, distinct from a format drift or an empty listing.
+    let err = forge
+        .pr_view(u64::MAX)
+        .await
+        .expect_err("viewing an absent PR must error");
+    assert!(
+        err.is_resource_not_found(),
+        "a confirmed-absent PR must classify as resource-not-found, not a parse/format \
+         drift: {err}"
+    );
+}

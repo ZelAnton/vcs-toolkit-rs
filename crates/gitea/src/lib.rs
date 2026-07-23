@@ -242,6 +242,46 @@ impl Default for PrEdit {
 /// positional the same way.
 pub const BINARY: &str = "tea";
 
+/// The [`Error::Parse`] message prefixes [`GiteaApi::issue_view`] / [`pr_view`](GiteaApi::pr_view)
+/// use to report a **confirmed resource absence** — the requested number is genuinely
+/// not in the fully-paged listing. `tea` has no single-item endpoint, so both views are
+/// synthesized by paging `tea … list`, and a real miss can only be surfaced as an
+/// [`Error::Parse`] — the *same variant* a genuine **format drift** (our positional
+/// parser rejecting tea's output) uses. These fixed prefixes let [`is_view_absence`]
+/// tell the two apart *by structure*: the producing sites build their messages from the
+/// same constants, so the classifier and the producers can never drift apart. The
+/// PR-side wording deliberately keeps the `no pull request` phrasing the
+/// [`vcs-forge`](https://crates.io/crates/vcs-forge) facade's own resource-not-found
+/// marker set keys on.
+const ABSENT_ISSUE_PREFIX: &str = "no issue #";
+const ABSENT_PR_PREFIX: &str = "no pull request #";
+
+/// Whether `err` is the **confirmed resource-absent** signal that
+/// [`GiteaApi::issue_view`] / [`pr_view`](GiteaApi::pr_view) raise when the requested
+/// issue/PR number is genuinely not present after a full paged listing — as opposed to
+/// a **format-drift** parse error (our positional parser rejecting tea's real output,
+/// or tea's `unknown output type` diagnostic).
+///
+/// `tea` has no single-item view endpoint, so both views are synthesized by paging
+/// `tea … list` and a real miss can only be reported as an [`Error::Parse`] — the *same
+/// variant* a genuine format drift uses. A consumer that must tell "this issue/PR
+/// doesn't exist" apart from "tea's output format drifted" — e.g. the scheduled
+/// CLI-drift test gate deciding skip-vs-fail, or a caller mapping an absence to its own
+/// `Ok(None)` — checks this **instead of matching the message text by hand**, so the
+/// distinction survives any later wording change to the message.
+///
+/// Matches **only** the deliberate empty-page absence sentinel — never the loud
+/// "stopped at the page safety bound" report (an *inconclusive* walk of a pathologically
+/// large repo, not a confirmed absence) nor any other parse failure — so it can never
+/// mask a real format regression as a mere absence.
+pub fn is_view_absence(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::Parse { message, .. }
+            if message.starts_with(ABSENT_ISSUE_PREFIX) || message.starts_with(ABSENT_PR_PREFIX)
+    )
+}
+
 // tea's `list` commands serialize a print-table whose columns are chosen with
 // `--fields`. We request exactly the columns the positional DSV parsers read, in
 // this column order (see `parse.rs`); we ask for `--output csv`, not `json`, because
@@ -530,6 +570,13 @@ pub trait GiteaApi: Send + Sync {
     /// single capped listing. It stops at the first empty page (a genuine absence →
     /// [`Error::Parse`]) or a large safety bound; a miss is not a false negative for
     /// any normally-sized repo.
+    ///
+    /// A confirmed absence and a **format drift** (our parser rejecting tea's output)
+    /// are both [`Error::Parse`], since there is no single-item endpoint to fail
+    /// differently — use [`is_view_absence`] to tell "this PR doesn't exist" apart from
+    /// "tea's format drifted" without matching the message text. The page-safety-bound
+    /// case is a distinct, loud [`Error::Parse`] (an inconclusive walk, not a confirmed
+    /// absence — `is_view_absence` returns `false` for it).
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
     /// Open a pull request, returning the command's output (`tea pr create`).
     /// Unlike `gh`/`glab`, `tea` prints a textual summary on success, **not** the
@@ -615,7 +662,9 @@ pub trait GiteaApi: Send + Sync {
     /// renders Markdown and ignores `--output`, so — like [`pr_view`](GiteaApi::pr_view) —
     /// this is synthesized by **paging** `tea issues list --state all` (`--page N`) and
     /// filtering by number, finding a closed issue and one past the server's ~50-row
-    /// page cap. An absence is an [`Error::Parse`].
+    /// page cap. A confirmed absence is an [`Error::Parse`] — the *same variant* a
+    /// format drift uses, since there is no single-item endpoint to fail differently;
+    /// use [`is_view_absence`] to tell the two apart without matching the message text.
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
     /// Open an issue, returning the command's output (`tea issues create
     /// --title <t> --description <d>`). Like [`pr_create`](GiteaApi::pr_create),
@@ -831,9 +880,12 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             }
             if exhausted {
                 // An empty page means we walked past the last PR — a genuine absence.
+                // Built from `ABSENT_PR_PREFIX` so `is_view_absence` recognises this
+                // deliberate "confirmed absent" sentinel and does not misread it as a
+                // format drift.
                 return Err(Error::parse(
                     BINARY,
-                    format!("no pull request #{number} in `tea pr list`"),
+                    format!("{ABSENT_PR_PREFIX}{number} in `tea pr list`"),
                 ));
             }
         }
@@ -1029,9 +1081,12 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             }
             if exhausted {
                 // An empty page means we walked past the last issue — a genuine absence.
+                // Built from `ABSENT_ISSUE_PREFIX` so `is_view_absence` recognises this
+                // deliberate "confirmed absent" sentinel and does not misread it as a
+                // format drift.
                 return Err(Error::parse(
                     BINARY,
-                    format!("no issue #{number} in `tea issues list`"),
+                    format!("{ABSENT_ISSUE_PREFIX}{number} in `tea issues list`"),
                 ));
             }
         }
@@ -1454,6 +1509,12 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         let err = tea.pr_view(Path::new("/repo"), 5).await.unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
+        // A genuine absence is the recognizable "confirmed absent" sentinel, not a
+        // format drift — so a drift-detection consumer can skip rather than fail.
+        assert!(
+            is_view_absence(&err),
+            "an empty-page miss must be the absence sentinel, not a drift: {err:?}"
+        );
         assert_eq!(
             rec.only_call().args_str(),
             [
@@ -1822,6 +1883,52 @@ mod tests {
         let tea = Gitea::with_runner(&rec);
         let err = tea.issue_view(Path::new("/repo"), 5).await.unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
+        // ...and it is the recognizable "confirmed absent" sentinel, not a format drift.
+        assert!(
+            is_view_absence(&err),
+            "an empty-page miss must be the absence sentinel, not a drift: {err:?}"
+        );
+    }
+
+    // The `is_view_absence` classifier separates a confirmed issue/PR absence (which
+    // both views synthesize as an `Error::Parse`, since `tea` has no single-item
+    // endpoint) from a genuine format drift or any other error — WITHOUT a consumer
+    // matching the message text by hand. Real drift must still read as drift so it is
+    // never masked as a mere absence.
+    #[test]
+    fn is_view_absence_separates_absence_from_drift() {
+        // The deliberate empty-page absence sentinels both views raise.
+        assert!(is_view_absence(&Error::parse(
+            BINARY,
+            format!("{ABSENT_ISSUE_PREFIX}5 in `tea issues list`"),
+        )));
+        assert!(is_view_absence(&Error::parse(
+            BINARY,
+            format!("{ABSENT_PR_PREFIX}5 in `tea pr list`"),
+        )));
+
+        // A real format drift is NOT an absence: our parser rejecting tea's output, or
+        // tea's `unknown output type` diagnostic — both stay classified as drift.
+        assert!(!is_view_absence(&Error::parse(
+            BINARY,
+            "unknown output type 'json', available types are: table, csv, simple, tsv, yaml",
+        )));
+        assert!(!is_view_absence(&Error::parse(
+            BINARY,
+            "expected a numeric index, got \"oops\"",
+        )));
+
+        // The inconclusive page-safety-bound report is NOT a confirmed absence.
+        assert!(!is_view_absence(&Error::parse(
+            BINARY,
+            "pull request #5 not found in the first 10000 of `tea pr list` (stopped at the \
+             200-page safety bound)",
+        )));
+
+        // Non-`Parse` variants are never an absence (a missing `tea` binary, a non-zero
+        // exit, …).
+        assert!(!is_view_absence(&Error::not_found(BINARY, None)));
+        assert!(!is_view_absence(&Error::exit(BINARY, 1, "", "boom")));
     }
 
     // issue_create assembles title/description; returns the trimmed stdout.
