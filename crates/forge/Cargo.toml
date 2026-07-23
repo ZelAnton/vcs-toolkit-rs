@@ -35,6 +35,12 @@ vcs-gitea = { path = "../gitea", version = "0.7" }
 vcs-diff = { path = "../diff", version = "0.7" }
 # `async fn` in the object-safe `ForgeApi` trait (dyn-friendly).
 async-trait = "0.1"
+# `tokio::sync::OnceCell` backs the per-handle CLI-version probe cache: one
+# `--version` spawn per `Forge` handle (shared across `at()` clones) instead of
+# one per mutating call, with async single-init and no lock on the read path.
+# Only the `sync` feature; the runtime itself is executor-agnostic (the wrappers
+# already run on tokio).
+tokio = { version = "1", features = ["sync"] }
 # Optional: derive `Serialize` on the unified DTOs behind the `serde` feature
 # (off by default). Turned on by JSON consumers such as `vcs-mcp`.
 serde = { version = "1", features = ["derive"], optional = true }

@@ -1162,6 +1162,38 @@ async fn forge_pr_merge_unsupported_options_map_to_invalid_params() {
     assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
 }
 
+// T-112: a mutating tool refused by the facade's pre-spawn **version gate** (the
+// installed CLI is confirmed below the crate's floor) maps to `invalid_params` —
+// the caller can fix it by upgrading the CLI, so it's a client-facing request
+// error, not an internal one. Here `gh --version` reports 1.14.0 (< the 2.0
+// floor), so `forge_pr_create` is version-gated before `gh pr create` spawns.
+#[tokio::test]
+async fn forge_version_gated_mutation_maps_to_invalid_params() {
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version 1.14.0\n")),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+
+    let err = server
+        .forge_pr_create(Parameters(PrCreateParams {
+            title: "T".into(),
+            body: "B".into(),
+            source: None,
+            target: None,
+        }))
+        .await
+        .expect_err("an old gh must version-gate the mutation");
+    assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    // The message names the operation and the version mismatch (client-actionable).
+    assert!(err.message.contains("pr_create"), "{}", err.message);
+}
+
 // T-058: `forge_pr_checkout` and `forge_pr_merge` locally mutate the working
 // copy (checkout/switch), so — unlike the other forge tools — they must go
 // through `begin_repo_write` and actually hold the same per-repo `write_lock`

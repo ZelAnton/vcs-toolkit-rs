@@ -42,6 +42,11 @@ pub vcs_forge::Error::InvalidInput(alloc::string::String)
 #[non_exhaustive] pub vcs_forge::Error::Unsupported
 pub vcs_forge::Error::Unsupported::forge: vcs_forge::ForgeKind
 pub vcs_forge::Error::Unsupported::operation: &'static str
+#[non_exhaustive] pub vcs_forge::Error::VersionUnsupported
+pub vcs_forge::Error::VersionUnsupported::forge: vcs_forge::ForgeKind
+pub vcs_forge::Error::VersionUnsupported::found: vcs_diff::version::Version
+pub vcs_forge::Error::VersionUnsupported::minimum: vcs_diff::version::Version
+pub vcs_forge::Error::VersionUnsupported::operation: &'static str
 impl vcs_forge::Error
 pub fn vcs_forge::Error::is_invalid_input(&self) -> bool
 pub fn vcs_forge::Error::is_not_found(&self) -> bool
@@ -51,7 +56,9 @@ pub fn vcs_forge::Error::is_transient(&self) -> bool
 pub fn vcs_forge::Error::is_transient_fetch_error(&self) -> bool
 pub fn vcs_forge::Error::is_unauthorized(&self) -> bool
 pub fn vcs_forge::Error::is_unsupported(&self) -> bool
+pub fn vcs_forge::Error::is_version_gated(&self) -> bool
 pub fn vcs_forge::Error::unsupported(vcs_forge::ForgeKind, &'static str) -> Self
+pub fn vcs_forge::Error::version_unsupported(vcs_forge::ForgeKind, &'static str, vcs_diff::version::Version, vcs_diff::version::Version) -> Self
 impl core::convert::From<processkit::error::Error> for vcs_forge::Error
 pub fn vcs_forge::Error::from(processkit::error::Error) -> Self
 impl core::error::Error for vcs_forge::Error

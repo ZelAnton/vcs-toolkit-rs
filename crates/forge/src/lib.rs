@@ -231,19 +231,69 @@ impl<R: ProcessRunner> Debug for Backend<R> {
     }
 }
 
+/// This crate's minimum supported CLI version per backend, mirroring each
+/// wrapper's private `MIN_SUPPORTED` (`vcs_github`/`vcs_gitlab`/`vcs_gitea`): gh ≥
+/// 2.0, glab ≥ 1.25, tea ≥ 0.9. The wrappers don't expose the constant, so these
+/// are kept here purely to *name the required minimum* in the pre-spawn version
+/// gate's [`Error::VersionUnsupported`]; the gate/decision itself is still driven by
+/// the wrapper's own `is_supported()` (surfaced through `*_forge::version_support`),
+/// so a hypothetical drift between these constants and a wrapper's floor can only
+/// misreport the minimum in a message, never change whether a call is gated.
+const GITHUB_MIN_VERSION: Version = Version {
+    major: 2,
+    minor: 0,
+    patch: 0,
+};
+const GITLAB_MIN_VERSION: Version = Version {
+    major: 1,
+    minor: 25,
+    patch: 0,
+};
+const GITEA_MIN_VERSION: Version = Version {
+    major: 0,
+    minor: 9,
+    patch: 0,
+};
+
+/// A cached CLI **version** probe (`gh`/`glab`/`tea --version`), computed at most
+/// once per [`Forge`] handle and shared across [`at`](Forge::at) clones — the probe
+/// is cwd-independent (`--version` doesn't read the repo), so re-binding the
+/// directory keeps the cached result. Only the version is cached; auth (which can
+/// change out of band) is always re-probed by [`capabilities`](Forge::capabilities).
+#[derive(Clone, Copy)]
+struct VersionProbe {
+    /// The parsed CLI version, or `None` when `--version` couldn't be obtained or
+    /// parsed — a fail-open signal (a mutating op is not gated on an unknown version).
+    version: Option<Version>,
+    /// Whether the installed CLI meets this crate's version floor — the wrapper's
+    /// own `is_supported()` verdict (via `*_forge::version_support`).
+    supported: bool,
+}
+
 /// A cwd-bound, forge-agnostic handle. Operations run against the bound directory
 /// ([`cwd`](Forge::cwd)); the CLI infers the repository from that directory's git
 /// remote. Use [`at`](Forge::at) for a sibling handle bound elsewhere.
 pub struct Forge<R: ProcessRunner = JobRunner> {
     cwd: PathBuf,
     backend: Backend<R>,
+    /// The per-handle CLI-version probe cache — see [`VersionProbe`]. Shared via
+    /// `Arc` so [`at`](Forge::at) clones reuse an already-filled probe; the
+    /// [`OnceCell`](tokio::sync::OnceCell) runs the probe once, even under
+    /// concurrent mutating calls, and read operations never touch it.
+    version_cache: Arc<tokio::sync::OnceCell<VersionProbe>>,
 }
 
 // Manual Debug (no `R: Debug` bound — the reason for hand-writing it rather than
 // deriving, matching `vcs_core::Repo`).
 impl<R: ProcessRunner> Debug for Forge<R> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let Forge { cwd, backend } = self;
+        // `version_cache` is an internal probe cache — not surfaced in `Debug`
+        // (and destructured to `_` so a future field addition is a compile error).
+        let Forge {
+            cwd,
+            backend,
+            version_cache: _,
+        } = self;
         f.debug_struct("Forge")
             .field("cwd", cwd)
             .field("backend", backend)
@@ -254,18 +304,12 @@ impl<R: ProcessRunner> Debug for Forge<R> {
 impl Forge<JobRunner> {
     /// A GitHub-backed handle bound to `cwd`, using the real job-backed runner.
     pub fn github(cwd: impl Into<PathBuf>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitHub(Arc::new(GitHub::new())),
-        }
+        Forge::handle(cwd.into(), Backend::GitHub(Arc::new(GitHub::new())))
     }
 
     /// A GitLab-backed handle bound to `cwd`, using the real job-backed runner.
     pub fn gitlab(cwd: impl Into<PathBuf>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitLab(Arc::new(GitLab::new())),
-        }
+        Forge::handle(cwd.into(), Backend::GitLab(Arc::new(GitLab::new())))
     }
 
     /// A Gitea-backed handle bound to `cwd`, using the real job-backed runner.
@@ -276,10 +320,7 @@ impl Forge<JobRunner> {
     /// override the way `gh`/`glab` do. Authenticate once, out of band, with
     /// `tea login`.
     pub fn gitea(cwd: impl Into<PathBuf>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::Gitea(Arc::new(Gitea::new())),
-        }
+        Forge::handle(cwd.into(), Backend::Gitea(Arc::new(Gitea::new())))
     }
 
     /// A GitHub-backed handle bound to `cwd` that authenticates with an explicit
@@ -290,10 +331,10 @@ impl Forge<JobRunner> {
     /// indirection or a rotating provider, build the [`GitHub`] client yourself and
     /// pass it to [`from_github`](Forge::from_github).
     pub fn github_with_token(cwd: impl Into<PathBuf>, token: impl Into<Secret>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitHub(Arc::new(GitHub::new().with_token(token))),
-        }
+        Forge::handle(
+            cwd.into(),
+            Backend::GitHub(Arc::new(GitHub::new().with_token(token))),
+        )
     }
 
     /// A GitLab-backed handle bound to `cwd` that authenticates with an explicit
@@ -301,37 +342,41 @@ impl Forge<JobRunner> {
     /// `glab`'s ambient login — the GitLab analogue of
     /// [`github_with_token`](Forge::github_with_token).
     pub fn gitlab_with_token(cwd: impl Into<PathBuf>, token: impl Into<Secret>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitLab(Arc::new(GitLab::new().with_token(token))),
-        }
+        Forge::handle(
+            cwd.into(),
+            Backend::GitLab(Arc::new(GitLab::new().with_token(token))),
+        )
     }
 }
 
 impl<R: ProcessRunner> Forge<R> {
+    /// Assemble a handle over `backend` bound to `cwd`, with a fresh (empty)
+    /// per-handle version-probe cache. The single construction seam every public
+    /// constructor routes through, so the cache is initialised in exactly one place
+    /// (a new constructor can't forget it). [`at`](Forge::at) is the one exception —
+    /// it *shares* an existing cache rather than starting a fresh one.
+    fn handle(cwd: PathBuf, backend: Backend<R>) -> Self {
+        Forge {
+            cwd,
+            backend,
+            version_cache: Arc::new(tokio::sync::OnceCell::new()),
+        }
+    }
+
     /// Build a GitHub-backed handle from an explicit client — for a custom runner
     /// (e.g. a test seam) or a pre-configured [`GitHub`].
     pub fn from_github(cwd: impl Into<PathBuf>, client: GitHub<R>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitHub(Arc::new(client)),
-        }
+        Forge::handle(cwd.into(), Backend::GitHub(Arc::new(client)))
     }
 
     /// Build a GitLab-backed handle from an explicit [`GitLab`] client.
     pub fn from_gitlab(cwd: impl Into<PathBuf>, client: GitLab<R>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::GitLab(Arc::new(client)),
-        }
+        Forge::handle(cwd.into(), Backend::GitLab(Arc::new(client)))
     }
 
     /// Build a Gitea-backed handle from an explicit [`Gitea`] client.
     pub fn from_gitea(cwd: impl Into<PathBuf>, client: Gitea<R>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::Gitea(Arc::new(client)),
-        }
+        Forge::handle(cwd.into(), Backend::Gitea(Arc::new(client)))
     }
 
     /// Build a handle for a remote URL that didn't classify as a known forge
@@ -343,10 +388,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// auto-detector that wants to surface a typed "I tried, no luck" rather
     /// than a guessed-but-wrong kind.
     pub fn from_unknown(cwd: impl Into<PathBuf>) -> Self {
-        Forge {
-            cwd: cwd.into(),
-            backend: Backend::Unknown,
-        }
+        Forge::handle(cwd.into(), Backend::Unknown)
     }
 
     /// Which forge drives this handle.
@@ -445,11 +487,15 @@ impl<R: ProcessRunner> Forge<R> {
         &self.cwd
     }
 
-    /// A sibling handle bound to `dir`, sharing this handle's client.
+    /// A sibling handle bound to `dir`, sharing this handle's client **and its
+    /// per-handle CLI-version probe cache** — the probe is cwd-independent, so a
+    /// version already confirmed on this handle carries over to the re-bound sibling
+    /// (no second `--version` spawn).
     pub fn at(&self, dir: impl Into<PathBuf>) -> Self {
         Forge {
             cwd: dir.into(),
             backend: self.backend.shared(),
+            version_cache: Arc::clone(&self.version_cache),
         }
     }
 
@@ -517,6 +563,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// Open a PR/MR (see [`PrCreate`]), returning the CLI's success output — a
     /// URL on GitHub/GitLab; `tea` prints a textual summary (no URL).
     pub async fn pr_create(&self, spec: PrCreate) -> Result<String> {
+        self.gate_version("pr_create").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_create(c, &self.cwd, spec).await,
             Backend::GitLab(c) => gitlab_forge::pr_create(c, &self.cwd, spec).await,
@@ -545,6 +592,7 @@ impl<R: ProcessRunner> Forge<R> {
                 "pr_comment: comment body must not be empty".into(),
             ));
         }
+        self.gate_version("pr_comment").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_comment(c, &self.cwd, number, body).await,
             Backend::GitLab(c) => gitlab_forge::mr_comment(c, &self.cwd, number, body).await,
@@ -562,12 +610,75 @@ impl<R: ProcessRunner> Forge<R> {
                 "pr_edit: at least one of title or body must be set".into(),
             ));
         }
+        self.gate_version("pr_edit").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_edit(c, &self.cwd, number, edit).await,
             Backend::GitLab(c) => gitlab_forge::mr_edit(c, &self.cwd, number, edit).await,
             Backend::Gitea(c) => gitea_forge::pr_edit(c, &self.cwd, number, edit).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_edit")),
         }
+    }
+
+    /// The per-handle CLI **version** probe, run at most once per handle and shared
+    /// across [`at`](Forge::at) clones (see [`VersionProbe`]). Dispatches to the
+    /// backend's `*_forge::version_support`; an `Unknown` handle has no CLI, so it
+    /// reports `None`/`unsupported` without spawning. A genuine spawn/timeout failure
+    /// **propagates** here (so [`capabilities`](Forge::capabilities) can surface it);
+    /// the caller decides whether to fail-open — [`gate_version`](Forge::gate_version)
+    /// does, [`capabilities`](Forge::capabilities) doesn't. A propagated error is
+    /// **not** cached (the `OnceCell` only stores a successful probe), so a transient
+    /// failure is retried on the next call.
+    async fn version_probe(&self) -> Result<VersionProbe> {
+        self.version_cache
+            .get_or_try_init(|| async {
+                let (version, supported) = match &self.backend {
+                    Backend::GitHub(c) => github_forge::version_support(c).await?,
+                    Backend::GitLab(c) => gitlab_forge::version_support(c).await?,
+                    Backend::Gitea(c) => gitea_forge::version_support(c).await?,
+                    // No CLI behind an Unknown handle — nothing to probe.
+                    Backend::Unknown => (None, false),
+                };
+                Ok(VersionProbe { version, supported })
+            })
+            .await
+            .copied()
+    }
+
+    /// The pre-spawn **version gate** for a **mutating** `operation`: refuse it with
+    /// [`Error::VersionUnsupported`] when the handle's CLI is **confirmed** below
+    /// this crate's floor, *before* the mutating command spawns. **Fail-open** on an
+    /// unknown/unparseable version, a probe we couldn't run (spawn/timeout), or an
+    /// `Unknown` handle (no CLI) — the call proceeds and surfaces its own error, so a
+    /// version we couldn't read never blocks a working mutation. Reading operations
+    /// never call this. The probe is cached ([`version_probe`](Forge::version_probe)),
+    /// so at most one `--version` spawn backs any number of mutating calls on a handle.
+    async fn gate_version(&self, operation: &'static str) -> Result<()> {
+        let minimum = match self.kind() {
+            ForgeKind::GitHub => GITHUB_MIN_VERSION,
+            ForgeKind::GitLab => GITLAB_MIN_VERSION,
+            ForgeKind::Gitea => GITEA_MIN_VERSION,
+            // An Unknown handle has no CLI to gate — the op already returns
+            // `Unsupported` on its own, without spawning.
+            ForgeKind::Unknown => return Ok(()),
+        };
+        // A probe we couldn't run is fail-open, exactly like an unparseable version:
+        // don't block a mutating call on a version we couldn't read.
+        let Ok(probe) = self.version_probe().await else {
+            return Ok(());
+        };
+        // Only a *confirmed* below-floor version gates; `None` (couldn't obtain/parse)
+        // is fail-open.
+        if let Some(found) = probe.version
+            && !probe.supported
+        {
+            return Err(Error::version_unsupported(
+                self.kind(),
+                operation,
+                found,
+                minimum,
+            ));
+        }
+        Ok(())
     }
 
     /// The forge's flat capability map — the intersection of "the CLI ships this
@@ -580,14 +691,16 @@ impl<R: ProcessRunner> Forge<R> {
     /// banner degrades to `supported: false` / `version: None` (conservatively
     /// unavailable) rather than failing the whole probe; a genuine spawn/timeout
     /// failure still propagates. The Unknown handle's map is the all-`false` shape
-    /// (no spawn).
+    /// (no spawn). The version probe is the same per-handle cache the mutating
+    /// version gate reads ([`VersionProbe`]), so `capabilities()` and a gated call
+    /// never probe `--version` twice on one handle; auth is always re-probed.
     pub async fn capabilities(&self) -> Result<ForgeCapabilities> {
         match &self.backend {
             Backend::GitHub(c) => {
                 let mut caps = static_github_caps();
-                let (version, supported) = github_forge::version_support(c).await?;
-                caps.version = version;
-                caps.supported = supported;
+                let probe = self.version_probe().await?;
+                caps.version = probe.version;
+                caps.supported = probe.supported;
                 caps.authed = github_forge::auth_status(c).await?;
                 if !caps.authed || !caps.supported {
                     zero_ops(&mut caps);
@@ -596,9 +709,9 @@ impl<R: ProcessRunner> Forge<R> {
             }
             Backend::GitLab(c) => {
                 let mut caps = static_gitlab_caps();
-                let (version, supported) = gitlab_forge::version_support(c).await?;
-                caps.version = version;
-                caps.supported = supported;
+                let probe = self.version_probe().await?;
+                caps.version = probe.version;
+                caps.supported = probe.supported;
                 caps.authed = gitlab_forge::auth_status(c).await?;
                 if !caps.authed || !caps.supported {
                     zero_ops(&mut caps);
@@ -607,9 +720,9 @@ impl<R: ProcessRunner> Forge<R> {
             }
             Backend::Gitea(c) => {
                 let mut caps = static_gitea_caps();
-                let (version, supported) = gitea_forge::version_support(c).await?;
-                caps.version = version;
-                caps.supported = supported;
+                let probe = self.version_probe().await?;
+                caps.version = probe.version;
+                caps.supported = probe.supported;
                 caps.authed = gitea_forge::auth_status(c).await?;
                 if !caps.authed || !caps.supported {
                     zero_ops(&mut caps);
@@ -638,6 +751,11 @@ impl<R: ProcessRunner> Forge<R> {
         if merge.delete_branch && !kind.supports_merge_option(MergeOption::DeleteBranch) {
             return Err(unsupported(kind, "pr_merge"));
         }
+        // Version-gate only after the cross-backend option checks above, so a
+        // requested-but-unsupported option still returns `Unsupported` without any
+        // spawn (the version probe included) — the gate covers the merge that WOULD
+        // otherwise reach the CLI.
+        self.gate_version("pr_merge").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_merge(c, &self.cwd, number, merge).await,
             Backend::GitLab(c) => gitlab_forge::pr_merge(c, &self.cwd, number, merge).await,
@@ -650,9 +768,18 @@ impl<R: ProcessRunner> Forge<R> {
     /// on Gitea** (`tea` has no draft toggle — a Gitea draft is a `WIP:` title
     /// prefix, edited via the raw client).
     pub async fn pr_mark_ready(&self, number: u64) -> Result<()> {
+        // Gitea (no draft toggle) and Unknown are structurally `Unsupported` at any
+        // version, so the version gate is applied only inside the two arms that would
+        // actually spawn — keeping the `Unsupported` arms spawn-free.
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_mark_ready(c, &self.cwd, number).await,
-            Backend::GitLab(c) => gitlab_forge::pr_mark_ready(c, &self.cwd, number).await,
+            Backend::GitHub(c) => {
+                self.gate_version("pr_mark_ready").await?;
+                github_forge::pr_mark_ready(c, &self.cwd, number).await
+            }
+            Backend::GitLab(c) => {
+                self.gate_version("pr_mark_ready").await?;
+                gitlab_forge::pr_mark_ready(c, &self.cwd, number).await
+            }
             Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_mark_ready")),
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_mark_ready")),
         }
@@ -665,6 +792,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// forge: [`pr_request_changes`](Forge::pr_request_changes) on GitHub/Gitea, and
     /// GitLab's approve/revoke model (withdraw via the wrapper's `mr_revoke`).
     pub async fn pr_approve(&self, number: u64) -> Result<()> {
+        self.gate_version("pr_approve").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_approve(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_approve(c, &self.cwd, number).await,
@@ -696,6 +824,9 @@ impl<R: ProcessRunner> Forge<R> {
         if !kind.supports_review_kind(ReviewKind::RequestChanges) {
             return Err(unsupported(kind, "pr_request_changes"));
         }
+        // Only GitHub/Gitea reach here (GitLab/Unknown are already `Unsupported`
+        // above, spawn-free) — version-gate the backends that would actually spawn.
+        self.gate_version("pr_request_changes").await?;
         match &self.backend {
             Backend::GitHub(c) => {
                 github_forge::pr_request_changes(c, &self.cwd, number, body).await
@@ -725,6 +856,9 @@ impl<R: ProcessRunner> Forge<R> {
         if spec.delete_branch && !kind.supports_pr_close_delete_branch() {
             return Err(unsupported(kind, "pr_close"));
         }
+        // Version-gate after the delete-branch option check, so a cross-backend
+        // `delete_branch` request stays `Unsupported` without any spawn.
+        self.gate_version("pr_close").await?;
         match &self.backend {
             Backend::GitHub(c) => {
                 github_forge::pr_close(c, &self.cwd, spec.number, spec.delete_branch).await
@@ -742,6 +876,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// real backends; an [`Unknown`](ForgeKind::Unknown) handle returns
     /// [`Unsupported`](Error::Unsupported).
     pub async fn pr_checkout(&self, number: u64) -> Result<()> {
+        self.gate_version("pr_checkout").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::pr_checkout(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::pr_checkout(c, &self.cwd, number).await,
@@ -817,6 +952,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// on GitHub/GitLab; `tea` prints a textual summary whose final line is the URL.
     /// (The same honest-output contract as [`pr_create`](Forge::pr_create).)
     pub async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
+        self.gate_version("issue_create").await?;
         let IssueCreate { title, body } = &spec;
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_create(c, &self.cwd, title, body).await,
@@ -830,6 +966,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// Supported on all three real backends; an [`Unknown`](ForgeKind::Unknown)
     /// handle returns [`Unsupported`](Error::Unsupported).
     pub async fn issue_close(&self, number: u64) -> Result<()> {
+        self.gate_version("issue_close").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_close(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::issue_close(c, &self.cwd, number).await,
@@ -843,6 +980,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// [`Unknown`](ForgeKind::Unknown) handle returns
     /// [`Unsupported`](Error::Unsupported).
     pub async fn issue_reopen(&self, number: u64) -> Result<()> {
+        self.gate_version("issue_reopen").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_reopen(c, &self.cwd, number).await,
             Backend::GitLab(c) => gitlab_forge::issue_reopen(c, &self.cwd, number).await,
@@ -871,6 +1009,7 @@ impl<R: ProcessRunner> Forge<R> {
                 "issue_comment: comment body must not be empty".into(),
             ));
         }
+        self.gate_version("issue_comment").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::issue_comment(c, &self.cwd, number, body).await,
             Backend::GitLab(c) => gitlab_forge::issue_comment(c, &self.cwd, number, body).await,
@@ -911,6 +1050,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// (see [`ReleaseCreate`]). Asset uploads are out of scope — drop to the wrapped
     /// client for those.
     pub async fn release_create(&self, spec: ReleaseCreate) -> Result<String> {
+        self.gate_version("release_create").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::release_create(c, &self.cwd, spec).await,
             Backend::GitLab(c) => gitlab_forge::release_create(c, &self.cwd, spec).await,
@@ -924,6 +1064,7 @@ impl<R: ProcessRunner> Forge<R> {
     /// Supported on all three real backends; an [`Unknown`](ForgeKind::Unknown)
     /// handle returns [`Unsupported`](Error::Unsupported).
     pub async fn release_delete(&self, tag: &str) -> Result<()> {
+        self.gate_version("release_delete").await?;
         match &self.backend {
             Backend::GitHub(c) => github_forge::release_delete(c, &self.cwd, tag).await,
             Backend::GitLab(c) => gitlab_forge::release_delete(c, &self.cwd, tag).await,
@@ -1286,7 +1427,7 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::testing::{Invocation, RecordingRunner, Reply, ScriptedRunner};
 
     fn github(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
         Forge::from_github("/repo", GitHub::with_runner(runner))
@@ -1296,6 +1437,27 @@ mod tests {
     }
     fn gitea(runner: ScriptedRunner) -> Forge<ScriptedRunner> {
         Forge::from_gitea("/repo", Gitea::with_runner(runner))
+    }
+
+    /// The single **mutating** call a dispatch test expects, tolerating the
+    /// pre-spawn version gate's `<cli> --version` probe. Every mutating op now
+    /// probes the CLI version once before spawning; on a `RecordingRunner` whose
+    /// fallback banner is unparseable, that probe **fails open** (the mutation
+    /// proceeds), so the recorder holds `[--version, <mutation>]`. Filter the probe
+    /// out and assert exactly one real mutation was spawned — preserving the
+    /// original "exactly one mutating call, with this argv" intent.
+    fn only_mutation(rec: &RecordingRunner) -> Invocation {
+        let mut mutations: Vec<Invocation> = rec
+            .calls()
+            .into_iter()
+            .filter(|c| c.args_str() != ["--version"])
+            .collect();
+        assert_eq!(
+            mutations.len(),
+            1,
+            "expected exactly one mutating (non `--version`) call, got {mutations:?}"
+        );
+        mutations.pop().unwrap()
     }
 
     #[tokio::test]
@@ -1940,7 +2102,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["pr", "close", "5", "--delete-branch"]
         );
 
@@ -1963,14 +2125,14 @@ mod tests {
             .pr_close(PrClose::new(5))
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["mr", "close", "5"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["mr", "close", "5"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .pr_close(PrClose::new(5))
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["pr", "close", "5"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["pr", "close", "5"]);
     }
 
     // Each backend's issue states map onto the unified ForgeIssueState — note
@@ -2256,7 +2418,7 @@ mod tests {
             .unwrap();
         assert_eq!(out, "https://gh/r/v1");
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             [
                 "release",
                 "create",
@@ -2277,7 +2439,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["release", "create", "v1", "--name", "One", "--notes", "N"]
         );
 
@@ -2288,7 +2450,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             [
                 "releases", "create", "--tag", "v1", "--title", "One", "--note", "N", "--draft"
             ]
@@ -2312,9 +2474,14 @@ mod tests {
                 err.is_unsupported(),
                 "expected Unsupported on GitLab, got {err:?}"
             );
+            // The wrapper rejects the draft/prerelease option before spawning the
+            // mutation; the facade's pre-spawn version gate may have run a harmless
+            // `--version` probe first, but no `release create` mutation must spawn.
             assert!(
-                rec.calls().is_empty(),
-                "an unsupported option must not spawn"
+                rec.calls().iter().all(|c| c.args_str() == ["--version"]),
+                "an unsupported option must not spawn the mutation (only the version \
+                 probe may run): {:?}",
+                rec.calls()
             );
         }
 
@@ -2342,7 +2509,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["release", "delete", "v1", "--yes"]
         );
 
@@ -2352,7 +2519,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["release", "delete", "v1", "--yes"]
         );
 
@@ -2361,7 +2528,7 @@ mod tests {
             .release_delete("v1")
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["releases", "delete", "v1"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["releases", "delete", "v1"]);
     }
 
     // `supports` reports the two new release mutators available on every real
@@ -2387,7 +2554,10 @@ mod tests {
             .pr_merge(5, PrMerge::squash())
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["pr", "merge", "5", "--squash"]);
+        assert_eq!(
+            only_mutation(&rec).args_str(),
+            ["pr", "merge", "5", "--squash"]
+        );
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
@@ -2395,7 +2565,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             [
                 "mr",
                 "merge",
@@ -2412,7 +2582,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["pr", "merge", "5", "--style", "merge"]
         );
     }
@@ -2431,7 +2601,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["pr", "merge", "5", "--squash", "--auto", "--delete-branch"]
         );
 
@@ -2462,21 +2632,21 @@ mod tests {
             .pr_checkout(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["pr", "checkout", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
             .pr_checkout(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["mr", "checkout", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["mr", "checkout", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .pr_checkout(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["pr", "checkout", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["pr", "checkout", "7"]);
     }
 
     // `pr_approve` dispatches to each CLI's own approving-review verb: gh `pr review
@@ -2490,7 +2660,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["pr", "review", "7", "--approve"]
         );
 
@@ -2499,14 +2669,14 @@ mod tests {
             .pr_approve(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["mr", "approve", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["mr", "approve", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .pr_approve(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["pr", "approve", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["pr", "approve", "7"]);
     }
 
     // `pr_request_changes` maps to gh `pr review --request-changes --body <body>`
@@ -2521,7 +2691,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             [
                 "pr",
                 "review",
@@ -2538,7 +2708,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["pr", "reject", "7", "please fix"]
         );
 
@@ -2577,21 +2747,21 @@ mod tests {
             .issue_close(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issue", "close", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issue", "close", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
             .issue_close(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issue", "close", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issue", "close", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .issue_close(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issues", "close", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issues", "close", "7"]);
 
         // reopen
         let rec = RecordingRunner::replying(Reply::ok(""));
@@ -2599,21 +2769,21 @@ mod tests {
             .issue_reopen(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issue", "reopen", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issue", "reopen", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitlab("/repo", GitLab::with_runner(&rec))
             .issue_reopen(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issue", "reopen", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issue", "reopen", "7"]);
 
         let rec = RecordingRunner::replying(Reply::ok(""));
         Forge::from_gitea("/repo", Gitea::with_runner(&rec))
             .issue_reopen(7)
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["issues", "reopen", "7"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["issues", "reopen", "7"]);
     }
 
     // `issue_comment` maps to gh `issue comment --body` / glab `issue note -m` /
@@ -2627,7 +2797,7 @@ mod tests {
             .unwrap();
         assert_eq!(out, "https://gh/i/7#c1");
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["issue", "comment", "7", "--body", "ping"]
         );
 
@@ -2637,7 +2807,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            rec.only_call().args_str(),
+            only_mutation(&rec).args_str(),
             ["issue", "note", "7", "-m", "ping"]
         );
 
@@ -2646,7 +2816,7 @@ mod tests {
             .issue_comment(7, "ping")
             .await
             .unwrap();
-        assert_eq!(rec.only_call().args_str(), ["comment", "7", "ping"]);
+        assert_eq!(only_mutation(&rec).args_str(), ["comment", "7", "ping"]);
     }
 
     // `issue_comment` rejects an empty / whitespace-only body with InvalidInput
@@ -2750,6 +2920,288 @@ mod tests {
                 .unwrap(),
             "https://gl/i/9"
         );
+    }
+
+    // ---- T-112: the pre-spawn CLI-version gate on mutating operations ----
+
+    // A CLI **confirmed** below the crate's version floor refuses every mutating op
+    // with `VersionUnsupported` BEFORE the mutating command spawns — only the
+    // `--version` probe runs, never the mutation. Covers the four core mutating ops
+    // (pr_create / pr_edit / pr_merge / issue_create) on one backend of each type
+    // (GitHub 1.14 < 2.0, GitLab 1.20 < 1.25, Gitea 0.8 < 0.9).
+    #[tokio::test]
+    async fn mutating_ops_gated_below_version_floor_without_spawn() {
+        // One gated mutating call: `VersionUnsupported` (not a structural
+        // `Unsupported`) and *no* mutation spawned — only the `--version` probe.
+        fn assert_gated(rec: &RecordingRunner, res: Result<()>) {
+            let err = res.expect_err("a confirmed-old CLI must version-gate the mutation");
+            assert!(
+                err.is_version_gated(),
+                "expected VersionUnsupported, got {err:?}"
+            );
+            assert!(
+                !err.is_unsupported(),
+                "the version gate is distinct from a structural Unsupported"
+            );
+            assert!(
+                rec.calls().iter().all(|c| c.args_str() == ["--version"]),
+                "the mutation must not spawn — only the version probe may run: {:?}",
+                rec.calls()
+            );
+        }
+
+        // GitHub — gh 1.14.0 is below the 2.0 floor.
+        let old_gh = || {
+            RecordingRunner::new(ScriptedRunner::new().on(
+                ["gh", "--version"],
+                Reply::ok("gh version 1.14.0 (2021-11-02)\n"),
+            ))
+        };
+        let rec = old_gh();
+        let f = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        assert_gated(&rec, f.pr_create(PrCreate::new("T", "B")).await.map(|_| ()));
+        let rec = old_gh();
+        let f = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        assert_gated(&rec, f.pr_edit(7, PrEdit::new().title("X")).await);
+        let rec = old_gh();
+        let f = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        assert_gated(&rec, f.pr_merge(7, PrMerge::merge()).await);
+        let rec = old_gh();
+        let f = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        assert_gated(
+            &rec,
+            f.issue_create(IssueCreate::new("T", "B")).await.map(|_| ()),
+        );
+
+        // GitLab — glab 1.20.0 is below the 1.25 floor.
+        let old_glab = || {
+            RecordingRunner::new(
+                ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab 1.20.0\n")),
+            )
+        };
+        let rec = old_glab();
+        let f = Forge::from_gitlab("/repo", GitLab::with_runner(&rec));
+        assert_gated(&rec, f.pr_create(PrCreate::new("T", "B")).await.map(|_| ()));
+        let rec = old_glab();
+        let f = Forge::from_gitlab("/repo", GitLab::with_runner(&rec));
+        assert_gated(&rec, f.pr_edit(7, PrEdit::new().title("X")).await);
+        let rec = old_glab();
+        let f = Forge::from_gitlab("/repo", GitLab::with_runner(&rec));
+        assert_gated(&rec, f.pr_merge(7, PrMerge::merge()).await);
+        let rec = old_glab();
+        let f = Forge::from_gitlab("/repo", GitLab::with_runner(&rec));
+        assert_gated(
+            &rec,
+            f.issue_create(IssueCreate::new("T", "B")).await.map(|_| ()),
+        );
+
+        // Gitea — tea 0.8.0 is below the 0.9 floor (K-062: 0.9 is exactly the floor,
+        // so 0.8 is the first version strictly below it that must gate).
+        let old_tea = || {
+            RecordingRunner::new(
+                ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea version 0.8.0\n")),
+            )
+        };
+        let rec = old_tea();
+        let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+        assert_gated(&rec, f.pr_create(PrCreate::new("T", "B")).await.map(|_| ()));
+        let rec = old_tea();
+        let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+        assert_gated(&rec, f.pr_edit(7, PrEdit::new().title("X")).await);
+        let rec = old_tea();
+        let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+        assert_gated(&rec, f.pr_merge(7, PrMerge::merge()).await);
+        let rec = old_tea();
+        let f = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+        assert_gated(
+            &rec,
+            f.issue_create(IssueCreate::new("T", "B")).await.map(|_| ()),
+        );
+    }
+
+    // The version carried by the gate error names the found version and the crate's
+    // floor for that backend (gh ≥ 2.0), so a caller can render an actionable
+    // "upgrade to ≥ X" message.
+    #[tokio::test]
+    async fn version_gate_error_carries_found_and_minimum() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version 1.14.0\n")),
+        );
+        let err = Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .pr_create(PrCreate::new("T", "B"))
+            .await
+            .unwrap_err();
+        match err {
+            Error::VersionUnsupported {
+                forge,
+                operation,
+                found,
+                minimum,
+            } => {
+                assert_eq!(forge, ForgeKind::GitHub);
+                assert_eq!(operation, "pr_create");
+                assert_eq!(
+                    found,
+                    Version {
+                        major: 1,
+                        minor: 14,
+                        patch: 0
+                    }
+                );
+                assert_eq!(minimum, GITHUB_MIN_VERSION);
+            }
+            other => panic!("expected VersionUnsupported, got {other:?}"),
+        }
+    }
+
+    // Fail-open: a version that can't be obtained or parsed does NOT gate — the
+    // mutation proceeds exactly as before (a guess must never block a working
+    // scenario). Here the `--version` banner is unrecognisable.
+    #[tokio::test]
+    async fn unparseable_version_fails_open_and_lets_the_mutation_through() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version unknowable\n"))
+                .on(["gh", "issue", "create"], Reply::ok("https://gh/i/1\n")),
+        );
+        let out = Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .issue_create(IssueCreate::new("T", "B"))
+            .await
+            .expect("an unknown version must fail open, not gate");
+        assert_eq!(out, "https://gh/i/1");
+        // The mutation DID spawn (fail-open), after the harmless version probe.
+        assert_eq!(
+            only_mutation(&rec).args_str().first().map(String::as_str),
+            Some("issue")
+        );
+    }
+
+    // Fail-open on a probe we couldn't even run: a `--version` spawn failure (no
+    // runner rule) must not block the mutation — the real op surfaces its own error
+    // if the CLI is genuinely broken, but a probe failure alone never gates.
+    #[tokio::test]
+    async fn unprobeable_version_fails_open() {
+        // The runner scripts the mutation but NOT `--version`, so the probe errors
+        // (spawn NotFound). The gate must swallow that and let the mutation run.
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["gh", "issue", "create"], Reply::ok("https://gh/i/9\n")),
+        );
+        let out = Forge::from_github("/repo", GitHub::with_runner(&rec))
+            .issue_create(IssueCreate::new("T", "B"))
+            .await
+            .expect("a version probe we couldn't run must fail open");
+        assert_eq!(out, "https://gh/i/9");
+    }
+
+    // The version probe is cached once per handle and shared across `at()` clones:
+    // three mutating calls (two on the handle, one on an `at()`-rebound sibling)
+    // spawn `--version` exactly once. Proves "one probe per handle", not per call.
+    #[tokio::test]
+    async fn version_probe_is_cached_once_per_handle_and_shared_by_at() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version 2.40.1\n"))
+                .on(["gh", "issue", "create"], Reply::ok("https://gh/i/1\n")),
+        );
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        forge
+            .issue_create(IssueCreate::new("A", "B"))
+            .await
+            .unwrap();
+        forge
+            .issue_create(IssueCreate::new("C", "D"))
+            .await
+            .unwrap();
+        // An `at()`-rebound sibling shares the same cache — no second probe.
+        forge
+            .at("/repo/sub")
+            .issue_create(IssueCreate::new("E", "F"))
+            .await
+            .unwrap();
+
+        let versions = rec
+            .calls()
+            .iter()
+            .filter(|c| c.args_str() == ["--version"])
+            .count();
+        assert_eq!(
+            versions, 1,
+            "the version probe must run once per handle, shared across at()"
+        );
+        let creates = rec
+            .calls()
+            .iter()
+            .filter(|c| c.args_str().first().map(String::as_str) == Some("issue"))
+            .count();
+        assert_eq!(creates, 3, "all three mutations ran");
+    }
+
+    // `capabilities()` and the mutating gate read the SAME cached version probe —
+    // calling both on one handle spawns `--version` exactly once (auth is separate).
+    #[tokio::test]
+    async fn capabilities_and_gate_share_one_version_probe() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["gh", "--version"], Reply::ok("gh version 2.40.1\n"))
+                .on(["gh", "auth"], Reply::ok(""))
+                .on(["gh", "issue", "create"], Reply::ok("https://gh/i/1\n")),
+        );
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        let caps = forge.capabilities().await.unwrap();
+        assert!(caps.supported, "modern gh clears the floor");
+        forge
+            .issue_create(IssueCreate::new("A", "B"))
+            .await
+            .unwrap();
+        let versions = rec
+            .calls()
+            .iter()
+            .filter(|c| c.args_str() == ["--version"])
+            .count();
+        assert_eq!(
+            versions, 1,
+            "capabilities() and the gate share one cached version probe"
+        );
+    }
+
+    // Reading operations are NEVER version-gated: an old CLI still reads, and a read
+    // doesn't even probe `--version` (reads never touch the gate/cache).
+    #[tokio::test]
+    async fn reading_ops_are_never_version_gated() {
+        let json = r#"[{"number":7,"title":"X","state":"OPEN","isDraft":false,"headRefName":"f","baseRefName":"main","url":"u"}]"#;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                // An old (below-floor) gh — a read must still work regardless.
+                .on(["gh", "--version"], Reply::ok("gh version 1.14.0\n"))
+                .on(["gh", "pr", "list"], Reply::ok(json)),
+        );
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        let prs = forge
+            .pr_list()
+            .await
+            .expect("reads are never version-gated");
+        assert_eq!(prs[0].number, 7);
+        assert!(
+            rec.calls().iter().all(|c| c.args_str() != ["--version"]),
+            "a read op must not probe the version: {:?}",
+            rec.calls()
+        );
+    }
+
+    // A CLI **exactly at** the floor is supported, not gated (the gate fires only on
+    // a version STRICTLY below the floor) — K-062's tea 0.9.2 "at the floor" edge.
+    #[tokio::test]
+    async fn version_exactly_at_floor_is_not_gated() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["tea", "--version"], Reply::ok("tea version 0.9.0\n"))
+                .on(["tea", "issues", "create"], Reply::ok("created\n")),
+        );
+        let out = Forge::from_gitea("/repo", Gitea::with_runner(&rec))
+            .issue_create(IssueCreate::new("T", "B"))
+            .await
+            .expect("tea exactly at the 0.9 floor must not be gated");
+        assert_eq!(out, "created");
     }
 }
 

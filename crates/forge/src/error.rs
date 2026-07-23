@@ -3,6 +3,7 @@
 //! operation a given forge's CLI does not provide.
 
 use crate::ForgeKind;
+use vcs_diff::Version;
 
 /// An error from a [`Forge`](crate::Forge) operation.
 #[derive(Debug)]
@@ -35,6 +36,30 @@ pub enum Error {
     /// `None`. Carries a short message naming what was wrong; surfaced by the
     /// MCP layer as `ErrorData::invalid_params` so a client can fix the call.
     InvalidInput(String),
+    /// A **mutating** operation was refused **before spawning** because the
+    /// installed forge CLI (`gh`/`glab`/`tea`) is **confirmed** older than the
+    /// version this crate requires — the pre-flight version gate. Carries the
+    /// `forge`, the [`ForgeApi`](crate::ForgeApi) method name, the `found`
+    /// version the binary reported, and the `minimum` this crate needs. Only a
+    /// *confirmed* below-floor version raises it: a version that couldn't be
+    /// obtained or parsed is **fail-open** (the call proceeds as before), and
+    /// **reading** operations are never version-gated. Distinct from
+    /// [`Unsupported`](Error::Unsupported) (an operation/option a backend
+    /// structurally lacks at any version): here the operation exists but the
+    /// binary is too old, so the fix is to upgrade the CLI. Classify with
+    /// [`Error::is_version_gated`]; the MCP layer surfaces it as
+    /// `ErrorData::invalid_params` (the caller can fix it by upgrading).
+    #[non_exhaustive]
+    VersionUnsupported {
+        /// Which forge's CLI is too old.
+        forge: ForgeKind,
+        /// The [`ForgeApi`](crate::ForgeApi) method that was refused.
+        operation: &'static str,
+        /// The version the installed CLI reported.
+        found: Version,
+        /// The minimum version this crate requires.
+        minimum: Version,
+    },
 }
 
 /// Lowercase markers identifying an **authentication** failure in a forge CLI's
@@ -93,6 +118,26 @@ impl Error {
     /// backend) must build it through this rather than a struct literal.
     pub fn unsupported(forge: ForgeKind, operation: &'static str) -> Self {
         Error::Unsupported { forge, operation }
+    }
+
+    /// Build a [`VersionUnsupported`](Error::VersionUnsupported) error — the
+    /// pre-spawn version gate's refusal of a mutating `operation` on a `forge`
+    /// whose CLI is confirmed `found` (below the crate's `minimum`). The stable
+    /// construction path — the variant is `#[non_exhaustive]`, so an external
+    /// [`ForgeApi`](crate::ForgeApi) impl gating its own backend must build it
+    /// through this rather than a struct literal.
+    pub fn version_unsupported(
+        forge: ForgeKind,
+        operation: &'static str,
+        found: Version,
+        minimum: Version,
+    ) -> Self {
+        Error::VersionUnsupported {
+            forge,
+            operation,
+            found,
+            minimum,
+        }
     }
 
     /// Lowercased `stdout`+`stderr` of an underlying non-zero `Exit` — the CLI's
@@ -176,6 +221,22 @@ impl Error {
         )
     }
 
+    /// Whether this is the pre-spawn **version gate** refusal
+    /// ([`VersionUnsupported`](Error::VersionUnsupported)) — a mutating
+    /// operation declined because the installed `gh`/`glab`/`tea` is
+    /// **confirmed** below the version this crate requires. Deliberately
+    /// **distinct** from [`is_unsupported`](Error::is_unsupported): there the
+    /// backend structurally can't do the operation (at any version); here the
+    /// operation exists but the binary is too old, so the fix is to upgrade the
+    /// CLI, not to avoid the operation. A binding maps a hit to a "please
+    /// upgrade the CLI" error; the MCP layer surfaces it as `invalid_params`
+    /// (the caller can fix it). Reading operations never raise it (they aren't
+    /// version-gated), and an unknown/unparseable version is fail-open (no
+    /// error at all).
+    pub fn is_version_gated(&self) -> bool {
+        matches!(self, Error::VersionUnsupported { .. })
+    }
+
     /// Whether this is an **input rejection** — a bad argument the facade refused
     /// before/without a useful CLI call: the facade's own
     /// [`InvalidInput`](Error::InvalidInput) (e.g. `pr_edit` with nothing to change),
@@ -220,6 +281,16 @@ impl std::fmt::Display for Error {
                 write!(f, "{} does not support `{operation}`", forge.as_str())
             }
             Error::InvalidInput(msg) => write!(f, "{msg}"),
+            Error::VersionUnsupported {
+                forge,
+                operation,
+                found,
+                minimum,
+            } => write!(
+                f,
+                "{}'s CLI is too old for `{operation}`: found {found}, need >= {minimum}",
+                forge.as_str()
+            ),
         }
     }
 }
@@ -228,7 +299,9 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Forge(e) => Some(e),
-            Error::Unsupported { .. } | Error::InvalidInput(_) => None,
+            Error::Unsupported { .. }
+            | Error::InvalidInput(_)
+            | Error::VersionUnsupported { .. } => None,
         }
     }
 }
@@ -387,5 +460,45 @@ mod tests {
         assert!(missing.is_not_found() && !missing.is_resource_not_found());
         assert!(!exit("some other error").is_resource_not_found());
         assert!(!exit("some other error").is_invalid_input());
+    }
+
+    #[test]
+    fn version_gated_is_its_own_class_distinct_from_unsupported() {
+        let found = Version {
+            major: 1,
+            minor: 14,
+            patch: 0,
+        };
+        let minimum = Version {
+            major: 2,
+            minor: 0,
+            patch: 0,
+        };
+        let err = Error::version_unsupported(ForgeKind::GitHub, "pr_create", found, minimum);
+        // The dedicated classifier fires…
+        assert!(err.is_version_gated());
+        // …and it is deliberately NOT `is_unsupported` — the operation exists,
+        // the binary is just too old (a distinct "upgrade the CLI" signal).
+        assert!(!err.is_unsupported(), "version-gate is not `Unsupported`");
+        // It is none of the CLI-output classifiers either (it carries no CLI body).
+        assert!(!err.is_invalid_input());
+        assert!(!err.is_unauthorized());
+        assert!(!err.is_rate_limited());
+        assert!(!err.is_resource_not_found());
+        assert!(!err.is_not_found());
+        assert!(!err.is_transient());
+        // It has no error source (a facade-own variant, like `Unsupported`).
+        assert!(std::error::Error::source(&err).is_none());
+        // Display names the operation, the found version, and the required floor.
+        let msg = err.to_string();
+        assert!(msg.contains("pr_create"), "{msg}");
+        assert!(msg.contains("1.14.0"), "{msg}");
+        assert!(msg.contains("2.0.0"), "{msg}");
+
+        // The inverse: a structural `Unsupported` is NOT a version gate.
+        assert!(
+            !Error::unsupported(ForgeKind::Gitea, "pr_diff").is_version_gated(),
+            "a structural Unsupported is not a version gate"
+        );
     }
 }

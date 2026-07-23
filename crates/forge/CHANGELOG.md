@@ -10,6 +10,21 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Pre-spawn CLI-version gate on mutating operations.** New
+  `Error::VersionUnsupported { forge, operation, found, minimum }` variant (on the
+  `#[non_exhaustive]` `Error`, so additive) and the classifier
+  `Error::is_version_gated()`. Every **mutating** operation (`pr_create`,
+  `pr_comment`, `pr_edit`, `pr_merge`, `pr_approve`, `pr_request_changes`,
+  `pr_mark_ready`, `pr_close`, `pr_checkout`, `issue_create`, `issue_close`,
+  `issue_reopen`, `issue_comment`, `release_create`, `release_delete`) now refuses
+  with this typed error **before spawning** when the installed `gh`/`glab`/`tea` is
+  **confirmed** below the crate's version floor (gh ≥ 2.0, glab ≥ 1.25, tea ≥ 0.9) —
+  an actionable "upgrade the CLI" signal instead of a cryptic deep-CLI failure. A
+  version that can't be obtained or parsed is **fail-open** (the call proceeds as
+  before), and **reading** operations are never version-gated. Distinct from
+  `Error::Unsupported` (a structural gap at any version). `Error::version_unsupported`
+  is the stable constructor. (Serialized nowhere — errors aren't part of the serde
+  surface.)
 - **Source-branch PR/MR lookup.** `Forge::pr_for_branch(source_branch)` returns
   every GitHub PR / GitLab MR for that source branch regardless of target or
   state (`gh pr list --head … --state all` / `glab mr list --source-branch …
@@ -68,6 +83,15 @@ crates; tag releases as `vcs-forge-v<version>`.
   rather than relying on the wrapper crate to reject the option — so introspection
   and dispatch read one source of truth. The observable result is unchanged
   (`Unsupported`, no spawn); the wrapper-level rejection remains as a backstop.
+- **CLI-version probe cached per handle (behaviour change).** The `--version` probe
+  behind `Forge::capabilities()` — and the new mutating version gate — now runs **at
+  most once per `Forge` handle** (shared across `at()`-rebound siblings), instead of
+  once per `capabilities()` call. A consumer that calls `capabilities()` repeatedly,
+  or interleaves it with mutating calls, no longer re-spawns `gh/glab/tea --version`
+  each time. Auth is still re-probed every `capabilities()` call (it can change out
+  of band); a version probe that fails (spawn/timeout) is not cached, so it retries.
+  Mutating operations on a **confirmed-old** CLI now return the new
+  `Error::VersionUnsupported` (see *Added*) rather than a raw CLI failure.
 
 ### Fixed
 -

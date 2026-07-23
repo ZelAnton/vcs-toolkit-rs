@@ -69,11 +69,14 @@ pub(crate) fn core_err(e: vcs_core::Error) -> ErrorData {
     }
 }
 
-/// Map a `vcs-forge` error into an MCP error — an `Unsupported` op or an
-/// `InvalidInput` (the facade's pre-spawn refusal path) is a client-facing
-/// invalid-request; a forge/network failure is internal.
+/// Map a `vcs-forge` error into an MCP error — an `Unsupported` op, a pre-spawn
+/// **version gate** refusal (the installed `gh`/`glab`/`tea` is too old, which the
+/// caller can fix by upgrading), or an `InvalidInput` (the facade's pre-spawn
+/// refusal path) is a client-facing invalid-request; a forge/network failure is
+/// internal.
 pub(crate) fn forge_err(e: vcs_forge::Error) -> ErrorData {
-    if e.is_unsupported() || matches!(e, vcs_forge::Error::InvalidInput(_)) {
+    if e.is_unsupported() || e.is_version_gated() || matches!(e, vcs_forge::Error::InvalidInput(_))
+    {
         ErrorData::invalid_params(e.to_string(), None)
     } else {
         ErrorData::internal_error(e.to_string(), None)
