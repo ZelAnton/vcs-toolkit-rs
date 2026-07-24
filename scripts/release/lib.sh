@@ -88,7 +88,7 @@ crate_deps() {
 # short/long forms — the workflow only ever versions plain X.Y.Z crates.
 is_semver() {
   case "$1" in
-    ''|*[!0-9.]*) return 1 ;;
+    ''|.*|*.|*..*|*[!0-9.]*) return 1 ;;
   esac
   local M m p rest
   IFS='.' read -r M m p rest <<EOF

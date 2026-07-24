@@ -68,6 +68,7 @@ test_next_version() {
   assert_eq "double-digit patch"    "1.2.10" "$(next_version 1.2.9 patch)"
   assert_fail "reject two-part version"  next_version 1.2 patch
   assert_fail "reject four-part version" next_version 1.2.3.4 patch
+  assert_fail "reject trailing dot"      next_version 1.2.3. patch
   assert_fail "reject prerelease"        next_version 1.2.3-rc1 patch
   assert_fail "reject non-numeric"       next_version 1.2.x patch
   assert_fail "reject unknown bump"      next_version 1.2.3 mega
@@ -78,6 +79,7 @@ test_is_semver() {
   assert_ok   "10.20.30 is semver" is_semver 10.20.30
   assert_fail "empty not semver"   is_semver ""
   assert_fail "1.2 not semver"     is_semver 1.2
+  assert_fail "trailing dot not semver" is_semver 1.2.3.
   assert_fail "v-prefixed not semver" is_semver v1.2.3
 }
 
