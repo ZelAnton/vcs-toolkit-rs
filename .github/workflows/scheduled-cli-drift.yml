@@ -158,7 +158,7 @@ jobs:
   # Live-forge lifecycle lane: stand up a one-shot, pinned Gitea, provision an
   # admin + a scoped token, log `tea` in, seed a repo (an auto-initialised base
   # plus a head branch one commit ahead, and a release), then drive the real
-  # create → view → comment → edit → merge PR lifecycle (and issues/releases)
+  # create → view → comment → merge PR lifecycle (and issues/releases)
   # end-to-end through the `vcs-forge` facade and `vcs-gitea`. This closes
   # ROADMAP §6.1: the forge wrappers' create/merge argv "tracks the documented
   # CLIs but isn't exercised end-to-end in CI (needs a live forge)".
@@ -332,7 +332,7 @@ jobs:
           set -euo pipefail
           title="Live Gitea lifecycle check failed"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          body="The scheduled live-Gitea lifecycle lane failed (tea ${{ matrix.tea }}): the end-to-end create → view → comment → edit → merge PR lifecycle (plus issues/releases) through vcs-forge/vcs-gitea against a one-shot Gitea did not pass.
+          body="The scheduled live-Gitea lifecycle lane failed (tea ${{ matrix.tea }}): the end-to-end create → view → comment → merge PR lifecycle (plus issues/releases) through vcs-forge/vcs-gitea against a one-shot Gitea did not pass.
 
           Run: ${run_url}
 

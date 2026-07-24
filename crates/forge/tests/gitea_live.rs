@@ -9,7 +9,7 @@
 //! "tracks the documented CLIs but isn't exercised end-to-end in CI (needs a live
 //! forge)". The hermetic scripted-runner tests pin the argv and JSON parsing
 //! against *assumed* fixtures; only a real `tea` against a real Gitea proves the
-//! whole create → view → comment → edit → merge (plus issues/releases) round-trip
+//! whole create → view → comment → merge (plus issues/releases) round-trip
 //! — the exact class of bug (`tea`'s real JSON shape diverging from our structs)
 //! the `vcs-gitea` re-model once caught.
 //!
@@ -34,7 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use vcs_forge::vcs_gitea::{Gitea, GiteaApi};
 use vcs_forge::{
-    Forge, ForgeIssueState, ForgePrState, IssueCreate, MergeStrategy, PrCreate, PrEdit, PrMerge,
+    Forge, ForgeIssueState, ForgePrState, IssueCreate, MergeStrategy, PrCreate, PrMerge,
 };
 
 /// The env switch the CI live-forge lane sets once a one-shot Gitea is up and
@@ -91,7 +91,7 @@ fn unique(tag: &str) -> String {
     format!("{tag} {stamp}")
 }
 
-/// The full create → list → view → comment → edit → merge PR lifecycle through
+/// The full create → list → view → comment → merge PR lifecycle through
 /// the facade against a real Gitea — the end-to-end proof the ROADMAP asks for.
 #[tokio::test]
 #[ignore = "requires a live one-shot Gitea (set VCS_GITEA_LIVE); see scheduled-cli-drift.yml"]
@@ -136,14 +136,9 @@ async fn pr_lifecycle_round_trip() {
         .await
         .expect("pr_comment");
 
-    // Edit the title, then confirm the change stuck through a fresh view.
-    let edited_title = unique("vcs-forge live PR edited");
-    forge
-        .pr_edit(number, PrEdit::new().title(&edited_title))
-        .await
-        .expect("pr_edit");
-    let after_edit = forge.pr_view(number).await.expect("pr_view after edit");
-    assert_eq!(after_edit.title, edited_title);
+    // `tea` 0.9.x has no PR-edit command. The facade's structural `Unsupported`
+    // result is covered by hermetic tests; this live lane exercises only operations
+    // that can actually reach the one-shot Gitea through the real CLI.
 
     // Merge it — the "merge" half — then confirm the state flips to Merged (the
     // exact `merged`-vs-`closed` mapping the gitea backend re-modelled).
