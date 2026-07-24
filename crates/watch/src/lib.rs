@@ -1159,11 +1159,11 @@ mod tests {
 #[cfg(test)]
 mod pipeline_tests {
     use super::*;
-    use vcs_testkit::TempDir;
     use processkit::ProcessRunner;
     use processkit::testing::{Reply, ScriptedRunner};
     use vcs_core::Repo;
     use vcs_core::vcs_git::Git;
+    use vcs_testkit::TempDir;
 
     /// Porcelain-v2 (NUL-separated) status output for a repo at `head`, clean.
     fn v2(head: &str) -> String {

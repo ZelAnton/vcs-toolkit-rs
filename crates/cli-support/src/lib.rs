@@ -1826,7 +1826,10 @@ mod tests {
         // And `cleanup_failed_clone_dest` must leave that file untouched when
         // called with `cleanable = false`.
         cleanup_failed_clone_dest(&file, false);
-        assert!(file.is_file(), "cleanup must not touch a non-cleanable dest");
+        assert!(
+            file.is_file(),
+            "cleanup must not touch a non-cleanable dest"
+        );
     }
 
     // Backoff is exponential off the base, capped at `max_backoff`, and zero when
