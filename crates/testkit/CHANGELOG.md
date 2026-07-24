@@ -16,7 +16,14 @@ crates; tag releases as `vcs-testkit-v<version>`.
 -
 
 ### Fixed
--
+- jj sandboxes now redirect jj's platform config directory on Unix
+  (`XDG_CONFIG_HOME`), not only on Windows (`APPDATA`). jj keeps repo- and
+  workspace-scoped config in a path-keyed store under that directory — outside
+  `JJ_CONFIG`'s reach, "for security reasons" — so `config set --repo user.*`
+  (run on every jj sandbox) previously wrote real files into the host's own
+  `~/.config/jj` on Linux/macOS during test runs. The store now lands in a
+  throwaway temp dir on every platform, extending the sandbox's config
+  hermeticity to Unix.
 
 ## [0.7.0] - 2026-07-19
 

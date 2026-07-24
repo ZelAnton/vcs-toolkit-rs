@@ -429,8 +429,17 @@ fn redact_value(value: &str) -> std::borrow::Cow<'_, str> {
 fn mask_url_userinfo(value: &str) -> Option<String> {
     let scheme_end = value.find("://")?;
     let after = &value[scheme_end + 3..];
-    let at = after.find('@')?;
-    let userinfo = &after[..at];
+    // Search for `userinfo@` only within the **authority** component — the span
+    // from just past `://` up to the first `/`, `?`, or `#`. An `@` in the path or
+    // query (e.g. `…/dir/file@rev`) is not a credential, so it must not drag the
+    // host/port/path into the mask. This is the same authority boundary
+    // `credentials::https_host` applies; take the **last** `@` in it (as
+    // `https_host`'s `rsplit_once('@')` does) so the userinfo is split off at the
+    // host, not at an earlier `@`. `authority` is a prefix of `after`, so the byte
+    // offset of the `@` is the same in both.
+    let authority = after.split(['/', '?', '#']).next().unwrap_or(after);
+    let at = authority.rfind('@')?;
+    let userinfo = &authority[..at];
     // Only mask when there is a password component (`user:secret`); a bare
     // `user@host` (no colon) is not a secret and stays visible.
     if !userinfo.contains(':') {
@@ -528,6 +537,37 @@ mod tests {
         // A bare `user@host` (no password component) stays visible.
         let out = redact_args(&argv(&["fetch", "ssh://git@github.com/o/r.git"]));
         assert_eq!(out[1], "ssh://git@github.com/o/r.git");
+    }
+
+    #[test]
+    fn url_at_in_path_is_not_mistaken_for_userinfo() {
+        // A URL with a port and an `@` in the *path* — but no embedded credential.
+        // The `@` lives past the authority boundary (the first `/`), so it is not
+        // userinfo: the host, port, and path must stay fully visible, never masked.
+        // (Regression: searching the whole remainder for `@` treated
+        // `host:8443/dir/file` as userinfo because of the port's `:`, collapsing the
+        // value to `https://<redacted>@rev`.)
+        let out = redact_args(&argv(&["clone", "https://host:8443/dir/file@rev"]));
+        assert_eq!(out[0], "clone");
+        assert_eq!(
+            out[1], "https://host:8443/dir/file@rev",
+            "no credential ⇒ nothing is masked; host/port/path stay intact"
+        );
+        assert!(
+            !out[1].contains(REDACTED),
+            "the value must not be redacted: {}",
+            out[1]
+        );
+
+        // And the credentialed form of the *same* shape — real `user:secret`
+        // userinfo, plus an `@` later in the path — still masks the credential while
+        // keeping host/port/path visible (the trailing path `@` is not userinfo).
+        let out = redact_args(&argv(&[
+            "clone",
+            "https://user:secret@host:8443/dir/file@rev",
+        ]));
+        assert_eq!(out[1], "https://<redacted>@host:8443/dir/file@rev");
+        assert!(!out[1].contains("secret"), "credential masked: {}", out[1]);
     }
 
     #[test]
