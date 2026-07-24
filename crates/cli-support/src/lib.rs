@@ -1779,28 +1779,6 @@ mod tests {
         }
     }
 
-    /// A unique, self-cleaning scratch dir under the OS temp dir (pid + counter
-    /// keeps parallel tests from colliding; no `tempfile` dev-dependency needed
-    /// for this one hermetic check).
-    struct Scratch(std::path::PathBuf);
-    impl Scratch {
-        fn new() -> Self {
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let p = std::env::temp_dir().join(format!(
-                "vcs-cli-support-clone-dest-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            Scratch(p)
-        }
-    }
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     // R7 (T-085): `clone_dest_cleanable` must return `true` only when `dest`'s
     // absence/emptiness is actually proven, never on an unrelated `read_dir`
     // failure — that path used to be `Err(_) => true`, which could tell
@@ -1808,43 +1786,47 @@ mod tests {
     // directory it merely failed to read (permission denied, transient I/O).
     #[test]
     fn clone_dest_cleanable_requires_proven_absence_or_emptiness() {
-        // Absent (NotFound) → cleanable.
-        let absent = Scratch::new();
-        assert!(clone_dest_cleanable(&absent.0));
+        use vcs_testkit::TempDir;
+
+        // Absent (NotFound) → cleanable. `TempDir::new` creates its own dir
+        // eagerly, so the proven-absent case has to be an as-yet-unjoined
+        // subpath of a live `TempDir`: the join alone creates nothing, so
+        // `absent` stays absent, while the parent `TempDir` still guarantees
+        // cleanup (mirrors `crates/core/tests/repo.rs`'s
+        // `tmp.path().join("dest") // never created` pattern).
+        let absent_parent = TempDir::new("clone-dest-absent");
+        let absent = absent_parent.path().join("absent");
+        assert!(clone_dest_cleanable(&absent));
 
         // An existing, empty directory → cleanable.
-        let empty = Scratch::new();
-        std::fs::create_dir_all(&empty.0).expect("create empty dir");
-        assert!(clone_dest_cleanable(&empty.0));
+        let empty = TempDir::new("clone-dest-empty");
+        assert!(clone_dest_cleanable(empty.path()));
 
         // An existing, non-empty directory → NOT cleanable.
-        let nonempty = Scratch::new();
-        std::fs::create_dir_all(&nonempty.0).expect("create dir");
-        std::fs::write(nonempty.0.join("keep.txt"), b"user data").expect("write file");
-        assert!(!clone_dest_cleanable(&nonempty.0));
+        let nonempty = TempDir::new("clone-dest-nonempty");
+        std::fs::write(nonempty.path().join("keep.txt"), b"user data").expect("write file");
+        assert!(!clone_dest_cleanable(nonempty.path()));
 
         // `dest` is a plain file, not a directory: `read_dir` fails with
         // `NotADirectory`/similar — NOT `NotFound` — so this must NOT be
         // classified as cleanable, even though `remove_dir_all` would in fact
         // fail harmlessly on a file. The point is the classification must not
         // rely on that coincidence.
-        let file = Scratch::new();
-        std::fs::write(&file.0, b"not a directory").expect("write file");
-        let err = std::fs::read_dir(&file.0).expect_err("read_dir on a file fails");
+        let file_parent = TempDir::new("clone-dest-file");
+        let file = file_parent.path().join("not-a-dir");
+        std::fs::write(&file, b"not a directory").expect("write file");
+        let err = std::fs::read_dir(&file).expect_err("read_dir on a file fails");
         assert_ne!(
             err.kind(),
             std::io::ErrorKind::NotFound,
             "must be a genuine NotADirectory-style failure, not NotFound"
         );
-        assert!(!clone_dest_cleanable(&file.0));
+        assert!(!clone_dest_cleanable(&file));
 
         // And `cleanup_failed_clone_dest` must leave that file untouched when
         // called with `cleanable = false`.
-        cleanup_failed_clone_dest(&file.0, false);
-        assert!(
-            file.0.is_file(),
-            "cleanup must not touch a non-cleanable dest"
-        );
+        cleanup_failed_clone_dest(&file, false);
+        assert!(file.is_file(), "cleanup must not touch a non-cleanable dest");
     }
 
     // Backoff is exponential off the base, capped at `max_backoff`, and zero when

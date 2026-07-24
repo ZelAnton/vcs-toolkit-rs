@@ -1012,38 +1012,14 @@ fn normalize(p: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    /// A unique, self-cleaning temp dir (no temp-dir crate needed for these
-    /// hermetic helper tests — pid + counter keeps parallel tests from colliding).
-    /// `pub(crate)`: the pipeline tests below reuse it for the scripted repo's
-    /// on-disk git dir (the snapshot's MERGE_HEAD probe reads the filesystem).
-    pub(crate) struct Scratch(pub(crate) PathBuf);
-    impl Scratch {
-        pub(crate) fn new() -> Self {
-            let p = std::env::temp_dir().join(format!(
-                "vcs-watch-commondir-{}-{}",
-                std::process::id(),
-                COUNTER.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&p).expect("create scratch dir");
-            Scratch(p)
-        }
-    }
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use vcs_testkit::TempDir;
 
     // A plain (non-worktree) git dir has no `commondir` file → no shared dir, so
     // behaviour is exactly today's single-dir watch.
     #[test]
     fn no_commondir_file_yields_none() {
-        let scratch = Scratch::new();
-        let git_dir = scratch.0.join(".git");
+        let scratch = TempDir::new("watch-commondir");
+        let git_dir = scratch.path().join(".git");
         std::fs::create_dir_all(&git_dir).expect("mkdir .git");
         assert_eq!(common_dir(&git_dir), None);
     }
@@ -1052,8 +1028,8 @@ mod tests {
     // (git's actual content), which must resolve to the sibling shared `.git`.
     #[test]
     fn relative_commondir_resolves_to_shared_git_dir() {
-        let scratch = Scratch::new();
-        let shared = scratch.0.join(".git");
+        let scratch = TempDir::new("watch-commondir");
+        let shared = scratch.path().join(".git");
         let private = shared.join("worktrees").join("wt");
         std::fs::create_dir_all(&private).expect("mkdir private gitdir");
         // git writes `../..` (relative to the private dir) here.
@@ -1072,9 +1048,9 @@ mod tests {
     // An absolute `commondir` (git permits it) is taken as-is.
     #[test]
     fn absolute_commondir_is_used_verbatim() {
-        let scratch = Scratch::new();
-        let shared = scratch.0.join("shared-git");
-        let private = scratch.0.join("private");
+        let scratch = TempDir::new("watch-commondir");
+        let shared = scratch.path().join("shared-git");
+        let private = scratch.path().join("private");
         std::fs::create_dir_all(&private).expect("mkdir private");
         std::fs::write(private.join("commondir"), format!("{}\n", shared.display()))
             .expect("write commondir");
@@ -1086,9 +1062,9 @@ mod tests {
     // the shared dir is not the private one (so two distinct watches register).
     #[test]
     fn state_dirs_includes_private_and_shared_for_worktree() {
-        let scratch = Scratch::new();
-        let root = scratch.0.join("wt-worktree");
-        let shared = scratch.0.join(".git");
+        let scratch = TempDir::new("watch-commondir");
+        let root = scratch.path().join("wt-worktree");
+        let shared = scratch.path().join(".git");
         let private = shared.join("worktrees").join("wt");
         std::fs::create_dir_all(&private).expect("mkdir private gitdir");
         std::fs::create_dir_all(&root).expect("mkdir worktree root");
@@ -1108,8 +1084,8 @@ mod tests {
 
     #[test]
     fn state_dirs_includes_git_dir_for_colocated_jj_repo() {
-        let scratch = Scratch::new();
-        let root = scratch.0.join("colocated");
+        let scratch = TempDir::new("watch-commondir");
+        let root = scratch.path().join("colocated");
         std::fs::create_dir_all(root.join(".jj")).expect("mkdir .jj");
         std::fs::create_dir_all(root.join(".git")).expect("mkdir .git");
 
@@ -1119,8 +1095,8 @@ mod tests {
 
     #[test]
     fn state_dirs_excludes_missing_git_dir_for_pure_jj_repo() {
-        let scratch = Scratch::new();
-        let root = scratch.0.join("pure-jj");
+        let scratch = TempDir::new("watch-commondir");
+        let root = scratch.path().join("pure-jj");
         std::fs::create_dir_all(root.join(".jj")).expect("mkdir .jj");
 
         let dirs = state_dirs(BackendKind::Jj, &root).expect("state_dirs");
@@ -1131,13 +1107,13 @@ mod tests {
     // duplicate is dropped — we never register the same path twice.
     #[test]
     fn self_referential_commondir_is_deduped() {
-        let scratch = Scratch::new();
-        let git_dir = scratch.0.join(".git");
+        let scratch = TempDir::new("watch-commondir");
+        let git_dir = scratch.path().join(".git");
         std::fs::create_dir_all(&git_dir).expect("mkdir .git");
         // `.` resolves to the dir itself.
         std::fs::write(git_dir.join("commondir"), ".\n").expect("write commondir");
         // The gitlink points the worktree root at this very dir.
-        let root = scratch.0.join("root");
+        let root = scratch.path().join("root");
         std::fs::create_dir_all(&root).expect("mkdir root");
         std::fs::write(
             root.join(".git"),
@@ -1182,8 +1158,8 @@ mod tests {
 /// integration tests (fake time says nothing about real OS event batching).
 #[cfg(test)]
 mod pipeline_tests {
-    use super::tests::Scratch;
     use super::*;
+    use vcs_testkit::TempDir;
     use processkit::ProcessRunner;
     use processkit::testing::{Reply, ScriptedRunner};
     use vcs_core::Repo;
@@ -1303,9 +1279,9 @@ mod pipeline_tests {
     // one emitted change.
     #[tokio::test(start_paused = true)]
     async fn debounce_coalesces_burst() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, defaults());
 
         for _ in 0..5 {
             h.signal();
@@ -1337,10 +1313,10 @@ mod pipeline_tests {
     // `sleep_until` arm — not just "on the next signal after the deadline").
     #[tokio::test(start_paused = true)]
     async fn max_wait_caps_continuous_signals() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let h_config = defaults();
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, h_config);
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, h_config);
 
         // A pump that fires a signal every 100 ms — always inside the 250 ms
         // quiet window, so only the ceiling can break the burst.
@@ -1380,13 +1356,13 @@ mod pipeline_tests {
     // running; the debounce timer still fires normally.
     #[tokio::test(start_paused = true)]
     async fn max_wait_duration_max_does_not_panic_the_loop() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let config = LoopConfig {
             max_wait: Duration::MAX,
             ..defaults()
         };
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, config);
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, config);
         h.signal();
         tokio::time::advance(Duration::from_millis(300)).await; // past the 250 ms debounce
         let change = h
@@ -1400,9 +1376,9 @@ mod pipeline_tests {
     // The base case: one signal, a quiet gap, one re-query.
     #[tokio::test(start_paused = true)]
     async fn quiet_gap_triggers_requery() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, defaults());
 
         h.signal();
         let change = h.out.recv().await.expect("change after the quiet gap");
@@ -1418,10 +1394,10 @@ mod pipeline_tests {
     // stats distinguish "no change" from "never re-queried").
     #[tokio::test(start_paused = true)]
     async fn no_change_yields_no_emission() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         // Same head as the baseline → empty diff.
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "aaa"), prev, defaults());
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "aaa"), prev, defaults());
 
         h.signal();
         settle().await; // let the loop register its quiet timer first
@@ -1471,14 +1447,14 @@ mod pipeline_tests {
     // signal re-checks and recovers.
     #[tokio::test(start_paused = true)]
     async fn transient_failure_skips_then_recovers() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(FlakyStatus {
                 fails_left: AtomicU64::new(1),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         ));
@@ -1560,15 +1536,15 @@ mod pipeline_tests {
     // signal is needed to observe the state that the timed-out query missed.
     #[tokio::test(start_paused = true)]
     async fn timeout_on_last_signal_recovers_via_backoff_retry() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(SlowFirstStatus {
                 slow_left: AtomicBool::new(true),
                 delay: Duration::from_secs(10),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         ));
@@ -1609,14 +1585,14 @@ mod pipeline_tests {
     // Retry exhaustion is bounded and then becomes idle until another event.
     #[tokio::test(start_paused = true)]
     async fn persistent_requery_failure_exhausts_retries_without_busy_loop() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(FlakyStatus {
                 fails_left: AtomicU64::new(100),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         ));
@@ -1651,14 +1627,14 @@ mod pipeline_tests {
     // Closing the producer while parked in backoff cancels the retry promptly.
     #[tokio::test(start_paused = true)]
     async fn drop_teardown_during_retry_backoff() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(FlakyStatus {
                 fails_left: AtomicU64::new(1),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         ));
@@ -1688,9 +1664,9 @@ mod pipeline_tests {
     // observes channel closure, without requiring separate stats polling.
     #[tokio::test(start_paused = true)]
     async fn permanent_backend_failure_closes_main_channel() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
-        let mut h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
+        let mut h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, defaults());
 
         h.backend_failed();
         assert!(h.out.recv().await.is_none(), "backend death closes recv");
@@ -1703,14 +1679,14 @@ mod pipeline_tests {
     // transient; the loop survives (a later attempt runs and is also bounded).
     #[tokio::test(start_paused = true)]
     async fn requery_timeout_skips_as_transient() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(Sleepy {
                 delay: Duration::from_secs(10),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         ));
@@ -1747,13 +1723,13 @@ mod pipeline_tests {
     // only reachable with a real notify watcher).
     #[tokio::test(start_paused = true)]
     async fn baseline_capture_honors_requery_timeout() {
-        let scratch = Scratch::new();
+        let scratch = TempDir::new("watch-commondir");
         let repo = Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(Sleepy {
                 delay: Duration::from_secs(10),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
                 head: "bbb",
             }),
         );
@@ -1779,15 +1755,15 @@ mod pipeline_tests {
     // the output channel.
     #[tokio::test(start_paused = true)]
     async fn drop_teardown_mid_debounce() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
         let Harness {
             sig,
             mut out,
             stats: _,
             watch_failed: _,
             task,
-        } = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+        } = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, defaults());
 
         sig.try_send(WatchSignal::Change).expect("send");
         tokio::time::advance(Duration::from_millis(100)).await; // mid-debounce
@@ -1830,14 +1806,14 @@ mod pipeline_tests {
     // dropping or buffering unboundedly; draining one item unparks it.
     #[tokio::test(start_paused = true)]
     async fn backpressure_parks_loop() {
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "base").await;
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "base").await;
         let repo = Box::new(Repo::from_git(
             "/r",
             "/r",
             Git::with_runner(VaryingHead {
                 statuses: AtomicU64::new(0),
-                gitdir: scratch.0.clone(),
+                gitdir: scratch.path().to_path_buf(),
             }),
         ));
         let config = LoopConfig {
@@ -1892,11 +1868,11 @@ mod pipeline_tests {
     async fn stream_yields_changes_and_advances_current() {
         use tokio_stream::StreamExt;
 
-        let scratch = Scratch::new();
-        let prev = baseline(&scratch.0, "aaa").await;
-        let h = spawn_loop(scripted_repo(&scratch.0, "bbb"), prev, defaults());
+        let scratch = TempDir::new("watch-commondir");
+        let prev = baseline(scratch.path(), "aaa").await;
+        let h = spawn_loop(scripted_repo(scratch.path(), "bbb"), prev, defaults());
 
-        let baseline_snap = scripted_repo(&scratch.0, "aaa")
+        let baseline_snap = scripted_repo(scratch.path(), "aaa")
             .snapshot()
             .await
             .expect("baseline snapshot");

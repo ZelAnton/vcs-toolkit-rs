@@ -41,6 +41,9 @@ serde = ["dep:serde", "dep:serde_json"]
 # adds the paused-clock (`start_paused`) support the cancellation-backoff tests use
 # to drive `tokio::time::sleep` deterministically without real waits.
 tokio = { version = "1", features = ["macros", "rt", "time", "test-util"] }
+# The shared self-cleaning temp-dir test fixture (replaces a private `Scratch`
+# copy) — intentionally dependency-free, so this doesn't create a cycle.
+vcs-testkit = { path = "../testkit" }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature and pass `--cfg docsrs` so any feature-gated
