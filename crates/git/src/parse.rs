@@ -349,7 +349,8 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
 /// would substitute `U+FFFD` and make `Worktree.path` name a *different* directory,
 /// the same defect the status/diff surface already avoids. The labels and the
 /// text-typed values (`HEAD` sha, `branch` ref) are ASCII, so they still decode as
-/// `String`.
+/// `String`. A trailing `\r` is stripped from every line so CRLF-framed output
+/// is equivalent to LF-framed output.
 ///
 /// This parses the **newline-framed** porcelain (no `-z`): git only grew
 /// `worktree list --porcelain -z` in 2.36, above this crate's git-support floor
@@ -366,6 +367,8 @@ pub(crate) fn parse_worktree_porcelain(output: &[u8]) -> Vec<Worktree> {
         }
     };
     for line in output.split(|&b| b == b'\n') {
+        // Trim a trailing CR so CRLF-framed output (Windows) parses identically.
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         if line.is_empty() {
             flush(&mut current, &mut worktrees);
             continue;
@@ -1161,6 +1164,23 @@ mod tests {
         assert_eq!(got[0].head.as_deref(), Some("abc123"));
         assert!(got[1].detached && got[1].branch.is_none());
         assert!(got[2].bare && got[2].head.is_none());
+    }
+
+    #[test]
+    fn worktrees_parse_crlf_without_trailing_carriage_returns() {
+        let got = parse_worktree_porcelain(
+            b"worktree /repo/wt\r\nHEAD abc123\r\nbranch refs/heads/main\r\nlocked\r\n\r\n\
+              worktree /repo/bare\r\nbare\r\n\r\n\
+              worktree /repo/detached\r\nHEAD def456\r\ndetached\r\n",
+        );
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].path, PathBuf::from("/repo/wt"));
+        assert_eq!(got[0].head.as_deref(), Some("abc123"));
+        assert_eq!(got[0].branch.as_deref(), Some("main"));
+        assert!(got[0].locked);
+        assert!(got[1].bare && got[1].head.is_none());
+        assert!(got[2].detached && got[2].branch.is_none());
+        assert_eq!(got[2].head.as_deref(), Some("def456"));
     }
 
     // A worktree whose directory name is not valid UTF-8 (legal on Unix) survives

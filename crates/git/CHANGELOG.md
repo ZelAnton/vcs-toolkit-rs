@@ -45,6 +45,9 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
+- `GitApi::worktree_list` now parses CRLF-framed porcelain exactly like LF output:
+  paths, branch/HEAD values, and valueless `bare`/`detached`/`locked` attributes no
+  longer retain or compare against a trailing carriage return. (T-125.)
 - security: `GitApi::config_set` now passes its argv as `git config -- <key> <value>`,
   pinning `key` and `value` behind the `--` option terminator. A `value` shaped like
   a flag (`--global`, `--file=<path>`, `--worktree`, …) is stored literally instead of
