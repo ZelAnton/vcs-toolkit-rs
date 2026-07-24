@@ -5,7 +5,9 @@
 
 use std::fmt::Write;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 
 const RECORD_COUNT: usize = 2_500;
 

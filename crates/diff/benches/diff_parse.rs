@@ -5,7 +5,9 @@
 
 use std::fmt::Write;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 
 const FILE_COUNT: usize = 1_200;
 const HUNKS_PER_FILE: usize = 3;

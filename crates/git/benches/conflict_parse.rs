@@ -1,8 +1,9 @@
 //! Criterion coverage for git conflict parsing and its byte-exact renderer.
 
 use std::fmt::Write;
+use std::hint::black_box;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 const CONFLICT_COUNT: usize = 600;
 
