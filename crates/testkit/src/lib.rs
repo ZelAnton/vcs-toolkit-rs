@@ -144,7 +144,10 @@ impl Drop for TempDir {
 /// The redirect-config env vars point at a guaranteed-nonexistent path; git
 /// and jj both treat a missing config file as empty, so no temp file is
 /// needed and the free [`git`]/[`jj`] helpers (which own no sandbox dir) get
-/// the same isolation as the sandbox methods.
+/// the same isolation as the sandbox methods. jj additionally has its
+/// *platform config directory* redirected to a temp dir on every platform,
+/// because its repo-/workspace-scoped config lives in a store there (outside
+/// `JJ_CONFIG`'s reach) rather than inside the workspace — see the `"jj"` arm.
 fn command(binary: &str, cwd: &Path) -> Command {
     // A path that cannot exist: a child of *this* binary's own path (a file,
     // so it can have no children). Resolved per call to stay self-contained.
@@ -181,12 +184,25 @@ fn command(binary: &str, cwd: &Path) -> Command {
             cmd.env("JJ_CONFIG", &nonexistent)
                 .env("JJ_USER", "test")
                 .env("JJ_EMAIL", "test@example.com");
-            // jj 0.42+ stores secure repo-scoped configuration below the
-            // platform config directory, even when `JJ_CONFIG` bypasses user
-            // config files. Keep that store out of the host profile as well.
+            // jj keeps its repo- and workspace-scoped config OUT of the repo,
+            // in a path-keyed store under the platform config directory ("the
+            // same directory as your user config, for security reasons") — and
+            // `JJ_CONFIG` redirects only the *user* config, not that store. So
+            // `configure_jj_identity`'s `config set --repo user.*` (run on every
+            // jj sandbox) writes real files there; redirect the platform config
+            // directory too, so they land in a throwaway temp dir instead of the
+            // host profile. jj resolves that directory from `%APPDATA%` on
+            // Windows and from `$XDG_CONFIG_HOME` (else `$HOME/.config`, on Linux
+            // and macOS alike) on Unix, so the redirect var is platform-specific
+            // even though the leak — and the fix — is not (confirmed on jj 0.42).
             #[cfg(windows)]
             cmd.env(
                 "APPDATA",
+                std::env::temp_dir().join("vcs-testkit-jj-config"),
+            );
+            #[cfg(unix)]
+            cmd.env(
+                "XDG_CONFIG_HOME",
                 std::env::temp_dir().join("vcs-testkit-jj-config"),
             );
         }
