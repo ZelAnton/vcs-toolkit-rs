@@ -94,28 +94,35 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A unique temporary directory, removed on drop.
 ///
 /// Unique without a temp-dir crate: process id + a process-wide monotonic
-/// counter, so parallel tests within a run never collide. The name is kept
-/// deliberately short — jj's `op_store` paths are deep, and a long prefix here
-/// can tip a nested `.jj/repo/op_store/operations/<id>` path over Windows'
-/// `MAX_PATH` (260) limit.
+/// counter, with `create_dir` retrying a stale name left by an earlier process.
+/// The name is kept deliberately short — jj's `op_store` paths are deep, and a
+/// long prefix here can tip a nested `.jj/repo/op_store/operations/<id>` path
+/// over Windows' `MAX_PATH` (260) limit.
 pub struct TempDir(PathBuf);
 
 impl TempDir {
     /// Create `%TEMP%/vcs-testkit-<tag>-<pid>-<n>`. Panics when the directory
     /// cannot be created.
     pub fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "vcs-testkit-{tag}-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&path).expect("create temp dir");
+        let path = loop {
+            let candidate = std::env::temp_dir().join(format!(
+                "vcs-testkit-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create temp dir {candidate:?}: {error}"),
+            }
+        };
         TempDir(path)
     }
 
@@ -129,6 +136,70 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         // Best-effort: a leaked temp dir must not fail the test run.
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A process-local lease for the platform config directory used by jj fixtures.
+///
+/// jj keeps repo- and workspace-scoped configuration outside the repository, so
+/// every command for a live [`JjSandbox`] must share one redirected platform
+/// config directory. The final lease drops that directory, preventing it from
+/// leaking into a later test-process run.
+struct JjConfigLease;
+
+struct JjConfigState {
+    dir: TempDir,
+    leases: usize,
+}
+
+static JJ_CONFIG: OnceLock<Mutex<Option<JjConfigState>>> = OnceLock::new();
+
+fn jj_config_slot() -> &'static Mutex<Option<JjConfigState>> {
+    JJ_CONFIG.get_or_init(|| Mutex::new(None))
+}
+
+fn lock_jj_config() -> std::sync::MutexGuard<'static, Option<JjConfigState>> {
+    // A failed fixture command may panic while it holds this lock. The next
+    // independent test must still be able to clean up and create a sandbox.
+    jj_config_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn jj_config_path() -> Option<PathBuf> {
+    lock_jj_config()
+        .as_ref()
+        .map(|state| state.dir.path().to_path_buf())
+}
+
+impl JjConfigLease {
+    fn acquire() -> Self {
+        let mut slot = lock_jj_config();
+        match slot.as_mut() {
+            Some(state) => state.leases += 1,
+            None => {
+                // Keep the tag short: jj's on-disk operation-store paths are
+                // deeply nested and Windows still has narrow path limits.
+                *slot = Some(JjConfigState {
+                    dir: TempDir::new("jjcfg"),
+                    leases: 1,
+                });
+            }
+        }
+        Self
+    }
+}
+
+impl Drop for JjConfigLease {
+    fn drop(&mut self) {
+        let mut slot = lock_jj_config();
+        let state = slot.as_mut().expect("jj config lease must have a state");
+        state.leases -= 1;
+        if state.leases == 0 {
+            // Dropping the `TempDir` removes all repo/workspace-scoped jj
+            // config before a subsequent test-process can reuse any paths.
+            drop(slot.take());
+        }
     }
 }
 
@@ -147,8 +218,11 @@ impl Drop for TempDir {
 /// the same isolation as the sandbox methods. jj additionally has its
 /// *platform config directory* redirected to a temp dir on every platform,
 /// because its repo-/workspace-scoped config lives in a store there (outside
-/// `JJ_CONFIG`'s reach) rather than inside the workspace — see the `"jj"` arm.
-fn command(binary: &str, cwd: &Path) -> Command {
+/// `JJ_CONFIG`'s reach) rather than inside the workspace.
+///
+/// Build an isolated command, optionally pinning jj's platform config root to
+/// a caller-owned directory that must outlive the child process.
+fn command_with_jj_config(binary: &str, cwd: &Path, jj_config_dir: Option<&Path>) -> Command {
     // A path that cannot exist: a child of *this* binary's own path (a file,
     // so it can have no children). Resolved per call to stay self-contained.
     let nonexistent = std::env::current_exe()
@@ -195,38 +269,59 @@ fn command(binary: &str, cwd: &Path) -> Command {
             // Windows and from `$XDG_CONFIG_HOME` (else `$HOME/.config`, on Linux
             // and macOS alike) on Unix, so the redirect var is platform-specific
             // even though the leak — and the fix — is not (confirmed on jj 0.42).
+            let config_dir = jj_config_dir
+                .map(Path::to_path_buf)
+                .or_else(jj_config_path)
+                .expect("jj command must have an isolated platform config directory");
             #[cfg(windows)]
-            cmd.env(
-                "APPDATA",
-                std::env::temp_dir().join("vcs-testkit-jj-config"),
-            );
+            cmd.env("APPDATA", config_dir);
             #[cfg(unix)]
-            cmd.env(
-                "XDG_CONFIG_HOME",
-                std::env::temp_dir().join("vcs-testkit-jj-config"),
-            );
+            cmd.env("XDG_CONFIG_HOME", config_dir);
         }
         _ => {}
     }
     cmd
 }
 
+/// Give a standalone raw jj command an ephemeral config root. Commands issued
+/// through a live [`JjSandbox`] reuse that sandbox run's leased root instead,
+/// preserving repo-scoped configuration across setup steps.
+fn transient_jj_config(binary: &str, shared_config: Option<&PathBuf>) -> Option<TempDir> {
+    (binary == "jj" && shared_config.is_none()).then(|| TempDir::new("jjcfg"))
+}
+
 /// Run a binary in `cwd`, panicking (with the command line in the message) on
 /// a spawn failure or non-zero exit. The fixture contract: fail loudly.
 fn run(binary: &str, cwd: &Path, args: &[&str]) {
-    let status = command(binary, cwd)
-        .args(args)
-        .status()
-        .unwrap_or_else(|e| panic!("failed to run `{binary} {args:?}`: {e}"));
+    let shared_jj_config = jj_config_path();
+    let transient_jj_config = transient_jj_config(binary, shared_jj_config.as_ref());
+    let status = command_with_jj_config(
+        binary,
+        cwd,
+        shared_jj_config
+            .as_deref()
+            .or_else(|| transient_jj_config.as_ref().map(|dir| dir.path())),
+    )
+    .args(args)
+    .status()
+    .unwrap_or_else(|e| panic!("failed to run `{binary} {args:?}`: {e}"));
     assert!(status.success(), "`{binary} {args:?}` exited with {status}");
 }
 
 /// Like [`run`] but capturing trimmed stdout.
 fn run_capture(binary: &str, cwd: &Path, args: &[&str]) -> String {
-    let out = command(binary, cwd)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run `{binary} {args:?}`: {e}"));
+    let shared_jj_config = jj_config_path();
+    let transient_jj_config = transient_jj_config(binary, shared_jj_config.as_ref());
+    let out = command_with_jj_config(
+        binary,
+        cwd,
+        shared_jj_config
+            .as_deref()
+            .or_else(|| transient_jj_config.as_ref().map(|dir| dir.path())),
+    )
+    .args(args)
+    .output()
+    .unwrap_or_else(|e| panic!("failed to run `{binary} {args:?}`: {e}"));
     assert!(
         out.status.success(),
         "`{binary} {args:?}` exited with {}: {}",
@@ -455,6 +550,7 @@ impl BareRemote {
 /// A throwaway **jj** repository (git-backed) with a repo-scoped identity.
 pub struct JjSandbox {
     dir: TempDir,
+    _config: JjConfigLease,
 }
 
 impl JjSandbox {
@@ -462,16 +558,20 @@ impl JjSandbox {
     /// `user.name`/`user.email`).
     ///
     /// The identity is supplied to *every* jj invocation as `JJ_USER` /
-    /// `JJ_EMAIL` env (see `command`), so the working-copy commit that
+    /// `JJ_EMAIL` env (through the fixture command builder), so the working-copy commit that
     /// `jj git init` creates is authored deterministically — a later
     /// `config set --repo user.*` only affects *future* commits and so cannot
     /// fix the init commit on its own. The repo-scoped config is kept anyway
     /// as belt-and-braces for any tool path that reads config over the env.
     pub fn init(tag: &str) -> Self {
+        let config = JjConfigLease::acquire();
         let dir = TempDir::new(tag);
         run("jj", dir.path(), &["git", "init"]);
         configure_jj_identity(dir.path());
-        JjSandbox { dir }
+        JjSandbox {
+            dir,
+            _config: config,
+        }
     }
 
     /// Create a **non**-colocated jj-only workspace (no `.git`), forcing
@@ -487,6 +587,7 @@ impl JjSandbox {
     /// `--config-toml` form) is used because it is the form supported across
     /// the whole jj range this crate targets.
     pub fn init_non_colocated(tag: &str) -> Self {
+        let config = JjConfigLease::acquire();
         let dir = TempDir::new(tag);
         run(
             "jj",
@@ -494,7 +595,10 @@ impl JjSandbox {
             &["--config", "git.colocate=false", "git", "init"],
         );
         configure_jj_identity(dir.path());
-        JjSandbox { dir }
+        JjSandbox {
+            dir,
+            _config: config,
+        }
     }
 
     /// Create a colocated jj/git workspace (`jj git init --colocate`) with
@@ -507,11 +611,15 @@ impl JjSandbox {
     /// repo-scoped `user.*` config is set, and [`configure_identity`] configures
     /// the colocated git repository for direct git scenario steps.
     pub fn colocated(tag: &str) -> Self {
+        let config = JjConfigLease::acquire();
         let dir = TempDir::new(tag);
         run("jj", dir.path(), &["git", "init", "--colocate"]);
         configure_jj_identity(dir.path());
         configure_identity(dir.path());
-        JjSandbox { dir }
+        JjSandbox {
+            dir,
+            _config: config,
+        }
     }
 
     /// The workspace root path.
@@ -594,7 +702,7 @@ impl JjSandbox {
 
 /// Set deterministic, repo-scoped jj identity after `jj git init`.
 ///
-/// [`command`] still supplies `JJ_USER` / `JJ_EMAIL` to the init command, so
+/// The fixture command builder still supplies `JJ_USER` / `JJ_EMAIL` to the init command, so
 /// its already-created working-copy commit is deterministic. This config is
 /// retained for code paths that read identity from the repository instead.
 fn configure_jj_identity(dir: &Path) {
@@ -611,7 +719,7 @@ mod tests {
     use super::*;
 
     fn jj_config_value_without_identity(dir: &Path, key: &str) -> String {
-        let out = command("jj", dir)
+        let out = command_with_jj_config("jj", dir, None)
             .env_remove("JJ_USER")
             .env_remove("JJ_EMAIL")
             .args(["config", "get", key])
@@ -636,6 +744,21 @@ mod tests {
         let kept = a.path().to_path_buf();
         drop(a);
         assert!(!kept.exists(), "removed on drop");
+    }
+
+    #[test]
+    fn jj_config_dir_is_shared_and_removed_after_final_lease() {
+        let first = JjConfigLease::acquire();
+        let path = jj_config_path().expect("active jj config directory");
+        let second = JjConfigLease::acquire();
+        assert_eq!(jj_config_path().as_deref(), Some(path.as_path()));
+
+        drop(first);
+        assert!(path.is_dir(), "one live sandbox still owns the directory");
+        drop(second);
+
+        assert!(jj_config_path().is_none(), "last lease cleared the state");
+        assert!(!path.exists(), "last lease removed the directory");
     }
 
     // Real-binary round-trips; ignored so hermetic CI stays green.
