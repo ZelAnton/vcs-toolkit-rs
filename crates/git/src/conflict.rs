@@ -6,8 +6,12 @@
 //! (2-way: ours/theirs), `diff3` (3-way: ours/base/theirs), and `zdiff3`
 //! (same markers as diff3 — the common affixes are already outside the
 //! region). Marker length is variable (`merge.conflictMarkerSize`, default 7)
-//! and is detected per region. Lines are kept verbatim (including `\r\n` and
-//! a missing trailing newline), so [`render`] is a byte-exact roundtrip.
+//! and is detected per region — **but only at 7 or above** (see
+//! [`has_conflict_markers`] and [`parse_conflicts`]): a file materialized with
+//! a smaller `merge.conflictMarkerSize` (or the `conflict-marker-size`
+//! attribute) is silently parsed as ordinary text by this module, not as a
+//! conflict. Lines are kept verbatim (including `\r\n` and a missing trailing
+//! newline), so [`render`] is a byte-exact roundtrip.
 //!
 //! jj note: files materialized with jj's `ui.conflict-marker-style = "git"`
 //! use this exact grammar (with jj's own labels) and parse here; jj's native
@@ -80,6 +84,14 @@ pub enum ConflictSegment {
 
 /// Does `content` contain a line that looks like a conflict-start marker?
 /// Cheap pre-check before a full [`parse_conflicts`].
+///
+/// **Contract: only marker runs of length `>= 7` count.** This guards against
+/// false positives on ordinary text containing short `<`/`=`/`>` runs (e.g. a
+/// `<<<` XML-ish snippet or a short divider). Consequently, a file whose
+/// `<<<<<<<` markers were written with `merge.conflictMarkerSize` (or the
+/// `conflict-marker-size` attribute) set below 7 will make this function
+/// return `false` even though a real `git` configured the same way would
+/// treat it as conflicted.
 pub fn has_conflict_markers(content: &str) -> bool {
     content
         .split_inclusive('\n')
@@ -117,6 +129,15 @@ fn parse_error(message: String) -> Error {
 /// ordinary content (a Markdown/RST underline, a divider, a quoted email), so a
 /// file with no real conflict — or a real conflict alongside marker-like content
 /// — parses cleanly.
+///
+/// **Contract: only marker runs of length `>= 7` open a region** (same
+/// threshold as [`has_conflict_markers`]), to avoid false positives on
+/// ordinary text with short `<`/`=`/`>` runs. A file whose `<<<<<<<` markers
+/// were written with `merge.conflictMarkerSize` (or the `conflict-marker-size`
+/// attribute) below 7 will *not* be recognized as conflicted here: it comes
+/// back as a single `ConflictSegment::Text` even though a real `git`
+/// configured the same way would have treated it as conflicted. Callers that
+/// need to support smaller marker sizes must detect that out of band.
 pub fn parse_conflicts(content: &str) -> Result<Vec<ConflictSegment>> {
     let mut segments = Vec::new();
     let mut text: Vec<String> = Vec::new();
