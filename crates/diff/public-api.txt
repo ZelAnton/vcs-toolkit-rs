@@ -165,3 +165,4 @@ pub fn vcs_diff::os_from_bytes(&[u8]) -> std::ffi::os_str::OsString
 pub fn vcs_diff::parse_diff(&str) -> alloc::vec::Vec<vcs_diff::FileDiff>
 pub fn vcs_diff::parse_dotted_version(&str) -> core::option::Option<vcs_diff::Version>
 pub fn vcs_diff::path_from_bytes(&[u8]) -> std::path::PathBuf
+pub fn vcs_diff::unquote_c_style_path(&str) -> alloc::vec::Vec<u8>
