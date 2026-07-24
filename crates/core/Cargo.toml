@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
 license.workspace = true
-license-file = "LICENSE"
 repository.workspace = true
 
 authors.workspace = true
