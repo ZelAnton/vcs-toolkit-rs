@@ -10,7 +10,9 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `unquote_c_style_path` — shared decoding of git C-quoted path text into raw
+  bytes, used by both `vcs-diff` and `vcs-git` so their quoting rules cannot
+  drift. (T-128.)
 
 ### Changed
 -
@@ -18,7 +20,7 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 - **`FileDiff::path`/`old_path` no longer corrupt a Unix filename containing a
   literal backslash.** `normalize_slashes` unconditionally rewrote every `\` to
-  `/`, right after `unquote_git_path` had specifically decoded a C-quoted `\\`
+  `/`, right after the C-style path decoder had specifically decoded a C-quoted `\\`
   back into `\` to keep the path lossless. Git diff output always uses `/`
   separators (a literal backslash is C-quoted), so the rewrite was pure risk
   with no upside on any platform; it is now removed rather than gated. (T-084.)

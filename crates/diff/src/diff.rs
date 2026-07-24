@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use crate::pathbytes::path_from_bytes;
+use crate::pathbytes::{path_from_bytes, unquote_c_style_path};
 
 /// What a diff call compares — the working tree/copy, or a specific
 /// revision/revset (or range).
@@ -252,16 +252,16 @@ fn parse_section(section: &str) -> Option<FileDiff> {
         } else if let Some(p) = line.strip_prefix("rename to ") {
             // `rename to`/`from` carry a *bare* path (no `a/`/`b/`), possibly git-
             // C-quoted when it has a non-ASCII/tab/quote/backslash byte.
-            rename_to = Some(unquote_git_path(p.trim_end()));
+            rename_to = Some(unquote_c_style_path(p.trim_end()));
         } else if let Some(p) = line.strip_prefix("rename from ") {
-            rename_from = Some(unquote_git_path(p.trim_end()));
+            rename_from = Some(unquote_c_style_path(p.trim_end()));
         } else if let Some(rest) = line.strip_prefix("+++ ") {
             // `b/<path>`, or `"b/<path>"` quoted (the `b/` is *inside* the quotes),
             // or `/dev/null` (deleted side). Unquote, then strip the `b/` — a
             // `/dev/null` (no `b/`) yields `None`, leaving `new_path` unset.
-            new_path = strip_side_prefix(unquote_git_path(rest.trim_end()), b"b/");
+            new_path = strip_side_prefix(unquote_c_style_path(rest.trim_end()), b"b/");
         } else if let Some(rest) = line.strip_prefix("--- ") {
-            minus_path = strip_side_prefix(unquote_git_path(rest.trim_end()), b"a/");
+            minus_path = strip_side_prefix(unquote_c_style_path(rest.trim_end()), b"a/");
         }
     }
     if let Some(done) = current.take() {
@@ -336,72 +336,14 @@ fn header_b_path(section: &str) -> Option<Vec<u8>> {
     // Quoted header: the b-side is the last `"b/…"` token (for the binary/mode-only
     // sections this fallback serves, both sides share one path and one quoting).
     let path = if let Some(q) = s.rfind("\"b/") {
-        strip_side_prefix(unquote_git_path(&s[q..]), b"b/").unwrap_or_default()
+        strip_side_prefix(unquote_c_style_path(&s[q..]), b"b/").unwrap_or_default()
     } else {
         let idx = s.find(" b/")?;
-        strip_side_prefix(unquote_git_path(&s[idx + 1..]), b"b/").unwrap_or_default()
+        strip_side_prefix(unquote_c_style_path(&s[idx + 1..]), b"b/").unwrap_or_default()
     };
     // A `diff --git a/x b/` with no path after `b/` yields nothing, not an empty
     // path — so a malformed header drops the section instead of an empty FileDiff.
     (!path.is_empty()).then_some(path)
-}
-
-/// Decode a git **C-quoted** path. git wraps a path in double quotes and C-escapes
-/// it when it contains a control byte, a `"`, a `\`, or — with the default
-/// `core.quotePath=true` — any non-ASCII (high) byte (e.g. `é` → `\303\251`). A path
-/// that is *not* quoted (no leading `"`) is returned unchanged, so callers can apply
-/// this unconditionally. Octal escapes decode to raw bytes, so a multi-byte UTF-8
-/// filename round-trips; the **raw decoded bytes** are returned (the caller builds
-/// a lossless [`PathBuf`] via [`path_from_bytes`]) instead of a lossily-decoded
-/// `String` — a non-UTF-8 path would otherwise be corrupted to `U+FFFD` here.
-/// Decoding stops at the first unescaped closing quote (trailing bytes are ignored).
-fn unquote_git_path(s: &str) -> Vec<u8> {
-    let bytes = s.as_bytes();
-    if bytes.first() != Some(&b'"') {
-        return bytes.to_vec();
-    }
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 1; // skip the opening quote
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => break, // unescaped closing quote
-            b'\\' if i + 1 < bytes.len() => {
-                i += 1;
-                match bytes[i] {
-                    b'a' => out.push(0x07),
-                    b'b' => out.push(0x08),
-                    b't' => out.push(b'\t'),
-                    b'n' => out.push(b'\n'),
-                    b'v' => out.push(0x0b),
-                    b'f' => out.push(0x0c),
-                    b'r' => out.push(b'\r'),
-                    b'"' => out.push(b'"'),
-                    b'\\' => out.push(b'\\'),
-                    d @ b'0'..=b'7' => {
-                        // Up to 3 octal digits → one byte (`\NNN`, NNN ≤ 0o377).
-                        let mut val = u32::from(d - b'0');
-                        let mut taken = 0;
-                        while taken < 2
-                            && i + 1 < bytes.len()
-                            && (b'0'..=b'7').contains(&bytes[i + 1])
-                        {
-                            i += 1;
-                            val = val * 8 + u32::from(bytes[i] - b'0');
-                            taken += 1;
-                        }
-                        out.push(val as u8);
-                    }
-                    other => out.push(other), // unknown escape: keep the byte
-                }
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -526,21 +468,6 @@ mod tests {
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, std::path::Path::new("a\\b.txt"));
-    }
-
-    #[test]
-    fn unquote_git_path_decodes_escapes_and_passes_through_plain() {
-        // The decoder now yields raw bytes (the caller builds a lossless PathBuf).
-        assert_eq!(unquote_git_path("b/plain.txt"), b"b/plain.txt".to_vec()); // not quoted
-        assert_eq!(
-            unquote_git_path("\"b/caf\\303\\251.txt\""),
-            "b/café.txt".as_bytes().to_vec()
-        ); // octal → the exact UTF-8 bytes
-        assert_eq!(unquote_git_path("\"a\\tb\""), b"a\tb".to_vec()); // \t
-        assert_eq!(unquote_git_path("\"a\\\\b\""), b"a\\b".to_vec()); // \\
-        assert_eq!(unquote_git_path("\"a\\\"b\""), b"a\"b".to_vec()); // \"
-        // A non-UTF-8 octal escape (0xFF) survives byte-for-byte — the whole point.
-        assert_eq!(unquote_git_path("\"\\377.bin\""), b"\xff.bin".to_vec());
     }
 
     #[test]

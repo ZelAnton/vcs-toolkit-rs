@@ -84,5 +84,5 @@ mod pathbytes;
 mod version;
 
 pub use diff::{ChangeKind, DiffLine, DiffSpec, DiffStat, FileDiff, Hunk, parse_diff};
-pub use pathbytes::{os_from_bytes, path_from_bytes};
+pub use pathbytes::{os_from_bytes, path_from_bytes, unquote_c_style_path};
 pub use version::{Version, parse_dotted_version};

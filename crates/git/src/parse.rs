@@ -455,7 +455,7 @@ pub struct CleanEntry {
 /// `git clean` has no `-z`/NUL machine framing, so this parses newline-framed
 /// text (`str::lines` also strips a CRLF `\r`, so Windows output parses
 /// identically); a path needing escaping is C-quoted like any other git
-/// porcelain path — see [`unquote_clean_path`].
+/// porcelain path — decoded by [`vcs_diff::unquote_c_style_path`].
 pub(crate) fn parse_clean_output(output: &str) -> Vec<CleanEntry> {
     output
         .lines()
@@ -463,7 +463,7 @@ pub(crate) fn parse_clean_output(output: &str) -> Vec<CleanEntry> {
             let rest = line
                 .strip_prefix("Would remove ")
                 .or_else(|| line.strip_prefix("Removing "))?;
-            let mut decoded = unquote_clean_path(rest);
+            let mut decoded = vcs_diff::unquote_c_style_path(rest);
             let is_dir = decoded.last() == Some(&b'/');
             if is_dir {
                 decoded.pop();
@@ -474,66 +474,6 @@ pub(crate) fn parse_clean_output(output: &str) -> Vec<CleanEntry> {
             })
         })
         .collect()
-}
-
-/// Decode a `git clean` path the same way git quotes any other porcelain
-/// path: wrapped in double quotes and C-escaped when it holds a control byte,
-/// a `"`, a `\`, or — with the default `core.quotePath=true` — any non-ASCII
-/// byte (e.g. `é` → `\303\251`, pure ASCII in the quoted form, so decoding
-/// `git clean`'s stdout as `&str` first never corrupts a quoted path; only an
-/// *unquoted* non-UTF-8 byte, which requires `core.quotePath=false` plus a
-/// non-UTF-8 filename, stays out of scope). An unquoted path (no leading `"`)
-/// is returned unchanged. Mirrors the diff-header path-unquoting `vcs_diff`
-/// uses internally for `git diff`'s `a/`/`b/` headers; kept as a small local
-/// copy since `git clean` has no `-z` machine framing to prefer instead, and
-/// the two crates' quoting rules are otherwise unrelated.
-fn unquote_clean_path(s: &str) -> Vec<u8> {
-    let bytes = s.as_bytes();
-    if bytes.first() != Some(&b'"') {
-        return bytes.to_vec();
-    }
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 1; // skip the opening quote
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => break, // unescaped closing quote
-            b'\\' if i + 1 < bytes.len() => {
-                i += 1;
-                match bytes[i] {
-                    b'a' => out.push(0x07),
-                    b'b' => out.push(0x08),
-                    b't' => out.push(b'\t'),
-                    b'n' => out.push(b'\n'),
-                    b'v' => out.push(0x0b),
-                    b'f' => out.push(0x0c),
-                    b'r' => out.push(b'\r'),
-                    b'"' => out.push(b'"'),
-                    b'\\' => out.push(b'\\'),
-                    d @ b'0'..=b'7' => {
-                        // Up to 3 octal digits → one byte (`\NNN`, NNN ≤ 0o377).
-                        let mut val = u32::from(d - b'0');
-                        let mut taken = 0;
-                        while taken < 2
-                            && i + 1 < bytes.len()
-                            && (b'0'..=b'7').contains(&bytes[i + 1])
-                        {
-                            i += 1;
-                            val = val * 8 + u32::from(bytes[i] - b'0');
-                            taken += 1;
-                        }
-                        out.push(val as u8);
-                    }
-                    other => out.push(other), // unknown escape: keep the byte
-                }
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    out
 }
 
 /// One line of `git blame --line-porcelain` output: who last touched the line
