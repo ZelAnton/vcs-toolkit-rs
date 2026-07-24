@@ -791,17 +791,28 @@ pub(crate) async fn clone<R: ProcessRunner>(
     Ok(())
 }
 
-/// Derive a jj workspace name from a branch name. jj workspace names must be
-/// valid identifiers, so substitute path/whitespace characters with `_`.
-/// Deterministic so a later lookup can reconstruct it.
+/// Derive a readable, collision-resistant jj workspace name from a branch name.
+/// jj workspace names must be valid identifiers, so substitute path/whitespace
+/// characters with `_`, then suffix a stable hash of the original UTF-8 bytes.
+/// Lookup is path-based in [`workspace_name_for_path`], not name reconstruction.
 fn workspace_name_for(branch: &str) -> String {
-    branch
+    let normalized: String = branch
         .chars()
         .map(|c| match c {
             '/' | '\\' | '.' | ':' | ' ' | '\t' | '\n' | '\r' => '_',
             other => other,
         })
-        .collect()
+        .collect();
+    // FNV-1a is deliberately implemented here instead of `DefaultHasher`: the
+    // generated workspace name must stay stable across Rust standard-library
+    // versions, while `DefaultHasher` does not promise that persistence contract.
+    let hash = branch
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    format!("{normalized}-{hash:016x}")
 }
 
 /// Find the workspace name whose `jj workspace root` matches `path`. Uses jj's
@@ -898,9 +909,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_name_substitutes_invalid_chars() {
-        assert_eq!(workspace_name_for("feature/x.y"), "feature_x_y");
-        assert_eq!(workspace_name_for("plain"), "plain");
+    fn workspace_name_is_stable_and_distinguishes_normalization_collisions() {
+        let slash = workspace_name_for("feat/x");
+        let dot = workspace_name_for("feat.x");
+        let space = workspace_name_for("feat x");
+        let literal = workspace_name_for("feat_x");
+
+        assert!(slash.starts_with("feat_x-"));
+        assert_eq!(slash, workspace_name_for("feat/x"));
+        assert_ne!(slash, dot);
+        assert_ne!(slash, space);
+        assert_ne!(slash, literal);
     }
 
     #[test]

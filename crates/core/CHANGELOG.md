@@ -52,6 +52,10 @@ crates; tag releases as `vcs-core-v<version>`.
 -
 
 ### Fixed
+- `Repo::create_worktree` on jj now gives each normalized workspace name a stable
+  suffix derived from the original branch. Branches such as `feat/x`, `feat.x`,
+  `feat x`, and `feat_x` can no longer collide as the same jj workspace; cleanup
+  continues to resolve the recorded workspace by path. (T-126.)
 - `Repo::at`, `Repo::from_git` and `Repo::from_jj` now **absolutise** the `root`/`cwd`
   they store at construction — via the same `std::path::absolute` normalisation
   `Repo::open`/`Repo::discover` already apply — so a handle built from a **relative**
