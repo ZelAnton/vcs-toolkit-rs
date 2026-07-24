@@ -30,6 +30,14 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 -
 
 ### Fixed
+- `redact_args`/`redact_value` no longer mistake part of a URL's path or query for
+  embedded credentials. `mask_url_userinfo` now searches for the `userinfo@` only
+  within the URL's **authority** component (up to the first `/`, `?`, or `#`), the
+  same boundary `https_host` uses — so a credential-free URL with a port and a
+  later `@`, e.g. `https://host:8443/dir/file@rev`, logs verbatim instead of
+  collapsing to `https://<redacted>@rev` (the port's `:` had made the whole
+  `host:8443/dir/file` look like `user:secret` userinfo). A genuine embedded
+  credential (`scheme://user:secret@host…`) is still masked, host/path kept. (T-120.)
 - `clone_dest_cleanable` now returns `true` only when `dest` is *provably*
   absent (`read_dir` fails with `NotFound`) or an already-empty directory —
   previously **any** `read_dir` error (permission denied, transient I/O, a
