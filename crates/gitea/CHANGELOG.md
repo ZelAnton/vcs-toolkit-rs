@@ -60,6 +60,28 @@ crates; tag releases as `vcs-gitea-v<version>`.
   (`--output csv`) and filters by number, like `pr_view` — finding a closed issue and
   one past the server's ~50-row page cap. The public `GiteaApi::issue_view` signature
   and the `Issue` DTO are **unchanged**; a genuine absence is an `ErrorReason::Parse`.
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  **Breaking** through this crate's own re-exported `vcs_gitea::Error`: `processkit::Error`
+  is no longer an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason`
+  (the former enum, every variant and field unchanged). All read accessors
+  (`code`/`program`/`stdout`/`stderr`/`stdout_bytes`/`diagnostic`/`combined`/the `is_*`
+  predicates/`signal`/`limit_kind`), `Display`, `Debug` and `source` are untouched, and
+  no method signature in this crate changed — only a direct variant match moves from
+  `match err { Error::Exit { .. } => … }` to `match err.reason() { ErrorReason::Exit { .. }
+  => … }` (or `err.into_reason()` to move a captured stream / the owned `io::Error`
+  out). (T-129.)
+- Re-exports `processkit::ErrorReason` and `processkit::ErrorKind` alongside the existing
+  `Error`/`Result`/`ProcessResult`/`ProcessRunner`/`JobRunner`, as `vcs_gitea::ErrorReason`
+  and `vcs_gitea::ErrorKind`. Deliberate and additive: with `Error` now opaque, these are
+  the only way to classify a failure, so omitting them would have turned a mechanical
+  rename into a silent capability regression for a consumer that depends on this crate
+  alone. (T-129.)
+- Requires a coordinated release of `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`,
+  `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
+  (`crates/core/docs/stability.md`, "Coordinated-release dependencies"). This crate is
+  pre-1.0, so the breaking change rides the minimum necessary **minor** bump
+  (0.7.0 → 0.8.0), which also satisfies the release workflow's `cargo-semver-checks`
+  gate. (T-129.)
 
 ### Fixed
 - **`pr_edit` now fails safely instead of silently listing PRs.** `tea` 0.9.2 has no
@@ -97,28 +119,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
   hermetic tests (the live commands mutate a real PR's review state).
 
 ### Changed
-- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
-  **Breaking** through this crate's own re-exported `vcs_gitea::Error`: `processkit::Error`
-  is no longer an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason`
-  (the former enum, every variant and field unchanged). All read accessors
-  (`code`/`program`/`stdout`/`stderr`/`stdout_bytes`/`diagnostic`/`combined`/the `is_*`
-  predicates/`signal`/`limit_kind`), `Display`, `Debug` and `source` are untouched, and
-  no method signature in this crate changed — only a direct variant match moves from
-  `match err { Error::Exit { .. } => … }` to `match err.reason() { ErrorReason::Exit { .. }
-  => … }` (or `err.into_reason()` to move a captured stream / the owned `io::Error`
-  out). (T-129.)
-- Re-exports `processkit::ErrorReason` and `processkit::ErrorKind` alongside the existing
-  `Error`/`Result`/`ProcessResult`/`ProcessRunner`/`JobRunner`, as `vcs_gitea::ErrorReason`
-  and `vcs_gitea::ErrorKind`. Deliberate and additive: with `Error` now opaque, these are
-  the only way to classify a failure, so omitting them would have turned a mechanical
-  rename into a silent capability regression for a consumer that depends on this crate
-  alone. (T-129.)
-- Requires a coordinated release of `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`,
-  `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
-  (`crates/core/docs/stability.md`, "Coordinated-release dependencies"). This crate is
-  pre-1.0, so the breaking change rides the minimum necessary **minor** bump
-  (0.7.0 → 0.8.0), which also satisfies the release workflow's `cargo-semver-checks`
-  gate. (T-129.)
+-
 
 ### Fixed
 -
