@@ -8,6 +8,8 @@ pub use vcs_gitlab::CredentialService
 pub use vcs_gitlab::DiffLine
 pub use vcs_gitlab::EnvToken
 pub use vcs_gitlab::Error
+pub use vcs_gitlab::ErrorKind
+pub use vcs_gitlab::ErrorReason
 pub use vcs_gitlab::FileDiff
 pub use vcs_gitlab::FnProvider
 pub use vcs_gitlab::GitLabVersion

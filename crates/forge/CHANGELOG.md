@@ -127,7 +127,26 @@ crates; tag releases as `vcs-forge-v<version>`.
   MCP tool.
 
 ### Changed
--
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  **Breaking** through `Error::Forge(processkit::Error)`: `processkit::Error` is no
+  longer an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason` (the
+  former enum, every variant and field unchanged), so a consumer that matched
+  `Error::Forge(processkit::Error::Exit { .. })` now writes
+  `Error::Forge(e) if matches!(e.reason(), processkit::ErrorReason::Exit { .. })` (or
+  `e.into_reason()` to take ownership, or the flat `e.kind()`). `ErrorReason` and
+  `ErrorKind` are reachable through the existing whole-crate `pub use processkit;`, so
+  no new named re-export was needed here. No method signature in this crate changed and
+  every classifier (`is_unauthorized`, `is_rate_limited`, `is_transient_fetch_error`,
+  `is_not_found`, `is_unsupported`, `is_invalid_input`, `is_resource_not_found`,
+  `is_version_gated`) keeps its exact behaviour: `cli_output` and
+  `is_resource_not_found` were rewritten against `reason()` rather than the
+  `stdout()`/`stderr()` accessors, which would also have admitted a `Timeout`/
+  `Signalled` run's partial output, and `is_unsupported` now reads the equivalent flat
+  `kind() == ErrorKind::Unsupported`. Requires a coordinated release of
+  `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`,
+  `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
+  (`crates/core/docs/stability.md`); pre-1.0, so the minimum necessary bump here is a
+  **minor** one (0.7.0 → 0.8.0). (T-129.)
 
 ### Fixed
 -

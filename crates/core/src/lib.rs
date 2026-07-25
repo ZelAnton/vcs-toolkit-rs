@@ -209,11 +209,15 @@ pub use vcs_git::OutputBudget;
 // through the facade or straight to the tool.
 pub use vcs_git;
 pub use vcs_jj;
-// Re-export `processkit` itself so a `vcs-core`-only consumer can name the
-// wrapped error directly — `match err { Error::Vcs(vcs_core::processkit::Error::
-// Timeout { .. }) => … }` — and reach `Outcome`/`CancellationToken`/… without
-// adding `processkit` as a separate dependency. (`Error::Vcs` carries a
-// `processkit::Error`; the classifiers below cover the common branches.)
+// Re-export `processkit` itself so a `vcs-core`-only consumer can name the wrapped
+// error directly and reach `Outcome`/`CancellationToken`/… without adding `processkit`
+// as a separate dependency. Since processkit 3.0 `Error` is an opaque wrapper over a
+// boxed reason, so that classification reads `match err { Error::Vcs(e) =>
+// matches!(e.reason(), vcs_core::processkit::ErrorReason::Timeout { .. }), … }` — or the
+// flat `e.kind()`. This whole-crate re-export already carries `ErrorReason`/`ErrorKind`,
+// so unlike the wrapper crates' named re-exports there is nothing extra to add here.
+// (`Error::Vcs` carries a `processkit::Error`; the classifiers below cover the common
+// branches.)
 pub use processkit;
 // Also surfaced at the crate root so the token a `default_cancel_on` client takes
 // (built via `Git`/`Jj`, then passed to `Repo::from_git`/`from_jj`) is one name
@@ -968,7 +972,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// Dispatches to the already-existing `GitApi::diff`/`JjApi::diff` with
     /// [`vcs_git::DiffSpec::WorkingTree`], so it inherits the backend client's
     /// [`OutputBudget`] — an over-budget diff errors with
-    /// [`OutputTooLarge`](processkit::Error::OutputTooLarge) rather than
+    /// [`OutputTooLarge`](processkit::ErrorReason::OutputTooLarge) rather than
     /// buffering (or silently truncating) an unbounded diff.
     ///
     /// Backend nuance (same as `diff_stat`): git diffs the working tree against
@@ -1041,7 +1045,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// ([`default_output_budget`](vcs_git::Git::default_output_budget), inherited
     /// through [`from_git`](Repo::from_git)/[`from_jj`](Repo::from_jj)). Reads the
     /// blob under `budget`: past the ceiling it errors with an
-    /// [`OutputTooLarge`](processkit::Error::OutputTooLarge)-carrying
+    /// [`OutputTooLarge`](processkit::ErrorReason::OutputTooLarge)-carrying
     /// [`Error::Vcs`] (actual and allowed sizes) rather than buffering an unbounded
     /// file — use it to read a legitimately large file
     /// ([`OutputBudget::unlimited`], or a higher cap) or to tighten the cap for one
@@ -3429,7 +3433,7 @@ mod tests {
     // firing as it reaches cleanup — the git analogue of jj's unit test
     // `rollback_to_survives_fired_cancellation`. With the fix, the cleanup
     // `merge --abort` runs on a FRESH cancel token and completes (→ `Clean`); the
-    // old token-inheriting abort would be cancelled and surface `Error::Cancelled`,
+    // old token-inheriting abort would be cancelled and surface `ErrorReason::Cancelled`,
     // abandoning the staged trial merge — so this test fails on the pre-fix code.
     #[tokio::test]
     async fn git_try_merge_cleanup_survives_cancellation_fired_at_rollback() {

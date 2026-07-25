@@ -111,7 +111,7 @@ jj.workspace_forget(repo, "feature").await?;
 # use vcs_jj::Jj;
 use std::time::Duration;
 let jj = Jj::new().default_timeout(Duration::from_secs(10));
-// every command now fails with `processkit::Error::Timeout` if it outruns 10s
+// every command now fails with `processkit::ErrorReason::Timeout` if it outruns 10s
 # let _ = jj;
 ```
 

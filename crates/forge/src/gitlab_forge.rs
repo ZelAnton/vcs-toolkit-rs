@@ -29,7 +29,7 @@ pub(crate) async fn version_support<R: ProcessRunner>(
 ) -> Result<(Option<vcs_gitlab::GitLabVersion>, bool)> {
     match glab.capabilities().await {
         Ok(caps) => Ok((Some(caps.version), caps.is_supported())),
-        Err(processkit::Error::Parse { .. }) => Ok((None, false)),
+        Err(e) if matches!(e.reason(), processkit::ErrorReason::Parse { .. }) => Ok((None, false)),
         Err(e) => Err(e.into()),
     }
 }

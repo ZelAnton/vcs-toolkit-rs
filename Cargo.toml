@@ -54,21 +54,33 @@ authors = ["Anton Zhelezniakou"]
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
 # test seams the wrappers build on (under `processkit::testing`). Was the internal
-# `vcs-process` crate; now the published `processkit`. Pin `"2.1"`: the 2.x line is
-# semver-stable, so the caret spans future 2.x releases and `cargo update` pulls them
-# safely. `Cargo.lock` resolves 2.3.2, which keeps the 2.1.1 `Error` constructors
-# (`Error::spawn`/`not_found`/`stdin`/`parse`) and picks up the 2.2.x Windows
-# process-group/PATHEXT fixes plus the 2.3.0 stdin-validation and bounded-buffer
-# hardening, the 2.3.1 stdin-retry/stderr-draining fixes, and the 2.3.2 stale Windows
-# CTRL_BREAK-leader cleanup; those matter because the wrappers resolve and launch
-# user-installed CLIs while `vcs-watch` manages job-object/process-group lifecycles. Reading a variant's
-# fields still goes through a `{ .. }` pattern (non-exhaustive patterns stay legal) or
-# the accessor API (`program()`, `stdout()`, `stderr()`, `code()`, `is_timeout()`, …). The mechanical
-# rename table from `docs/migrating-1.2-to-2.1.md` (`terminate_all`→`kill_all`,
-# `avg_cpu`→`avg_cpu_cores`, `memory_max`→`max_memory`, `Error::OutputTooLarge`'s
-# `line_limit`/`byte_limit`→`max_lines`/`max_bytes`, `processkit::{Encoding,StreamExt}`→
-# `processkit::prelude::…`) hits no call site in this workspace (verified by rg).
-processkit = "2.1"
+# `vcs-process` crate; now the published `processkit`. Pin `"3.0"`: the 3.x line is
+# semver-stable, so the caret spans future 3.x releases and `cargo update` pulls them
+# safely; it carries forward everything the 2.x pin was kept for (the `Error`
+# constructors `Error::spawn`/`not_found`/`stdin`/`parse`, the Windows
+# process-group/PATHEXT fixes, stdin validation, bounded output buffers, stdin-retry
+# and stderr draining, and the stale Windows CTRL_BREAK-leader cleanup), which matter
+# because the wrappers resolve and launch user-installed CLIs while `vcs-watch`
+# manages job-object/process-group lifecycles. What 3.0 breaks, and how this
+# workspace answers it:
+#   * `Error` is now an opaque struct wrapping a boxed `ErrorReason` (the former enum,
+#     variants and fields unchanged). Reads still go through the accessors
+#     (`program()`, `code()`, `stdout()`/`stderr()`, `is_timeout()`, …); variant
+#     matching moved to `err.reason()` / `err.into_reason()`, and coarse classification
+#     to the flat `err.kind() -> ErrorKind`. Both `ErrorReason` and `ErrorKind` are
+#     re-exported from every wrapper crate that re-exports `Error`, so downstream users
+#     keep the ability to classify a failure through our surface.
+#   * The output-event stream was renamed with no deprecated aliases
+#     (`output_events()`→`events()`, `OutputEvent`→`ProcessEvent`,
+#     `OutputEvents`→`ProcessEvents`) and now has to be joined via its `finish()`
+#     finisher; verified by rg that this workspace drives no such stream and names none
+#     of those items.
+#   * Output-limit accounting switched from decoded line-content bytes to raw bytes read
+#     from the pipe. This workspace does set byte caps — `vcs_cli_support::OutputBudget`
+#     projects onto `OutputBufferPolicy::max_bytes` — so a cap now trips marginally
+#     earlier on CRLF/non-UTF-8 output. `OutputBudget::bytes`' doc states the new unit;
+#     re-tuning our own documented ceilings is the follow-up audit task's scope.
+processkit = "3.0"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
 # Unified version: 0.15 satisfies both wrapper crate requirements (was 0.13) and processkit/mock needs.

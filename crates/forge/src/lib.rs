@@ -186,10 +186,14 @@ pub use vcs_diff::Version;
 // most callers never name it). It is `vcs_cli_support::Secret`, the very type the
 // wrappers' `with_token` takes.
 pub use vcs_cli_support::{OutputBudget, Secret};
-// Re-export `processkit` itself so a `vcs-forge`-only consumer can match the
-// wrapped error — `Error::Forge(vcs_forge::processkit::Error::Timeout { .. })` —
-// and name the `CancellationToken` for a `default_cancel_on` client, without a
-// direct `processkit` dependency. (Mirrors `vcs_core::processkit`.)
+// Re-export `processkit` itself so a `vcs-forge`-only consumer can match the wrapped
+// error and name the `CancellationToken` for a `default_cancel_on` client, without a
+// direct `processkit` dependency. Since processkit 3.0 `Error` is an opaque wrapper, so
+// that match reads `Error::Forge(e) if matches!(e.reason(),
+// vcs_forge::processkit::ErrorReason::Timeout { .. })` — or the flat `e.kind()`. This
+// whole-crate re-export already carries `ErrorReason`/`ErrorKind`, so unlike the wrapper
+// crates' named re-exports there is nothing extra to add here. (Mirrors
+// `vcs_core::processkit`.)
 pub use processkit;
 pub use processkit::CancellationToken;
 
@@ -1698,17 +1702,20 @@ mod tests {
                 .default_output_budget(OutputBudget::bytes(64 * 1024));
         let forge = Forge::from_github("/repo", gh);
         match forge.pr_diff(7).await {
-            Err(Error::Forge(processkit::Error::OutputTooLarge {
-                program,
-                max_bytes,
-                total_bytes,
-                ..
-            })) => {
-                assert_eq!(program, "gh");
-                assert_eq!(max_bytes, Some(64 * 1024));
-                assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
-            }
-            other => panic!("expected wrapped OutputTooLarge, got {other:?}"),
+            Err(Error::Forge(inner)) => match inner.into_reason() {
+                processkit::ErrorReason::OutputTooLarge {
+                    program,
+                    max_bytes,
+                    total_bytes,
+                    ..
+                } => {
+                    assert_eq!(program, "gh");
+                    assert_eq!(max_bytes, Some(64 * 1024));
+                    assert!(total_bytes > 64 * 1024, "actual exceeds allowed");
+                }
+                other => panic!("expected wrapped OutputTooLarge, got {other:?}"),
+            },
+            other => panic!("expected a wrapped processkit error, got {other:?}"),
         }
         // The per-call override reads the same large PR in full.
         let files = forge
@@ -1724,7 +1731,8 @@ mod tests {
         let forge = Forge::from_gitlab("/repo", glab);
         assert!(matches!(
             forge.pr_diff(4).await,
-            Err(Error::Forge(processkit::Error::OutputTooLarge { .. }))
+            Err(Error::Forge(e))
+                if matches!(e.reason(), processkit::ErrorReason::OutputTooLarge { .. })
         ));
     }
 

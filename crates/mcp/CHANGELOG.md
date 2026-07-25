@@ -35,6 +35,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
   weakened). Off by default. (T-117.)
 
 ### Changed
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  This crate's own public surface is unchanged (its `public-api.txt` snapshot does not
+  move) — it maps failures to MCP error payloads through `vcs-core`/`vcs-forge`
+  classifiers rather than matching `processkit::Error` variants itself — but the server
+  is built on the wrappers whose re-exported `Error` became an opaque wrapper around a
+  boxed `ErrorReason`, so it ships in the coordinated release of `vcs-cli-support`,
+  `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`,
+  `vcs-watch` and `vcs-mcp` (`crates/core/docs/stability.md`). Pre-1.0, so the minimum
+  necessary bump here is a **minor** one (0.7.0 → 0.8.0). (T-129.)
 - `VcsMcpServer::new` is now generic over the clients' `ProcessRunner`
   (`new<R: ProcessRunner + 'static>(Repo<R>, Option<Forge<R>>, WriteGate)`), so a
   caller can inject a non-default runner — e.g. the `--log-commands`

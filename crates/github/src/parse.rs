@@ -563,7 +563,7 @@ pub(crate) fn parse_feedback(json: &str) -> Result<PrFeedback> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::Error;
+    use processkit::ErrorReason;
 
     #[test]
     fn parses_pr_list() {
@@ -796,8 +796,11 @@ mod tests {
 
     #[test]
     fn malformed_json_is_a_parse_error() {
-        match vcs_cli_support::json::from_json::<Vec<Issue>>(BINARY, "not json").unwrap_err() {
-            Error::Parse { .. } => {}
+        match vcs_cli_support::json::from_json::<Vec<Issue>>(BINARY, "not json")
+            .unwrap_err()
+            .into_reason()
+        {
+            ErrorReason::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
     }

@@ -25,7 +25,7 @@ there), so harden the `Git` client you point at it instead.
 use vcs_jj::Jj;
 
 let jj = Jj::new();                                       // real, job-backed runner
-let jj = Jj::new().default_timeout(Duration::from_secs(10)); // every cmd → Error::Timeout past 10s
+let jj = Jj::new().default_timeout(Duration::from_secs(10)); // every cmd → ErrorReason::Timeout past 10s
 ```
 
 - `Jj::new()` — the production client over the real job-backed runner.
@@ -406,7 +406,7 @@ async fn absorb(&self, dir: &Path, from: Option<String>, filesets: &[JjFileset])
 - `split_paths` — split exactly these filesets out of `@` into their own commit
   (`split -m <message> <filesets>`). `filesets` must be **non-empty** — a
   fileset-less split opens jj's interactive diff editor (a headless hang), so it
-  is refused with an [`Error::Spawn`] before spawning.
+  is refused with an [`ErrorReason::Spawn`] before spawning.
 - `absorb` — fold working-copy edits into the mutable ancestors that introduced
   the touched lines (`absorb [--from <revset>] [<filesets>…]`); an empty
   `filesets` absorbs everything.
@@ -677,7 +677,7 @@ async fn capabilities(&self) -> Result<JjCapabilities>;
 is the raw `jj --version` string. `capabilities` parses that into
 [`JjCapabilities`] — a value type; probe once and keep the result. The crate's
 validated floor is **jj ≥ 0.38** (`JjCapabilities::is_supported`); an
-unrecognisable version string is an `Error::Parse`.
+unrecognisable version string is an `ErrorReason::Parse`.
 
 ```rust,ignore
 # use std::path::Path;
@@ -974,7 +974,7 @@ construction — before it can reach any argv slot (verified: `jj edit -evil` �
 "unexpected argument"). The remaining caller-supplied bare positionals that are
 *not* bookmarks/revsets (remote names, operation ids, workspace names, urls) keep
 an internal guard that refuses an empty or leading-`-` value with an
-`Error::Spawn` **before** spawning. The `run`/`run_raw` escape hatches are *not*
+`ErrorReason::Spawn` **before** spawning. The `run`/`run_raw` escape hatches are *not*
 guarded — you build the whole argv.
 
 `split_paths`/`commit_paths`/`squash_paths`/`absorb` take `&[JjFileset]` rather
@@ -1000,7 +1000,7 @@ before spawning.
 [`op_head`]: #operation-log
 [`op_restore`]: #operation-log
 [`rollback_to`]: #operation-log
-[`Error::Spawn`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
+[`ErrorReason::Spawn`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`ProcessResult`]: https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/
 [`Change`]: #change
 [`Bookmark`]: #bookmark

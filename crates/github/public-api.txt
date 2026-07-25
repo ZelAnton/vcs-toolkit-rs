@@ -8,6 +8,8 @@ pub use vcs_github::CredentialService
 pub use vcs_github::DiffLine
 pub use vcs_github::EnvToken
 pub use vcs_github::Error
+pub use vcs_github::ErrorKind
+pub use vcs_github::ErrorReason
 pub use vcs_github::FileDiff
 pub use vcs_github::FnProvider
 pub use vcs_github::GitHubVersion

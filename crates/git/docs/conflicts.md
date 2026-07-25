@@ -90,7 +90,7 @@ pub fn resolve(segments: &[ConflictSegment], side: ResolutionSide) -> Result<Str
 
 `has_conflict_markers` is a cheap pre-check (any line that looks like a
 `<<<<<<<` start) before committing to a full parse. `parse_conflicts` errors
-with `Error::Parse` only on a genuinely malformed **region** — a `<<<<<<<`-opened
+with `ErrorReason::Parse` only on a genuinely malformed **region** — a `<<<<<<<`-opened
 region missing its `=======` separator or `>>>>>>>` terminator. A `=======` /
 `>>>>>>>` run *outside* any region (a Markdown/RST underline, a divider, a quoted
 email) is kept as ordinary text, not an error, so a file with marker-like content
@@ -240,7 +240,7 @@ pub fn resolve(segments: &[JjConflictSegment], resolution: JjResolution) -> Resu
 
 `has_conflict_markers` looks for a `<<<<<<<` line whose label parses as
 `conflict N of M` — git-style markers are *not* jj's and won't match.
-`parse_conflicts` errors with `Error::Parse` on an unterminated region, content
+`parse_conflicts` errors with `ErrorReason::Parse` on an unterminated region, content
 before the first section marker, or a `git`-style file (the error tells you to
 use `vcs_git::conflict`). `resolve` errors when the requested `Side(i)` doesn't
 exist or `Base` is requested on a region with no base — the message names the

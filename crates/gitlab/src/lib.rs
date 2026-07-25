@@ -123,7 +123,14 @@ pub use vcs_cli_support::{
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
 // `GitLab<R>` seam) and the `JobRunner` default. (Also brings
 // `Error`/`Result`/`ProcessResult`/`ProcessRunner` into scope here.)
-pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
+// `ErrorReason` and `ErrorKind` ride along deliberately: since processkit 3.0
+// `Error` is an opaque wrapper, so *classifying* a failure means reaching
+// `err.reason()` (variant-grain) or `err.kind()` (flat) — types a consumer cannot
+// name without them. Omitting them would leave the re-exported `Error` unmatched,
+// a silent capability regression rather than a mechanical rename.
+pub use processkit::{
+    Error, ErrorKind, ErrorReason, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency. (Cancellation is core in processkit
 // 0.10 — always available, no feature.)
@@ -268,7 +275,7 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
 /// flag-VALUE positions, so a leading `-` is not parsed as a flag) — it is a
 /// glab-specific value with special meaning to the CLI itself, so it lives here
 /// rather than in `vcs-cli-support`. Refuse the bare `"-"` before anything
-/// spawns, surfacing an `Error::Spawn` whose source is
+/// spawns, surfacing an `ErrorReason::Spawn` whose source is
 /// `io::ErrorKind::InvalidInput`, naming `what` in the message. A caller who
 /// needs a literal single-dash body must pick a different, non-sentinel
 /// representation (e.g. `"-\u{200B}"` or wrap it) — there is no way to make
@@ -329,7 +336,7 @@ impl MergeStrategy {
 /// [`delete_branch`](MrMerge::delete_branch) options: glab's own `--auto-merge` is
 /// *merge-when-pipeline-succeeds*, a different contract from gh's `--auto`. So when
 /// either option is set, [`mr_merge`](GitLabApi::mr_merge) returns a structured
-/// `Error::Unsupported` rather than *silently* ignoring the request — for an
+/// `ErrorReason::Unsupported` rather than *silently* ignoring the request — for an
 /// irreversible merge, quietly dropping an option could produce the wrong side
 /// effects. The default (neither set) is the plain immediate merge.
 #[derive(Debug, Clone)]
@@ -340,11 +347,11 @@ pub struct MrMerge {
     pub strategy: MergeStrategy,
     /// Request gh-style auto-merge (merge once requirements are met). **Not
     /// expressible on `glab`** — when set, [`mr_merge`](GitLabApi::mr_merge)
-    /// returns `Error::Unsupported` instead of merging immediately anyway (see the
+    /// returns `ErrorReason::Unsupported` instead of merging immediately anyway (see the
     /// type docs).
     pub auto: bool,
     /// Delete the source branch after merging. **Not expressible here** — when
-    /// set, [`mr_merge`](GitLabApi::mr_merge) returns `Error::Unsupported` instead
+    /// set, [`mr_merge`](GitLabApi::mr_merge) returns `ErrorReason::Unsupported` instead
     /// of silently leaving the branch in place.
     pub delete_branch: bool,
 }
@@ -375,7 +382,7 @@ impl MrMerge {
 
     /// Request auto-merge (merge once requirements are met). **Unsupported on
     /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
-    /// `Error::Unsupported` (see the type docs).
+    /// `ErrorReason::Unsupported` (see the type docs).
     pub fn auto(mut self) -> Self {
         self.auto = true;
         self
@@ -383,7 +390,7 @@ impl MrMerge {
 
     /// Request deleting the source branch after merging. **Unsupported on
     /// `glab`**: setting this makes [`mr_merge`](GitLabApi::mr_merge) return
-    /// `Error::Unsupported`.
+    /// `ErrorReason::Unsupported`.
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
         self
@@ -402,7 +409,7 @@ impl MrMerge {
 /// **Backend capability.** A GitLab release has **no draft or pre-release concept**,
 /// so `glab release create` has no such flag. When either [`draft`](ReleaseCreate::draft)
 /// or [`prerelease`](ReleaseCreate::prerelease) is set, [`release_create`](GitLabApi::release_create)
-/// returns a structured `Error::Unsupported` rather than *silently* ignoring the
+/// returns a structured `ErrorReason::Unsupported` rather than *silently* ignoring the
 /// request — the fields exist only to keep the spec uniform across the three
 /// wrappers (like [`MrMerge`]'s `auto`/`delete_branch`).
 #[derive(Debug, Clone)]
@@ -417,10 +424,10 @@ pub struct ReleaseCreate {
     /// string) — refused before spawning, like [`mr_create`](GitLabApi::mr_create).
     pub notes: Option<String>,
     /// Save as a draft. **Unsupported on GitLab** — setting this makes
-    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    /// [`release_create`](GitLabApi::release_create) return `ErrorReason::Unsupported`.
     pub draft: bool,
     /// Mark as a prerelease. **Unsupported on GitLab** — setting this makes
-    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    /// [`release_create`](GitLabApi::release_create) return `ErrorReason::Unsupported`.
     pub prerelease: bool,
 }
 
@@ -450,14 +457,14 @@ impl ReleaseCreate {
     }
 
     /// Request a draft. **Unsupported on `glab`**: setting this makes
-    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    /// [`release_create`](GitLabApi::release_create) return `ErrorReason::Unsupported`.
     pub fn draft(mut self) -> Self {
         self.draft = true;
         self
     }
 
     /// Request a prerelease. **Unsupported on `glab`**: setting this makes
-    /// [`release_create`](GitLabApi::release_create) return `Error::Unsupported`.
+    /// [`release_create`](GitLabApi::release_create) return `ErrorReason::Unsupported`.
     pub fn prerelease(mut self) -> Self {
         self.prerelease = true;
         self
@@ -551,7 +558,7 @@ pub trait GitLabApi: Send + Sync {
     async fn version(&self) -> Result<String>;
     /// The installed binary's parsed version, as [`GitLabCapabilities`]
     /// (`glab --version`). A value type — probe once and keep it; an unrecognisable
-    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `glab`
+    /// version banner is an [`ErrorReason::Parse`]. Gate an operation on a minimum `glab`
     /// with [`GitLabCapabilities::ensure_supported`].
     async fn capabilities(&self) -> Result<GitLabCapabilities>;
     /// Whether the user is authenticated (`glab auth status` exits zero). Reflects
@@ -578,7 +585,7 @@ pub trait GitLabApi: Send + Sync {
     /// branch is rejected before spawning so an untrusted branch cannot alter the
     /// command.
     ///
-    /// **Defaulted** to `Error::Unsupported` so external trait implementers keep
+    /// **Defaulted** to `ErrorReason::Unsupported` so external trait implementers keep
     /// compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn mr_list_for_source_branch(
@@ -586,9 +593,9 @@ pub trait GitLabApi: Send + Sync {
         dir: &Path,
         source_branch: &str,
     ) -> Result<Vec<MergeRequest>> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_list_for_source_branch".into(),
-        })
+        }))
     }
     /// A single merge request by its project-scoped number — GitLab's `iid`
     /// (`glab mr view <number> --output json`). Named `number` for consistency
@@ -600,7 +607,7 @@ pub trait GitLabApi: Send + Sync {
     /// body, and the optional source (`None` = the current branch) and target
     /// (`None` = the project default) branches. A body that is *exactly* `"-"`
     /// is glab's own stdin/editor sentinel (not the literal string) — refused
-    /// with an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput`
+    /// with an `ErrorReason::Spawn` whose source is `io::ErrorKind::InvalidInput`
     /// before anything spawns, so a headless caller never hangs waiting on an
     /// editor/stdin that never comes.
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String>;
@@ -609,7 +616,7 @@ pub trait GitLabApi: Send + Sync {
     /// glab's default of enabling merge-when-pipeline-succeeds. Takes a [`MrMerge`]
     /// spec (the [`MergeStrategy`] plus the gh-style `auto`/`delete_branch`
     /// options). `glab` can express **neither** `auto` nor `delete_branch` through
-    /// this wrapper, so requesting either returns a structured `Error::Unsupported`
+    /// this wrapper, so requesting either returns a structured `ErrorReason::Unsupported`
     /// rather than silently dropping it (see [`MrMerge`]).
     async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()>;
     /// Mark a draft merge request as ready (`glab mr update <id> --ready`).
@@ -619,67 +626,67 @@ pub trait GitLabApi: Send + Sync {
     /// Check out a merge request's source branch into the working copy at `dir`
     /// (`glab mr checkout <id>`) — the branch is fetched and switched to, so a
     /// subsequent build/test/edit runs against the MR locally. Mutates the working
-    /// copy. **Defaulted** to `Error::Unsupported` so external implementers keep
+    /// copy. **Defaulted** to `ErrorReason::Unsupported` so external implementers keep
     /// compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn mr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_checkout".into(),
-        })
+        }))
     }
     /// Add a comment to a merge request, returning the command's output
     /// (`glab mr note <id> -m <message>`). The note body rides in a
     /// flag-VALUE position, so no argv-injection guard is needed — but a body
     /// that is *exactly* `"-"` is glab's stdin/editor sentinel, refused with
-    /// an `Error::Spawn` whose source is `io::ErrorKind::InvalidInput` before
+    /// an `ErrorReason::Spawn` whose source is `io::ErrorKind::InvalidInput` before
     /// anything spawns (same rule as [`mr_create`](GitLabApi::mr_create)).
     /// **Defaulted** to
-    /// `Error::Unsupported` so external implementers keep compiling when the
+    /// `ErrorReason::Unsupported` so external implementers keep compiling when the
     /// crate bumps.
     #[allow(unused_variables)]
     async fn mr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_comment".into(),
-        })
+        }))
     }
     /// Edit a merge request's title and/or description
     /// (`glab mr update <id> [--title <title>] [--description <body>] --yes`).
     /// At least one of `title` or `body` must be `Some` — the facade rejects
     /// both-`None` before reaching the wrapper. `--yes` skips glab's
     /// confirmation prompt. A `Some` body that is *exactly* `"-"` is glab's
-    /// stdin/editor sentinel, refused with an `Error::Spawn` whose source is
+    /// stdin/editor sentinel, refused with an `ErrorReason::Spawn` whose source is
     /// `io::ErrorKind::InvalidInput` before anything spawns (same rule as
     /// [`mr_create`](GitLabApi::mr_create)). **Defaulted** to
-    /// `Error::Unsupported`.
+    /// `ErrorReason::Unsupported`.
     #[allow(unused_variables)]
     async fn mr_edit(&self, dir: &Path, number: u64, edit: MrEdit) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_edit".into(),
-        })
+        }))
     }
     /// Approve a merge request (`glab mr approve <id>`) — record the caller's
     /// approval. GitLab models MR review as **approve / revoke** (there is no
     /// "request changes" action, unlike GitHub's `pr review --request-changes`), so
     /// this is the approving half; withdraw it with [`mr_revoke`](GitLabApi::mr_revoke).
     /// `number` is a `u64`, so the bare `<id>` positional can never look like a flag
-    /// — nothing to guard. **Defaulted** to `Error::Unsupported` so external
+    /// — nothing to guard. **Defaulted** to `ErrorReason::Unsupported` so external
     /// implementers keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn mr_approve(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_approve".into(),
-        })
+        }))
     }
     /// Revoke a previously-recorded approval of a merge request
     /// (`glab mr revoke <id>`) — the withdrawing half of GitLab's approve/revoke
     /// review model. `number` is a `u64`, so the bare `<id>` positional can never
-    /// look like a flag. **Defaulted** to `Error::Unsupported` so external
+    /// look like a flag. **Defaulted** to `ErrorReason::Unsupported` so external
     /// implementers keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn mr_revoke(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "mr_revoke".into(),
-        })
+        }))
     }
     /// The MR's pipeline status, bucketed (`glab mr view <id> --output json`,
     /// reading `head_pipeline.status`). [`CiStatus::None`] when no pipeline ran.
@@ -700,44 +707,44 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab issue create --title <t> --description <d> --yes`). `--yes` skips
     /// glab's interactive submission prompt — mirrors
     /// [`mr_create`](GitLabApi::mr_create), including the same `"-"`
-    /// dash-sentinel guard on `body` (refused with an `Error::Spawn` whose
+    /// dash-sentinel guard on `body` (refused with an `ErrorReason::Spawn` whose
     /// source is `io::ErrorKind::InvalidInput` before anything spawns).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
     /// Close an issue (`glab issue close <id>`). `number` is a `u64`, so the bare
     /// `<id>` positional can never look like a flag — nothing to guard. **Defaulted**
-    /// to `Error::Unsupported` so external implementers keep compiling when the crate
+    /// to `ErrorReason::Unsupported` so external implementers keep compiling when the crate
     /// bumps (only the `GitLab` concrete impl and the regenerated `MockGitLabApi`
     /// override it).
     #[allow(unused_variables)]
     async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_close".into(),
-        })
+        }))
     }
     /// Reopen a closed issue (`glab issue reopen <id>`). `number` is a `u64`, so the
     /// bare `<id>` positional can never look like a flag — nothing to guard.
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps (only the `GitLab` concrete impl and the regenerated
     /// `MockGitLabApi` override it).
     #[allow(unused_variables)]
     async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_reopen".into(),
-        })
+        }))
     }
     /// Add a note (comment) to an issue, returning the command's output
     /// (`glab issue note <id> -m <body>`). The note body rides in a flag-VALUE
     /// position, so no argv-injection guard is needed — but a body that is *exactly*
-    /// `"-"` is glab's stdin/editor sentinel, refused with an `Error::Spawn` whose
+    /// `"-"` is glab's stdin/editor sentinel, refused with an `ErrorReason::Spawn` whose
     /// source is `io::ErrorKind::InvalidInput` before anything spawns (same rule as
-    /// [`mr_comment`](GitLabApi::mr_comment)). **Defaulted** to `Error::Unsupported`
+    /// [`mr_comment`](GitLabApi::mr_comment)). **Defaulted** to `ErrorReason::Unsupported`
     /// so external implementers keep compiling when the crate bumps (only the
     /// `GitLab` concrete impl and the regenerated `MockGitLabApi` override it).
     #[allow(unused_variables)]
     async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_comment".into(),
-        })
+        }))
     }
     /// Releases for `dir` (`glab release list --per-page 100 --output json`).
     /// Returns up to 100 (100 is the GitLab API per-page max); use
@@ -750,27 +757,27 @@ pub trait GitLabApi: Send + Sync {
     async fn release_view(&self, dir: &Path, tag: &str) -> Result<Release>;
     /// Create a release, returning glab's output (`glab release create <tag>
     /// [--name <title>] [--notes <notes>]`) — see [`ReleaseCreate`]. GitLab has no
-    /// draft/pre-release concept, so setting either returns `Error::Unsupported`.
+    /// draft/pre-release concept, so setting either returns `ErrorReason::Unsupported`.
     /// The `<tag>` bare positional is guarded with `reject_flag_like`, and a notes
     /// body of exactly `"-"` is refused (glab's stdin/editor sentinel). Asset
     /// uploads are out of scope (attach files via [`run`](GitLabApi::run)).
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps.
     #[allow(unused_variables)]
     async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_create".into(),
-        })
+        }))
     }
     /// Delete a release by tag (`glab release delete <tag> --yes`). `--yes` skips
     /// glab's confirmation prompt so a headless caller never hangs. Deletes the
     /// release only, not the underlying git tag. The `<tag>` bare positional is
-    /// guarded with `reject_flag_like`. **Defaulted** to `Error::Unsupported`.
+    /// guarded with `reject_flag_like`. **Defaulted** to `ErrorReason::Unsupported`.
     #[allow(unused_variables)]
     async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_delete".into(),
-        })
+        }))
     }
 }
 
@@ -957,14 +964,14 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // produce the wrong side effects — report it as `Unsupported`. The default
         // (neither set) is the plain immediate merge.
         if merge.auto {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "mr_merge(auto)".into(),
-            });
+            }));
         }
         if merge.delete_branch {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "mr_merge(delete_branch)".into(),
-            });
+            }));
         }
         let id = number.to_string();
         // `--yes` skips the confirmation prompt. `--auto-merge=false` forces an
@@ -1186,14 +1193,14 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
         // express neither. Rather than silently drop a requested option, report it
         // `Unsupported` (mirroring `mr_merge`'s handling of `auto`/`delete_branch`).
         if spec.draft {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "release_create(draft)".into(),
-            });
+            }));
         }
         if spec.prerelease {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "release_create(prerelease)".into(),
-            });
+            }));
         }
         // `<tag>` is a bare positional — guard it against flag-injection/empty like
         // `release_view`. `--name` is a flag-VALUE slot (no guard). A literal `-`
@@ -1230,7 +1237,7 @@ impl<R: ProcessRunner> GitLab<R> {
     /// [`mr_diff`](GitLabApi::mr_diff) with an explicit per-call [`OutputBudget`],
     /// instead of this client's [`default_output_budget`](GitLab::default_output_budget).
     /// Past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] (actual and
+    /// [`ErrorReason::OutputTooLarge`] (actual and
     /// allowed sizes) rather than buffering an unbounded diff — the override for a
     /// legitimately huge MR.
     pub async fn mr_diff_within(
@@ -1388,7 +1395,7 @@ mod tests {
         );
         assert!(!caps.is_supported(), "1.20 is below the 1.25 floor");
         let err = caps.ensure_supported().expect_err("unsupported");
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         let message = source.to_string();
@@ -1403,7 +1410,10 @@ mod tests {
             ScriptedRunner::new().on(["glab", "--version"], Reply::ok("glab (unknown)\n")),
         );
         let err = garbage.capabilities().await.expect_err("unrecognisable");
-        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Parse { .. }),
+            "got {err:?}"
+        );
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -1640,8 +1650,8 @@ mod tests {
         let glab =
             GitLab::with_runner(ScriptedRunner::new().on(["glab", "auth"], Reply::timeout()));
         assert!(matches!(
-            glab.auth_status().await.unwrap_err(),
-            Error::Timeout { .. }
+            glab.auth_status().await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
         ));
     }
 
@@ -1713,7 +1723,7 @@ mod tests {
             .await
             .expect_err("mr_create must reject a bare dash body");
         assert!(
-            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            matches!(err.reason(), ErrorReason::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
             "expected Spawn(InvalidInput), got {err:?}"
         );
 
@@ -1722,7 +1732,7 @@ mod tests {
             .await
             .expect_err("mr_edit must reject a bare dash body");
         assert!(
-            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            matches!(err.reason(), ErrorReason::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
             "expected Spawn(InvalidInput), got {err:?}"
         );
 
@@ -1731,7 +1741,7 @@ mod tests {
             .await
             .expect_err("issue_create must reject a bare dash body");
         assert!(
-            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            matches!(err.reason(), ErrorReason::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
             "expected Spawn(InvalidInput), got {err:?}"
         );
 
@@ -1740,7 +1750,7 @@ mod tests {
             .await
             .expect_err("mr_comment must reject a bare dash body");
         assert!(
-            matches!(&err, Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
+            matches!(err.reason(), ErrorReason::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput),
             "expected Spawn(InvalidInput), got {err:?}"
         );
 
@@ -1859,7 +1869,7 @@ mod tests {
                 .await
                 .expect_err("auto/delete_branch are Unsupported on glab");
             assert!(
-                matches!(err, Error::Unsupported { .. }),
+                matches!(err.reason(), ErrorReason::Unsupported { .. }),
                 "expected Unsupported, got {err:?}"
             );
         }
@@ -1973,8 +1983,12 @@ mod tests {
         let glab =
             GitLab::with_runner(ScriptedRunner::new().on(["glab", "mr", "diff"], Reply::ok(&big)))
                 .default_output_budget(OutputBudget::bytes(64 * 1024));
-        match glab.mr_diff(Path::new("/r"), 4).await {
-            Err(Error::OutputTooLarge {
+        match glab
+            .mr_diff(Path::new("/r"), 4)
+            .await
+            .map_err(Error::into_reason)
+        {
+            Err(ErrorReason::OutputTooLarge {
                 program,
                 max_bytes,
                 total_bytes,
@@ -2196,14 +2210,16 @@ mod tests {
         assert!(matches!(
             glab.release_create(Path::new("/r"), ReleaseCreate::new("v1").draft())
                 .await
-                .unwrap_err(),
-            Error::Unsupported { .. }
+                .unwrap_err()
+                .reason(),
+            ErrorReason::Unsupported { .. }
         ));
         assert!(matches!(
             glab.release_create(Path::new("/r"), ReleaseCreate::new("v1").prerelease())
                 .await
-                .unwrap_err(),
-            Error::Unsupported { .. }
+                .unwrap_err()
+                .reason(),
+            ErrorReason::Unsupported { .. }
         ));
         assert!(
             rec.calls().is_empty(),

@@ -13,7 +13,7 @@ in a fake in tests.
 
 Caller-supplied names, revisions, ranges, remotes, and URLs that land in a bare
 positional argv slot are guarded automatically — a value that is empty or begins
-with `-` is rejected with an `Error::Spawn` *before* anything spawns, so it can't
+with `-` is rejected with an `ErrorReason::Spawn` *before* anything spawns, so it can't
 be smuggled in as a flag.
 
 [`processkit`]: https://crates.io/crates/processkit
@@ -25,7 +25,7 @@ be smuggled in as a flag.
 use vcs_git::Git;
 
 let git = Git::new();                                         // real, job-backed runner
-let git = Git::new().default_timeout(Duration::from_secs(30)); // every cmd → Error::Timeout past 30s
+let git = Git::new().default_timeout(Duration::from_secs(30)); // every cmd → ErrorReason::Timeout past 30s
 ```
 
 - `Git::new()` — the production client over the real job-backed runner.
@@ -715,7 +715,7 @@ async fn init(&self, dir: &Path) -> Result<()>;
 - **`version`** — `git --version` text.
 - **`capabilities`** — the parsed version as [`GitCapabilities`](#gitcapabilities). A
   value type — probe once and keep it; an unrecognisable version string is an
-  `Error::Parse`.
+  `ErrorReason::Parse`.
 - **`common_dir`** — the repository's common git directory (`rev-parse
   --git-common-dir`), stable across linked worktrees.
 - **`git_dir`** — this worktree's git directory (`rev-parse --git-dir`).
@@ -1040,7 +1040,7 @@ pub fn only_ignored(self) -> Self;      // chainable: remove ONLY ignored files/
 
 **Force is always an explicit, separate call — never a default.** `Clean::new()` picks
 neither `dry_run` nor `force`; passing that as-is to `clean` is refused *before*
-spawning `git` (an `Error::Spawn`/`InvalidInput`), rather than depending on this
+spawning `git` (an `ErrorReason::Spawn`/`InvalidInput`), rather than depending on this
 repository's `clean.requireForce` git config to guard the delete. When `dry_run` is
 set, `force` is ignored — dry-run always wins, so a spec that (oddly) sets both can
 never actually delete.
@@ -1253,7 +1253,7 @@ let _ = (name, rev, target, CheckoutTarget::Previous);
 ## Error classification
 
 git writes load-bearing diagnostics to *either* stream on failure, so these free
-functions probe both `stdout` and `stderr` of an `Error::Exit` — call them instead
+functions probe both `stdout` and `stderr` of an `ErrorReason::Exit` — call them instead
 of re-implementing the string-scraping yourself.
 
 ```rust,ignore
@@ -1263,7 +1263,7 @@ pub fn is_transient_fetch_error(err: &Error) -> bool; // DNS / dropped connectio
 ```
 
 `is_transient_fetch_error` deliberately does **not** treat a processkit-level
-`Error::Timeout` as retryable: a timeout already spent the caller's full deadline, so
+`ErrorReason::Timeout` as retryable: a timeout already spent the caller's full deadline, so
 retrying it would multiply the wall-clock (a fetch is tried up to 3×). Raise the
 timeout rather than have it silently tripled. See [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) for the `Error` shape.
 

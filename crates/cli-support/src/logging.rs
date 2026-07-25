@@ -43,7 +43,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use processkit::{Command, Error, JobRunner, ProcessResult, ProcessRunner, Result, RunningProcess};
+use processkit::{
+    Command, Error, ErrorKind, JobRunner, ProcessResult, ProcessRunner, Result, RunningProcess,
+};
 
 /// The longest a single free-text argv value is rendered before it is truncated
 /// with a `…(<n> chars)` marker. Normal argv (subcommands, flags, refs, paths,
@@ -325,18 +327,30 @@ fn status_of<T>(result: &Result<ProcessResult<T>>) -> CommandStatus {
 }
 
 /// A stable, output-free category for a runner error — never the error's captured
-/// stdout/stderr (which could echo user text). A conservative wildcard keeps a
-/// future `#[non_exhaustive]` variant safe.
+/// stdout/stderr (which could echo user text).
+///
+/// Classifies through processkit's flat [`ErrorKind`] rather than matching the
+/// error's [`reason`](Error::reason): what this needs *is* a coarse classification,
+/// not a field, and `kind()` already folds the cases we would otherwise have to
+/// enumerate (a `PermissionDenied` spawn/IO failure now reads as such instead of
+/// hiding behind "spawn failed"/"io error"). The one distinction `kind()` collapses
+/// that is worth keeping is our own output cap firing, which the dedicated
+/// [`Error::output_overflow`] accessor recovers without destructuring a variant. A
+/// conservative wildcard keeps the `#[non_exhaustive]` enum (and the
+/// `limits`-feature-gated `ResourceLimit` kind, which this workspace does not
+/// enable) safe.
 fn error_category(err: &Error) -> &'static str {
-    match err {
-        Error::NotFound { .. } => "program not found",
-        Error::Spawn { .. } => "spawn failed",
-        Error::Timeout { .. } => "timed out",
-        Error::Cancelled { .. } => "cancelled",
-        Error::Unsupported { .. } => "unsupported",
-        Error::OutputTooLarge { .. } => "output too large",
-        Error::Exit { .. } => "non-zero exit",
-        Error::Io(_) => "io error",
+    match err.kind() {
+        ErrorKind::NotFound => "program not found",
+        ErrorKind::Spawn => "spawn failed",
+        ErrorKind::PermissionDenied => "permission denied",
+        ErrorKind::Timeout => "timed out",
+        ErrorKind::Cancelled => "cancelled",
+        ErrorKind::Unsupported => "unsupported",
+        ErrorKind::Exit => "non-zero exit",
+        ErrorKind::Signalled => "signalled",
+        ErrorKind::Predicate => "predicate rejected",
+        _ if err.output_overflow().is_some() => "output too large",
         _ => "error",
     }
 }
@@ -488,6 +502,75 @@ mod tests {
         fn on_command(&self, record: &CommandRecord<'_>) {
             self.0.lock().unwrap().push(record.to_string());
         }
+    }
+
+    // The category label a failure is logged under. Pinned per failure kind because
+    // `error_category` classifies through processkit's flat `ErrorKind` (plus the
+    // `output_overflow` accessor for the one case that kind folds into its
+    // catch-all), so a future `ErrorKind` reshuffle upstream must be a visible,
+    // deliberate change here rather than a silent relabelling of every log line.
+    #[tokio::test]
+    async fn every_failure_kind_gets_its_stable_category() {
+        use processkit::{ErrorReason, OutputBufferPolicy, OverflowMode};
+        use std::io;
+
+        let io_err = |kind: io::ErrorKind| io::Error::from(kind);
+        let cases: Vec<(Error, &str)> = vec![
+            (Error::not_found("git", None), "program not found"),
+            (
+                Error::spawn("git", io_err(io::ErrorKind::InvalidInput)),
+                "spawn failed",
+            ),
+            (
+                Error::spawn("git", io_err(io::ErrorKind::PermissionDenied)),
+                "permission denied",
+            ),
+            (
+                Error::timeout("git", Duration::from_secs(1), "", ""),
+                "timed out",
+            ),
+            (
+                ErrorReason::Cancelled {
+                    program: "git".into(),
+                }
+                .into(),
+                "cancelled",
+            ),
+            (
+                ErrorReason::Unsupported {
+                    operation: "suspend".into(),
+                }
+                .into(),
+                "unsupported",
+            ),
+            (Error::exit("git", 1, "", "boom"), "non-zero exit"),
+            (Error::signalled("git", Some(9), "", ""), "signalled"),
+            // Reasons `ErrorKind` folds into its catch-all: a plain IO failure and a
+            // parse failure both read as the generic label.
+            (
+                ErrorReason::Io(io_err(io::ErrorKind::BrokenPipe)).into(),
+                "error",
+            ),
+            (Error::parse("git", "unrecognisable version"), "error"),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(error_category(&err), expected, "for {err:?}");
+        }
+
+        // `OutputTooLarge` is `#[non_exhaustive]`, so it can only be produced by
+        // actually tripping a byte ceiling — which is also the honest check that the
+        // dedicated `output_overflow` accessor still recovers the category.
+        let runner = RecordingRunner::replying(Reply::ok("x".repeat(4096)));
+        let command = Command::new("git").args(["diff"]).output_buffer(
+            OutputBufferPolicy::unbounded()
+                .with_overflow(OverflowMode::Error)
+                .with_max_bytes(16),
+        );
+        let over_budget = runner
+            .output_bytes(&command)
+            .await
+            .expect_err("4 KiB of output must trip a 16-byte ceiling");
+        assert_eq!(error_category(&over_budget), "output too large");
     }
 
     #[test]

@@ -52,7 +52,7 @@ keep it from resolving as a pathspec; on jj it lands in the `-r <revset>`
 flag-value slot (see "not guarded, by design" below), which the CLI itself
 rejects if dash-prefixed.
 
-A rejected value surfaces as a spawn-side **`processkit::Error::Spawn`** — the
+A rejected value surfaces as a spawn-side **`processkit::ErrorReason::Spawn`** — the
 same variant a missing binary produces — carrying the program name and an
 `InvalidInput` IO source describing it (classifiable via `Error::is_invalid_input`).
 It is raised *instead* of spawning, not by the child.
@@ -63,7 +63,7 @@ It is raised *instead* of spawning, not by the child.
 // A caller-supplied revision that starts with `-` is refused at construction,
 // before it can ever reach `checkout`:
 let err = RevSpec::new("--upload-pack=/bin/evil").unwrap_err();
-assert!(matches!(err, processkit::Error::Spawn { .. })); // never spawned
+assert!(matches!(err.reason(), processkit::ErrorReason::Spawn { .. })); // never spawned
 // The valid path: build the target at your boundary, then switch.
 git.checkout(repo, &CheckoutTarget::Ref(RevSpec::new("main").unwrap()))
     .await
@@ -140,7 +140,7 @@ git.checkout(repo, name.as_str()).await?;
 # Ok(()) }
 ```
 
-A rejected newtype returns the same `Error::Spawn { program, source }` shape the
+A rejected newtype returns the same `ErrorReason::Spawn { program, source }` shape the
 in-method guard uses — so a value that passes `RefName::new` will never be
 rejected later for flag-shape.
 
@@ -267,7 +267,7 @@ about *what a submodule's own content does*, not the argv shape.
 
 The conflicted-file parsers treat their input as arbitrary bytes: `vcs_git::conflict`
 and `vcs_jj::conflict` turn marker soup into structured regions and **never
-panic** on malformed or hostile input — a bad file is an `Error::Parse`, not a
+panic** on malformed or hostile input — a bad file is an `ErrorReason::Parse`, not a
 crash. This is property-tested for panic-freedom on arbitrary input, alongside a
 byte-exact `render(parse(x)) == x` roundtrip. See the [conflicts guide](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/).
 
@@ -312,5 +312,5 @@ mechanism, and jj's in-process git backend offers no per-operation override.
 - [git guide](https://docs.rs/vcs-git/latest/vcs_git/guide/) — the full `GitApi` surface and the hardened profile in context.
 - [`vcs-cli-support` credentials module](https://docs.rs/vcs-cli-support/latest/vcs_cli_support/credentials/) — the `CredentialProvider` seam and `git_credential_helper`.
 - [jj guide](https://docs.rs/vcs-jj/latest/vcs_jj/guide/) — why there is no `Jj::hardened()`, and the colocated-repo story.
-- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — `Error::Spawn` and the other
+- [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — `ErrorReason::Spawn` and the other
   variants the guards raise, plus containment and observability.

@@ -106,7 +106,7 @@ merges **immediately** rather than enabling glab's default
 merge-when-pipeline-succeeds. The gh-style `.auto()` / `.delete_branch()` options
 are **not expressible on `glab`** through this wrapper (glab's own `--auto-merge`
 is a different, merge-when-pipeline contract), so setting either makes `mr_merge`
-return `Error::Unsupported` rather than silently dropping it. [`CiStatus`] buckets
+return `ErrorReason::Unsupported` rather than silently dropping it. [`CiStatus`] buckets
 the pipeline into `Passing` / `Failing` / `Pending` / `None`.
 
 `mr_create` takes an [`MrCreate`] spec — build it through `MrCreate::new(title,
@@ -116,7 +116,7 @@ setters. Public fields: `title: String`, `body: String`, `source: Option<String>
 `target: Option<String>`.
 
 A `body` that is *exactly* `"-"` is refused before glab ever spawns
-(`Error::Spawn` with `io::ErrorKind::InvalidInput`): glab treats a bare `-` as a
+(`ErrorReason::Spawn` with `io::ErrorKind::InvalidInput`): glab treats a bare `-` as a
 request to open `$EDITOR`/read from stdin rather than the literal string, which
 would hang a headless caller indefinitely. The same guard covers `mr_edit`'s
 body, `issue_create`'s body, and `mr_comment`'s message.
@@ -162,7 +162,7 @@ refused before any process spawns).
 and the notes body is refused when it is *exactly* `"-"` (glab's stdin/editor
 sentinel, like `mr_create`'s description). A **GitLab release has no draft or
 pre-release concept**, so requesting either `draft` or `prerelease` returns a
-structured `Error::Unsupported` rather than silently ignoring it — the fields exist
+structured `ErrorReason::Unsupported` rather than silently ignoring it — the fields exist
 only to keep the spec uniform across the three wrappers. Asset uploads are **out of
 scope** (attach files with `run`). `release_delete` passes `--yes` to skip glab's
 confirmation prompt and deletes the release only, not the underlying git tag.

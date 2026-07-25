@@ -39,7 +39,7 @@ let git = Git::new().default_timeout(Duration::from_secs(10));
 // Every command this client runs gets a 10s deadline.
 ```
 
-A command that outruns its deadline fails with **`processkit::Error::Timeout {
+A command that outruns its deadline fails with **`processkit::ErrorReason::Timeout {
 program, timeout }`**, and the job — the whole process tree — is killed, not just
 the top process. `default_timeout` chains with the other builders, so a hardened,
 deadlined client is `Git::hardened().default_timeout(…)`.
@@ -47,9 +47,31 @@ deadlined client is `Git::hardened().default_timeout(…)`.
 ## The error model
 
 A non-zero exit, a spawn failure, a timeout, and a parse failure are *distinct*
-`processkit::Error` variants carrying structured fields — not a stringly-typed
-blob. Branch on the variant rather than matching substrings of stderr. The enum
-is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
+structured failures carrying typed fields — not a stringly-typed blob. Branch on
+the failure kind rather than matching substrings of stderr.
+
+**Where the variants live (processkit 3.0).** `processkit::Error` itself is an
+opaque, pointer-sized wrapper around a boxed **`processkit::ErrorReason`** — the
+variant enum below. That keeps every `Result<T, Error>` on the run path small,
+including a facade enum that embeds one (`vcs_core::Error::Vcs`,
+`vcs_forge::Error::Forge`). Reading an error needs no unwrapping: `code()`,
+`program()`, `stdout()`/`stderr()`/`stdout_bytes()`, `diagnostic()`, `combined()`,
+the `is_*()` predicates, `signal()`, `Display`, `Debug` and `source()` all work on
+`Error` directly. Only a **variant match** goes through the reason:
+
+- `err.reason() -> &ErrorReason` — borrow, the usual case;
+- `err.into_reason() -> ErrorReason` — take ownership, when a captured stream or
+  the owned `io::Error` must be moved out;
+- `err.kind() -> ErrorKind` — a flat classifier (`not_found`, `permission_denied`,
+  `timeout`, `exit`, `signalled`, `cancelled`, `unsupported`, `spawn`, `predicate`,
+  `other`, each with a stable `name()`), when a coarse bucket is all you need.
+
+Every wrapper crate re-exports `ErrorReason` and `ErrorKind` next to `Error`
+(`vcs_git::ErrorReason`, `vcs_jj::ErrorKind`, …), and `vcs-core`/`vcs-forge`/
+`vcs-watch` re-export the whole `processkit` crate — so classifying a failure never
+needs a direct `processkit` dependency.
+
+`ErrorReason` is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
 
 - **`Exit { program: String, code: i32, stdout: String, stderr: String }`** — ran
   to completion, exited non-zero. Both streams are captured (each truncated to
@@ -88,17 +110,37 @@ is `#[non_exhaustive]`, so keep a catch-all arm. The variants:
 > folded into the exit path.
 
 ```rust,ignore
-use processkit::Error;
+use processkit::{Error, ErrorReason};
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &std::path::Path) -> Result<(), Error> {
-match git.checkout(repo, "does-not-exist").await {
-    Ok(()) => {}
-    Err(Error::Exit { code, stderr, .. }) => eprintln!("git exited {code}: {stderr}"),
-    Err(Error::Timeout { .. })           => eprintln!("git timed out"),
-    Err(Error::Spawn { .. })             => eprintln!("could not start git (or a guarded arg)"),
-    other => { other?; } // `#[non_exhaustive]` — keep a fallthrough
+if let Err(err) = git.checkout(repo, "does-not-exist").await {
+    // `into_reason()` takes ownership, so the fallthrough can hand the failure back
+    // (`From<ErrorReason> for Error`); `reason()` would borrow instead.
+    match err.into_reason() {
+        ErrorReason::Exit { code, stderr, .. } => eprintln!("git exited {code}: {stderr}"),
+        ErrorReason::Timeout { .. }           => eprintln!("git timed out"),
+        ErrorReason::Spawn { .. }             => eprintln!("could not start git (or a guarded arg)"),
+        other => return Err(other.into()), // `#[non_exhaustive]` — keep a fallthrough
+    }
 }
 # Ok(()) }
+```
+
+Or, when the bucket is enough, skip the variants entirely:
+
+```rust,ignore
+use processkit::ErrorKind;
+# use vcs_git::{Git, GitApi};
+# async fn demo(git: &Git, repo: &std::path::Path) {
+if let Err(err) = git.checkout(repo, "does-not-exist").await {
+    match err.kind() {
+        ErrorKind::Exit => eprintln!("git exited {:?}", err.code()),
+        ErrorKind::Timeout => eprintln!("git timed out"),
+        ErrorKind::NotFound => eprintln!("git is not installed"),
+        _ => eprintln!("{err}"),
+    }
+}
+# }
 ```
 
 **Exit code as data.** When a non-zero exit is an *answer*, not a failure (e.g.
@@ -179,6 +221,6 @@ let _ = git;
 
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the runner seams in full (trait, `mock`
   feature, scripted/recording runners) and the real-binary fixtures.
-- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — the injection guards behind `Error::Spawn`
+- [Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/) — the injection guards behind `ErrorReason::Spawn`
   and the untrusted-repo profile.
 - Per-crate guides: [git](https://docs.rs/vcs-git/latest/vcs_git/guide/), [jj](https://docs.rs/vcs-jj/latest/vcs_jj/guide/), [github](https://docs.rs/vcs-github/latest/vcs_github/guide/), [core](https://docs.rs/vcs-core/latest/vcs_core/guide/).

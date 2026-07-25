@@ -1,6 +1,8 @@
 pub mod vcs_gitea
 pub use vcs_gitea::CancellationToken
 pub use vcs_gitea::Error
+pub use vcs_gitea::ErrorKind
+pub use vcs_gitea::ErrorReason
 pub use vcs_gitea::GiteaVersion
 pub use vcs_gitea::JobRunner
 pub use vcs_gitea::ProcessResult

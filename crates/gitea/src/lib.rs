@@ -129,7 +129,14 @@ use std::path::Path;
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/`Gitea<R>`
 // seam) and the `JobRunner` default. (Also brings `Error`/`Result`/`ProcessResult`/
 // `ProcessRunner` into scope here.)
-pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
+// `ErrorReason` and `ErrorKind` ride along deliberately: since processkit 3.0
+// `Error` is an opaque wrapper, so *classifying* a failure means reaching
+// `err.reason()` (variant-grain) or `err.kind()` (flat) — types a consumer cannot
+// name without them. Omitting them would leave the re-exported `Error` unmatched,
+// a silent capability regression rather than a mechanical rename.
+pub use processkit::{
+    Error, ErrorKind, ErrorReason, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;
@@ -189,7 +196,7 @@ impl PrCreate {
 /// `#[non_exhaustive]`, so build it through [`PrEdit::new`] and the chained
 /// [`title`](PrEdit::title) / [`body`](PrEdit::body) setters rather than a
 /// struct literal. `tea` has no `pr edit` subcommand, so the Gitea client and
-/// facade always return `Error::Unsupported` without spawning. This public type
+/// facade always return `ErrorReason::Unsupported` without spawning. This public type
 /// remains for source compatibility with the defaulted trait method.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -240,11 +247,11 @@ impl Default for PrEdit {
 /// positional the same way.
 pub const BINARY: &str = "tea";
 
-/// The [`Error::Parse`] message prefixes [`GiteaApi::issue_view`] / [`pr_view`](GiteaApi::pr_view)
+/// The [`ErrorReason::Parse`] message prefixes [`GiteaApi::issue_view`] / [`pr_view`](GiteaApi::pr_view)
 /// use to report a **confirmed resource absence** — the requested number is genuinely
 /// not in the fully-paged listing. `tea` has no single-item endpoint, so both views are
 /// synthesized by paging `tea … list`, and a real miss can only be surfaced as an
-/// [`Error::Parse`] — the *same variant* a genuine **format drift** (our positional
+/// [`ErrorReason::Parse`] — the *same variant* a genuine **format drift** (our positional
 /// parser rejecting tea's output) uses. These fixed prefixes let [`is_view_absence`]
 /// tell the two apart *by structure*: the producing sites build their messages from the
 /// same constants, so the classifier and the producers can never drift apart. The
@@ -261,7 +268,7 @@ const ABSENT_PR_PREFIX: &str = "no pull request #";
 /// or tea's `unknown output type` diagnostic).
 ///
 /// `tea` has no single-item view endpoint, so both views are synthesized by paging
-/// `tea … list` and a real miss can only be reported as an [`Error::Parse`] — the *same
+/// `tea … list` and a real miss can only be reported as an [`ErrorReason::Parse`] — the *same
 /// variant* a genuine format drift uses. A consumer that must tell "this issue/PR
 /// doesn't exist" apart from "tea's output format drifted" — e.g. the scheduled
 /// CLI-drift test gate deciding skip-vs-fail, or a caller mapping an absence to its own
@@ -274,8 +281,8 @@ const ABSENT_PR_PREFIX: &str = "no pull request #";
 /// mask a real format regression as a mere absence.
 pub fn is_view_absence(err: &Error) -> bool {
     matches!(
-        err,
-        Error::Parse { message, .. }
+        err.reason(),
+        ErrorReason::Parse { message, .. }
             if message.starts_with(ABSENT_ISSUE_PREFIX) || message.starts_with(ABSENT_PR_PREFIX)
     )
 }
@@ -336,7 +343,7 @@ impl MergeStrategy {
 /// **no** merge-when-checks-succeed (`auto`) flag, and this wrapper does not drive
 /// source-branch deletion, so when either the gh-style [`auto`](PrMerge::auto) or
 /// [`delete_branch`](PrMerge::delete_branch) option is set,
-/// [`pr_merge`](GiteaApi::pr_merge) returns a structured `Error::Unsupported`
+/// [`pr_merge`](GiteaApi::pr_merge) returns a structured `ErrorReason::Unsupported`
 /// rather than *silently* ignoring it — for an irreversible merge, quietly
 /// dropping an option could produce the wrong side effects. The default (neither
 /// set) is the plain merge.
@@ -347,10 +354,10 @@ pub struct PrMerge {
     pub strategy: MergeStrategy,
     /// Request gh-style auto-merge (merge once checks pass). **Not expressible on
     /// `tea`** — when set, [`pr_merge`](GiteaApi::pr_merge) returns
-    /// `Error::Unsupported` (see the type docs).
+    /// `ErrorReason::Unsupported` (see the type docs).
     pub auto: bool,
     /// Delete the source branch after merging. **Not expressible here** — when
-    /// set, [`pr_merge`](GiteaApi::pr_merge) returns `Error::Unsupported` instead
+    /// set, [`pr_merge`](GiteaApi::pr_merge) returns `ErrorReason::Unsupported` instead
     /// of silently leaving the branch in place.
     pub delete_branch: bool,
 }
@@ -381,7 +388,7 @@ impl PrMerge {
 
     /// Request auto-merge (merge once checks pass). **Unsupported on `tea`**:
     /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
-    /// `Error::Unsupported` (see the type docs).
+    /// `ErrorReason::Unsupported` (see the type docs).
     pub fn auto(mut self) -> Self {
         self.auto = true;
         self
@@ -389,7 +396,7 @@ impl PrMerge {
 
     /// Request deleting the source branch after merging. **Unsupported on `tea`**:
     /// setting this makes [`pr_merge`](GiteaApi::pr_merge) return
-    /// `Error::Unsupported`.
+    /// `ErrorReason::Unsupported`.
     pub fn delete_branch(mut self) -> Self {
         self.delete_branch = true;
         self
@@ -547,7 +554,7 @@ pub trait GiteaApi: Send + Sync {
     async fn version(&self) -> Result<String>;
     /// The installed binary's parsed version, as [`GiteaCapabilities`]
     /// (`tea --version`). A value type — probe once and keep it; an unrecognisable
-    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `tea`
+    /// version banner is an [`ErrorReason::Parse`]. Gate an operation on a minimum `tea`
     /// with [`GiteaCapabilities::ensure_supported`].
     async fn capabilities(&self) -> Result<GiteaCapabilities>;
     /// Whether at least one login is configured (`tea login list --output csv`
@@ -566,14 +573,14 @@ pub trait GiteaApi: Send + Sync {
     /// **pages** through `tea pr list --state all` (`--page N`) and filters by
     /// number — correctly finding a PR past the server's ~50-row page cap, unlike a
     /// single capped listing. It stops at the first empty page (a genuine absence →
-    /// [`Error::Parse`]) or a large safety bound; a miss is not a false negative for
+    /// [`ErrorReason::Parse`]) or a large safety bound; a miss is not a false negative for
     /// any normally-sized repo.
     ///
     /// A confirmed absence and a **format drift** (our parser rejecting tea's output)
-    /// are both [`Error::Parse`], since there is no single-item endpoint to fail
+    /// are both [`ErrorReason::Parse`], since there is no single-item endpoint to fail
     /// differently — use [`is_view_absence`] to tell "this PR doesn't exist" apart from
     /// "tea's format drifted" without matching the message text. The page-safety-bound
-    /// case is a distinct, loud [`Error::Parse`] (an inconclusive walk, not a confirmed
+    /// case is a distinct, loud [`ErrorReason::Parse`] (an inconclusive walk, not a confirmed
     /// absence — `is_view_absence` returns `false` for it).
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
     /// Open a pull request, returning the command's output (`tea pr create`).
@@ -587,7 +594,7 @@ pub trait GiteaApi: Send + Sync {
     /// Takes a [`PrMerge`] spec (the [`MergeStrategy`] plus the gh-style
     /// `auto`/`delete_branch` options). `tea` can express **neither** `auto` nor
     /// `delete_branch` through this wrapper, so requesting either returns a
-    /// structured `Error::Unsupported` rather than silently dropping it (see
+    /// structured `ErrorReason::Unsupported` rather than silently dropping it (see
     /// [`PrMerge`]).
     async fn pr_merge(&self, dir: &Path, number: u64, merge: PrMerge) -> Result<()>;
     /// Close a pull request without merging (`tea pr close <number>`).
@@ -595,59 +602,59 @@ pub trait GiteaApi: Send + Sync {
     /// Check out a pull request's branch into the working copy at `dir`
     /// (`tea pr checkout <number>`) — the head branch is fetched and switched to,
     /// so a subsequent build/test/edit runs against the PR locally. Mutates the
-    /// working copy. **Defaulted** to `Error::Unsupported` so external implementers
+    /// working copy. **Defaulted** to `ErrorReason::Unsupported` so external implementers
     /// keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_checkout".into(),
-        })
+        }))
     }
     /// Add a comment to a pull request, returning the command's output
     /// (`tea comment <index> <body>`). Gitea PRs and issues share the `index`
     /// space and the same `tea comment` subcommand hits both. The `body` is a
     /// bare positional, so the trait method guards it with
     /// `reject_flag_like` (a leading `-` or empty value is rejected before
-    /// any process spawns). **Defaulted** to `Error::Unsupported` so external
+    /// any process spawns). **Defaulted** to `ErrorReason::Unsupported` so external
     /// implementers keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn pr_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_comment".into(),
-        })
+        }))
     }
     /// `tea` has no `pr edit` subcommand, so editing a pull request's title or
     /// description is unsupported by this client. This defaulted compatibility
-    /// method returns `Error::Unsupported` before any process spawns; use the
+    /// method returns `ErrorReason::Unsupported` before any process spawns; use the
     /// Gitea REST API instead.
     async fn pr_edit(&self, _dir: &Path, _number: u64, _edit: PrEdit) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_edit".into(),
-        })
+        }))
     }
     /// Approve a pull request (`tea pr approve <index>`) — record an approving
     /// review. `number` is a `u64`, so the bare `<index>` positional can never look
     /// like a flag — nothing to guard. The negative counterpart is
-    /// [`pr_reject`](GiteaApi::pr_reject). **Defaulted** to `Error::Unsupported` so
+    /// [`pr_reject`](GiteaApi::pr_reject). **Defaulted** to `ErrorReason::Unsupported` so
     /// external implementers keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn pr_approve(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_approve".into(),
-        })
+        }))
     }
     /// Request changes on a pull request (`tea pr reject <index> <reason>`) — tea's
     /// "reject" review, which **requires** a reason. The `reason` is a bare
     /// positional (after the index), so it is guarded with `reject_flag_like` (a
     /// leading `-` or empty value is refused before any process spawns), like
     /// [`pr_comment`](GiteaApi::pr_comment)'s body. **Defaulted** to
-    /// `Error::Unsupported` so external implementers keep compiling when the crate
+    /// `ErrorReason::Unsupported` so external implementers keep compiling when the crate
     /// bumps.
     #[allow(unused_variables)]
     async fn pr_reject(&self, dir: &Path, number: u64, body: &str) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_reject".into(),
-        })
+        }))
     }
     /// Open issues for `dir` (`tea issues list --output csv`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
@@ -658,7 +665,7 @@ pub trait GiteaApi: Send + Sync {
     /// renders Markdown and ignores `--output`, so — like [`pr_view`](GiteaApi::pr_view) —
     /// this is synthesized by **paging** `tea issues list --state all` (`--page N`) and
     /// filtering by number, finding a closed issue and one past the server's ~50-row
-    /// page cap. A confirmed absence is an [`Error::Parse`] — the *same variant* a
+    /// page cap. A confirmed absence is an [`ErrorReason::Parse`] — the *same variant* a
     /// format drift uses, since there is no single-item endpoint to fail differently;
     /// use [`is_view_absence`] to tell the two apart without matching the message text.
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
@@ -670,39 +677,39 @@ pub trait GiteaApi: Send + Sync {
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
     /// Close an issue (`tea issues close <index>`). `number` is a `u64`, so the bare
     /// `<index>` positional can never look like a flag — nothing to guard.
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps (only the `Gitea` concrete impl and the regenerated
     /// `MockGiteaApi` override it).
     #[allow(unused_variables)]
     async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_close".into(),
-        })
+        }))
     }
     /// Reopen a closed issue (`tea issues reopen <index>`). `number` is a `u64`, so
     /// the bare `<index>` positional can never look like a flag — nothing to guard.
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps (only the `Gitea` concrete impl and the regenerated
     /// `MockGiteaApi` override it).
     #[allow(unused_variables)]
     async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_reopen".into(),
-        })
+        }))
     }
     /// Add a comment to an issue, returning the command's output
     /// (`tea comment <index> <body>`). Gitea issues and PRs share the `index` space
     /// and the same `tea comment` subcommand, so this is the issue-side twin of
     /// [`pr_comment`](GiteaApi::pr_comment): the `body` is a bare positional, guarded
     /// with `reject_flag_like` (a leading `-` or empty value is rejected before any
-    /// process spawns). **Defaulted** to `Error::Unsupported` so external
+    /// process spawns). **Defaulted** to `ErrorReason::Unsupported` so external
     /// implementers keep compiling when the crate bumps (only the `Gitea` concrete
     /// impl and the regenerated `MockGiteaApi` override it).
     #[allow(unused_variables)]
     async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_comment".into(),
-        })
+        }))
     }
     /// Releases for `dir` (`tea releases list --output csv`). As with
     /// [`pr_list`](GiteaApi::pr_list), the Gitea server caps a page at
@@ -719,24 +726,24 @@ pub trait GiteaApi: Send + Sync {
     /// see [`ReleaseCreate`]. tea takes the tag as a `--tag` flag value (not a
     /// positional) and its notes flag is the singular `--note`. Asset uploads are
     /// out of scope (attach files via [`run`](GiteaApi::run)). **Defaulted** to
-    /// `Error::Unsupported` so external implementers keep compiling when the crate
+    /// `ErrorReason::Unsupported` so external implementers keep compiling when the crate
     /// bumps.
     #[allow(unused_variables)]
     async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_create".into(),
-        })
+        }))
     }
     /// Delete a release by its tag (`tea releases delete <tag>`). The `<tag>` is a
     /// bare positional, so it is guarded with `reject_flag_like` (a leading `-` or
     /// empty value is rejected before spawning). Like `tea`'s other mutators
     /// (`pr_close`/`pr_merge`), this passes no confirmation flag. **Defaulted** to
-    /// `Error::Unsupported`.
+    /// `ErrorReason::Unsupported`.
     #[allow(unused_variables)]
     async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_delete".into(),
-        })
+        }))
     }
 }
 
@@ -801,7 +808,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             .await?;
         if res.code() != Some(0) {
             // A timeout / signal-kill (no exit code) is a genuine failure;
-            // `ensure_success` surfaces it as `Error::Timeout`/IO. A plain
+            // `ensure_success` surfaces it as `ErrorReason::Timeout`/IO. A plain
             // non-zero exit, however, just means "no logins" → false.
             if res.code().is_none() {
                 let _ = res.ensure_success()?;
@@ -925,14 +932,14 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
         // effects — report it as `Unsupported`. The default (neither set) is the
         // plain `--style` merge.
         if merge.auto {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "pr_merge(auto)".into(),
-            });
+            }));
         }
         if merge.delete_branch {
-            return Err(Error::Unsupported {
+            return Err(Error::from(ErrorReason::Unsupported {
                 operation: "pr_merge(delete_branch)".into(),
-            });
+            }));
         }
         let n = number.to_string();
         self.core
@@ -1293,7 +1300,7 @@ mod tests {
         );
         assert!(!caps.is_supported(), "0.8 is below the 0.9 floor");
         let err = caps.ensure_supported().expect_err("unsupported");
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         let message = source.to_string();
@@ -1308,7 +1315,10 @@ mod tests {
             ScriptedRunner::new().on(["tea", "--version"], Reply::ok("tea (unknown build)\n")),
         );
         let err = garbage.capabilities().await.expect_err("unrecognisable");
-        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Parse { .. }),
+            "got {err:?}"
+        );
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -1487,7 +1497,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         let err = tea.pr_view(Path::new("/repo"), 5).await.unwrap_err();
-        assert!(matches!(err, Error::Parse { .. }));
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
         // A genuine absence is the recognizable "confirmed absent" sentinel, not a
         // format drift — so a drift-detection consumer can skip rather than fail.
         assert!(
@@ -1575,8 +1585,8 @@ mod tests {
             ScriptedRunner::new().on(["tea", "login", "list"], Reply::timeout()),
         );
         assert!(matches!(
-            tea.auth_status().await.unwrap_err(),
-            Error::Timeout { .. }
+            tea.auth_status().await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
         ));
     }
 
@@ -1640,7 +1650,7 @@ mod tests {
                 .await
                 .expect_err("auto/delete_branch are Unsupported on tea");
             assert!(
-                matches!(err, Error::Unsupported { .. }),
+                matches!(err.reason(), ErrorReason::Unsupported { .. }),
                 "expected Unsupported, got {err:?}"
             );
         }
@@ -1745,7 +1755,10 @@ mod tests {
             .pr_edit(Path::new("/r"), 7, PrEdit::new().title("T").body("B"))
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Unsupported { .. }), "{err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Unsupported { .. }),
+            "{err:?}"
+        );
         assert!(
             rec.calls().is_empty(),
             "unsupported operation must not spawn"
@@ -1832,7 +1845,7 @@ mod tests {
         let rec = RecordingRunner::replying(Reply::ok(""));
         let tea = Gitea::with_runner(&rec);
         let err = tea.issue_view(Path::new("/repo"), 5).await.unwrap_err();
-        assert!(matches!(err, Error::Parse { .. }));
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
         // ...and it is the recognizable "confirmed absent" sentinel, not a format drift.
         assert!(
             is_view_absence(&err),
@@ -1841,7 +1854,7 @@ mod tests {
     }
 
     // The `is_view_absence` classifier separates a confirmed issue/PR absence (which
-    // both views synthesize as an `Error::Parse`, since `tea` has no single-item
+    // both views synthesize as an `ErrorReason::Parse`, since `tea` has no single-item
     // endpoint) from a genuine format drift or any other error — WITHOUT a consumer
     // matching the message text by hand. Real drift must still read as drift so it is
     // never masked as a mere absence.

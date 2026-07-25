@@ -180,7 +180,7 @@ Add the wrapper(s) you need. Every method is `async`, so call them from a tokio
 runtime:
 
 ```rust
-use processkit::Error;
+use processkit::{Error, ErrorReason};
 use std::path::Path;
 use std::time::Duration;
 use vcs_git::{Git, GitApi};
@@ -202,13 +202,14 @@ async fn main() -> Result<(), Error> {
     );
 
     // Distinguish failure modes structurally instead of matching on strings.
-    match git.checkout(repo, "does-not-exist").await {
-        Err(Error::Exit { code, stderr, .. }) => {
-            eprintln!("git exited {code}: {stderr}");
-        }
-        Err(Error::Timeout { .. }) => eprintln!("git timed out"),
-        other => {
-            other?;
+    // `Error` is an opaque wrapper; the variants live on `ErrorReason`.
+    if let Err(err) = git.checkout(repo, "does-not-exist").await {
+        match err.into_reason() {
+            ErrorReason::Exit { code, stderr, .. } => {
+                eprintln!("git exited {code}: {stderr}");
+            }
+            ErrorReason::Timeout { .. } => eprintln!("git timed out"),
+            other => return Err(other.into()),
         }
     }
     Ok(())

@@ -110,13 +110,16 @@ git.worktree_remove(repo, WorktreeRemove::new("/tmp/feature")).await?;
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
 # async fn demo(git: &Git, repo: &Path) {
-    match git.checkout(repo, "nope").await {
-        Ok(()) => {}
-        Err(processkit::Error::Exit { code, stderr, .. }) => {
-            eprintln!("git exited {code}: {stderr}")
+    // `Error` is an opaque wrapper since processkit 3.0; the variants live on
+    // `ErrorReason`, reachable as `vcs_git::ErrorReason` too.
+    if let Err(err) = git.checkout(repo, "nope").await {
+        match err.reason() {
+            processkit::ErrorReason::Exit { code, stderr, .. } => {
+                eprintln!("git exited {code}: {stderr}")
+            }
+            processkit::ErrorReason::Timeout { .. } => eprintln!("timed out"),
+            _ => eprintln!("{err}"),
         }
-        Err(processkit::Error::Timeout { .. }) => eprintln!("timed out"),
-        Err(e) => eprintln!("{e}"),
     }
 # }
 ```

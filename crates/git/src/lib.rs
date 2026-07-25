@@ -136,7 +136,14 @@ use processkit::Command;
 // consumers needn't depend on processkit directly — incl. `ProcessRunner` (the
 // `with_runner`/`Git<R>` seam) and the `JobRunner` default. (`Error`/`Result`/
 // `ProcessResult`/`ProcessRunner` are in scope here too via this `pub use`.)
-pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
+// `ErrorReason` and `ErrorKind` ride along deliberately: since processkit 3.0
+// `Error` is an opaque wrapper, so *classifying* a failure means reaching
+// `err.reason()` (variant-grain) or `err.kind()` (flat) — types a consumer cannot
+// name without them. Omitting them would leave the re-exported `Error` unmatched,
+// a silent capability regression rather than a mechanical rename.
+pub use processkit::{
+    Error, ErrorKind, ErrorReason, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;
@@ -936,7 +943,7 @@ impl GitCapabilities {
 /// construction, before it can reach an argv slot. The remaining
 /// caller-supplied bare positionals that are *not* refs/revisions — remote
 /// names and URLs — keep an internal `reject_flag_like` guard: a value that is
-/// empty or begins with `-` is rejected with an [`Error::Spawn`] *before*
+/// empty or begins with `-` is rejected with an [`ErrorReason::Spawn`] *before*
 /// spawning. Flag-value slots (`-m <msg>`, `--branch <b>`), filesystem path
 /// arguments (`--`-separated pathspecs, plus worktree paths and clone
 /// destinations — typed `Path`, caller-trusted), and the `run`/`run_raw`
@@ -961,7 +968,7 @@ pub trait GitApi: Send + Sync {
     async fn version(&self) -> Result<String>;
     /// The installed binary's parsed version, as [`GitCapabilities`]
     /// (`git --version`). A value type — probe once and keep it; an
-    /// unrecognisable version string is an [`Error::Parse`].
+    /// unrecognisable version string is an [`ErrorReason::Parse`].
     async fn capabilities(&self) -> Result<GitCapabilities>;
     /// Working-tree status (`git status --porcelain=v1 -z`).
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
@@ -1536,7 +1543,7 @@ impl<R: ProcessRunner> Git<R> {
     /// legitimately large diff past a tighter client default
     /// ([`OutputBudget::unlimited`], or a higher byte cap), or to tighten the cap
     /// for one call. Past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] (actual and
+    /// [`ErrorReason::OutputTooLarge`] (actual and
     /// allowed sizes) rather than buffering an unbounded diff.
     pub async fn diff_text_within(
         &self,
@@ -1627,7 +1634,7 @@ impl<R: ProcessRunner> Git<R> {
     /// [`OutputBudget`], instead of this client's
     /// [`default_output_budget`](Git::default_output_budget). Reads a blob's bytes
     /// under `budget`: past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] rather than
+    /// [`ErrorReason::OutputTooLarge`] rather than
     /// buffering an unbounded file.
     pub async fn show_file_within(
         &self,
@@ -2107,7 +2114,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     async fn is_unborn(&self, dir: &Path) -> Result<bool> {
         // `rev-parse --verify -q HEAD` resolves HEAD quietly: 0 = a commit exists
         // (not unborn), 1 = no commit yet (unborn). `probe` maps those to a bool
-        // and surfaces anything else (e.g. 128, not a repo) as `Error::Exit`.
+        // and surfaces anything else (e.g. 128, not a repo) as `ErrorReason::Exit`.
         Ok(!self
             .core
             .probe(
@@ -2938,7 +2945,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         }
         // `budget_diagnostics`: bound the retained clone progress/failure output
         // (a drop-oldest tail — never `OutputTooLarge`, so a real failure stays a
-        // classifiable `Error::Exit`). Unbounded by default.
+        // classifiable `ErrorReason::Exit`). Unbounded by default.
         let command = self.core.budget_diagnostics(apply_secret_env(
             command
                 .arg(url)
@@ -3256,7 +3263,7 @@ impl<R: ProcessRunner> Git<R> {
     ///
     /// The trait probe's underlying `rev-parse --git-dir` inherits the client
     /// token; once a probe merge's cancellation has fired, that probe's `?` would
-    /// propagate `Error::Cancelled` **before** the abort that undoes the trial
+    /// propagate `ErrorReason::Cancelled` **before** the abort that undoes the trial
     /// merge is ever reached, leaving it staged in the working tree. Resolving the
     /// git dir on a fresh token instead lets the decision complete, so it pairs
     /// with [`merge_abort_detached`](Self::merge_abort_detached) to make **both**
@@ -3891,6 +3898,13 @@ pub mod blocking {
 mod tests {
     use super::*;
 
+    /// The [`ErrorReason`] behind a failed result. Since processkit 3.0 `Error` is
+    /// an opaque wrapper, so the variant assertions below reach the reason through
+    /// it instead of matching the error directly.
+    fn err_reason<T>(out: &Result<T>) -> Option<&ErrorReason> {
+        out.as_ref().err().map(Error::reason)
+    }
+
     // Terse constructors for the validated newtypes in test call sites; the
     // literals here are always valid, so `unwrap` is fine in tests.
     fn rn(s: &str) -> RefName {
@@ -4194,14 +4208,14 @@ mod tests {
         assert!(!git.is_bisect_in_progress(d).await.unwrap());
     }
 
-    // A non-zero exit surfaces as a structured `Error::Exit`.
+    // A non-zero exit surfaces as a structured `ErrorReason::Exit`.
     #[tokio::test]
     async fn nonzero_exit_is_structured_error() {
         let git = Git::with_runner(
             ScriptedRunner::new().on(["git", "status"], Reply::fail(128, "not a git repository")),
         );
-        match git.status(Path::new(".")).await.unwrap_err() {
-            Error::Exit { code, stderr, .. } => {
+        match git.status(Path::new(".")).await.unwrap_err().into_reason() {
+            ErrorReason::Exit { code, stderr, .. } => {
                 assert_eq!(code, 128);
                 assert!(stderr.contains("not a git repository"), "{stderr}");
             }
@@ -4210,7 +4224,7 @@ mod tests {
     }
 
     // diff_is_empty maps the raw exit code itself: 0 → clean, 1 → dirty, and
-    // anything else is a real failure surfaced as Error::Exit.
+    // anything else is a real failure surfaced as ErrorReason::Exit.
     #[tokio::test]
     async fn diff_is_empty_maps_exit_codes() {
         let clean =
@@ -4227,8 +4241,12 @@ mod tests {
             Reply::fail(128, "fatal: not a repo"),
         ));
         assert!(matches!(
-            broken.diff_is_empty(Path::new(".")).await.unwrap_err(),
-            Error::Exit { code: 128, .. }
+            broken
+                .diff_is_empty(Path::new("."))
+                .await
+                .unwrap_err()
+                .reason(),
+            ErrorReason::Exit { code: 128, .. }
         ));
     }
 
@@ -4596,8 +4614,8 @@ mod tests {
             ScriptedRunner::new().on(["git", "rev-parse"], Reply::fail(128, "boom")),
         );
         assert!(matches!(
-            broken.is_unborn(Path::new(".")).await.unwrap_err(),
-            Error::Exit { code: 128, .. }
+            broken.is_unborn(Path::new(".")).await.unwrap_err().reason(),
+            ErrorReason::Exit { code: 128, .. }
         ));
     }
 
@@ -4665,7 +4683,10 @@ mod tests {
             .log_paths(Path::new("."), &rv("HEAD"), 5, &[])
             .await
             .expect_err("empty paths must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -4920,7 +4941,10 @@ mod tests {
             .log_paths(Path::new("."), &rv("HEAD"), 5, &[huge])
             .await
             .expect_err("an individually oversized path must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -4963,7 +4987,10 @@ mod tests {
         // still catch a pathological caller-constructed one.
         let bad = unsafe { OsStr::from_encoded_bytes_unchecked(b"a\0b") };
         let err = pathspec_nul_bytes([bad]).expect_err("embedded NUL must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -5067,7 +5094,10 @@ mod tests {
             .clean(Path::new("."), Clean::new())
             .await
             .expect_err("neither dry_run nor force must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -6210,7 +6240,7 @@ mod tests {
 
     // Client-level cancellation (processkit 0.8 `cancellation` feature) on a
     // *retried* op: a `fetch` built on a client with `default_cancel_on(token)`
-    // parks until the token fires, then surfaces `Error::Cancelled` — and because
+    // parks until the token fires, then surfaces `ErrorReason::Cancelled` — and because
     // cancellation is **terminal** (not transient), the fetch-retry does NOT
     // replay it (one spawn, not FETCH_ATTEMPTS). Hermetic via `Reply::pending()`
     // on a paused clock.
@@ -6230,7 +6260,10 @@ mod tests {
             "fetch must park until the token fires"
         );
         token.cancel();
-        assert!(matches!(call.await.unwrap_err(), Error::Cancelled { .. }));
+        assert!(matches!(
+            call.await.unwrap_err().reason(),
+            ErrorReason::Cancelled { .. }
+        ));
         assert_eq!(
             rec.calls().len(),
             1,
@@ -6467,7 +6500,7 @@ mod tests {
         );
         let err = caps.ensure_supported().expect_err("unsupported");
         // The message must name the floor and the found version.
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         let message = source.to_string();
@@ -6486,7 +6519,7 @@ mod tests {
         let caps = mid.capabilities().await.expect("capabilities");
         assert!(!caps.is_supported(), "2.7.4 is below the 2.31 floor");
         let err = caps.ensure_supported().expect_err("2.7.4 unsupported");
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         assert!(
@@ -6499,8 +6532,8 @@ mod tests {
             ScriptedRunner::new().on(["git", "--version"], Reply::ok("not a version")),
         );
         assert!(matches!(
-            garbage.capabilities().await.unwrap_err(),
-            Error::Parse { .. }
+            garbage.capabilities().await.unwrap_err().reason(),
+            ErrorReason::Parse { .. }
         ));
     }
 
@@ -6732,7 +6765,7 @@ mod tests {
         // cancelled, so the detached path really did side-step a live token.
         let bare = git.merge_abort(dir).await;
         assert!(
-            matches!(bare, Err(Error::Cancelled { .. })),
+            matches!(err_reason(&bare), Some(ErrorReason::Cancelled { .. })),
             "a bare merge_abort must inherit the fired token: {bare:?}"
         );
     }
@@ -6773,7 +6806,7 @@ mod tests {
         // token rather than the token being inert.
         let bare = git.is_merge_in_progress(dir).await;
         assert!(
-            matches!(bare, Err(Error::Cancelled { .. })),
+            matches!(err_reason(&bare), Some(ErrorReason::Cancelled { .. })),
             "a bare is_merge_in_progress must inherit the fired token: {bare:?}"
         );
     }
@@ -6848,8 +6881,9 @@ mod tests {
         match git
             .diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
             .await
+            .map_err(Error::into_reason)
         {
-            Err(Error::OutputTooLarge {
+            Err(ErrorReason::OutputTooLarge {
                 program,
                 max_bytes,
                 total_bytes,
@@ -6891,9 +6925,11 @@ mod tests {
             .default_output_budget(OutputBudget::bytes(64 * 1024));
         // The default budget would refuse it…
         assert!(matches!(
-            git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
-                .await,
-            Err(Error::OutputTooLarge { .. })
+            err_reason(
+                &git.diff_text(Path::new("/r"), DiffSpec::Rev("HEAD".into()))
+                    .await
+            ),
+            Some(ErrorReason::OutputTooLarge { .. })
         ));
         // …but an explicit unlimited override reads it in full.
         let got = git
@@ -6914,8 +6950,8 @@ mod tests {
         let git = Git::with_runner(ScriptedRunner::new().on(["git", "show"], Reply::ok(&big)))
             .default_output_budget(OutputBudget::bytes(64 * 1024));
         assert!(matches!(
-            git.show_file(Path::new("/r"), &rv("HEAD"), "big.bin").await,
-            Err(Error::OutputTooLarge { .. })
+            err_reason(&git.show_file(Path::new("/r"), &rv("HEAD"), "big.bin").await),
+            Some(ErrorReason::OutputTooLarge { .. })
         ));
         let got = git
             .show_file_within(
@@ -7276,7 +7312,7 @@ mod tests {
             .switch_with_stash(Path::new("/r"), &ct("nope"))
             .await
             .expect_err("checkout error must surface");
-        assert!(matches!(err, Error::Exit { .. }));
+        assert!(matches!(err.reason(), ErrorReason::Exit { .. }));
         let calls = rec.calls();
         assert_eq!(
             calls.last().unwrap().args_str(),

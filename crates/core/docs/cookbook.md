@@ -115,9 +115,9 @@ into *every* command it runs, so one `token.cancel()` kills all of its in-flight
 calls — no new API, no per-call plumbing.
 
 ```rust,ignore
-// `CancellationToken` and `Error` are both
+// `CancellationToken`, `Error` and `ErrorReason` are all
 // re-exported by each wrapper, so a consumer needn't depend on `processkit` directly.
-use vcs_github::{CancellationToken, Error, GitHub, GitHubApi};
+use vcs_github::{CancellationToken, ErrorReason, GitHub, GitHubApi};
 
 let token = CancellationToken::new();
 // Scope the cancellation to a CLIENT, not a call — clients are cheap; give each
@@ -131,14 +131,15 @@ tokio::spawn(async move {
 });
 
 match gh.run_watch(repo, run_id).await {     // long block — interruptible now
-    Err(e) if matches!(e, Error::Cancelled { .. }) => println!("watch cancelled"),
+    // `Error` is opaque since processkit 3.0 — match the reason behind it.
+    Err(e) if matches!(e.reason(), ErrorReason::Cancelled { .. }) => println!("watch cancelled"),
     other => { other?; }
 }
 ```
 
 A per-command `cancel_on` on a built command **replaces** the client default
 (explicit beats default, like `timeout`); derive both from one `child_token()` if
-you need two cancel sources. `Error::Cancelled` is **terminal** — the fetch-retry
+you need two cancel sources. `ErrorReason::Cancelled` is **terminal** — the fetch-retry
 treats it as non-transient and will not replay a cancelled run. Through the facades,
 build the wrapped client the same way (`GitHub::new().default_cancel_on(t)`) and
 hand it to `Forge::from_github(cwd, client)` / `Repo::from_git(root, cwd, client)`.

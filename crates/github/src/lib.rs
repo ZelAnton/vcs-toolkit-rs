@@ -141,7 +141,14 @@ pub use vcs_cli_support::{
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/
 // `GitHub<R>` seam) and the `JobRunner` default. (Also brings
 // `Error`/`Result`/`ProcessResult`/`ProcessRunner` into scope here.)
-pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
+// `ErrorReason` and `ErrorKind` ride along deliberately: since processkit 3.0
+// `Error` is an opaque wrapper, so *classifying* a failure means reaching
+// `err.reason()` (variant-grain) or `err.kind()` (flat) — types a consumer cannot
+// name without them. Omitting them would leave the re-exported `Error` unmatched,
+// a silent capability regression rather than a mechanical rename.
+pub use processkit::{
+    Error, ErrorKind, ErrorReason, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency. (Cancellation is core in processkit
 // 0.10 — always available, no feature.)
@@ -318,7 +325,7 @@ fn validate_host(host: &str) -> Result<String> {
     Ok(trimmed.to_ascii_lowercase())
 }
 
-/// The `Error::Spawn` / `InvalidInput` the crate raises for a rejected caller
+/// The `ErrorReason::Spawn` / `InvalidInput` the crate raises for a rejected caller
 /// value (the same shape as [`reject_flag_like`], classified by
 /// `vcs_cli_support::is_invalid_input`), naming the bad host and why.
 fn invalid_host_error(value: &str, reason: &str) -> Error {
@@ -860,7 +867,7 @@ pub trait GitHubApi: Send + Sync {
     async fn version(&self) -> Result<String>;
     /// The installed binary's parsed version, as [`GitHubCapabilities`]
     /// (`gh --version`). A value type — probe once and keep it; an unrecognisable
-    /// version banner is an [`Error::Parse`]. Gate an operation on a minimum `gh`
+    /// version banner is an [`ErrorReason::Parse`]. Gate an operation on a minimum `gh`
     /// with [`GitHubCapabilities::ensure_supported`].
     async fn capabilities(&self) -> Result<GitHubCapabilities>;
     /// Whether the user is authenticated (`gh auth status` exits zero). Reflects
@@ -878,14 +885,14 @@ pub trait GitHubApi: Send + Sync {
     /// *another* host can't turn this into a false negative for the host you
     /// target. Like `auth_status`, it folds only the exit code into the bool (any
     /// non-zero exit → `false`); a spawn failure or timeout still errors.
-    /// **Defaulted** to `Error::Unsupported` so external implementers of the trait
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers of the trait
     /// keep compiling when the crate bumps (only the `GitHub` concrete impl and the
     /// regenerated `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "auth_status_for".into(),
-        })
+        }))
     }
     /// The repository for `dir` (`gh repo view --json …`).
     async fn repo_view(&self, dir: &Path) -> Result<RepoView>;
@@ -897,13 +904,13 @@ pub trait GitHubApi: Send + Sync {
     /// Empty when none match; returns up to 100. A flag-like or empty `head` is
     /// rejected before spawning so an untrusted branch cannot alter the command.
     ///
-    /// **Defaulted** to `Error::Unsupported` so external trait implementers keep
+    /// **Defaulted** to `ErrorReason::Unsupported` so external trait implementers keep
     /// compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn pr_list_for_source_branch(&self, dir: &Path, head: &str) -> Result<Vec<PullRequest>> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_list_for_source_branch".into(),
-        })
+        }))
     }
     /// Pull requests that merge `head` into `base`, in any state — open, closed,
     /// or merged (`gh pr list --head <head> --base <base> --state all --limit 100
@@ -942,14 +949,14 @@ pub trait GitHubApi: Send + Sync {
     /// Check out a pull request's branch into the working copy at `dir`
     /// (`gh pr checkout <n>`) — the head branch is fetched and switched to, so a
     /// subsequent build/test/edit runs against the PR locally. Mutates the working
-    /// copy. **Defaulted** to `Error::Unsupported` so external implementers of the
+    /// copy. **Defaulted** to `ErrorReason::Unsupported` so external implementers of the
     /// trait keep compiling when the crate bumps (only the `GitHub` concrete impl
     /// and the regenerated `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn pr_checkout(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_checkout".into(),
-        })
+        }))
     }
     /// The PR's checks (`gh pr checks <n> --json …`). gh signals the overall
     /// outcome through its exit code — 0 all passed, 8 still pending, 1 some
@@ -969,14 +976,14 @@ pub trait GitHubApi: Send + Sync {
     /// (`gh pr edit <n> [--title <title>] [--body <body>]`). At least one of
     /// `title` or `body` must be `Some` — the facade rejects both-`None`
     /// before reaching the wrapper, so the default implementation is
-    /// unreachable in normal use. **Defaulted** to `Error::Unsupported` so
+    /// unreachable in normal use. **Defaulted** to `ErrorReason::Unsupported` so
     /// external implementers of the trait keep compiling when the crate
     /// bumps.
     #[allow(unused_variables)]
     async fn pr_edit(&self, dir: &Path, number: u64, edit: PrEdit) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "pr_edit".into(),
-        })
+        }))
     }
     /// The PR's submitted reviews and conversation comments
     /// (`gh pr view <n> --json reviews,comments`).
@@ -1008,7 +1015,7 @@ pub trait GitHubApi: Send + Sync {
     ///
     /// **Blocks for the whole run.** A client
     /// [`default_timeout`](GitHub::default_timeout) kills the watch when it
-    /// elapses (`Error::Timeout`) — drive this from a client with no (or a
+    /// elapses (`ErrorReason::Timeout`) — drive this from a client with no (or a
     /// generous) timeout.
     async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
     /// Fire a `workflow_dispatch` event for a workflow, driven by a
@@ -1025,16 +1032,16 @@ pub trait GitHubApi: Send + Sync {
     /// Exit codes follow gh's convention (`gh help exit-codes`): **0** dispatched,
     /// **1** on failure — e.g. an unknown workflow (`HTTP 404: workflow … not found`),
     /// a workflow lacking a `workflow_dispatch` trigger, or an unknown input —
-    /// surfaced as [`Error::Exit`]; **4** if `gh` is not authenticated.
+    /// surfaced as [`ErrorReason::Exit`]; **4** if `gh` is not authenticated.
     ///
-    /// **Defaulted** to `Error::Unsupported` so external implementers of the trait
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers of the trait
     /// keep compiling when the crate bumps (only the `GitHub` concrete impl and the
     /// regenerated `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn workflow_dispatch(&self, dir: &Path, spec: WorkflowDispatch) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "workflow_dispatch".into(),
-        })
+        }))
     }
     /// Rerun a completed workflow run (`gh run rerun <id> [--failed]`); pass a
     /// [`RerunScope`] to rerun every job ([`All`](RerunScope::All)) or only the
@@ -1047,15 +1054,15 @@ pub trait GitHubApi: Send + Sync {
     /// [`run_watch`](GitHubApi::run_watch) for it. Exit codes follow gh's convention
     /// (`gh help exit-codes`): **0** queued, **1** on failure — e.g. no such run
     /// (`failed to get run: HTTP 404`), or `--failed` on a run with no failed jobs —
-    /// as [`Error::Exit`]; **4** if unauthenticated.
+    /// as [`ErrorReason::Exit`]; **4** if unauthenticated.
     ///
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps.
     #[allow(unused_variables)]
     async fn run_rerun(&self, dir: &Path, id: u64, scope: RerunScope) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "run_rerun".into(),
-        })
+        }))
     }
     /// Cancel an in-progress workflow run (`gh run cancel <id>`). The id is
     /// [`WorkflowRun::database_id`]; being a `u64`, the bare positional can never look
@@ -1068,15 +1075,15 @@ pub trait GitHubApi: Send + Sync {
     /// codes follow gh's convention (`gh help exit-codes`): **0** accepted, **1** on
     /// failure — e.g. no such run (`Could not find any workflow run with ID …`), or a
     /// run that is already completed (`Cannot cancel a workflow run that is
-    /// completed`) — as [`Error::Exit`]; **4** if unauthenticated.
+    /// completed`) — as [`ErrorReason::Exit`]; **4** if unauthenticated.
     ///
-    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers keep compiling
     /// when the crate bumps.
     #[allow(unused_variables)]
     async fn run_cancel(&self, dir: &Path, id: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "run_cancel".into(),
-        })
+        }))
     }
 
     // --- Issues / releases ---------------------------------------------------
@@ -1089,38 +1096,38 @@ pub trait GitHubApi: Send + Sync {
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
     /// Close an issue (`gh issue close <n>`). `number` is a `u64`, so the bare
     /// positional can never look like a flag — nothing to guard. **Defaulted** to
-    /// `Error::Unsupported` so external implementers of the trait keep compiling
+    /// `ErrorReason::Unsupported` so external implementers of the trait keep compiling
     /// when the crate bumps (only the `GitHub` concrete impl and the regenerated
     /// `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_close".into(),
-        })
+        }))
     }
     /// Reopen a closed issue (`gh issue reopen <n>`). `number` is a `u64`, so the
     /// bare positional can never look like a flag — nothing to guard. **Defaulted**
-    /// to `Error::Unsupported` so external implementers of the trait keep compiling
+    /// to `ErrorReason::Unsupported` so external implementers of the trait keep compiling
     /// when the crate bumps (only the `GitHub` concrete impl and the regenerated
     /// `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn issue_reopen(&self, dir: &Path, number: u64) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_reopen".into(),
-        })
+        }))
     }
     /// Add a comment to an issue, returning its URL
     /// (`gh issue comment <n> --body <body>`). The body rides in a flag-VALUE slot,
     /// so a leading `-` is safe and no argv guard is needed (same as
-    /// [`pr_comment`](GitHubApi::pr_comment)). **Defaulted** to `Error::Unsupported`
+    /// [`pr_comment`](GitHubApi::pr_comment)). **Defaulted** to `ErrorReason::Unsupported`
     /// so external implementers of the trait keep compiling when the crate bumps
     /// (only the `GitHub` concrete impl and the regenerated `MockGitHubApi` override
     /// it).
     #[allow(unused_variables)]
     async fn issue_comment(&self, dir: &Path, number: u64, body: &str) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "issue_comment".into(),
-        })
+        }))
     }
     /// Releases, newest first (`gh release list --limit 100 --json …`); `body`/`url`
     /// are not fetched here — use [`release_view`](GitHubApi::release_view).
@@ -1135,25 +1142,25 @@ pub trait GitHubApi: Send + Sync {
     /// — see [`ReleaseCreate`].
     /// gh creates the git tag from the default branch's latest state if it doesn't
     /// yet exist. Asset uploads are out of scope (attach files with
-    /// [`run`](GitHubApi::run)). **Defaulted** to `Error::Unsupported` so external
+    /// [`run`](GitHubApi::run)). **Defaulted** to `ErrorReason::Unsupported` so external
     /// implementers of the trait keep compiling when the crate bumps (only the
     /// `GitHub` concrete impl and the regenerated `MockGitHubApi` override it).
     #[allow(unused_variables)]
     async fn release_create(&self, dir: &Path, spec: ReleaseCreate) -> Result<String> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_create".into(),
-        })
+        }))
     }
     /// Delete a release by tag (`gh release delete <tag> --yes`). `--yes` skips gh's
     /// confirmation prompt so a headless caller never hangs. Deletes the release
     /// only, not the underlying git tag (use `gh release delete --cleanup-tag` via
-    /// [`run`](GitHubApi::run) for that). **Defaulted** to `Error::Unsupported` so
+    /// [`run`](GitHubApi::run) for that). **Defaulted** to `ErrorReason::Unsupported` so
     /// external implementers keep compiling when the crate bumps.
     #[allow(unused_variables)]
     async fn release_delete(&self, dir: &Path, tag: &str) -> Result<()> {
-        Err(Error::Unsupported {
+        Err(Error::from(ErrorReason::Unsupported {
             operation: "release_delete".into(),
-        })
+        }))
     }
 }
 
@@ -1457,7 +1464,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             // 8 = pending, 1 = some failed) but prints the same JSON for all
             // three — parse it and let the caller branch on each `bucket`.
             // A parse failure here is a real schema problem and must surface
-            // as `Error::Parse`, not be masked by the exit code.
+            // as `ErrorReason::Parse`, not be masked by the exit code.
             Some(0) => vcs_cli_support::json::from_json(BINARY, res.stdout()),
             Some(1 | 8) if !res.stdout().trim().is_empty() => {
                 vcs_cli_support::json::from_json(BINARY, res.stdout())
@@ -1586,7 +1593,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // `run view`'s `conclusion` can. Without it, a non-zero watch exit is a
         // genuine error (no such run, auth, …). `output_string` does NOT error on a
         // timeout (it returns the result with a timeout flag), so
-        // `ensure_success` is what surfaces a killed watch as `Error::Timeout`
+        // `ensure_success` is what surfaces a killed watch as `ErrorReason::Timeout`
         // instead of reading a half-finished run below.
         let id_str = id.to_string();
         // `gh run watch` re-prints the full job table every ~3 s until the run ends,
@@ -1783,7 +1790,7 @@ impl<R: ProcessRunner> GitHub<R> {
     /// [`pr_diff`](GitHubApi::pr_diff) with an explicit per-call [`OutputBudget`],
     /// instead of this client's [`default_output_budget`](GitHub::default_output_budget).
     /// Past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] (actual and
+    /// [`ErrorReason::OutputTooLarge`] (actual and
     /// allowed sizes) rather than buffering an unbounded diff — the override for a
     /// legitimately huge PR.
     pub async fn pr_diff_within(
@@ -1905,6 +1912,13 @@ mod tests {
     use super::*;
     use processkit::testing::{RecordReplayRunner, RecordingRunner, Reply, ScriptedRunner};
 
+    /// The [`ErrorReason`] behind a failed result. Since processkit 3.0 `Error` is
+    /// an opaque wrapper, so the variant assertions below reach the reason through
+    /// it instead of matching the error directly.
+    fn err_reason<T>(out: &Result<T>) -> Option<&ErrorReason> {
+        out.as_ref().err().map(Error::reason)
+    }
+
     #[test]
     fn binary_name_is_gh() {
         assert_eq!(BINARY, "gh");
@@ -1962,7 +1976,7 @@ mod tests {
         );
         assert!(!caps.is_supported(), "1.14 is below the 2.0 floor");
         let err = caps.ensure_supported().expect_err("unsupported");
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         let message = source.to_string();
@@ -1977,7 +1991,10 @@ mod tests {
             ScriptedRunner::new().on(["gh", "--version"], Reply::ok("gh version unknowable\n")),
         );
         let err = garbage.capabilities().await.expect_err("unrecognisable");
-        assert!(matches!(err, Error::Parse { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Parse { .. }),
+            "got {err:?}"
+        );
     }
 
     // Compile-time guard: the bound view stays `Copy` for the default `JobRunner`.
@@ -2102,13 +2119,13 @@ mod tests {
 
     // Regression guard for the timeout fix: a timed-out auth check must error,
     // not silently report "not authenticated" (the old hand-rolled mapping bug).
-    // Relies on processkit surfacing a timed-out run as `Error::Timeout`.
+    // Relies on processkit surfacing a timed-out run as `ErrorReason::Timeout`.
     #[tokio::test]
     async fn auth_status_errors_on_timeout() {
         let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::timeout()));
         assert!(matches!(
-            gh.auth_status().await.unwrap_err(),
-            Error::Timeout { .. }
+            gh.auth_status().await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
         ));
     }
 
@@ -2499,8 +2516,8 @@ mod tests {
             Reply::fail(1, "no pull requests found for branch 'feat/x'"),
         ));
         assert!(matches!(
-            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
-            Error::Exit { .. }
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err().reason(),
+            ErrorReason::Exit { .. }
         ));
 
         // Exit 4 (auth required) is a real failure, not an outcome.
@@ -2508,15 +2525,15 @@ mod tests {
             ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::fail(4, "auth required")),
         );
         assert!(matches!(
-            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
-            Error::Exit { .. }
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err().reason(),
+            ErrorReason::Exit { .. }
         ));
 
         let gh =
             GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "checks"], Reply::timeout()));
         assert!(matches!(
-            gh.pr_checks(Path::new("."), 7).await.unwrap_err(),
-            Error::Timeout { .. }
+            gh.pr_checks(Path::new("."), 7).await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
         ));
     }
 
@@ -2546,8 +2563,12 @@ mod tests {
         let gh =
             GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(&big)))
                 .default_output_budget(OutputBudget::bytes(64 * 1024));
-        match gh.pr_diff(Path::new("/r"), 7).await {
-            Err(Error::OutputTooLarge {
+        match gh
+            .pr_diff(Path::new("/r"), 7)
+            .await
+            .map_err(Error::into_reason)
+        {
+            Err(ErrorReason::OutputTooLarge {
                 program,
                 max_bytes,
                 total_bytes,
@@ -2570,8 +2591,8 @@ mod tests {
             GitHub::with_runner(ScriptedRunner::new().on(["gh", "pr", "diff"], Reply::ok(out)))
                 .default_output_budget(OutputBudget::bytes(4)); // absurdly tight default
         assert!(matches!(
-            gh.pr_diff(Path::new("/r"), 7).await,
-            Err(Error::OutputTooLarge { .. })
+            err_reason(&gh.pr_diff(Path::new("/r"), 7).await),
+            Some(ErrorReason::OutputTooLarge { .. })
         ));
         let files = gh
             .pr_diff_within(Path::new("/r"), 7, OutputBudget::unlimited())
@@ -3316,8 +3337,8 @@ mod tests {
         );
         let gh = GitHub::with_runner(&rec);
         assert!(matches!(
-            gh.run_watch(Path::new("."), 42).await.unwrap_err(),
-            Error::Timeout { .. }
+            gh.run_watch(Path::new("."), 42).await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
         ));
         assert_eq!(rec.calls().len(), 1, "no view after a timed-out watch");
 
@@ -3325,15 +3346,15 @@ mod tests {
             ScriptedRunner::new().on(["gh", "run", "watch"], Reply::fail(1, "no such run")),
         );
         assert!(matches!(
-            gh.run_watch(Path::new("."), 42).await.unwrap_err(),
-            Error::Exit { .. }
+            gh.run_watch(Path::new("."), 42).await.unwrap_err().reason(),
+            ErrorReason::Exit { .. }
         ));
     }
 
     // Client-level cancellation (processkit 0.8 `cancellation` feature): a client
     // built with `default_cancel_on(token)` threads the token into every command
     // it builds, so a long `run_watch` parks until the token fires, then surfaces
-    // `Error::Cancelled` — a controller cancels without touching the call site
+    // `ErrorReason::Cancelled` — a controller cancels without touching the call site
     // (zero new vcs-* API). Hermetic via `Reply::pending()` (parks until the
     // command's token fires) on a paused clock: the 1 h `timeout` elapses
     // instantly while the call is parked, proving it does not resolve early.
@@ -3353,9 +3374,9 @@ mod tests {
             "run_watch must park until the token fires"
         );
         token.cancel();
-        match call.await {
-            Err(Error::Cancelled { program }) => assert_eq!(program, "gh"),
-            other => panic!("expected Error::Cancelled, got {other:?}"),
+        match call.await.map_err(Error::into_reason) {
+            Err(ErrorReason::Cancelled { program }) => assert_eq!(program, "gh"),
+            other => panic!("expected ErrorReason::Cancelled, got {other:?}"),
         }
     }
 
@@ -3470,7 +3491,7 @@ mod tests {
         assert_eq!(rec.only_call().args_str(), ["run", "cancel", "42"]);
     }
 
-    // A non-zero gh exit on a run-control verb surfaces as `Error::Exit`, not a
+    // A non-zero gh exit on a run-control verb surfaces as `ErrorReason::Exit`, not a
     // swallowed success (e.g. cancelling an already-completed run, gh exit 1).
     #[tokio::test]
     async fn run_control_surfaces_gh_exit_errors() {
@@ -3479,8 +3500,11 @@ mod tests {
             Reply::fail(1, "Cannot cancel a workflow run that is completed"),
         ));
         assert!(matches!(
-            gh.run_cancel(Path::new("."), 42).await.unwrap_err(),
-            Error::Exit { .. }
+            gh.run_cancel(Path::new("."), 42)
+                .await
+                .unwrap_err()
+                .reason(),
+            ErrorReason::Exit { .. }
         ));
 
         let gh = GitHub::with_runner(ScriptedRunner::new().on(
@@ -3493,8 +3517,9 @@ mod tests {
         assert!(matches!(
             gh.workflow_dispatch(Path::new("."), WorkflowDispatch::new("x.yml"))
                 .await
-                .unwrap_err(),
-            Error::Exit { .. }
+                .unwrap_err()
+                .reason(),
+            ErrorReason::Exit { .. }
         ));
     }
 

@@ -119,7 +119,7 @@ program name** (e.g. `["git", "status"]`) — and replies with a `Reply`.
 
 - `Reply::ok(stdout)` — exit 0 with this stdout.
 - `Reply::fail(code, stderr)` — non-zero exit with this stderr.
-- `Reply::timeout()` — surfaces as `processkit::Error::Timeout`.
+- `Reply::timeout()` — surfaces as `processkit::ErrorReason::Timeout`.
 - `Reply::fail(code, stderr).with_stdout(json)` — a non-zero exit that *also*
   carried stdout (e.g. `gh pr checks` reporting failures as JSON on a failing
   exit).
@@ -239,7 +239,7 @@ underlying crates do.
 
 `Reply::pending()` (always available) parks a matched call until the
 command's token fires (a per-command `cancel_on` or a client `default_cancel_on`),
-then resolves `Err(Error::Cancelled)`. That tests the cancellation *behaviour* — the
+then resolves `Err(ErrorReason::Cancelled)`. That tests the cancellation *behaviour* — the
 call really parks, then really unwinds — with no real binary. Run it on a paused
 clock (`#[tokio::test(start_paused = true)]`): a long `time::timeout` elapses
 instantly while the call is parked, proving it doesn't resolve early.
@@ -259,7 +259,11 @@ async fn run_watch_cancels() {
     // Parked: a 1 h timeout elapses (paused clock) without the call resolving.
     assert!(tokio::time::timeout(std::time::Duration::from_secs(3600), &mut call).await.is_err());
     token.cancel();
-    assert!(matches!(call.await.unwrap_err(), processkit::Error::Cancelled { .. }));
+    // `Error` is opaque since processkit 3.0 — match the reason behind it.
+    assert!(matches!(
+        call.await.unwrap_err().reason(),
+        processkit::ErrorReason::Cancelled { .. }
+    ));
 }
 ```
 

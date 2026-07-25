@@ -17,15 +17,15 @@
 //!   A caller value that is empty/whitespace, or starts with `-`, is refused before
 //!   spawning (the CLI would parse it as a flag); flag-*value* slots (`-m <msg>`)
 //!   are consumed verbatim and skip the check. Wrappers call it with their own
-//!   binary name so the surfaced [`Error::Spawn`] names the right `program`.
+//!   binary name so the surfaced [`ErrorReason::Spawn`] names the right `program`.
 //! - **[`FETCH_ATTEMPTS`] / [`FETCH_BACKOFF`]** — the shared transient-retry policy
 //!   for `fetch` (one try plus two retries, fixed backoff between them).
 //! - **[`is_merge_conflict`] / [`is_nothing_to_commit`] / [`is_transient_fetch_error`]
 //!   / [`is_lock_contention`]** — classify a returned [`Error`] so callers branch on
 //!   *intent* ("conflict, resolve it"; "nothing to commit, no-op"; "transient,
 //!   retry"; "another process holds the lock, retry") instead of matching on error
-//!   internals. They inspect captured [`Error::Exit`] output against fixed marker
-//!   lists; a [`processkit`] [`Error::Timeout`] is **not** treated as a transient
+//!   internals. They inspect captured [`ErrorReason::Exit`] output against fixed marker
+//!   lists; a [`processkit`] [`ErrorReason::Timeout`] is **not** treated as a transient
 //!   fetch error (it already spent the full deadline — see
 //!   [`is_transient_fetch_error`]); any unfamiliar `#[non_exhaustive]` variant falls
 //!   through to "no".
@@ -36,7 +36,7 @@
 //!   `with_retry(...)` without changing a call site. Lock-acquisition failures are
 //!   pre-execution, so retrying is safe even for mutating commands. A
 //!   [`default_cancel_on`](ManagedClient::default_cancel_on) token also cuts the
-//!   backoff short: cancelling mid-retry returns a structured [`Error::Cancelled`]
+//!   backoff short: cancelling mid-retry returns a structured [`ErrorReason::Cancelled`]
 //!   at once instead of sleeping out the remaining delay.
 //! - **[`CredentialProvider`] / [`Credential`] / [`Secret`]** — an opt-in seam for
 //!   supplying a secret *per operation* (a CI token, a vault lookup) instead of
@@ -75,8 +75,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use processkit::{
-    CancellationToken, CliClient, Command, Error, IntoCommand, JobRunner, OutputBufferPolicy,
-    OverflowMode, ProcessResult, ProcessRunner, Result,
+    CancellationToken, CliClient, Command, Error, ErrorReason, IntoCommand, JobRunner,
+    OutputBufferPolicy, OverflowMode, ProcessResult, ProcessRunner, Result,
 };
 
 pub mod credentials;
@@ -111,7 +111,8 @@ pub mod json {
     }
 
     /// Deserialize a forge CLI's `--json` output into `T`, mapping a parse failure to
-    /// [`Error::Parse`] tagged with `program` (the CLI's binary name).
+    /// [`ErrorReason::Parse`](processkit::ErrorReason::Parse) tagged with `program`
+    /// (the CLI's binary name).
     pub fn from_json<T: DeserializeOwned>(program: &str, json: &str) -> Result<T> {
         serde_json::from_str(json).map_err(|e| Error::parse(program, e.to_string()))
     }
@@ -138,7 +139,7 @@ pub mod json {
 ///
 /// - [`content_policy`](OutputBudget::content_policy) — a **fail-loud** ceiling
 ///   ([`OverflowMode::Error`]): once the cap is reached the run errors with
-///   [`Error::OutputTooLarge`], carrying the actual (`total_lines`/`total_bytes`)
+///   [`ErrorReason::OutputTooLarge`], carrying the actual (`total_lines`/`total_bytes`)
 ///   and allowed (`max_lines`/`max_bytes`) sizes. The pipe is still drained (the
 ///   child never blocks) and output past the ceiling is **counted but never
 ///   retained**, so memory stays bounded and a truncated result is never handed
@@ -173,10 +174,15 @@ impl OutputBudget {
         }
     }
 
-    /// A byte ceiling of `max_bytes` (the retained-text size, the unit
-    /// [`OutputBufferPolicy::max_bytes`] caps). The primary, memory-bounding
-    /// knob: it applies to the raw-stdout content path where a line cap would
-    /// not. Add a line ceiling with [`with_max_lines`](Self::with_max_lines).
+    /// A byte ceiling of `max_bytes`, in the unit
+    /// [`OutputBufferPolicy::max_bytes`] caps: since processkit 3.0 that is the
+    /// **raw bytes read from the output pipe** — line terminators and invalid-UTF-8
+    /// bytes included — not the decoded line-content bytes it counted before. For
+    /// plain ASCII/UTF-8 LF output the two coincide; CRLF or non-UTF-8 output counts
+    /// slightly higher, so a cap set against the old unit now trips marginally
+    /// earlier. The primary, memory-bounding knob: it applies to the raw-stdout
+    /// content path where a line cap would not. Add a line ceiling with
+    /// [`with_max_lines`](Self::with_max_lines).
     pub const fn bytes(max_bytes: usize) -> Self {
         Self {
             max_bytes: Some(max_bytes),
@@ -209,7 +215,7 @@ impl OutputBudget {
     }
 
     /// The **fail-loud** [`OutputBufferPolicy`] for a content verb — errors with
-    /// [`Error::OutputTooLarge`] once the ceiling is reached, never retaining or
+    /// [`ErrorReason::OutputTooLarge`] once the ceiling is reached, never retaining or
     /// returning a truncated tail. `None` when [`unlimited`](Self::unlimited)
     /// (leave the command's default buffer).
     pub fn content_policy(&self) -> Option<OutputBufferPolicy> {
@@ -232,8 +238,8 @@ impl OutputBudget {
     /// The **drop-oldest** [`OutputBufferPolicy`] for a discard verb's diagnostic
     /// output (`clone`/`fetch`): keeps the last `max_bytes`/`max_lines` (the tail,
     /// where a CLI's fatal line sits) and flags truncation, but does **not** raise
-    /// [`Error::OutputTooLarge`] — so a genuine failure still surfaces as
-    /// `Error::Exit` and stays classifiable ([`is_transient_fetch_error`],
+    /// [`ErrorReason::OutputTooLarge`] — so a genuine failure still surfaces as
+    /// `ErrorReason::Exit` and stays classifiable ([`is_transient_fetch_error`],
     /// [`is_lock_contention`]). `None` when [`unlimited`](Self::unlimited).
     pub fn diagnostic_policy(&self) -> Option<OutputBufferPolicy> {
         if self.is_unlimited() {
@@ -620,7 +626,7 @@ macro_rules! managed_client {
 /// leading `-` would be parsed by the CLI as a *flag* (verified: `git checkout
 /// -evil` → "unknown switch"; jj likewise), and an empty (or whitespace-only)
 /// value silently changes most commands' meaning. Refuse both before anything
-/// spawns, surfacing an [`Error::Spawn`] naming `program`. An interior NUL is
+/// spawns, surfacing an [`ErrorReason::Spawn`] naming `program`. An interior NUL is
 /// refused too (it can't be passed in argv and otherwise surfaces as an opaque
 /// OS spawn error). Flag-VALUE positions (`-m <msg>`, `--branch <b>`) don't need
 /// this — the CLI consumes the next token verbatim there.
@@ -726,9 +732,15 @@ const TRANSIENT_FETCH_MARKERS: &[&str] = &[
     "rpc failed",
 ];
 
-/// Whether `err` is an [`Error::Exit`] whose captured output contains any marker.
+/// Whether `err` is an [`ErrorReason::Exit`] whose captured output contains any
+/// marker.
+///
+/// Matches the reason rather than reading [`Error::stdout`]/[`Error::stderr`]: those
+/// accessors also return the partial output of a `Timeout` or `Signalled` run, which
+/// must not be scanned for a "conflict"/"nothing to commit"/lock marker — only a
+/// completed non-zero exit carries a verdict the markers describe.
 fn exit_output_matches(err: &Error, markers: &[&str]) -> bool {
-    let Error::Exit { stdout, stderr, .. } = err else {
+    let ErrorReason::Exit { stdout, stderr, .. } = err.reason() else {
         return false;
     };
     let out = stdout.to_ascii_lowercase();
@@ -824,7 +836,7 @@ pub fn is_lock_contention(err: &Error) -> bool {
 }
 
 /// Whether `err` is an **input rejection** — a bad caller argument, encoded as an
-/// [`Error::Spawn`] whose source is `io::ErrorKind::InvalidInput`. This is the
+/// [`ErrorReason::Spawn`] whose source is `io::ErrorKind::InvalidInput`. This is the
 /// pattern the toolkit's own argument guards raise ([`reject_flag_like`] and the
 /// validating newtypes `RefName`/`RevSpec`/`RevsetExpr`) for a value that would be
 /// misparsed as a flag, is empty, or contains a NUL — and it also covers the
@@ -835,8 +847,8 @@ pub fn is_lock_contention(err: &Error) -> bool {
 /// `ValueError`; the facades re-expose it as `Error::is_invalid_input()`.
 pub fn is_invalid_input(err: &Error) -> bool {
     matches!(
-        err,
-        Error::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput
+        err.reason(),
+        ErrorReason::Spawn { source, .. } if source.kind() == std::io::ErrorKind::InvalidInput
     )
 }
 
@@ -948,16 +960,17 @@ fn full_jitter(max: Duration) -> Duration {
     Duration::from_nanos((r % (nanos + 1)).min(u64::MAX as u128) as u64)
 }
 
-/// The structured [`Error::Cancelled`] to surface when a cancellation token aborts
-/// the retry backoff, named for the same program as the attempt that just failed —
-/// so it reads exactly like the `Cancelled` a [`processkit`] run raises when its own
-/// [`default_cancel_on`](ManagedClient::default_cancel_on) token kills an in-flight
-/// process. Falls back to an empty program name only if the last error carried none
-/// (every real attempt error names its program).
+/// The structured [`ErrorReason::Cancelled`] to surface when a cancellation token
+/// aborts the retry backoff, named for the same program as the attempt that just
+/// failed — so it reads exactly like the `Cancelled` a [`processkit`] run raises when
+/// its own [`default_cancel_on`](ManagedClient::default_cancel_on) token kills an
+/// in-flight process. Falls back to an empty program name only if the last error
+/// carried none (every real attempt error names its program).
 fn cancelled_error(last_err: &Error) -> Error {
-    Error::Cancelled {
+    ErrorReason::Cancelled {
         program: last_err.program().unwrap_or_default().to_owned(),
     }
+    .into()
 }
 
 /// Run `op`, retrying its result while `should_retry` says so and `policy` has
@@ -968,7 +981,7 @@ fn cancelled_error(last_err: &Error) -> Error {
 ///
 /// When `cancel` is `Some`, the backoff between attempts is **cancellation-aware**:
 /// if the token fires before or during a wait, the wait stops immediately and the
-/// whole retry aborts with a structured [`Error::Cancelled`] (naming the
+/// whole retry aborts with a structured [`ErrorReason::Cancelled`] (naming the
 /// just-failed attempt's program). It does **not** sit out the rest of the delay,
 /// and — crucially — it launches **no** further attempt, so a cancel can never race
 /// a fresh op into flight (the attempt count stays deterministic). Pass `None` to
@@ -1306,7 +1319,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Apply this client's default budget to `cmd` as a **diagnostic** (drop-oldest
     /// tail) bound, for a discard verb that only surfaces its output on failure
     /// (`clone`/`fetch`). Caps the retained error/progress buffer without turning a
-    /// real failure into [`Error::OutputTooLarge`] — the tail (where a CLI's fatal
+    /// real failure into [`ErrorReason::OutputTooLarge`] — the tail (where a CLI's fatal
     /// line sits) is preserved, so [`is_transient_fetch_error`] /
     /// [`is_lock_contention`] still classify it. A no-op when the budget is
     /// [`unlimited`](OutputBudget::unlimited).
@@ -1403,7 +1416,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// **Output budget:** this client's default [`OutputBudget`]
     /// ([`default_output_budget`](Self::default_output_budget)) is applied as a
     /// fail-loud byte ceiling — a content read past the cap errors with
-    /// [`Error::OutputTooLarge`] (carrying the actual and allowed sizes) instead of
+    /// [`ErrorReason::OutputTooLarge`] (carrying the actual and allowed sizes) instead of
     /// buffering an unbounded blob, and a truncated read is never returned as if
     /// complete. Unlimited by default (unchanged behaviour). Override the ceiling
     /// for one call with [`run_untrimmed_within`](Self::run_untrimmed_within).
@@ -1423,7 +1436,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
         budget: OutputBudget,
     ) -> Result<String> {
         let cmd = self.prepare(call).await?;
-        // A fail-loud byte ceiling: `output_bytes` raises `Error::OutputTooLarge`
+        // A fail-loud byte ceiling: `output_bytes` raises `ErrorReason::OutputTooLarge`
         // the moment the raw stdout passes the cap (drained but not retained), so
         // this never returns a truncated blob as if it were complete.
         let cmd = match budget.content_policy() {
@@ -1544,7 +1557,7 @@ mod tests {
         assert!(reject_flag_like("git", "branch name", "  feature").is_ok());
         // The error names the program and surfaces as a spawn-side refusal.
         let err = reject_flag_like("jj", "revset", "--remote").unwrap_err();
-        assert!(matches!(err, Error::Spawn { program, .. } if program == "jj"));
+        assert!(matches!(err.reason(), ErrorReason::Spawn { program, .. } if program == "jj"));
     }
 
     #[test]
@@ -1600,7 +1613,7 @@ mod tests {
         assert!(!is_transient_fetch_error(&missing));
     }
 
-    // R2: regression for the processkit 0.9.1 untruncated-`Error::Exit` fix. A large
+    // R2: regression for the processkit 0.9.1 untruncated-`ErrorReason::Exit` fix. A large
     // output (well past the old 4 KiB cap) with the decisive marker near the END must
     // still classify — proving the classifiers see the whole captured stream.
     #[test]
@@ -1626,20 +1639,20 @@ mod tests {
         assert!(is_transient_fetch_error(&transient));
     }
 
-    // processkit's `Error` is `#[non_exhaustive]` and grows variants over time
+    // processkit's `ErrorReason` is `#[non_exhaustive]` and grows variants over time
     // (`NotReady`/`Unsupported`/`CassetteMiss`/`NotFound`/`Signalled`/`Cancelled`/
     // `ResourceLimit`). Unfamiliar variants must fall through every classifier to
     // "no" — a not-ready or unsupported run is neither a conflict, nor a clean
     // tree, nor worth a fetch retry.
     #[test]
     fn unfamiliar_error_variants_are_not_classified() {
-        let not_ready = Error::NotReady {
+        let not_ready = Error::from(ErrorReason::NotReady {
             program: "git".into(),
             timeout: Duration::from_secs(5),
-        };
-        let unsupported = Error::Unsupported {
+        });
+        let unsupported = Error::from(ErrorReason::Unsupported {
             operation: "suspend".into(),
-        };
+        });
         for err in [&not_ready, &unsupported] {
             assert!(!is_merge_conflict(err));
             assert!(!is_nothing_to_commit(err));
@@ -1647,23 +1660,23 @@ mod tests {
         }
     }
 
-    // `Error::Cancelled` (a client-level `default_cancel_on` killing an in-flight
-    // run; always available since cancellation became core in processkit 0.10) must
-    // fall through every classifier to "no" — a cancelled fetch was *deliberately*
-    // stopped, so replaying it would fight the cancellation. (Behaviour already held
-    // via the `#[non_exhaustive]` fall-through above; this pins it as a first-class
-    // assertion.)
+    // `ErrorReason::Cancelled` (a client-level `default_cancel_on` killing an
+    // in-flight run; always available since cancellation became core in processkit
+    // 0.10) must fall through every classifier to "no" — a cancelled fetch was
+    // *deliberately* stopped, so replaying it would fight the cancellation. (Behaviour
+    // already held via the `#[non_exhaustive]` fall-through above; this pins it as a
+    // first-class assertion.)
     #[test]
     fn cancelled_is_not_transient_or_otherwise_classified() {
-        let cancelled = Error::Cancelled {
+        let cancelled = Error::from(ErrorReason::Cancelled {
             program: "git".into(),
-        };
+        });
         assert!(!is_transient_fetch_error(&cancelled));
         assert!(!is_merge_conflict(&cancelled));
         assert!(!is_nothing_to_commit(&cancelled));
     }
 
-    // `Error::Signalled` (a process killed by a signal — e.g. an external SIGTERM/
+    // `ErrorReason::Signalled` (a process killed by a signal — e.g. an external SIGTERM/
     // SIGKILL, surfaced first-class since processkit 0.9.2 and carrying partial
     // `stdout`/`stderr` since 0.10) is *terminal*, not transient: a deliberate kill
     // should not be auto-retried, and a signal death is neither a merge conflict nor
@@ -1949,6 +1962,12 @@ mod tests {
         )
     }
 
+    /// The [`ErrorReason`] behind a failed result, so the assertions below can match
+    /// a variant on the now-opaque [`Error`] wrapper without unwrapping by hand.
+    fn err_reason<T>(out: &Result<T>) -> Option<&ErrorReason> {
+        out.as_ref().err().map(Error::reason)
+    }
+
     // Cancellation scenario 1 — the token is **already fired** when the backoff is
     // about to begin: `retry_async` must not sleep out the (long) delay, and must
     // abort with a structured `Cancelled` after the single attempt that already ran,
@@ -1972,7 +1991,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            matches!(err_reason(&out), Some(ErrorReason::Cancelled { program }) if program == "git"),
             "a fired token aborts with a program-named Cancelled, got {out:?}"
         );
         assert_eq!(
@@ -2017,7 +2036,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            matches!(err_reason(&out), Some(ErrorReason::Cancelled { program }) if program == "git"),
             "a cancel during the sleep aborts with Cancelled, got {out:?}"
         );
         assert_eq!(
@@ -2059,7 +2078,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(out, Err(Error::Cancelled { ref program }) if program == "git"),
+            matches!(err_reason(&out), Some(ErrorReason::Cancelled { program }) if program == "git"),
             "a cancel observed before the next attempt aborts with Cancelled, got {out:?}"
         );
         assert_eq!(
@@ -2082,7 +2101,7 @@ mod tests {
         })
         .await;
         assert!(
-            matches!(out, Err(Error::Exit { .. })),
+            matches!(err_reason(&out), Some(ErrorReason::Exit { .. })),
             "last error is the lock exit, not Cancelled"
         );
         assert_eq!(

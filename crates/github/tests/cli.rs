@@ -26,7 +26,7 @@ async fn version_mentions_gh() {
 // scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
 // minimum and unrecognisable arms): if a future `gh` reshapes its `--version`
 // output so the shared parser can't read it, `capabilities()` returns
-// `Error::Parse` and this fails, flagging the drift.
+// `ErrorReason::Parse` and this fails, flagging the drift.
 #[tokio::test]
 #[ignore = "requires the gh binary"]
 async fn capability_version_gate_real_binary() {

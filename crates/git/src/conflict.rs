@@ -123,7 +123,7 @@ fn parse_error(message: String) -> Error {
 
 /// Parse a conflicted file's content into text/conflict segments.
 ///
-/// Errors with [`Error::Parse`] only on a genuinely malformed *region*: a
+/// Errors with [`ErrorReason::Parse`](processkit::ErrorReason::Parse) only on a genuinely malformed *region*: a
 /// `<<<<<<<`-opened region missing its `=======` separator or `>>>>>>>`
 /// terminator. A `=======`/`>>>>>>>` run **outside** any region is treated as
 /// ordinary content (a Markdown/RST underline, a divider, a quoted email), so a
@@ -288,6 +288,7 @@ pub fn resolve(segments: &[ConflictSegment], side: ResolutionSide) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::ErrorReason;
 
     const MERGE_2WAY: &str =
         "line 1\n<<<<<<< HEAD\nmain line 2\n=======\nfeature line 2\n>>>>>>> feature\nline 3\n";
@@ -400,7 +401,10 @@ mod tests {
             "<<<<<<< HEAD\nours\n=======\ntheirs\n", // no terminator
         ] {
             assert!(
-                matches!(parse_conflicts(bad), Err(Error::Parse { .. })),
+                matches!(
+                    parse_conflicts(bad).map_err(Error::into_reason),
+                    Err(ErrorReason::Parse { .. })
+                ),
                 "{bad:?} must fail"
             );
         }

@@ -10,6 +10,8 @@ pub use vcs_git::DiffSpec
 pub use vcs_git::DiffStat
 pub use vcs_git::EnvToken
 pub use vcs_git::Error
+pub use vcs_git::ErrorKind
+pub use vcs_git::ErrorReason
 pub use vcs_git::FileDiff
 pub use vcs_git::GitVersion
 pub use vcs_git::Hunk

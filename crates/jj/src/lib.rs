@@ -164,7 +164,14 @@ use std::time::Duration;
 // depend on processkit directly — incl. `ProcessRunner` (the `with_runner`/`Jj<R>`
 // seam) and the `JobRunner` default. (Also brings `Error`/`Result`/`ProcessResult`/
 // `ProcessRunner` into scope here.)
-pub use processkit::{Error, JobRunner, ProcessResult, ProcessRunner, Result};
+// `ErrorReason` and `ErrorKind` ride along deliberately: since processkit 3.0
+// `Error` is an opaque wrapper, so *classifying* a failure means reaching
+// `err.reason()` (variant-grain) or `err.kind()` (flat) — types a consumer cannot
+// name without them. Omitting them would leave the re-exported `Error` unmatched,
+// a silent capability regression rather than a mechanical rename.
+pub use processkit::{
+    Error, ErrorKind, ErrorReason, JobRunner, ProcessResult, ProcessRunner, Result,
+};
 // Re-exported so a consumer can name the token for `default_cancel_on` without
 // taking a direct `processkit` dependency.
 pub use processkit::CancellationToken;
@@ -658,7 +665,7 @@ impl JjCapabilities {
 /// before it can reach an argv slot. The remaining caller-supplied bare
 /// positionals that are *not* bookmarks/revsets — remote names and operation
 /// ids — keep an internal guard: a value that is empty or begins with `-` is
-/// rejected with an [`Error::Spawn`] *before* spawning. Flag-value slots
+/// rejected with an [`ErrorReason::Spawn`] *before* spawning. Flag-value slots
 /// (`-m <msg>`) and the `run`/`run_raw` escape hatches are not guarded.
 #[cfg_attr(feature = "mock", mockall::automock)]
 #[async_trait::async_trait]
@@ -684,7 +691,7 @@ pub trait JjApi: Send + Sync {
     async fn version(&self) -> Result<String>;
     /// The installed binary's parsed version, as [`JjCapabilities`]
     /// (`jj --version`). A value type — probe once and keep it; an
-    /// unrecognisable version string is an [`Error::Parse`].
+    /// unrecognisable version string is an [`ErrorReason::Parse`].
     async fn capabilities(&self) -> Result<JjCapabilities>;
     /// Parsed working-copy changes — the files changed in `@`
     /// (`jj diff -r @ --summary`), mirroring `vcs_git` `status`.
@@ -1018,7 +1025,7 @@ pub trait JjApi: Send + Sync {
     async fn squash_into(&self, dir: &Path, spec: SquashInto) -> Result<()>;
     /// Finalise a commit from exactly these filesets (`commit -m <message>
     /// <filesets>`); the rest stay in the new working-copy change. An **empty**
-    /// `filesets` slice is refused with `Error::Spawn`/`InvalidInput` before spawning
+    /// `filesets` slice is refused with `ErrorReason::Spawn`/`InvalidInput` before spawning
     /// (a bare `jj commit` would commit the whole working copy, not "exactly these").
     async fn commit_paths(&self, dir: &Path, filesets: &[JjFileset], message: &str) -> Result<()>;
     /// Squash exactly these filesets from one revision into another
@@ -1391,7 +1398,7 @@ impl<R: ProcessRunner> Jj<R> {
     /// [`diff_text`](JjApi::diff_text) with an explicit per-call [`OutputBudget`],
     /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
     /// Past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] (actual and
+    /// [`ErrorReason::OutputTooLarge`] (actual and
     /// allowed sizes) rather than buffering an unbounded diff.
     pub async fn diff_text_within(
         &self,
@@ -1443,7 +1450,7 @@ impl<R: ProcessRunner> Jj<R> {
     /// [`file_show`](JjApi::file_show) with an explicit per-call [`OutputBudget`],
     /// instead of this client's [`default_output_budget`](Jj::default_output_budget).
     /// Reads a file's bytes under `budget`: past the ceiling the read errors with
-    /// [`Error::OutputTooLarge`] rather than
+    /// [`ErrorReason::OutputTooLarge`] rather than
     /// buffering an unbounded file.
     pub async fn file_show_within(
         &self,
@@ -3134,6 +3141,13 @@ mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
+    /// The [`ErrorReason`] behind a failed result. Since processkit 3.0 `Error` is
+    /// an opaque wrapper, so the variant assertions below reach the reason through
+    /// it instead of matching the error directly.
+    fn err_reason<T>(out: &Result<T>) -> Option<&ErrorReason> {
+        out.as_ref().err().map(Error::reason)
+    }
+
     // Terse constructors for the validated newtypes in test call sites; the
     // literals here are always valid, so `unwrap` is fine in tests.
     fn rv(s: &str) -> RevsetExpr {
@@ -4628,7 +4642,7 @@ mod tests {
             .await;
         let err = res.expect_err("closure error must surface");
         assert!(
-            matches!(err.cause, Error::Exit { .. }),
+            matches!(err.cause.reason(), ErrorReason::Exit { .. }),
             "cause: {:?}",
             err.cause
         );
@@ -4760,9 +4774,9 @@ mod tests {
             .transaction(dir, |_tx| async move {
                 // The main operation's cancellation fires mid-transaction.
                 token.cancel();
-                Err::<(), _>(Error::Cancelled {
+                Err::<(), _>(Error::from(ErrorReason::Cancelled {
                     program: "jj".to_string(),
-                })
+                }))
             })
             .await;
         let err = res.expect_err("cancelled closure");
@@ -4803,13 +4817,16 @@ mod tests {
             .await;
         let err = res.expect_err("closure error");
         assert!(
-            matches!(err.cause, Error::Exit { .. }),
+            matches!(err.cause.reason(), ErrorReason::Exit { .. }),
             "cause: {:?}",
             err.cause
         );
         match err.rollback {
             Rollback::Failed(e) => {
-                assert!(matches!(e, Error::Exit { .. }), "rollback error: {e:?}");
+                assert!(
+                    matches!(e.reason(), ErrorReason::Exit { .. }),
+                    "rollback error: {e:?}"
+                );
             }
             other => panic!("expected Rollback::Failed, got {other:?}"),
         }
@@ -4844,7 +4861,7 @@ mod tests {
             .await;
         let err = res.expect_err("closure error");
         assert!(
-            matches!(err.cause, Error::Exit { .. }),
+            matches!(err.cause.reason(), ErrorReason::Exit { .. }),
             "cause: {:?}",
             err.cause
         );
@@ -4978,7 +4995,7 @@ mod tests {
         assert!(!caps.is_supported());
         let err = caps.ensure_supported().expect_err("unsupported");
         // The message must name both the floor and the found version.
-        let Error::Spawn { source, .. } = &err else {
+        let ErrorReason::Spawn { source, .. } = err.reason() else {
             panic!("expected Spawn, got {err:?}");
         };
         let message = source.to_string();
@@ -4991,8 +5008,8 @@ mod tests {
         let garbage =
             Jj::with_runner(ScriptedRunner::new().on(["jj", "--version"], Reply::ok("nope")));
         assert!(matches!(
-            garbage.capabilities().await.unwrap_err(),
-            Error::Parse { .. }
+            garbage.capabilities().await.unwrap_err().reason(),
+            ErrorReason::Parse { .. }
         ));
     }
 
@@ -5123,7 +5140,10 @@ mod tests {
             .split_paths(Path::new("/r"), &[], "msg")
             .await
             .expect_err("empty filesets must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -5137,7 +5157,10 @@ mod tests {
             .commit_paths(Path::new("/r"), &[], "msg")
             .await
             .expect_err("empty filesets must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -5182,7 +5205,10 @@ mod tests {
             .log_paths(Path::new("."), &rv("@"), 5, &[])
             .await
             .expect_err("empty filesets must be refused");
-        assert!(matches!(err, Error::Spawn { .. }), "got {err:?}");
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "got {err:?}"
+        );
         assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
@@ -5397,8 +5423,9 @@ mod tests {
         match jj
             .diff_text(Path::new("."), DiffSpec::Rev("@-".into()))
             .await
+            .map_err(Error::into_reason)
         {
-            Err(Error::OutputTooLarge {
+            Err(ErrorReason::OutputTooLarge {
                 program,
                 max_bytes,
                 total_bytes,
@@ -5434,8 +5461,8 @@ mod tests {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "file", "show"], Reply::ok(&big)))
             .default_output_budget(OutputBudget::bytes(64 * 1024));
         assert!(matches!(
-            jj.file_show(Path::new("."), &rv("@"), "big.bin").await,
-            Err(Error::OutputTooLarge { .. })
+            err_reason(&jj.file_show(Path::new("."), &rv("@"), "big.bin").await),
+            Some(ErrorReason::OutputTooLarge { .. })
         ));
         let got = jj
             .file_show_within(

@@ -10,7 +10,7 @@
 //! the parser against *assumed* fixtures). They run a real `tea … list` and assert the
 //! output is a real table our parser accepts — **not** a format mismatch. A format
 //! mismatch is a hard **failure**, the exact bug class this crate's re-model fixed:
-//! that means either our parser diverged from tea's real output (`Error::Parse`) or tea
+//! that means either our parser diverged from tea's real output (`ErrorReason::Parse`) or tea
 //! rejected the requested `--output` format (an `unknown output type` diagnostic — how
 //! `tea` 0.9.x reported the old, unsupported `--output json`, with exit 0). Only a
 //! genuine **environment** problem (no Gitea repo, not authenticated, network) is a
@@ -39,24 +39,24 @@ fn test_repo() -> PathBuf {
 
 /// Whether an error is a **format-contract** signal (a hard failure) rather than an
 /// environment skip. Two shapes count as drift: our parser rejecting tea's real output
-/// (`Error::Parse`), and tea rejecting the requested `--output` format — the `unknown
+/// (`ErrorReason::Parse`), and tea rejecting the requested `--output` format — the `unknown
 /// output type` diagnostic, which on `tea` 0.9.x arrived with exit 0 and so used to be
 /// swallowed as a silent empty list. Everything else (no repo, no login, network) is a
 /// genuine environment error we skip on.
 ///
 /// **A confirmed resource absence is not drift.** `issue_view`/`pr_view` synthesize a
 /// single-item view by paging `tea … list` (`tea` has no single-item endpoint), so a
-/// number that is genuinely absent is reported as an `Error::Parse` too — the *same
+/// number that is genuinely absent is reported as an `ErrorReason::Parse` too — the *same
 /// variant* a real drift uses. `vcs_gitea::is_view_absence` recognises that deliberate
 /// sentinel *by structure*, so this gate excludes it **without matching the message
-/// text by hand** — while every other `Error::Parse` (a real parser/`--output`
+/// text by hand** — while every other `ErrorReason::Parse` (a real parser/`--output`
 /// mismatch) still counts as drift, so a genuine format regression is never masked as a
 /// mere absence.
 fn is_format_drift(err: &processkit::Error) -> bool {
     if is_view_absence(err) {
         return false;
     }
-    matches!(err, processkit::Error::Parse { .. })
+    matches!(err.reason(), processkit::ErrorReason::Parse { .. })
         || err.to_string().contains("unknown output type")
 }
 
@@ -81,7 +81,7 @@ fn assert_output_contract<T>(label: &str, result: processkit::Result<T>) {
 /// `release_list` is the one read op with **no `--fields`** pin — tea's release-table
 /// column order is intrinsic (pinned in `src/parse.rs` to tea's
 /// `modules/print/release.go::ReleasesList`), so a same-typed `Published At`<->`Status`
-/// transposition in a future `tea` would parse with no `Error::Parse`/`unknown output
+/// transposition in a future `tea` would parse with no `ErrorReason::Parse`/`unknown output
 /// type` and thus slip past [`is_format_drift`]. This value-shape check makes that
 /// specific swap catchable against a real `tea`: for `--output csv` (machine-readable),
 /// tea's `FormatTime` emits an RFC3339 stamp for a published release and `""` for a
@@ -126,7 +126,7 @@ async fn version_runs() {
 // scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
 // minimum and unrecognisable arms): if a future `tea` reshapes its `--version`
 // output so the shared parser can't read it, `capabilities()` returns
-// `Error::Parse` and this fails, flagging the drift.
+// `ErrorReason::Parse` and this fails, flagging the drift.
 #[tokio::test]
 #[ignore = "requires the tea binary"]
 async fn capability_version_gate_real_binary() {

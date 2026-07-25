@@ -5,6 +5,8 @@ pub use vcs_jj::DiffLine
 pub use vcs_jj::DiffSpec
 pub use vcs_jj::DiffStat
 pub use vcs_jj::Error
+pub use vcs_jj::ErrorKind
+pub use vcs_jj::ErrorReason
 pub use vcs_jj::FileDiff
 pub use vcs_jj::Hunk
 pub use vcs_jj::JjVersion

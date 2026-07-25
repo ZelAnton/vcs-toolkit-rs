@@ -317,7 +317,7 @@ pub(crate) fn parse_ci_status(json: &str) -> Result<CiStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::Error;
+    use processkit::ErrorReason;
 
     #[test]
     fn parses_mr_list() {
@@ -633,9 +633,11 @@ mod tests {
 
     #[test]
     fn malformed_json_is_a_parse_error() {
-        match vcs_cli_support::json::from_json::<Vec<MergeRequest>>(BINARY, "not json").unwrap_err()
+        match vcs_cli_support::json::from_json::<Vec<MergeRequest>>(BINARY, "not json")
+            .unwrap_err()
+            .into_reason()
         {
-            Error::Parse { .. } => {}
+            ErrorReason::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
     }

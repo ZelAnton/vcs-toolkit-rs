@@ -121,10 +121,15 @@ a promise):
   (DTOs, parsed results) is `#[non_exhaustive]` so a new field/variant isn't a
   breaking change — except deliberate value types (`Version`) that callers
   legitimately construct.
-- **Structured errors.** Failures surface as `processkit::Error` variants
-  (`Exit`/`Timeout`/`Spawn`/`Parse`), never a stringly-typed blob; the facade adds
-  only repo-detection variants. Classifiers (`is_merge_conflict`, …) give intent
-  without matching on internals.
+- **Structured errors.** Failures surface as a `processkit::Error`, never a
+  stringly-typed blob. Since processkit 3.0 that type is an opaque, pointer-sized
+  wrapper: the structured variants (`Exit`/`Timeout`/`Spawn`/`Parse`/…) live on
+  `processkit::ErrorReason`, reached with `err.reason()` (borrow) or
+  `err.into_reason()` (own), with the flat `err.kind() -> ErrorKind` for coarse
+  classification. Every crate that re-exports `Error` re-exports `ErrorReason` and
+  `ErrorKind` alongside it, so a consumer can classify a failure without depending on
+  `processkit` directly. The facade adds only repo-detection variants. Classifiers
+  (`is_merge_conflict`, …) give intent without matching on internals.
 - **Injection-safe by default.** Caller strings in bare positional argv slots are
   guarded (`reject_flag_like`); flag-value slots are documented as exempt.
 - **No leaked internals.** Re-exports are explicit (no glob leaks); private

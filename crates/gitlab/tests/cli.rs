@@ -48,7 +48,7 @@ async fn auth_status_does_not_error() {
 // scheduled-drift lane runs (the hermetic unit tests in `src/lib.rs` cover the
 // minimum and unrecognisable arms): if a future `glab` reshapes its `--version`
 // output so the shared parser can't read it, `capabilities()` returns
-// `Error::Parse` and this fails, flagging the drift.
+// `ErrorReason::Parse` and this fails, flagging the drift.
 #[tokio::test]
 #[ignore = "requires the glab binary"]
 async fn capability_version_gate_real_binary() {

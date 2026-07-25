@@ -13,7 +13,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
 - **`is_view_absence` — tell a confirmed issue/PR absence apart from a format drift.**
   `tea` has no single-item view, so `GiteaApi::issue_view`/`pr_view` synthesize one by
   paging `tea … list`; a number that is genuinely absent can therefore only be reported
-  as a `processkit::Error::Parse` — the **same variant** a real format drift (our
+  as a `processkit::ErrorReason::Parse` — the **same variant** a real format drift (our
   positional parser rejecting tea's output, or tea's `unknown output type`) uses. The
   new `vcs_gitea::is_view_absence(&err)` classifier recognises the deliberate
   "confirmed absent" sentinel **by structure** (a shared message prefix the producing
@@ -23,10 +23,10 @@ crates; tag releases as `vcs-gitea-v<version>`.
   **without matching the error message text by hand**, and a real drift is never
   misread as an absence. This makes the absence-vs-drift split a **documented, typed
   contract** rather than an incidental string shape. The `issue_view`/`pr_view`
-  signatures and the absence `Error::Parse` value (its message included) are
+  signatures and the absence `ErrorReason::Parse` value (its message included) are
   **unchanged**, so existing consumers — including the `vcs-forge` facade's
   `is_resource_not_found` — keep working; the page-safety-bound miss stays a distinct,
-  loud `Error::Parse` for which `is_view_absence` is `false`.
+  loud `ErrorReason::Parse` for which `is_view_absence` is `false`.
 - **Issue lifecycle methods.** `GiteaApi::issue_close(dir, number)` (`tea issues
   close <index>`) and `issue_reopen(dir, number)` (`tea issues reopen <index>`)
   flip an issue's state and return `Result<()>`; `issue_comment(dir, number, body)`
@@ -34,7 +34,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
   reusing the shared `tea comment` subcommand (Gitea's issue/PR index space is
   shared, like `pr_comment`). The comment body is a bare positional, so it is
   guarded with `reject_flag_like`. All three are `at`-forwarded and have defaulted
-  `Error::Unsupported` trait bodies so external implementers keep compiling; the
+  `ErrorReason::Unsupported` trait bodies so external implementers keep compiling; the
   exact argv is pinned by hermetic tests.
 
 ### Changed
@@ -59,13 +59,13 @@ crates; tag releases as `vcs-gitea-v<version>`.
   can't be parsed structurally; `issue_view` now pages `tea issues list --state all`
   (`--output csv`) and filters by number, like `pr_view` — finding a closed issue and
   one past the server's ~50-row page cap. The public `GiteaApi::issue_view` signature
-  and the `Issue` DTO are **unchanged**; a genuine absence is an `Error::Parse`.
+  and the `Issue` DTO are **unchanged**; a genuine absence is an `ErrorReason::Parse`.
 
 ### Fixed
 - **`pr_edit` now fails safely instead of silently listing PRs.** `tea` 0.9.2 has no
   `pr edit` subcommand and degrades an unknown subcommand into `pr list`; the concrete
   client implementation was removed so `GiteaApi::pr_edit` now uses its default
-  `Error::Unsupported` result without spawning `tea`. Use the Gitea REST API to edit a
+  `ErrorReason::Unsupported` result without spawning `tea`. Use the Gitea REST API to edit a
   pull request.
 - **PR merge argv now puts flags before the index.** `GiteaApi::pr_merge` emits
   `tea pr merge --style <style> <index>`. This is required by tea 0.9.x's urfave-cli
@@ -74,7 +74,7 @@ crates; tag releases as `vcs-gitea-v<version>`.
   error.** tea always prints a DSV header even for zero rows, and some builds print
   nothing — both now read as an empty list rather than an error, while the
   `unknown output type` diagnostic (the exit-0 signal that a requested `--output`
-  format is unsupported) is turned into an `Error::Parse` instead of a silently-empty
+  format is unsupported) is turned into an `ErrorReason::Parse` instead of a silently-empty
   result, so a format regression can't pass unnoticed.
 - **Format-drift test gate no longer degrades into an environment-skip.** The
   `#[ignore]` real-`tea` suite (`tests/cli.rs`) and the weekly `gitea-live` workflow
@@ -97,7 +97,28 @@ crates; tag releases as `vcs-gitea-v<version>`.
   hermetic tests (the live commands mutate a real PR's review state).
 
 ### Changed
--
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  **Breaking** through this crate's own re-exported `vcs_gitea::Error`: `processkit::Error`
+  is no longer an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason`
+  (the former enum, every variant and field unchanged). All read accessors
+  (`code`/`program`/`stdout`/`stderr`/`stdout_bytes`/`diagnostic`/`combined`/the `is_*`
+  predicates/`signal`/`limit_kind`), `Display`, `Debug` and `source` are untouched, and
+  no method signature in this crate changed — only a direct variant match moves from
+  `match err { Error::Exit { .. } => … }` to `match err.reason() { ErrorReason::Exit { .. }
+  => … }` (or `err.into_reason()` to move a captured stream / the owned `io::Error`
+  out). (T-129.)
+- Re-exports `processkit::ErrorReason` and `processkit::ErrorKind` alongside the existing
+  `Error`/`Result`/`ProcessResult`/`ProcessRunner`/`JobRunner`, as `vcs_gitea::ErrorReason`
+  and `vcs_gitea::ErrorKind`. Deliberate and additive: with `Error` now opaque, these are
+  the only way to classify a failure, so omitting them would have turned a mechanical
+  rename into a silent capability regression for a consumer that depends on this crate
+  alone. (T-129.)
+- Requires a coordinated release of `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`,
+  `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
+  (`crates/core/docs/stability.md`, "Coordinated-release dependencies"). This crate is
+  pre-1.0, so the breaking change rides the minimum necessary **minor** bump
+  (0.7.0 → 0.8.0), which also satisfies the release workflow's `cargo-semver-checks`
+  gate. (T-129.)
 
 ### Fixed
 -

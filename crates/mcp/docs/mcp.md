@@ -163,7 +163,7 @@ host) resolves to **no forge**, so the `forge_*` tools return the "no forge
 configured" error while the `repo_*` tools work regardless. Pass `--forge` to
 override the detection (e.g. a self-hosted GitLab/Gitea on a custom domain).
 
-Gitea's wrapper reports `Error::Unsupported` for `repo_view`/`pr_checks`/
+Gitea's wrapper reports `ErrorReason::Unsupported` for `repo_view`/`pr_checks`/
 `release_view`; the server maps that to an MCP *invalid-request* (a client-facing
 "this forge can't do that"), distinct from an internal forge/network failure.
 

@@ -280,7 +280,7 @@ fn looks_git_style(content: &str) -> bool {
 }
 
 /// Parse a jj-materialized conflicted file (native `diff`/`snapshot` styles)
-/// into text/conflict segments. Errors with [`Error::Parse`] on malformed input
+/// into text/conflict segments. Errors with [`ErrorReason::Parse`](processkit::ErrorReason::Parse) on malformed input
 /// (unterminated region, content before the first section marker). A **git-style**
 /// file (the `<<<`/`===`/`>>>` triad with no jj `conflict N of M` header) is
 /// redirected to `vcs_git::conflict`. A jj file whose *content* merely contains a
@@ -482,6 +482,7 @@ pub fn resolve(segments: &[JjConflictSegment], resolution: JjResolution) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::ErrorReason;
 
     // Captured verbatim from jj 0.38 (default `diff` style).
     const DIFF_STYLE: &str = "line 1\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from: rnxsupvw 638ae425 \"base\"\n\\\\\\\\\\\\\\        to: ozvltnxm 92f2b14f \"side-a\"\n-line 2\n+main line 2\n+++++++ xyrusolp ad268d1f \"side-b\"\nfeature line 2\n>>>>>>> conflict 1 of 1 ends\nline 3\n";
@@ -570,7 +571,10 @@ mod tests {
             ">>>>>>> conflict 1 of 1 ends\n",
         );
         let err = parse_conflicts(input).unwrap_err();
-        assert!(matches!(err, Error::Parse { .. }), "structured parse error");
+        assert!(
+            matches!(err.reason(), ErrorReason::Parse { .. }),
+            "structured parse error"
+        );
         assert!(
             err.to_string().contains("to:"),
             "error should point at the malformed `to:` line: {err}"
@@ -862,7 +866,10 @@ mod tests {
     fn git_style_and_malformed_are_rejected() {
         let git_style = "<<<<<<< abc 123 \"side-a\"\nx\n||||||| base\ny\n=======\nz\n>>>>>>> def\n";
         let err = parse_conflicts(git_style).unwrap_err();
-        assert!(matches!(err, Error::Parse { .. }), "structured parse error");
+        assert!(
+            matches!(err.reason(), ErrorReason::Parse { .. }),
+            "structured parse error"
+        );
         // The message must actively steer the caller to the right parser, not just
         // fail — that redirect is the point of rejecting a git-style file here.
         assert!(

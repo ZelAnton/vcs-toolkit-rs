@@ -50,7 +50,7 @@ positional and always lists). Consequences:
   50 rows each) and filtering by number. The Gitea *server* caps a page at
   `MAX_RESPONSE_ITEMS` (default 50), so a single large `--limit` is silently clamped
   — paging is what lets `pr_view` find a PR past that cap instead of a false "not
-  found". It stops at the first empty page (a genuine absence → `Error::Parse`) or a
+  found". It stops at the first empty page (a genuine absence → `ErrorReason::Parse`) or a
   large safety bound. (`issue_view`, by contrast, is a *first-class* `tea issues
   <index>` — see [Issues & releases](#issues--releases).)
 - **`repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are simply
@@ -131,7 +131,7 @@ tea.pr_merge(repo, 7, PrMerge::squash()).await?;
 `PrMerge::merge()`/`squash()`/`rebase()`. The gh-style `.auto()` /
 `.delete_branch()` options are **not expressible on `tea`** (it has no
 merge-when-checks flag), so setting either makes `pr_merge` return
-`Error::Unsupported` rather than silently dropping it.
+`ErrorReason::Unsupported` rather than silently dropping it.
 
 `pr_create` takes a [`PrCreate`] spec — build it through `PrCreate::new(title,
 body)` and chain the optional `.head(b)` (`--head`; `None` = the current branch) /

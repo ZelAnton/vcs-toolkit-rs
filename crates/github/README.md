@@ -91,7 +91,11 @@ use std::time::Duration;
     match gh.auth_status().await {
         Ok(true) => println!("authenticated"),
         Ok(false) => println!("not logged in (run `gh auth login`)"),
-        Err(processkit::Error::Timeout { .. }) => eprintln!("gh timed out"),
+        // `Error` is an opaque wrapper since processkit 3.0; the variants live on
+        // `ErrorReason`, re-exported as `vcs_github::ErrorReason` too.
+        Err(e) if matches!(e.reason(), processkit::ErrorReason::Timeout { .. }) => {
+            eprintln!("gh timed out")
+        }
         Err(e) => eprintln!("{e}"),
     }
 # Ok(()) }

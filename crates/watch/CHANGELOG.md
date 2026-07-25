@@ -13,7 +13,20 @@ crates; tag releases as `vcs-watch-v<version>`.
 -
 
 ### Changed
--
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  **Breaking** through `Error::processkit_error() -> Option<&processkit::Error>`:
+  `processkit::Error` is no longer an enum but an opaque, pointer-sized wrapper around a
+  boxed `ErrorReason` (the former enum, every variant and field unchanged), so a
+  consumer that matched the returned error by variant now goes through `err.reason()`
+  (borrow) or the flat `err.kind()`. `ErrorReason` and `ErrorKind` are reachable through
+  the existing whole-crate `pub use processkit;`, so no new named re-export was needed
+  here. This crate's own `Error`/`WatchError` enums are unaffected (`Error::Io` is
+  `vcs-watch`'s own `std::io::Error` variant, not processkit's), no method signature
+  changed, and no behaviour changed. Requires a coordinated release of
+  `vcs-cli-support`, `vcs-git`, `vcs-jj`, `vcs-github`, `vcs-gitlab`, `vcs-gitea`,
+  `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
+  (`crates/core/docs/stability.md`); pre-1.0, so the minimum necessary bump here is a
+  **minor** one (0.7.0 → 0.8.0). (T-129.)
 
 ### Fixed
 -

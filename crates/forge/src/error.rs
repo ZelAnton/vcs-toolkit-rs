@@ -145,8 +145,15 @@ impl Error {
     /// (spawn/timeout/signal/not-found) and the facade's own variants, which carry
     /// no CLI message to classify.
     fn cli_output(&self) -> Option<String> {
-        match self {
-            Error::Forge(processkit::Error::Exit { stdout, stderr, .. }) => {
+        let Error::Forge(e) = self else {
+            return None;
+        };
+        // Matches the *reason* rather than reading `Error::stdout`/`Error::stderr`:
+        // those accessors also hand back the partial output of a `Timeout`/`Signalled`
+        // run, which this classifier deliberately excludes (a killed run's tail is not
+        // a CLI verdict to scan for auth/rate-limit markers).
+        match e.reason() {
+            processkit::ErrorReason::Exit { stdout, stderr, .. } => {
                 Some(format!("{stdout}\n{stderr}").to_ascii_lowercase())
             }
             _ => None,
@@ -210,15 +217,20 @@ impl Error {
     /// (an operation — or a requested option — a backend can't do, e.g. `pr_checks`
     /// on Gitea, or `auto`/`delete_branch` on `pr_merge` and source-branch deletion on
     /// `pr_close` off GitHub, which the facade rejects before spawning) **and** a
-    /// wrapper-level [`processkit::Error::Unsupported`] bubbling up through
+    /// wrapper-level [`processkit::ErrorReason::Unsupported`] bubbling up through
     /// [`Forge`](crate::Error::Forge) — the same "this backend can't do that" signal,
     /// whether the facade caught it up front or a wrapper reported it. A caller acts on
     /// either identically.
     pub fn is_unsupported(&self) -> bool {
-        matches!(
-            self,
-            Error::Unsupported { .. } | Error::Forge(processkit::Error::Unsupported { .. })
-        )
+        match self {
+            Error::Unsupported { .. } => true,
+            // This is a coarse classification, not a field read, so it goes through
+            // processkit's flat `kind()` rather than its `reason()` variant —
+            // `ErrorKind::Unsupported` has exactly one source reason, so the two are
+            // equivalent here and `kind()` states the intent.
+            Error::Forge(e) => e.kind() == processkit::ErrorKind::Unsupported,
+            _ => false,
+        }
     }
 
     /// Whether this is the pre-spawn **version gate** refusal
@@ -261,13 +273,16 @@ impl Error {
     /// resource the caller *can't access* as well as one that's absent, so a `glab`
     /// hit can mean "forbidden" — indistinguishable from the CLI text.
     pub fn is_resource_not_found(&self) -> bool {
-        let hay = match self {
-            Error::Forge(processkit::Error::Exit { stdout, stderr, .. }) => {
+        let Error::Forge(e) = self else {
+            return false;
+        };
+        let hay = match e.reason() {
+            processkit::ErrorReason::Exit { stdout, stderr, .. } => {
                 format!("{stdout}\n{stderr}").to_ascii_lowercase()
             }
             // The Gitea `pr_view` miss is a facade *parse* error (an absent list row),
             // not a non-zero exit — check its message too.
-            Error::Forge(processkit::Error::Parse { message, .. }) => message.to_ascii_lowercase(),
+            processkit::ErrorReason::Parse { message, .. } => message.to_ascii_lowercase(),
             _ => return false,
         };
         RESOURCE_NOT_FOUND_MARKERS.iter().any(|m| hay.contains(m))

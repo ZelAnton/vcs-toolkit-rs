@@ -17,7 +17,7 @@ the real [`GitHub`] client only appears at the edges. See
 [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) for the two seams.
 
 Requires the `gh` binary on `PATH`, authenticated via `gh auth login`. An
-unauthenticated `gh` surfaces as an `Error::Exit` (gh's auth-required exit), not
+unauthenticated `gh` surfaces as an `ErrorReason::Exit` (gh's auth-required exit), not
 a silent empty result.
 
 [`processkit`]: https://crates.io/crates/processkit
@@ -38,7 +38,7 @@ knobs and one test seam:
 use std::time::Duration;
 use processkit::testing::ScriptedRunner;
 
-// Cap every spawned `gh` — a slow/hung command becomes `Error::Timeout`.
+// Cap every spawned `gh` — a slow/hung command becomes `ErrorReason::Timeout`.
 let gh = GitHub::new().default_timeout(Duration::from_secs(30));
 
 // Inject a fake process executor instead of spawning `gh` (tests, CI).
@@ -115,7 +115,9 @@ let gh = GitHub::new();
 match gh.auth_status().await {
     Ok(true)  => println!("authenticated"),
     Ok(false) => println!("not logged in (run `gh auth login`)"),
-    Err(processkit::Error::Timeout { .. }) => eprintln!("gh timed out"),
+    Err(e) if matches!(e.reason(), processkit::ErrorReason::Timeout { .. }) => {
+        eprintln!("gh timed out")
+    }
     Err(e) => eprintln!("{e}"),
 }
 # Ok(()) }
@@ -257,7 +259,7 @@ every case and lets you branch on each entry's [`bucket`](#checkrun). A PR with
 no checks at all (gh exits 1 with a "no checks reported" message and no JSON)
 yields an empty list. Any *other* non-zero exit — no such PR, auth required,
 timeout — is a genuine error. A JSON that fails to parse surfaces as
-`Error::Parse`, never masked by the exit code.
+`ErrorReason::Parse`, never masked by the exit code.
 
 ```rust,ignore
 # use vcs_github::{CheckBucket, GitHub, GitHubApi};
@@ -356,7 +358,7 @@ follow-up `run view`. It deliberately omits gh's `--exit-status`: that flag
 would fold the run's outcome onto the process exit code, which can't distinguish
 a failed run from a cancelled one — the follow-up view's
 [`conclusion`](#workflowrun) can. A client `default_timeout` kills the watch
-when it elapses (`Error::Timeout`), so drive `run_watch` from a client with no
+when it elapses (`ErrorReason::Timeout`), so drive `run_watch` from a client with no
 (or a generous) timeout.
 
 ```rust,ignore
@@ -377,7 +379,7 @@ match run.conclusion.as_str() {
 The three *control* verbs close the CI automation loop (start a workflow,
 rerun a failed one, cancel a running one). All three return `Result<()>` and
 follow gh's exit-code convention (`gh help exit-codes`): **0** on success, **1**
-on failure (surfaced as `Error::Exit`), **4** if gh is not authenticated.
+on failure (surfaced as `ErrorReason::Exit`), **4** if gh is not authenticated.
 
 `workflow_dispatch` fires a `workflow_dispatch` event (`gh workflow run`) via a
 [`WorkflowDispatch`](#workflowdispatch) spec — the workflow (its file or display

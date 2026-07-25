@@ -136,7 +136,7 @@ fn strip_fork_owner(head: &str) -> String {
 }
 
 /// Parse a tea table cell holding an issue/PR index (a plain number after DSV
-/// unquoting, e.g. `4`) into a `u64`, mapping a non-numeric value to [`Error::Parse`].
+/// unquoting, e.g. `4`) into a `u64`, mapping a non-numeric value to [`ErrorReason::Parse`](processkit::ErrorReason::Parse).
 fn parse_index(value: &str) -> Result<u64> {
     value
         .trim()
@@ -147,7 +147,7 @@ fn parse_index(value: &str) -> Result<u64> {
 /// The message `tea` prints when asked for an `--output` format it does not support.
 /// On the crate's floor (`tea` 0.9.x) this goes to **stdout with exit code 0**, so a
 /// read op would otherwise treat it as a silently-empty list; detect it and turn it
-/// into a loud [`Error::Parse`] instead (a newer `tea` exits non-zero, which the
+/// into a loud [`ErrorReason::Parse`](processkit::ErrorReason::Parse) instead (a newer `tea` exits non-zero, which the
 /// `try_parse`/`ensure_success` layer already surfaces as an error). tea has spelled
 /// the prefix with either a leading `'` (0.9/0.10) or `"` (0.14) quote and, in some
 /// builds, wrapped the whole message in `"`, so match the version-stable prefix after
@@ -299,7 +299,7 @@ pub(crate) fn parse_issue_list(csv: &str) -> Result<Vec<Issue>> {
 ///
 /// The one drift this positional read can't self-detect is a same-typed transposition
 /// among the string columns (e.g. `Published At` <-> `Status`): it parses with no
-/// `Error::Parse`/`unknown output type`, so it would slip past the format-drift gate.
+/// `ErrorReason::Parse`/`unknown output type`, so it would slip past the format-drift gate.
 /// The live `#[ignore]` release check in `tests/cli.rs` covers that specific swap with a
 /// value-shape assertion (a real `published_at` must look like a timestamp, never a
 /// `Status` keyword).
@@ -354,6 +354,7 @@ pub(crate) fn parse_login_present(csv: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::ErrorReason;
     use proptest::prelude::*;
 
     // An empty (some tea builds) or header-only (the usual empty-list shape) table is
@@ -386,20 +387,20 @@ mod tests {
             "unknown output type \"json\", available types are: csv, simple, table, tsv, yaml, json",
         ] {
             assert!(matches!(
-                parse_pr_list(sentinel).unwrap_err(),
-                Error::Parse { .. }
+                parse_pr_list(sentinel).unwrap_err().reason(),
+                ErrorReason::Parse { .. }
             ));
             assert!(matches!(
-                parse_issue_list(sentinel).unwrap_err(),
-                Error::Parse { .. }
+                parse_issue_list(sentinel).unwrap_err().reason(),
+                ErrorReason::Parse { .. }
             ));
             assert!(matches!(
-                parse_release_list(sentinel).unwrap_err(),
-                Error::Parse { .. }
+                parse_release_list(sentinel).unwrap_err().reason(),
+                ErrorReason::Parse { .. }
             ));
             assert!(matches!(
-                parse_login_present(sentinel).unwrap_err(),
-                Error::Parse { .. }
+                parse_login_present(sentinel).unwrap_err().reason(),
+                ErrorReason::Parse { .. }
             ));
         }
     }
@@ -517,8 +518,8 @@ mod tests {
     #[test]
     fn pr_non_numeric_index_is_a_parse_error() {
         let csv = "\"index\",\"title\",\"state\"\n\"x\",\"t\",\"open\"\n";
-        match parse_pr_list(csv).unwrap_err() {
-            Error::Parse { .. } => {}
+        match parse_pr_list(csv).unwrap_err().into_reason() {
+            ErrorReason::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
     }
@@ -614,8 +615,8 @@ mod tests {
     #[test]
     fn release_missing_tag_is_a_parse_error() {
         let csv = "\"Tag-Name\",\"Title\"\n\"\",\"no tag\"\n";
-        match parse_release_list(csv).unwrap_err() {
-            Error::Parse { .. } => {}
+        match parse_release_list(csv).unwrap_err().into_reason() {
+            ErrorReason::Parse { .. } => {}
             other => panic!("expected Parse, got {other:?}"),
         }
     }

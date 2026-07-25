@@ -27,7 +27,40 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   `CommandRecord`, `CommandStatus`, and `StderrObserver`. (T-117.)
 
 ### Changed
--
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  Breaking for a downstream that pattern-matches a `processkit::Error` this crate's
+  classifiers accept: `Error` is no longer an enum but an opaque, pointer-sized
+  wrapper around a boxed `ErrorReason` (the former enum, every variant and field
+  unchanged). Read accessors (`code`/`program`/`stdout`/`stderr`/`diagnostic`/the
+  `is_*` predicates/…), `Display`, `Debug`, and `source` are untouched — only a direct
+  variant match moves to `err.reason()` (borrow) / `err.into_reason()` (own), with the
+  new flat `err.kind() -> ErrorKind` for coarse classification. Every signature in this
+  crate is unchanged (`is_merge_conflict`, `is_nothing_to_commit`,
+  `is_transient_fetch_error`, `is_lock_contention`, `is_invalid_input` still take
+  `&processkit::Error`), and their behaviour is preserved exactly — the internal
+  variant matches were rewritten against `reason()`, deliberately *not* against the
+  `stdout()`/`stderr()` accessors, which would also have admitted a `Timeout`/
+  `Signalled` run's partial output. Requires a coordinated release of the whole
+  processkit-facing set (see `crates/core/docs/stability.md`); pre-1.0, so the minimum
+  necessary bump here is a **minor** one (0.7.0 → 0.8.0). (T-129.)
+- `logging::CommandStatus::Failed`'s category string now comes from processkit's flat
+  `ErrorKind` classifier instead of an eight-arm variant match. A permission-denied
+  spawn/IO failure reads as `permission denied` (was `spawn failed`/`io error`), and a
+  signal death (`signalled`) and a predicate rejection (`predicate rejected`) gain their
+  own categories instead of falling into the generic `error`. `program not found`,
+  `spawn failed`, `timed out`, `cancelled`, `unsupported`, `non-zero exit` and
+  `output too large` are unchanged (the last recovered through the dedicated
+  `Error::output_overflow` accessor, which `ErrorKind` folds into its catch-all); a
+  plain non-permission `Io` failure now reads `error` rather than `io error`. The
+  strings are diagnostic text on a stderr log line, not a parsed contract. (T-129.)
+- `OutputBudget::bytes`' documented unit follows processkit 3.0: the
+  `OutputBufferPolicy::max_bytes` ceiling now counts **raw bytes read from the output
+  pipe** (line terminators and invalid-UTF-8 bytes included) rather than decoded
+  line-content bytes, so a cap trips marginally earlier on CRLF or non-UTF-8 output.
+  Identical for plain ASCII/UTF-8 LF output. The projections themselves
+  (`content_policy`/`diagnostic_policy`) are unchanged; re-tuning this workspace's own
+  documented ceilings against the new unit is deliberately left to a follow-up audit.
+  (T-129.)
 
 ### Fixed
 - `redact_args`/`redact_value` no longer mistake part of a URL's path or query for

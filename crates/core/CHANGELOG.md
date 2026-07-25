@@ -49,7 +49,22 @@ crates; tag releases as `vcs-core-v<version>`.
   consumer must not expose jj-specific API types. (T-108.)
 
 ### Changed
--
+- **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
+  **Breaking** through `Error::Vcs(processkit::Error)`: `processkit::Error` is no longer
+  an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason` (the former
+  enum, every variant and field unchanged), so a consumer that matched
+  `Error::Vcs(processkit::Error::Timeout { .. })` now writes
+  `Error::Vcs(e) if matches!(e.reason(), processkit::ErrorReason::Timeout { .. })` (or
+  `e.into_reason()` to take ownership, or the flat `e.kind()`). `ErrorReason` and
+  `ErrorKind` are reachable through the existing whole-crate `pub use processkit;`, so
+  no new named re-export was needed here. No method signature in this crate changed and
+  the facade's own classifiers (`is_merge_conflict`, `is_not_found`,
+  `is_transient_fetch_error`, `is_invalid_input`, …) keep their exact behaviour.
+  `crates/core/docs/stability.md`'s "Structured errors" guarantee was restated for the
+  new shape. Requires a coordinated release of `vcs-cli-support`, `vcs-git`, `vcs-jj`,
+  `vcs-github`, `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch` and
+  `vcs-mcp` (same document); pre-1.0, so the minimum necessary bump here is a **minor**
+  one (0.9.0 → 0.10.0). (T-129.)
 
 ### Fixed
 - `Repo::create_worktree` on jj now gives each normalized workspace name a stable
