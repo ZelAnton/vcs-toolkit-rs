@@ -70,6 +70,15 @@ crates; tag releases as `vcs-jj-v<version>`.
   pre-1.0, so the breaking change rides the minimum necessary **minor** bump
   (0.11.0 → 0.12.0), which also satisfies the release workflow's `cargo-semver-checks`
   gate. (T-129.)
+- Byte-ceiling accounting for the budgeted content verbs audited against processkit 3.0:
+  **no ceiling moved** — `diff_text`/`diff`/`file_show`/`template_query` read `jj`'s RAW
+  stdout, whose byte accounting the 3.0 release left untouched. The same fail-loud budget
+  does also ride the command's line-pumped **stderr**, which now charges every line
+  terminator, so a `jj` invocation that floods stderr can raise `OutputTooLarge`
+  marginally earlier than it did on the 2.x line. The drop-oldest diagnostic bound
+  `git_clone`/`git_fetch` use is unaffected (drop-mode retention is still measured in
+  decoded line-content bytes). `vcs_cli_support::OutputBudget::bytes` documents the
+  per-stream unit; nothing here was re-tuned. (T-130.)
 
 ### Fixed
 - **`resolve_list` now reads jj's machine-oriented `file list` template instead

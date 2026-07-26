@@ -1691,6 +1691,10 @@ mod tests {
     // `OutputTooLarge`-carrying error (actual + allowed sizes), never a truncated
     // diff; the facade's `pr_diff_within` overrides the ceiling per-call. Verified
     // on both GitHub (`gh pr diff`) and GitLab (`glab mr diff`).
+    // T-130: audited against processkit 3.0's raw-pipe-byte accounting and kept as
+    // is — a content read captures RAW stdout, whose accounting 3.0 left untouched,
+    // and the fixture is ~2x the ceiling under either unit. The exact boundary is
+    // pinned in `vcs_cli_support`'s `content_budget_*` tests.
     #[tokio::test]
     async fn pr_diff_inherits_client_budget_and_overrides_per_call() {
         let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);

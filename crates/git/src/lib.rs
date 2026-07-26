@@ -6872,6 +6872,13 @@ mod tests {
     // diff handed back as if complete. The huge output is drained but NOT retained
     // (the error carries only counts, not the multi-KiB blob): the bounded-memory
     // contract.
+    // T-130: audited against processkit 3.0's raw-pipe-byte accounting and kept as
+    // is. A content read captures RAW stdout, whose byte accounting 3.0 did not
+    // change (only the line-pumped streams were re-based), and the fixture is ~2x
+    // the ceiling under either unit — so this still asserts the contract it states
+    // rather than passing on a coincidence. The exact boundary, and the stderr
+    // stream that DID shift, are pinned in `vcs_cli_support`'s `content_budget_*`
+    // tests; see `OutputBudget::bytes` for the per-stream unit.
     #[tokio::test]
     async fn diff_text_over_budget_errors_output_too_large() {
         let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);

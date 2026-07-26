@@ -5414,6 +5414,10 @@ mod tests {
     // refused with `OutputTooLarge` (actual `total_bytes` + allowed `max_bytes`),
     // never a silently truncated diff. The oversized output is drained but not
     // retained (the error carries only counts): the bounded-memory contract.
+    // T-130: audited against processkit 3.0's raw-pipe-byte accounting and kept as
+    // is — a content read captures RAW stdout, whose accounting 3.0 left untouched,
+    // and the fixture is ~2x the ceiling under either unit. The exact boundary is
+    // pinned in `vcs_cli_support`'s `content_budget_*` tests.
     #[tokio::test]
     async fn diff_text_over_budget_errors_output_too_large() {
         let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);

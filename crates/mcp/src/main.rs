@@ -60,6 +60,13 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// (the pre-T-049 behaviour). Applies to content tools (`repo_show_file`,
 /// `repo_diff`, `forge_pr_diff`); exceeding it returns `OutputTooLarge` rather
 /// than a silently truncated result.
+///
+/// The unit is the bytes the wrapped CLI writes to its output pipe, verbatim —
+/// see [`OutputBudget::bytes`](vcs_core::OutputBudget::bytes), which is where the
+/// per-stream accounting is documented. This ceiling is deliberately left at its
+/// pre-processkit-3.0 value: 3.0's raw-pipe-byte switch did not move the
+/// raw-stdout ceiling these tools read through (T-130), so re-tuning it would
+/// change the server's behaviour for no reason.
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
 #[tokio::main]

@@ -2556,6 +2556,10 @@ mod tests {
 
     // T-049: `pr_diff` over the client's default OutputBudget is refused with
     // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff.
+    // T-130: audited against processkit 3.0's raw-pipe-byte accounting and kept as
+    // is — a content read captures RAW stdout, whose accounting 3.0 left untouched,
+    // and the fixture is ~2x the ceiling under either unit. The exact boundary is
+    // pinned in `vcs_cli_support`'s `content_budget_*` tests.
     #[tokio::test]
     async fn pr_diff_over_budget_errors_output_too_large() {
         let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
@@ -2606,6 +2610,10 @@ mod tests {
     // as its DROP-OLDEST *diagnostic* projection — a bounded tail that NEVER turns a
     // long, chatty watch into `OutputTooLarge`. A watch that reprints far past the
     // 256 KiB / 256-line cap still succeeds and reads the final run state.
+    // T-130: unaffected by processkit 3.0's raw-pipe-byte accounting — that change
+    // re-based the fail-loud `OverflowMode::Error` ceiling only, while a drop-mode
+    // buffer still bounds what it RETAINS by decoded line-content bytes. The 256 KiB
+    // / 256-line watch cap therefore keeps exactly the tail it kept before.
     #[tokio::test]
     async fn run_watch_bounds_output_without_failing_loud() {
         // ~5 MiB of repeated job-table frames — well past the watch cap.

@@ -145,6 +145,10 @@ async fn repo_show_file_returns_content() {
 // built over — a `repo_show_file` whose content exceeds the budget surfaces as a
 // tool error (the wrapped `OutputTooLarge`), never a silently truncated file. A
 // budget below the ceiling returns the content in full.
+// T-130: unaffected by processkit 3.0's raw-pipe-byte accounting — a content tool
+// reads RAW stdout, whose byte accounting 3.0 left untouched, and the fixture is
+// ~3x the ceiling under either unit. The exact boundary (and the line-pumped
+// stream that DID shift) is pinned in `vcs_cli_support`'s `content_budget_*` tests.
 #[tokio::test]
 async fn repo_show_file_honours_inherited_output_budget() {
     let big = "x".repeat(200_000);
@@ -204,6 +208,9 @@ async fn repo_diff_returns_parsed_diff() {
 // was built over, exactly like `repo_show_file` — an over-budget diff surfaces
 // as a tool error (the wrapped `OutputTooLarge`), never a silently truncated
 // diff. A budget below the ceiling returns the diff in full.
+// T-130: unaffected by processkit 3.0's raw-pipe-byte accounting (raw-stdout
+// capture, unchanged unit; fixture ~4x the ceiling) — see the note on
+// `repo_show_file_honours_inherited_output_budget`.
 #[tokio::test]
 async fn repo_diff_honours_inherited_output_budget() {
     let big = "diff --git a/m b/m\n".to_string() + &"+x\n".repeat(100_000);
@@ -670,6 +677,9 @@ async fn forge_pr_diff_routes_and_returns_parsed_diff() {
 // T-049: `forge_pr_diff` inherits the output budget of the forge client the
 // server was built over — an over-budget PR diff surfaces as a tool error
 // (the wrapped `OutputTooLarge`), never a truncated diff.
+// T-130: unaffected by processkit 3.0's raw-pipe-byte accounting (raw-stdout
+// capture, unchanged unit; fixture ~2x the ceiling) — see the note on
+// `repo_show_file_honours_inherited_output_budget`.
 #[tokio::test]
 async fn forge_pr_diff_honours_inherited_output_budget() {
     let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);

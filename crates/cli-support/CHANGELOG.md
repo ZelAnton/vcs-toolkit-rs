@@ -54,13 +54,35 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   plain non-permission `Io` failure now reads `error` rather than `io error`. The
   strings are diagnostic text on a stderr log line, not a parsed contract. (T-129.)
 - `OutputBudget::bytes`' documented unit follows processkit 3.0: the
-  `OutputBufferPolicy::max_bytes` ceiling now counts **raw bytes read from the output
+  `OutputBufferPolicy::max_bytes` ceiling counts **raw bytes read from the output
   pipe** (line terminators and invalid-UTF-8 bytes included) rather than decoded
-  line-content bytes, so a cap trips marginally earlier on CRLF or non-UTF-8 output.
-  Identical for plain ASCII/UTF-8 LF output. The projections themselves
-  (`content_policy`/`diagnostic_policy`) are unchanged; re-tuning this workspace's own
-  documented ceilings against the new unit is deliberately left to a follow-up audit.
-  (T-129.)
+  line-content bytes. The projections themselves
+  (`content_policy`/`diagnostic_policy`) are unchanged. (T-129; the unit's effect on
+  this crate's own ceilings is described by the T-130 audit entry below, which
+  supersedes this entry's original "identical for plain ASCII/UTF-8 LF output"
+  wording.)
+- **Byte-ceiling accounting audited against processkit 3.0 and its documentation
+  corrected.** The effect of the new unit splits by *stream*, and `OutputBudget`'s
+  docs now say so rather than claiming the change is inert on plain LF output — it
+  is not, because an LF terminator is now charged just like a CRLF's extra `\r`:
+  - The **raw stdout** every content verb reads (`ManagedClient::run_untrimmed` →
+    `output_bytes`) was counted in raw pipe bytes before 3.0 as well, so **no
+    content ceiling moved**: a cap on `diff_text`/`show_file`/`pr_diff` refuses
+    exactly the reads it refused on the 2.x line.
+  - The **line-pumped stderr** the same fail-loud policy also rides now charges each
+    line terminator, so a command that floods stderr can raise `OutputTooLarge` one
+    byte per line sooner than it did on 2.x. That is a real behavioural change
+    downstream inherits from the bump.
+  - The drop-oldest `diagnostic_policy` (a discard verb's `clone`/`fetch`
+    diagnostics) is unaffected either way: drop-mode retention is still bounded by
+    decoded line-content bytes, so it keeps the same tail.
+
+  `OutputBudget::bytes` documents the per-stream unit, the type doc records that
+  the ceiling rides each captured stream independently (so one call's worst case is
+  ~2x the cap), `diagnostic_policy` records the retention asymmetry, and both
+  boundaries are pinned by exact tests (`content_budget_counts_raw_stdout_bytes_verbatim`,
+  `content_budget_charges_stderr_line_terminators`) instead of only by
+  far-past-the-cap fixtures. No ceiling was re-tuned. (T-130.)
 
 ### Fixed
 - `redact_args`/`redact_value` no longer mistake part of a URL's path or query for

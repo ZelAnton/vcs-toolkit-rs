@@ -140,10 +140,12 @@ pub mod json {
 /// - [`content_policy`](OutputBudget::content_policy) — a **fail-loud** ceiling
 ///   ([`OverflowMode::Error`]): once the cap is reached the run errors with
 ///   [`ErrorReason::OutputTooLarge`], carrying the actual (`total_lines`/`total_bytes`)
-///   and allowed (`max_lines`/`max_bytes`) sizes. The pipe is still drained (the
-///   child never blocks) and output past the ceiling is **counted but never
-///   retained**, so memory stays bounded and a truncated result is never handed
-///   back as if complete. This is what the content verbs use.
+///   and allowed (`max_lines`/`max_bytes`) sizes — the reported `total_bytes` is
+///   in the same unit as the ceiling that fired, see [`bytes`](OutputBudget::bytes).
+///   The pipe is still drained (the child never blocks) and output past the
+///   ceiling is **counted but never retained**, so memory stays bounded and a
+///   truncated result is never handed back as if complete. This is what the
+///   content verbs use.
 /// - [`diagnostic_policy`](OutputBudget::diagnostic_policy) — a **drop-oldest**
 ///   tail bound: caps the retained error/progress output of a discard verb
 ///   (`clone`/`fetch`) *without* converting a real failure into
@@ -156,6 +158,13 @@ pub mod json {
 /// byte cap — not the line cap — is what [`processkit`] enforces. A line ceiling
 /// ([`with_max_lines`](OutputBudget::with_max_lines)) is an optional extra that
 /// also bounds line-pumped output (a diagnostic stream, a verb's stderr).
+///
+/// Each captured stream carries the ceiling **independently**: a content verb's
+/// raw stdout and its line-pumped stderr each get their own `max_bytes` budget
+/// (so one call's worst-case retained memory is about twice the cap, not the
+/// cap), and either one reaching it is what raises `OutputTooLarge`. What
+/// counts as a "byte" is not the same on the two streams — see
+/// [`bytes`](OutputBudget::bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputBudget {
     max_bytes: Option<usize>,
@@ -175,14 +184,37 @@ impl OutputBudget {
     }
 
     /// A byte ceiling of `max_bytes`, in the unit
-    /// [`OutputBufferPolicy::max_bytes`] caps: since processkit 3.0 that is the
-    /// **raw bytes read from the output pipe** — line terminators and invalid-UTF-8
-    /// bytes included — not the decoded line-content bytes it counted before. For
-    /// plain ASCII/UTF-8 LF output the two coincide; CRLF or non-UTF-8 output counts
-    /// slightly higher, so a cap set against the old unit now trips marginally
-    /// earlier. The primary, memory-bounding knob: it applies to the raw-stdout
-    /// content path where a line cap would not. Add a line ceiling with
-    /// [`with_max_lines`](Self::with_max_lines).
+    /// [`OutputBufferPolicy::max_bytes`] caps. The primary, memory-bounding
+    /// knob: it applies to the raw-stdout content path where a line cap would
+    /// not. Add a line ceiling with [`with_max_lines`](Self::with_max_lines).
+    ///
+    /// # What a byte counts as
+    ///
+    /// The unit differs by **stream**, because the two are captured differently.
+    /// Both ceilings fire strictly *past* the cap: output sitting exactly on
+    /// `max_bytes` is still accepted.
+    ///
+    /// - **Raw stdout** — what every content verb reads
+    ///   ([`ManagedClient::run_untrimmed`]: `diff_text`, `show_file`, `pr_diff`,
+    ///   `template_query`, …): the cap counts the bytes read from the pipe
+    ///   **verbatim**, with no line framing to strip and nothing decoded. This
+    ///   is what [`processkit`] has always counted on this path, so its 3.0
+    ///   switch to raw-pipe-byte accounting did **not** move this ceiling — a
+    ///   64 KiB content cap refuses exactly the same reads it did before.
+    /// - **Line-pumped stderr** (and any line-captured stream): since processkit
+    ///   3.0 the fail-loud ceiling counts the raw bytes read from the pipe —
+    ///   **line terminators and invalid-UTF-8 bytes included** — where it
+    ///   previously counted only the decoded line *content*. A plain LF stream
+    ///   therefore counts one byte per line more than it used to (the LF is now
+    ///   charged, not just a CRLF's extra `\r`), so a cap set against the old
+    ///   unit trips marginally earlier on this stream.
+    ///
+    /// [`ErrorReason::OutputTooLarge`]'s reported `total_bytes` is in the same
+    /// unit as whichever of those ceilings fired.
+    ///
+    /// The drop-oldest [`diagnostic_policy`](Self::diagnostic_policy) is a third
+    /// case, unaffected by that change: what it *retains* is bounded by the
+    /// decoded line-content bytes it holds, not by the raw bytes it saw.
     pub const fn bytes(max_bytes: usize) -> Self {
         Self {
             max_bytes: Some(max_bytes),
@@ -241,6 +273,15 @@ impl OutputBudget {
     /// [`ErrorReason::OutputTooLarge`] — so a genuine failure still surfaces as
     /// `ErrorReason::Exit` and stays classifiable ([`is_transient_fetch_error`],
     /// [`is_lock_contention`]). `None` when [`unlimited`](Self::unlimited).
+    ///
+    /// The retained tail is measured in **decoded line-content** bytes, which is
+    /// [`processkit`]'s drop-mode accounting and is deliberately *not* the
+    /// raw-pipe-byte unit its 3.0 release re-based the fail-loud
+    /// [`OverflowMode::Error`] ceiling onto — so how much tail this projection
+    /// keeps is unchanged by that release. Note also that a single line longer
+    /// than `max_bytes` is never assembled by the pump and so is dropped whole
+    /// (counted only as truncation): keep the byte cap comfortably above a
+    /// plausible single fatal line.
     pub fn diagnostic_policy(&self) -> Option<OutputBufferPolicy> {
         if self.is_unlimited() {
             return None;
@@ -1420,6 +1461,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// buffering an unbounded blob, and a truncated read is never returned as if
     /// complete. Unlimited by default (unchanged behaviour). Override the ceiling
     /// for one call with [`run_untrimmed_within`](Self::run_untrimmed_within).
+    ///
+    /// The ceiling rides **both** captured streams independently: the raw stdout
+    /// this verb returns, counted verbatim, and the command's line-pumped stderr,
+    /// counted as raw pipe bytes (terminators included) since processkit 3.0 — so
+    /// a command that floods stderr past the cap fails loud here too. See
+    /// [`OutputBudget::bytes`] for the per-stream unit.
     pub async fn run_untrimmed(&self, call: impl IntoCommand<R>) -> Result<String> {
         self.run_untrimmed_within(call, self.output_budget).await
     }
@@ -1539,6 +1586,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use processkit::testing::{Reply, ScriptedRunner};
 
     #[test]
     fn rejects_empty_and_leading_dash() {
@@ -2299,5 +2347,102 @@ mod tests {
         assert!(client.output_budget().is_unlimited());
         let client = client.default_output_budget(OutputBudget::bytes(1 << 20));
         assert_eq!(client.output_budget(), OutputBudget::bytes(1 << 20));
+    }
+
+    // T-130 (processkit 3.0 raw-byte-accounting audit): pin the *unit* of the byte
+    // ceiling on the raw-stdout content path — the path every content verb reads
+    // through. There is no line framing here, so the cap counts pipe bytes
+    // verbatim (terminators included, nothing decoded) and fires strictly PAST the
+    // cap. processkit counted exactly this on the raw path before 3.0 as well,
+    // which is precisely why its switch to raw-pipe-byte accounting did NOT move
+    // this ceiling; every pre-existing over-budget test across the wrapper crates
+    // uses a fixture ~2x its cap and so could not have detected a shift either
+    // way. This one is exact on both sides of the boundary.
+    #[tokio::test]
+    async fn content_budget_counts_raw_stdout_bytes_verbatim() {
+        // 8 raw bytes: 6 of line content plus the two LF terminators.
+        let out = "abc\ndef\n";
+        assert_eq!(out.len(), 8);
+        let client = ManagedClient::with_runner(
+            "tool",
+            ScriptedRunner::new().on(["tool", "read"], Reply::ok(out)),
+        );
+
+        // Sitting exactly on the cap is within budget, and the bytes come back
+        // verbatim (the trailing LF is content here, not a stripped terminator).
+        let got = client
+            .run_untrimmed_within(client.command(["read"]), OutputBudget::bytes(8))
+            .await
+            .expect("stdout exactly on the cap is within budget");
+        assert_eq!(got, out);
+
+        // A cap of 6 — the decoded line-CONTENT total, i.e. what the pre-3.0 line
+        // accounting would have measured — is not the unit on this path: the raw
+        // 8 bytes trip it, and the reported total is the raw one.
+        match client
+            .run_untrimmed_within(client.command(["read"]), OutputBudget::bytes(6))
+            .await
+            .map_err(Error::into_reason)
+        {
+            Err(ErrorReason::OutputTooLarge {
+                max_bytes,
+                total_bytes,
+                max_lines,
+                total_lines,
+                ..
+            }) => {
+                assert_eq!(max_bytes, Some(6), "the allowed ceiling");
+                assert_eq!(total_bytes, 8, "raw pipe bytes, both terminators charged");
+                // Raw stdout has no lines, so only the byte ceiling is reported.
+                assert_eq!(max_lines, None);
+                assert_eq!(total_lines, 0);
+            }
+            other => panic!("expected OutputTooLarge, got {other:?}"),
+        }
+    }
+
+    // T-130: the same content ceiling also rides the command's line-pumped STDERR,
+    // and *that* stream is where processkit 3.0's accounting change is observable:
+    // the fail-loud ceiling now charges every line terminator, so a stderr flood
+    // whose decoded content would still have fitted the cap trips it. This is a
+    // real behavioural change this workspace's budget inherited from the 3.0 bump
+    // (T-129) that no test covered — the audit's genuinely uncovered gap.
+    #[tokio::test]
+    async fn content_budget_charges_stderr_line_terminators() {
+        // 18 raw stderr bytes: 16 of line content plus the two LF terminators.
+        let warnings = "warn one\nwarn two\n";
+        assert_eq!(warnings.len(), 18);
+        let client = ManagedClient::with_runner(
+            "tool",
+            ScriptedRunner::new().on(["tool", "read"], Reply::ok("ok\n").with_stderr(warnings)),
+        );
+
+        // 17 sits above the 16 decoded content bytes and below the 18 raw ones, so
+        // it is exactly the cap the old accounting would have let through.
+        match client
+            .run_untrimmed_within(client.command(["read"]), OutputBudget::bytes(17))
+            .await
+            .map_err(Error::into_reason)
+        {
+            Err(ErrorReason::OutputTooLarge {
+                max_bytes,
+                total_bytes,
+                total_lines,
+                ..
+            }) => {
+                assert_eq!(max_bytes, Some(17), "the allowed ceiling");
+                assert_eq!(total_bytes, 18, "raw stderr bytes, terminators charged");
+                assert_eq!(total_lines, 2, "every line is counted, dropped or not");
+            }
+            other => panic!("expected OutputTooLarge from stderr, got {other:?}"),
+        }
+
+        // One byte more of budget accepts the same stderr (the ceiling fires
+        // strictly past the cap) and hands back stdout untouched.
+        let got = client
+            .run_untrimmed_within(client.command(["read"]), OutputBudget::bytes(18))
+            .await
+            .expect("stderr exactly on the cap is within budget");
+        assert_eq!(got, "ok\n");
     }
 }

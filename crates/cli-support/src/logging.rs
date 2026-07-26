@@ -560,6 +560,9 @@ mod tests {
         // `OutputTooLarge` is `#[non_exhaustive]`, so it can only be produced by
         // actually tripping a byte ceiling — which is also the honest check that the
         // dedicated `output_overflow` accessor still recovers the category.
+        // T-130: unaffected by processkit 3.0's raw-pipe-byte accounting — this trips
+        // the RAW-stdout ceiling (`output_bytes`), whose unit 3.0 left untouched, and
+        // 4 KiB is 256x the 16-byte cap under either unit.
         let runner = RecordingRunner::replying(Reply::ok("x".repeat(4096)));
         let command = Command::new("git").args(["diff"]).output_buffer(
             OutputBufferPolicy::unbounded()

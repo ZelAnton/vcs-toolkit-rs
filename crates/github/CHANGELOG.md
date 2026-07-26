@@ -96,6 +96,15 @@ crates; tag releases as `vcs-github-v<version>`.
   pre-1.0, so the breaking change rides the minimum necessary **minor** bump
   (0.11.0 → 0.12.0), which also satisfies the release workflow's `cargo-semver-checks`
   gate. (T-129.)
+- Byte-ceiling accounting for the budgeted content verb audited against processkit 3.0:
+  **no ceiling moved** — `pr_diff`/`pr_diff_within` read `gh`'s RAW stdout, whose byte
+  accounting the 3.0 release left untouched, and `run_watch`'s fixed 256 KiB / 256-line
+  cap is a drop-oldest tail whose retention is still measured in decoded line-content
+  bytes. The same fail-loud content budget does also ride the command's line-pumped
+  **stderr**, which now charges every line terminator, so a `gh` invocation that floods
+  stderr can raise `OutputTooLarge` marginally earlier than it did on the 2.x line.
+  `vcs_cli_support::OutputBudget::bytes` documents the per-stream unit; nothing here was
+  re-tuned. (T-130.)
 
 ### Fixed
 -

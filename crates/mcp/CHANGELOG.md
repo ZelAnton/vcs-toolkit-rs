@@ -51,6 +51,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `dyn VcsRepo`/`dyn ForgeApi` immediately, so the server stays runner-agnostic;
   existing `new(repo, forge, writes)` calls infer `R = JobRunner` unchanged.
   (T-117.)
+- `--max-output-bytes` audited against processkit 3.0's byte accounting and **kept at
+  its 10 MiB default**: the content tools (`repo_show_file`, `repo_diff`,
+  `forge_pr_diff`) read the wrapped CLI's RAW stdout, whose byte accounting the 3.0
+  release left untouched, so the ceiling refuses exactly the reads it refused on the 2.x
+  line and re-tuning it would have changed behaviour for no reason. The same fail-loud
+  budget does also ride the CLI's line-pumped **stderr**, which now charges every line
+  terminator, so a tool whose CLI floods stderr can report `OutputTooLarge` marginally
+  earlier than before. `vcs_cli_support::OutputBudget::bytes` documents the per-stream
+  unit. (T-130.)
 
 ### Fixed
 - **`forge_pr_edit` now reports Gitea as unsupported.** Its tool and capability-map

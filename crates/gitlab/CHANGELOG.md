@@ -57,6 +57,13 @@ crates; tag releases as `vcs-gitlab-v<version>`.
   pre-1.0, so the breaking change rides the minimum necessary **minor** bump
   (0.7.0 → 0.8.0), which also satisfies the release workflow's `cargo-semver-checks`
   gate. (T-129.)
+- Byte-ceiling accounting for the budgeted content verb audited against processkit 3.0:
+  **no ceiling moved** — `mr_diff`/`mr_diff_within` read `glab`'s RAW stdout, whose byte
+  accounting the 3.0 release left untouched. The same fail-loud budget does also ride the
+  command's line-pumped **stderr**, which now charges every line terminator, so a `glab`
+  invocation that floods stderr can raise `OutputTooLarge` marginally earlier than it did
+  on the 2.x line. `vcs_cli_support::OutputBudget::bytes` documents the per-stream unit;
+  nothing here was re-tuned. (T-130.)
 
 ### Fixed
 -

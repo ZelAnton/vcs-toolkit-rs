@@ -132,6 +132,17 @@ unit tests still pass against the freshly recorded file, and commit the
 cassette alongside the code/test change that motivated re-recording — never on
 its own in an unrelated PR.
 
+One exception to read past when reviewing a fresh recording: each entry also
+stores processkit's own capture metadata (`total_lines`/`total_bytes`/
+`duration_ms`), which is **not** `gh` output. The committed cassettes were
+recorded before the processkit 3.0 bump, whose fail-loud output ceiling now
+counts raw pipe bytes instead of decoded line content, so a re-record raises
+each entry's `total_bytes` by one per captured line (the line terminator, now
+charged) with byte-identical `stdout`. That delta is the accounting change
+audited in T-130, not drift in what `gh` prints — a `stdout`/`args` diff still
+is. Nothing replays off `total_bytes`, so the stale values are inert until the
+next recording.
+
 **A cassette diff is a change to an external contract, not a routine data
 update — review it explicitly, the way a `public-api.txt` diff is reviewed
 below.** The cassette *is* "what `gh` actually printed" on the recording run;

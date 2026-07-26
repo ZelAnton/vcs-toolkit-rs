@@ -77,9 +77,29 @@ authors = ["Anton Zhelezniakou"]
 #     of those items.
 #   * Output-limit accounting switched from decoded line-content bytes to raw bytes read
 #     from the pipe. This workspace does set byte caps — `vcs_cli_support::OutputBudget`
-#     projects onto `OutputBufferPolicy::max_bytes` — so a cap now trips marginally
-#     earlier on CRLF/non-UTF-8 output. `OutputBudget::bytes`' doc states the new unit;
-#     re-tuning our own documented ceilings is the follow-up audit task's scope.
+#     projects onto `OutputBufferPolicy::max_bytes`. Audited site by site (T-130), the
+#     effect splits by stream, and the split is what `OutputBudget::bytes`' doc now
+#     states: the RAW-stdout capture every content verb reads through
+#     (`run_untrimmed` -> `output_bytes`) was counted in raw pipe bytes before 3.0 as
+#     well — `pump_raw_bytes`/`push_capped_bytes` are byte-identical between 2.3.2 and
+#     3.0.0 — so no content ceiling (the 64 KiB test caps, the MCP `--max-output-bytes`
+#     default) moved; the LINE-pumped streams, i.e. a content verb's stderr under the
+#     same fail-loud policy, now charge every line terminator, so a cap set against the
+#     old unit trips one byte per line earlier there. Both boundaries are pinned by
+#     `vcs_cli_support`'s `content_budget_*` tests. The drop-oldest diagnostic
+#     projection (`clone`/`fetch`, `gh run watch`) is unaffected either way: drop-mode
+#     retention is still bounded by decoded line-content bytes.
+#   * `OverflowMode::DropNewest` now keeps a true contiguous prefix. Not applicable: this
+#     workspace never selects that mode — `OutputBudget` projects only onto `Error`
+#     (content) and `DropOldest` (the default of `unbounded()`/`bounded()`, diagnostics);
+#     rg finds no `DropNewest` at all, and the only two `with_overflow` calls both select
+#     `Error`. The content path also refuses a truncated capture outright rather than
+#     parsing a partial one, so no parser here can depend on how a head is retained.
+#   * Windows ConPTY launches now clear inherited standard handles. Not applicable: the
+#     fix lives behind processkit's non-default `pty` feature, which no crate here
+#     enables (only `mock`, `tracing`, `record` are), and nothing in this workspace calls
+#     `use_pty`/`pty_size`/`resize_pty` — every child is spawned on the ordinary piped
+#     backend, so no capture or parsing path can depend on the old handle behaviour.
 processkit = "3.0"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.

@@ -65,6 +65,14 @@ crates; tag releases as `vcs-core-v<version>`.
   `vcs-github`, `vcs-gitlab`, `vcs-gitea`, `vcs-forge`, `vcs-core`, `vcs-watch` and
   `vcs-mcp` (same document); pre-1.0, so the minimum necessary bump here is a **minor**
   one (0.9.0 → 0.10.0). (T-129.)
+- Byte-ceiling accounting for the budgeted facade reads audited against processkit 3.0:
+  **no ceiling moved** — `Repo::diff` / `Repo::show_file` (and their `*_within`
+  overrides) read the backend CLI's RAW stdout, whose byte accounting the 3.0 release
+  left untouched. The same fail-loud budget does also ride the command's line-pumped
+  **stderr**, which now charges every line terminator, so a backend CLI that floods
+  stderr can surface `OutputTooLarge` marginally earlier than it did on the 2.x line.
+  `vcs_cli_support::OutputBudget::bytes` documents the per-stream unit; nothing here
+  was re-tuned. (T-130.)
 
 ### Fixed
 - `Repo::create_worktree` on jj now gives each normalized workspace name a stable

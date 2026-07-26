@@ -121,6 +121,14 @@ crates; tag releases as `vcs-forge-v<version>`.
   `vcs-forge`, `vcs-core`, `vcs-watch` and `vcs-mcp`
   (`crates/core/docs/stability.md`); pre-1.0, so the minimum necessary bump here is a
   **minor** one (0.7.0 → 0.8.0). (T-129.)
+- Byte-ceiling accounting for the budgeted content verb audited against processkit 3.0:
+  **no ceiling moved** — `Forge::pr_diff`/`pr_diff_within` inherit a backend client's
+  budget and read the forge CLI's RAW stdout, whose byte accounting the 3.0 release left
+  untouched. The same fail-loud budget does also ride the command's line-pumped
+  **stderr**, which now charges every line terminator, so a forge CLI that floods stderr
+  can surface `OutputTooLarge` marginally earlier than it did on the 2.x line.
+  `vcs_cli_support::OutputBudget::bytes` documents the per-stream unit; nothing here was
+  re-tuned. (T-130.)
 
 ### Fixed
 -

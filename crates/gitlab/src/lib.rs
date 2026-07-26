@@ -1976,6 +1976,10 @@ mod tests {
     // T-049: `mr_diff` over the client's default OutputBudget is refused with
     // `OutputTooLarge` (actual + allowed sizes), never a silently truncated diff;
     // the per-call override reads a legitimately large MR past a tight default.
+    // T-130: audited against processkit 3.0's raw-pipe-byte accounting and kept as
+    // is — a content read captures RAW stdout, whose accounting 3.0 left untouched,
+    // and the fixture is ~2x the ceiling under either unit. The exact boundary is
+    // pinned in `vcs_cli_support`'s `content_budget_*` tests.
     #[tokio::test]
     async fn mr_diff_over_budget_errors_and_override_reads() {
         let big = "diff --git a/m b/m\n".to_string() + &"+line\n".repeat(20_000);
