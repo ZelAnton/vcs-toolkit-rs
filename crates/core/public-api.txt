@@ -4,6 +4,8 @@ pub use vcs_core::ChangeKind
 pub use vcs_core::DiffStat
 pub use vcs_core::FileDiff
 pub use vcs_core::OutputBudget
+pub use vcs_core::ProcessEvent
+pub use vcs_core::ProgressCallback
 pub use vcs_core::processkit
 pub use vcs_core::vcs_git
 pub use vcs_core::vcs_jj
@@ -60,7 +62,7 @@ impl core::panic::unwind_safe::UnwindSafe for vcs_core::CreateOutcome
 pub vcs_core::Error::BareRepository(std::path::PathBuf)
 pub vcs_core::Error::Io(std::io::error::Error)
 pub vcs_core::Error::NotARepository(std::path::PathBuf)
-pub vcs_core::Error::Rollback(vcs_jj::Rollback)
+pub vcs_core::Error::Rollback(vcs_jj::transaction::Rollback)
 pub vcs_core::Error::Unsupported(alloc::string::String)
 pub vcs_core::Error::Vcs(processkit::error::Error)
 pub vcs_core::Error::WorktreeNotFound(std::path::PathBuf)
@@ -304,6 +306,7 @@ impl core::panic::unwind_safe::UnwindSafe for vcs_core::Remote
 pub struct vcs_core::Repo<R: processkit::runner::ProcessRunner>
 impl vcs_core::Repo<processkit::runner::JobRunner>
 pub async fn vcs_core::Repo<processkit::runner::JobRunner>::clone(vcs_core::BackendKind, &str, &std::path::Path, vcs_core::CloneSpec) -> vcs_core::Result<Self>
+pub async fn vcs_core::Repo<processkit::runner::JobRunner>::clone_with_progress<'a>(vcs_core::BackendKind, &str, &std::path::Path, vcs_core::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> vcs_core::Result<Self>
 pub fn vcs_core::Repo<processkit::runner::JobRunner>::discover(impl core::convert::AsRef<std::path::Path>) -> vcs_core::Result<Self>
 pub fn vcs_core::Repo<processkit::runner::JobRunner>::open(impl core::convert::AsRef<std::path::Path>) -> vcs_core::Result<Self>
 impl<R: processkit::runner::ProcessRunner> vcs_core::Repo<R>
@@ -328,6 +331,7 @@ pub fn vcs_core::Repo<R>::discover_with<G, J>(impl core::convert::AsRef<std::pat
 pub async fn vcs_core::Repo<R>::fetch(&self) -> vcs_core::Result<()>
 pub async fn vcs_core::Repo<R>::fetch_branch(&self, &str) -> vcs_core::Result<()>
 pub async fn vcs_core::Repo<R>::fetch_from(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::fetch_with_progress<'a>(&self, &'a mut vcs_cli_support::ProgressCallback<'a>) -> vcs_core::Result<()>
 pub fn vcs_core::Repo<R>::from_git(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<std::path::PathBuf>, vcs_git::Git<R>) -> Self
 pub fn vcs_core::Repo<R>::from_jj(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<std::path::PathBuf>, vcs_jj::Jj<R>) -> Self
 pub fn vcs_core::Repo<R>::git(&self) -> core::option::Option<&vcs_git::Git<R>>
@@ -344,6 +348,7 @@ pub async fn vcs_core::Repo<R>::local_branches_readonly(&self) -> vcs_core::Resu
 pub async fn vcs_core::Repo<R>::log(&self, &str, usize) -> vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>
 pub async fn vcs_core::Repo<R>::new_child(&self, &str) -> vcs_core::Result<()>
 pub async fn vcs_core::Repo<R>::push(&self, &str) -> vcs_core::Result<()>
+pub async fn vcs_core::Repo<R>::push_with_progress<'a>(&self, &str, &'a mut vcs_cli_support::ProgressCallback<'a>) -> vcs_core::Result<()>
 pub async fn vcs_core::Repo<R>::rebase(&self, &str) -> vcs_core::Result<()>
 pub async fn vcs_core::Repo<R>::remotes(&self) -> vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>
 pub async fn vcs_core::Repo<R>::remove_worktree(&self, vcs_core::WorktreeRemove) -> vcs_core::Result<()>
@@ -377,6 +382,7 @@ pub fn vcs_core::Repo<R>::diff_stat<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_core::Repo<R>::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_with_progress<'a, 'life0, 'async_trait>(&'life0 self, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -387,6 +393,7 @@ pub fn vcs_core::Repo<R>::local_branches_readonly<'life0, 'async_trait>(&'life0 
 pub fn vcs_core::Repo<R>::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::push_with_progress<'a, 'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -568,6 +575,7 @@ pub fn vcs_core::VcsRepo::diff_stat<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_core::VcsRepo::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::VcsRepo::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::VcsRepo::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::fetch_with_progress<'a, 'life0, 'async_trait>(&'life0 self, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::VcsRepo::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::VcsRepo::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::VcsRepo::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -578,6 +586,7 @@ pub fn vcs_core::VcsRepo::local_branches_readonly<'life0, 'async_trait>(&'life0 
 pub fn vcs_core::VcsRepo::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::VcsRepo::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::VcsRepo::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::VcsRepo::push_with_progress<'a, 'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::VcsRepo::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::VcsRepo::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::VcsRepo::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -609,6 +618,7 @@ pub fn vcs_core::Repo<R>::diff_stat<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_core::Repo<R>::fetch<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::fetch_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::fetch_from<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::fetch_with_progress<'a, 'life0, 'async_trait>(&'life0 self, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::has_tracked_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::has_uncommitted_changes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::in_progress_state<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<vcs_core::OperationState>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -619,6 +629,7 @@ pub fn vcs_core::Repo<R>::local_branches_readonly<'life0, 'async_trait>(&'life0 
 pub fn vcs_core::Repo<R>::log<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Commit>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::new_child<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::push<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_core::Repo<R>::push_with_progress<'a, 'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::rebase<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_core::Repo<R>::remotes<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<alloc::vec::Vec<vcs_core::Remote>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_core::Repo<R>::remove_worktree<'life0, 'async_trait>(&'life0 self, vcs_core::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_core::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait

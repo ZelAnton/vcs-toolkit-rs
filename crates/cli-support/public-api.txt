@@ -1,4 +1,5 @@
 pub mod vcs_cli_support
+pub use vcs_cli_support::ProcessEvent
 pub mod vcs_cli_support::credentials
 #[non_exhaustive] pub enum vcs_cli_support::credentials::CredentialService
 pub vcs_cli_support::credentials::CredentialService::Git
@@ -432,6 +433,7 @@ pub async fn vcs_cli_support::ManagedClient<R>::run(&self, impl processkit::clie
 pub async fn vcs_cli_support::ManagedClient<R>::run_unit(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<()>
 pub async fn vcs_cli_support::ManagedClient<R>::run_untrimmed(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_cli_support::ManagedClient<R>::run_untrimmed_within(&self, impl processkit::client::IntoCommand<R>, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_cli_support::ManagedClient<R>::run_with_progress(&self, impl processkit::client::IntoCommand<R>, &mut vcs_cli_support::ProgressCallback<'_>) -> processkit::error::Result<()>
 pub fn vcs_cli_support::ManagedClient<R>::runner(&self) -> &R
 pub async fn vcs_cli_support::ManagedClient<R>::try_parse<T>(&self, impl processkit::client::IntoCommand<R>, impl core::ops::function::FnOnce(&str) -> processkit::error::Result<T> + core::marker::Send) -> processkit::error::Result<T> where T: core::marker::Send
 pub fn vcs_cli_support::ManagedClient<R>::with_credentials(self, alloc::sync::Arc<dyn vcs_cli_support::credentials::CredentialProvider>) -> Self
@@ -590,3 +592,5 @@ pub fn vcs_cli_support::provider_fn<F>(F) -> vcs_cli_support::credentials::FnPro
 pub fn vcs_cli_support::redact_args(&[std::ffi::os_str::OsString]) -> alloc::vec::Vec<alloc::string::String>
 pub fn vcs_cli_support::reject_flag_like(&str, &str, &str) -> processkit::error::Result<()>
 pub async fn vcs_cli_support::retry_async<T, Fut>(&vcs_cli_support::RetryPolicy, core::option::Option<&tokio_util::sync::cancellation_token::CancellationToken>, impl core::ops::function::Fn(&processkit::error::Error) -> bool, impl core::ops::function::FnMut() -> Fut) -> processkit::error::Result<T> where Fut: core::future::future::Future<Output = processkit::error::Result<T>>
+pub async fn vcs_cli_support::run_with_progress<R: processkit::runner::ProcessRunner + ?core::marker::Sized>(&R, &processkit::command::Command, &mut vcs_cli_support::ProgressCallback<'_>) -> processkit::error::Result<()>
+pub type vcs_cli_support::ProgressCallback<'a> = (dyn core::ops::function::FnMut(processkit::running::stream::ProcessEvent) + core::marker::Send + 'a)

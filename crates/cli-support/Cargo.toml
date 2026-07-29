@@ -22,7 +22,7 @@ processkit.workspace = true
 async-trait = "0.1"
 # The async backoff sleep in `retry_async` (the `ManagedClient` retry loop). Only
 # the time driver is needed; the wrappers already run on tokio.
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["macros", "time"] }
 # Optional: the JSON helpers in the `json` module (`null_to_empty` / `from_json`)
 # the forge wrappers share. Only the `Deserialize`/`Deserializer`/`DeserializeOwned`
 # traits are needed (no derive), plus `serde_json` for the parse. Gated behind the

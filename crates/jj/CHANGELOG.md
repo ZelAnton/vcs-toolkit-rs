@@ -9,6 +9,10 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ## [Unreleased]
 
+- Add typed `git_fetch_with_progress`, `git_push_with_progress`, and
+  `git_clone_with_progress` methods with ScriptedRunner-replayable process
+  lifecycle/output events and the existing failed-clone cleanup contract.
+
 ### Added
 - `JjApi::remote_add`, `remote_list`, `remote_remove`, `remote_rename`, and
   `remote_set_url`: typed management of jj Git remotes, including the public

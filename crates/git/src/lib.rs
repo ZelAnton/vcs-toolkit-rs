@@ -167,8 +167,8 @@ pub use vcs_diff::{
 use vcs_cli_support::git_credential_helper;
 pub use vcs_cli_support::{
     Credential, CredentialProvider, CredentialRequest, CredentialService, EnvToken, OutputBudget,
-    RetryPolicy, Secret, StaticCredential, is_lock_contention, is_merge_conflict,
-    is_nothing_to_commit, is_transient_fetch_error, provider_fn,
+    ProcessEvent, ProgressCallback, RetryPolicy, Secret, StaticCredential, is_lock_contention,
+    is_merge_conflict, is_nothing_to_commit, is_transient_fetch_error, provider_fn,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -455,6 +455,14 @@ pub trait GitApi: Send + Sync {
     /// Fetch from the default remote (`fetch --quiet`), with `GIT_TERMINAL_PROMPT=0`.
     /// Transient (network) failures are retried (3 attempts, 500 ms backoff).
     async fn fetch(&self, dir: &Path) -> Result<()>;
+    /// Fetch from the default remote while reporting process lifecycle and
+    /// stdout/stderr lines. This observes one process attempt (no automatic
+    /// replay), so [`ProcessEvent::Exited`] is always terminal.
+    async fn fetch_with_progress<'a>(
+        &self,
+        dir: &Path,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Fetch from a *named* remote (`fetch --quiet <remote>`), with
     /// `GIT_TERMINAL_PROMPT=0`. Transient failures are retried like
     /// [`fetch`](GitApi::fetch).
@@ -465,6 +473,14 @@ pub trait GitApi: Send + Sync {
     async fn fetch_branch(&self, dir: &Path, branch: &RefName) -> Result<()>;
     /// Push to a remote (`push [-u] <remote> <refspec>`); see [`GitPush`].
     async fn push(&self, dir: &Path, spec: GitPush) -> Result<()>;
+    /// Push while reporting process lifecycle and stdout/stderr lines. Uses
+    /// git's `--progress` flag so progress is emitted even though output is piped.
+    async fn push_with_progress<'a>(
+        &self,
+        dir: &Path,
+        spec: GitPush,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Stage a branch's changes without committing (`merge --squash <branch>`).
     async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()>;
     /// Merge a branch (`merge [--no-ff] [-m <msg> | --no-edit] <branch>`); with no
@@ -605,6 +621,16 @@ pub trait GitApi: Send + Sync {
     /// Clone `url` into `dest` (`git clone <url> <dest>` + [`CloneSpec`] flags).
     /// Runs without a working directory — pass an **absolute** `dest`.
     async fn clone_repo(&self, url: &str, dest: &Path, spec: CloneSpec) -> Result<()>;
+    /// Clone while reporting process lifecycle and stdout/stderr lines. Uses
+    /// git's `--progress` flag and preserves [`clone_repo`](GitApi::clone_repo)'s
+    /// failed-destination cleanup contract.
+    async fn clone_repo_with_progress<'a>(
+        &self,
+        url: &str,
+        dest: &Path,
+        spec: CloneSpec,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Create a lightweight tag at `rev` (`tag <name> [<rev>]`; `None` = HEAD).
     async fn tag_create(&self, dir: &Path, name: &RefName, rev: Option<RevSpec>) -> Result<()>;
     /// Create an annotated tag (`tag -a <name> -m <message> [<rev>]`); see
@@ -1751,6 +1777,25 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core.run_unit(cmd).await
     }
 
+    async fn fetch_with_progress<'a>(
+        &self,
+        dir: &Path,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        let (pre, envs) = self.remote_credentials(None).await?;
+        let mut args: Vec<String> = pre;
+        // `--progress` forces git to emit transfer progress even though
+        // processkit pipes stderr rather than attaching a terminal.
+        args.extend(["fetch", "--progress"].map(String::from));
+        let cmd = self.core.budget_diagnostics(apply_secret_env(
+            c_locale(self.core.command_in(dir, &args))
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            &envs,
+        ));
+        self.core.run_with_progress(cmd, progress).await
+    }
+
     async fn fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
         // A leading-`-` remote is a bare positional here — and a flag like
         // `--upload-pack=<cmd>` would run an arbitrary local program for a
@@ -1835,6 +1880,47 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             &envs,
         );
         self.core.run_unit(cmd).await
+    }
+
+    async fn push_with_progress<'a>(
+        &self,
+        dir: &Path,
+        spec: GitPush,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        reject_flag_like("remote", &spec.remote)?;
+        reject_flag_like("refspec", &spec.refspec)?;
+        let sides: Vec<&str> = spec.refspec.split(':').collect();
+        if sides.len() > 2 || sides.iter().any(|s| s.starts_with('+')) {
+            return Err(processkit::Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "push refspec {:?} contains a force (`+`) or multi-ref (`:`) \
+                         metacharacter — pass a plain branch or `local:remote`, or use \
+                         `run([\"push\", …])` for a force-push",
+                        spec.refspec
+                    ),
+                ),
+            ));
+        }
+        let (pre, envs) = self.remote_credentials(None).await?;
+        let mut args: Vec<String> = pre;
+        args.extend(["push", "--progress"].map(String::from));
+        if spec.set_upstream {
+            args.push("-u".to_string());
+        }
+        args.push(spec.remote);
+        args.push(spec.refspec);
+        let cmd = apply_secret_env(
+            self.core
+                .command_in(dir, &args)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            &envs,
+        );
+        self.core.run_with_progress(cmd, progress).await
     }
 
     async fn merge_squash(&self, dir: &Path, branch: &RevSpec) -> Result<()> {
@@ -2214,6 +2300,45 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // why `cleanable` must be computed before the clone runs.
         let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
         let result = self.core.run_unit(command).await;
+        if result.is_err() {
+            vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
+        }
+        result
+    }
+
+    async fn clone_repo_with_progress<'a>(
+        &self,
+        url: &str,
+        dest: &Path,
+        spec: CloneSpec,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        reject_flag_like("url", url)?;
+        let (pre, envs) = self
+            .remote_credentials(vcs_cli_support::https_host(url).as_deref())
+            .await?;
+        let mut initial: Vec<String> = pre;
+        initial.extend(["clone", "--progress"].map(String::from));
+        let mut command = self.core.command(&initial);
+        if let Some(branch) = spec.branch.as_deref() {
+            command = command.arg("--branch").arg(branch);
+        }
+        if let Some(depth) = spec.depth {
+            command = command.arg("--depth").arg(depth.to_string());
+        }
+        if spec.bare {
+            command = command.arg("--bare");
+        }
+        let command = self.core.budget_diagnostics(apply_secret_env(
+            command
+                .arg(url)
+                .arg(dest)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            &envs,
+        ));
+        let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
+        let result = self.core.run_with_progress(command, progress).await;
         if result.is_err() {
             vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
         }
@@ -5372,6 +5497,84 @@ mod tests {
             k.to_str() == Some("GIT_TERMINAL_PROMPT")
                 && v.as_deref().and_then(|o| o.to_str()) == Some("0")
         }));
+    }
+
+    #[tokio::test]
+    async fn network_progress_variants_stream_scripted_lifecycles() {
+        use std::sync::{Arc, Mutex};
+
+        let runner = ScriptedRunner::new()
+            .on(
+                ["git", "fetch", "--progress"],
+                Reply::ok("fetch-out").with_stderr("fetch-progress"),
+            )
+            .on(
+                ["git", "push", "--progress", "-u", "origin", "main"],
+                Reply::ok("push-out").with_stderr("push-progress"),
+            )
+            .on(
+                ["git", "clone", "--progress", "https://x/r", "/dest"],
+                Reply::ok("clone-out").with_stderr("clone-progress"),
+            );
+        let git = Git::with_runner(runner);
+
+        for operation in 0..3 {
+            let names = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&names);
+            let mut progress = move |event: ProcessEvent| {
+                sink.lock().unwrap().push(event.name());
+            };
+            match operation {
+                0 => git
+                    .fetch_with_progress(Path::new("/repo"), &mut progress)
+                    .await
+                    .unwrap(),
+                1 => git
+                    .push_with_progress(
+                        Path::new("/repo"),
+                        GitPush::branch(rn("main")).set_upstream(),
+                        &mut progress,
+                    )
+                    .await
+                    .unwrap(),
+                2 => git
+                    .clone_repo_with_progress(
+                        "https://x/r",
+                        Path::new("/dest"),
+                        CloneSpec::new(),
+                        &mut progress,
+                    )
+                    .await
+                    .unwrap(),
+                _ => unreachable!(),
+            }
+            drop(progress);
+            let names = names.lock().unwrap();
+            assert_eq!(names.first(), Some(&"started"));
+            assert!(names.contains(&"stdout"));
+            assert!(names.contains(&"stderr"));
+            assert_eq!(names.last(), Some(&"exited"));
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_clone_failure_keeps_the_cleanup_contract() {
+        use vcs_testkit::TempDir;
+
+        let root = TempDir::new("stream-clone-cleanup");
+        let dest = root.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "clone", "--progress"],
+            Reply::fail(128, "network failed"),
+        ));
+        let mut progress = |_event: ProcessEvent| {};
+        assert!(
+            git.clone_repo_with_progress("https://x/r", &dest, CloneSpec::new(), &mut progress)
+                .await
+                .is_err()
+        );
+        assert!(!dest.exists(), "a cleanable partial destination is removed");
     }
 
     // A transient failure (DNS/network) is retried up to FETCH_ATTEMPTS times.

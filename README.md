@@ -427,13 +427,16 @@ Four seams, no extra configuration:
 - **Argv observation** — wrap the real runner the same way tests wrap fakes:
   `RecordingRunner::new(JobRunner::new())`, hand `&rec` to `with_runner`, and
   read `rec.calls()` (full argv, cwd, env per invocation).
-- **Live output streaming** — `processkit::Command` supports per-line
-  callbacks (`.on_stdout_line(|l| …)` / `.on_stderr_line(…)`), so a
-  long-running command built directly against processkit can report progress
-  while it runs. The typed `Git`/`Jj` methods consume their `Command`
-  internally and do **not** surface the hook yet — streaming wrappers (e.g. a
-  fetch-with-progress) land once the upstream hardening (callback panic
-  isolation, scripted-replay testability) ships in processkit.
+- **Live output streaming** — processkit 3.1's lifecycle stream is exposed by
+  `GitApi::{fetch,push,clone_repo}_with_progress`, the corresponding
+  `JjApi::git_*_with_progress` methods, and portable
+  `Repo::{fetch,push,clone}_with_progress`. Their object-safe callback receives
+  `ProcessEvent::Started`, stdout/stderr lines, then terminal `Exited`; a
+  non-zero exit still returns the ordinary structured error with both streams.
+  Each call observes one process attempt (no hidden retry), so one `Exited`
+  always closes one callback sequence and a UI never has to guess whether more
+  events are coming. A panicking callback is disabled while the child continues
+  to be drained and reaped.
 - **`tracing` feature** — each crate's `tracing` feature makes processkit emit
   a `debug` event per command run (program, args, exit) for any subscriber.
 - **Dry-run harness** — `ScriptedRunner::new().fallback(Reply::ok(""))`

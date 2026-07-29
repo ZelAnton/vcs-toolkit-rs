@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
 use vcs_jj::{
-    BookmarkName, ChangedPath, DiffSpec, FileDiff, Jj, JjApi, JjFileset, OutputBudget, RevsetExpr,
-    Rollback, WorkspaceAdd,
+    BookmarkName, ChangedPath, DiffSpec, FileDiff, Jj, JjApi, JjFileset, OutputBudget,
+    ProgressCallback, RevsetExpr, Rollback, WorkspaceAdd,
 };
 
 use crate::dto::{
@@ -379,6 +379,15 @@ pub(crate) async fn fetch<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<()
     Ok(())
 }
 
+pub(crate) async fn fetch_with_progress<'a, R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    jj.git_fetch_with_progress(dir, progress).await?;
+    Ok(())
+}
+
 pub(crate) async fn fetch_from<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,
@@ -407,6 +416,17 @@ pub(crate) async fn push<R: ProcessRunner>(jj: &Jj<R>, dir: &Path, branch: &str)
     // bookmark. Only the git path guards, because there the branch lands in a
     // *bare positional* refspec slot where a `--flag` would be parsed as one.
     jj.git_push(dir, Some(BookmarkName::new(branch)?)).await?;
+    Ok(())
+}
+
+pub(crate) async fn push_with_progress<'a, R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    branch: &str,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    jj.git_push_with_progress(dir, Some(BookmarkName::new(branch)?), progress)
+        .await?;
     Ok(())
 }
 
@@ -759,6 +779,23 @@ pub(crate) async fn clone<R: ProcessRunner>(
     dest: &Path,
     spec: &crate::dto::CloneSpec,
 ) -> Result<()> {
+    jj.git_clone(url, dest, clone_spec(spec)?).await?;
+    Ok(())
+}
+
+pub(crate) async fn clone_with_progress<'a, R: ProcessRunner>(
+    jj: &Jj<R>,
+    url: &str,
+    dest: &Path,
+    spec: &crate::dto::CloneSpec,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    jj.git_clone_with_progress(url, dest, clone_spec(spec)?, progress)
+        .await?;
+    Ok(())
+}
+
+fn clone_spec(spec: &crate::dto::CloneSpec) -> Result<vcs_jj::GitClone> {
     // Collect every git-only option the caller set, so the rejection names all of them
     // at once rather than one per retry.
     let mut git_only: Vec<&str> = Vec::new();
@@ -787,8 +824,7 @@ pub(crate) async fn clone<R: ProcessRunner>(
     } else {
         vcs_jj::GitClone::separate()
     };
-    jj.git_clone(url, dest, jj_spec).await?;
-    Ok(())
+    Ok(jj_spec)
 }
 
 /// Derive a readable, collision-resistant jj workspace name from a branch name.

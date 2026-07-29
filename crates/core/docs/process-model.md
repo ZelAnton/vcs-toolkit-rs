@@ -182,13 +182,28 @@ for call in rec.calls() {
 # Ok(()) }
 ```
 
-**(b) Live output streaming — caveat.** `processkit::Command` supports per-line
-callbacks (`.on_stdout_line(|l| …)` / `.on_stderr_line(…)`), so a long-running
-command built **directly against processkit** can report progress while it runs.
-The typed `Git` / `Jj` methods consume their `Command` internally and do **not**
-surface the hook yet — streaming wrappers (e.g. a fetch-with-progress) land once
-the upstream hardening (callback panic isolation, scripted-replay testability)
-ships in processkit.
+**(b) Live output streaming.** Processkit 3.1's hardened lifecycle stream is
+available through the typed network methods:
+
+- `GitApi::{fetch,push,clone_repo}_with_progress`;
+- `JjApi::{git_fetch,git_push,git_clone}_with_progress`;
+- portable `Repo::{fetch,push,clone}_with_progress`.
+
+The object-safe callback receives `ProcessEvent::Started`, interleaved
+stdout/stderr line events, then terminal `ProcessEvent::Exited`. Internally the
+event consumer and `RunningProcess::finish()` are polled concurrently — draining
+events first would wait forever for the finisher to publish `Exited`. A rejected
+exit is reconstructed as the same structured processkit error as the captured
+path, including the streamed stdout/stderr, so the normal classifiers still
+work.
+
+Each streaming method intentionally observes one process lifecycle and does not
+apply the captured fetch path's automatic transient retry. That keeps `Exited`
+truthfully terminal; callers can choose an explicit replay policy after seeing
+the event and returned error. A callback panic is caught and disables further
+callback delivery for that run; the child is still drained and reaped, so UI
+code cannot strand it. `ScriptedRunner` implements `start()`/`events()` as well,
+so the complete lifecycle is hermetically replayable in tests.
 
 **(c) The `tracing` feature.** Each crate's `tracing` feature (forwarding to
 `processkit/tracing`) makes processkit emit a `debug` event per command run —

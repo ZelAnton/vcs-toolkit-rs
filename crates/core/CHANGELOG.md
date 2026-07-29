@@ -9,6 +9,10 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+- Add backend-agnostic `Repo::fetch_with_progress`, `push_with_progress`, and
+  `clone_with_progress`, forwarding the Git/Jujutsu lifecycle event callbacks
+  without hiding backend retries behind a terminal `Exited` event.
+
 ### Added
 - `Repo::clone(backend, url, dest, spec)` and the unified `CloneSpec` DTO:
   backend-agnostic repository cloning on the facade. Clone is the one operation with

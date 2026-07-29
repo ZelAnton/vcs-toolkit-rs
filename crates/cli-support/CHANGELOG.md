@@ -9,6 +9,11 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ## [Unreleased]
 
+- Add `ProcessEvent`/`ProgressCallback` and the shared
+  `run_with_progress`/`ManagedClient::run_with_progress` lifecycle driver. It
+  polls processkit 3.1 events beside the finisher, preserves streamed diagnostics
+  in structured exit errors, and is replayable through `ScriptedRunner`.
+
 ### Added
 - `logging` module — a command-logging `ProcessRunner` decorator:
   `LoggingRunner` wraps any real runner and reports every spawn (program, argv,

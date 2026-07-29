@@ -72,12 +72,107 @@ use std::fmt;
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use processkit::prelude::StreamExt;
 use processkit::{
     CancellationToken, CliClient, Command, Error, ErrorReason, IntoCommand, JobRunner,
     OutputBufferPolicy, OverflowMode, ProcessResult, ProcessRunner, Result,
 };
+
+/// One lifecycle/progress event from a streamed CLI operation.
+///
+/// Re-exported from [`processkit`] so wrapper users do not need a second direct
+/// dependency merely to inspect progress. The stream starts with
+/// [`ProcessEvent::Started`], carries stdout/stderr lines, and ends with
+/// [`ProcessEvent::Exited`]. The enum is non-exhaustive; consumers should keep a
+/// wildcard match arm.
+pub use processkit::ProcessEvent;
+
+/// Object-safe callback accepted by the typed streaming operations.
+///
+/// `Send` lets an async trait future containing the borrowed callback remain
+/// `Send`, preserving `GitApi`/`JjApi`/facade trait-object usability. A callback
+/// panic is caught and disables further callback delivery for that run; output
+/// draining and process completion continue, matching processkit's hardened
+/// per-line handler contract.
+pub type ProgressCallback<'a> = dyn FnMut(ProcessEvent) + Send + 'a;
+
+/// Run one command while forwarding its lifecycle and output events.
+///
+/// `events()` and `finish()` are deliberately driven concurrently: the terminal
+/// `Exited` event is published by the finisher, so draining the stream first
+/// would deadlock. Output lines are also retained locally so a rejected exit is
+/// promoted to the same structured processkit error shape as `run_unit`, with
+/// the command's stdout/stderr available to classifiers.
+///
+/// This function observes exactly **one process lifecycle** and therefore does
+/// not apply a command/client retry policy: `Exited` is always the final event.
+/// A caller that wants to replay a failed streamed operation can decide that
+/// explicitly after receiving the terminal event and returned error.
+pub async fn run_with_progress<R: ProcessRunner + ?Sized>(
+    runner: &R,
+    command: &Command,
+    progress: &mut ProgressCallback<'_>,
+) -> Result<()> {
+    let program = command.program().to_string_lossy().into_owned();
+    let ok_codes = command
+        .configured_ok_codes()
+        .map_or_else(|| vec![0], <[i32]>::to_vec);
+    let absolute_timeout = command.configured_timeout();
+    let inactivity_timeout = command.configured_inactivity_timeout();
+    let started = Instant::now();
+
+    let mut run = runner.start(command).await?;
+    let mut events = run.events()?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let forward = async {
+        let mut callback_active = true;
+        while let Some(event) = events.next().await {
+            let target = match &event {
+                ProcessEvent::Stdout(_) => Some(&mut stdout),
+                ProcessEvent::Stderr(_) => Some(&mut stderr),
+                _ => None,
+            };
+            if let (Some(target), Some(line)) = (target, event.text()) {
+                if !target.is_empty() {
+                    target.push('\n');
+                }
+                target.push_str(line);
+            }
+            if callback_active
+                && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| progress(event)))
+                    .is_err()
+            {
+                // A UI callback must not strand the child or its pipe pumps.
+                // Disable it, keep draining, and let the real process outcome win.
+                callback_active = false;
+            }
+        }
+    };
+    let (_, finished) = tokio::join!(forward, run.finish());
+    let finished = finished?;
+    let timeout = if finished.outcome.inactivity_timed_out() {
+        inactivity_timeout
+    } else {
+        absolute_timeout
+    };
+    ProcessResult::from_parts(
+        program,
+        stdout,
+        stderr,
+        finished.outcome,
+        timeout,
+        started.elapsed(),
+        finished.stderr_truncated,
+        0,
+        0,
+        ok_codes,
+    )
+    .ensure_success()
+    .map(drop)
+}
 
 pub mod credentials;
 pub use credentials::{
@@ -1418,6 +1513,24 @@ impl<R: ProcessRunner> ManagedClient<R> {
         .await
     }
 
+    /// Run one command while forwarding live process events to `progress`.
+    ///
+    /// Credential injection and all command defaults are applied exactly as for
+    /// [`run_unit`](Self::run_unit). Unlike that captured-output path, this is a
+    /// deliberately single-attempt lifecycle: neither this client's optional
+    /// lock retry nor a command retry is applied, so the callback observes one
+    /// `Started … Exited` sequence and `Exited` remains terminal. The returned
+    /// error still carries the streamed stdout/stderr for normal processkit
+    /// classification.
+    pub async fn run_with_progress(
+        &self,
+        call: impl IntoCommand<R>,
+        progress: &mut ProgressCallback<'_>,
+    ) -> Result<()> {
+        let cmd = self.prepare(call).await?;
+        crate::run_with_progress(self.inner.runner(), &cmd, progress).await
+    }
+
     /// Like [`CliClient::output_string`], with credential injection. **No lock-retry:**
     /// `output_string` returns `Ok` on a non-zero exit (it captures the result), so a
     /// lock failure surfaces as an `Ok` here, not an `Err` the retry predicate could
@@ -1587,6 +1700,74 @@ impl<R: ProcessRunner> ManagedClient<R> {
 mod tests {
     use super::*;
     use processkit::testing::{Reply, ScriptedRunner};
+    use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn streamed_run_replays_scripted_lifecycle_and_preserves_failure_output() {
+        let runner = ScriptedRunner::new().on(
+            ["tool", "network-op"],
+            Reply::fail(23, "remote rejected").with_stdout("sent objects"),
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let mut progress = move |event| sink.lock().unwrap().push(event);
+
+        let err = run_with_progress(
+            &runner,
+            &Command::new("tool").arg("network-op"),
+            &mut progress,
+        )
+        .await
+        .expect_err("the scripted non-zero exit stays an error");
+        drop(progress);
+
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Exit { code: 23, stdout, stderr, .. }
+                if stdout == "sent objects" && stderr == "remote rejected"
+        ));
+        let events = seen.lock().unwrap();
+        assert!(matches!(events.first(), Some(ProcessEvent::Started { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.text() == Some("sent objects"))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.text() == Some("remote rejected"))
+        );
+        assert!(matches!(
+            events.last(),
+            Some(ProcessEvent::Exited(outcome)) if outcome.code() == Some(23)
+        ));
+    }
+
+    #[tokio::test]
+    async fn streamed_run_isolates_a_panicking_progress_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let runner = ScriptedRunner::new().on(
+            ["tool", "network-op"],
+            Reply::ok("out").with_stderr("progress"),
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let mut progress = move |_event| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            panic!("broken UI callback");
+        };
+
+        run_with_progress(
+            &runner,
+            &Command::new("tool").arg("network-op"),
+            &mut progress,
+        )
+        .await
+        .expect("the process outcome wins over a callback panic");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "callback is disabled");
+    }
 
     #[test]
     fn rejects_empty_and_leading_dash() {

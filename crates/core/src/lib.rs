@@ -199,7 +199,7 @@ pub use error::{Error, Result};
 // `default_output_budget`) or a per-call override
 // ([`Repo::show_file_within`](Repo::show_file_within)) for the content read this
 // facade exposes. `vcs-git` and `vcs-jj` re-export the same type.
-pub use vcs_git::OutputBudget;
+pub use vcs_git::{OutputBudget, ProcessEvent, ProgressCallback};
 
 // Re-export the underlying typed clients so a consumer depending only on
 // `vcs-core` can still reach raw, tool-specific operations — and their types
@@ -573,6 +573,33 @@ impl Repo<JobRunner> {
             BackendKind::Jj => {
                 let jj = Jj::new();
                 jj_backend::clone(&jj, url, &dest, &spec).await?;
+                Ok(Repo::from_jj(dest.clone(), dest, jj))
+            }
+        }
+    }
+
+    /// [`clone`](Repo::clone) with live process lifecycle and output events.
+    ///
+    /// The callback sees one `Started … Exited` sequence from the selected
+    /// backend. Clone validation and failed-destination cleanup are identical to
+    /// the captured-output constructor; only observability differs.
+    pub async fn clone_with_progress<'a>(
+        backend: BackendKind,
+        url: &str,
+        dest: &Path,
+        spec: CloneSpec,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<Self> {
+        let dest = std::path::absolute(dest)?;
+        match backend {
+            BackendKind::Git => {
+                let git = Git::new();
+                git_backend::clone_with_progress(&git, url, &dest, &spec, progress).await?;
+                Ok(Repo::from_git(dest.clone(), dest, git))
+            }
+            BackendKind::Jj => {
+                let jj = Jj::new();
+                jj_backend::clone_with_progress(&jj, url, &dest, &spec, progress).await?;
                 Ok(Repo::from_jj(dest.clone(), dest, jj))
             }
         }
@@ -1136,6 +1163,20 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// [`fetch`](Repo::fetch) with live process lifecycle and output events.
+    ///
+    /// This observes one backend process attempt (no automatic transient
+    /// replay), so [`ProcessEvent::Exited`] is always the final callback event.
+    pub async fn fetch_with_progress<'a>(
+        &self,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::fetch_with_progress(g, &self.cwd, progress).await,
+            Backend::Jj(j) => jj_backend::fetch_with_progress(j, &self.cwd, progress).await,
+        }
+    }
+
     /// Fetch from a *named* remote (git `fetch <remote>` / jj
     /// `git fetch --remote <remote>`). Transient network failures are retried by
     /// the underlying client.
@@ -1170,6 +1211,20 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::push(g, &self.cwd, branch).await,
             Backend::Jj(j) => jj_backend::push(j, &self.cwd, branch).await,
+        }
+    }
+
+    /// [`push`](Repo::push) with live process lifecycle and output events.
+    pub async fn push_with_progress<'a>(
+        &self,
+        branch: &str,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => {
+                git_backend::push_with_progress(g, &self.cwd, branch, progress).await
+            }
+            Backend::Jj(j) => jj_backend::push_with_progress(j, &self.cwd, branch, progress).await,
         }
     }
 
@@ -1471,7 +1526,7 @@ macro_rules! facade_trait {
             $( #[doc = $sdoc:expr] fn $sn:ident( $($sa:ident: $sat:ty),* $(,)? ) -> $sr:ty; )*
         }
         async {
-            $( fn $an:ident( $($aa:ident: $aat:ty),* $(,)? ) -> $ar:ty; )*
+            $( fn $an:ident $(<$al:lifetime>)?( $($aa:ident: $aat:ty),* $(,)? ) -> $ar:ty; )*
         }
     ) => {
         $(#[doc = $tdoc])*
@@ -1483,7 +1538,7 @@ macro_rules! facade_trait {
             )*
             $(
                 #[doc = concat!("See [`", stringify!($Ty), "::", stringify!($an), "`].")]
-                async fn $an(&self, $($aa: $aat),*) -> $ar;
+                async fn $an $(<$al>)?(&self, $($aa: $aat),*) -> $ar;
             )*
         }
 
@@ -1498,7 +1553,7 @@ macro_rules! facade_trait {
                 }
             )*
             $(
-                async fn $an(&self, $($aa: $aat),*) -> $ar {
+                async fn $an $(<$al>)?(&self, $($aa: $aat),*) -> $ar {
                     self.$an($($aa),*).await
                 }
             )*
@@ -1551,9 +1606,11 @@ facade_trait! {
         fn snapshot_readonly() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[PathBuf], message: &str) -> Result<()>;
         fn fetch() -> Result<()>;
+        fn fetch_with_progress<'a>(progress: &'a mut ProgressCallback<'a>) -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
         fn fetch_branch(branch: &str) -> Result<()>;
         fn push(branch: &str) -> Result<()>;
+        fn push_with_progress<'a>(branch: &str, progress: &'a mut ProgressCallback<'a>) -> Result<()>;
         fn checkout(reference: &str) -> Result<()>;
         fn new_child(reference: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
@@ -3230,6 +3287,57 @@ mod tests {
         assert_eq!(&args[..4], &["git", "push", "-b", "exact:feature"]);
     }
 
+    #[tokio::test]
+    async fn progress_facade_dispatches_fetch_and_push_on_both_backends() {
+        use std::sync::{Arc, Mutex};
+
+        let git = git_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "fetch", "--progress"],
+                    Reply::ok("fetch-out").with_stderr("fetch-progress"),
+                )
+                .on(
+                    ["git", "push", "--progress", "-u", "origin", "feature"],
+                    Reply::ok("push-out").with_stderr("push-progress"),
+                ),
+        );
+        let jj = jj_repo(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "git", "fetch"],
+                    Reply::ok("fetch-out").with_stderr("fetch-progress"),
+                )
+                .on(
+                    ["jj", "git", "push", "-b", "exact:feature"],
+                    Reply::ok("push-out").with_stderr("push-progress"),
+                ),
+        );
+
+        for repo in [&git, &jj] {
+            for push in [false, true] {
+                let names = Arc::new(Mutex::new(Vec::new()));
+                let sink = Arc::clone(&names);
+                let mut progress = move |event: ProcessEvent| {
+                    sink.lock().unwrap().push(event.name());
+                };
+                if push {
+                    repo.push_with_progress("feature", &mut progress)
+                        .await
+                        .unwrap();
+                } else {
+                    repo.fetch_with_progress(&mut progress).await.unwrap();
+                }
+                drop(progress);
+                let names = names.lock().unwrap();
+                assert_eq!(names.first(), Some(&"started"));
+                assert!(names.contains(&"stdout"));
+                assert!(names.contains(&"stderr"));
+                assert_eq!(names.last(), Some(&"exited"));
+            }
+        }
+    }
+
     // A flag-like branch is now rejected the same way on BOTH backends: the
     // facade converts the branch string into the validated newtype at the
     // boundary (`vcs_git::RefName` / `vcs_jj::BookmarkName`), so `--force` is
@@ -4251,7 +4359,11 @@ mod tests {
         let repo = git_repo(
             ScriptedRunner::new()
                 .on(["git", "symbolic-ref"], Reply::ok("main\n"))
-                .on(["git", "show-ref"], Reply::ok("")),
+                .on(["git", "show-ref"], Reply::ok(""))
+                .on(
+                    ["git", "fetch", "--progress"],
+                    Reply::ok("").with_stderr("progress"),
+                ),
         );
         let dynamic: &dyn VcsRepo = &repo;
         assert_eq!(dynamic.kind(), BackendKind::Git);
@@ -4262,6 +4374,9 @@ mod tests {
         // Exercise a reference-argument async method through `&dyn` — pins the
         // async_trait lifetime capture the macro relies on (no-arg calls don't).
         assert!(dynamic.branch_exists("main").await.unwrap());
+        // And the lifetime-generic callback row remains object-safe too.
+        let mut progress = |_event: ProcessEvent| {};
+        dynamic.fetch_with_progress(&mut progress).await.unwrap();
     }
 
     // When the backend has no native trunk (git `origin/HEAD` unset), the facade

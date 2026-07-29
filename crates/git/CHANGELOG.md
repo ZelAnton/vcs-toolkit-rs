@@ -9,6 +9,10 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+- Add typed `fetch_with_progress`, `push_with_progress`, and
+  `clone_repo_with_progress` methods. They stream process lifecycle/output
+  events, force Git progress for piped output, and retain clone cleanup safety.
+
 ### Added
 - `GitApi::remote_list` (also on `GitAt`): typed `git remote -v` listing. Its
   tolerant parser coalesces fetch/push display rows to one `Remote { name, url }`

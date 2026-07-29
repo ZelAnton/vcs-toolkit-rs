@@ -190,7 +190,8 @@ pub use vcs_diff::{
 // The error classifiers live in the shared plumbing crate — re-exported so
 // `vcs_jj::is_transient_fetch_error`, `vcs_jj::is_lock_contention` still resolve.
 pub use vcs_cli_support::{
-    OutputBudget, RetryPolicy, is_lock_contention, is_transient_fetch_error,
+    OutputBudget, ProcessEvent, ProgressCallback, RetryPolicy, is_lock_contention,
+    is_transient_fetch_error,
 };
 
 /// Name of the underlying CLI binary this crate drives.
@@ -330,12 +331,27 @@ pub trait JjApi: Send + Sync {
     /// Fetch from the git remote (`jj git fetch`); transient (network) failures
     /// are retried (3 attempts, 500 ms backoff).
     async fn git_fetch(&self, dir: &Path) -> Result<()>;
+    /// Fetch while reporting process lifecycle and stdout/stderr lines. This
+    /// observes one process attempt (no automatic replay), so
+    /// [`ProcessEvent::Exited`] is always terminal.
+    async fn git_fetch_with_progress<'a>(
+        &self,
+        dir: &Path,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Fetch from a *named* git remote (`jj git fetch --remote <remote>`);
     /// transient failures are retried like [`git_fetch`](JjApi::git_fetch).
     async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()>;
     /// Push to the git remote (`jj git push`, optionally `-b <bookmark>`). The
     /// bookmark is owned (`Option<BookmarkName>`) to keep the trait `mockall`-friendly.
     async fn git_push(&self, dir: &Path, bookmark: Option<BookmarkName>) -> Result<()>;
+    /// Push while reporting process lifecycle and stdout/stderr lines.
+    async fn git_push_with_progress<'a>(
+        &self,
+        dir: &Path,
+        bookmark: Option<BookmarkName>,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Add a Git remote (`jj git remote add <name> <url>`).
     ///
     /// `name` and `url` are positional arguments and reject empty or leading-`-`
@@ -599,6 +615,16 @@ pub trait JjApi: Send + Sync {
     /// on the jj version *and* the user's `git.colocate` config, so the
     /// [`GitClone`] choice decides deterministically.
     async fn git_clone(&self, url: &str, dest: &Path, spec: GitClone) -> Result<()>;
+    /// Clone while reporting process lifecycle and stdout/stderr lines, while
+    /// preserving [`git_clone`](JjApi::git_clone)'s failed-destination cleanup
+    /// contract.
+    async fn git_clone_with_progress<'a>(
+        &self,
+        url: &str,
+        dest: &Path,
+        spec: GitClone,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()>;
     /// Fold working-copy edits into the mutable ancestors that introduced the
     /// touched lines (`absorb [--from <revset>] [<filesets>…]`); empty
     /// `filesets` absorbs everything.
@@ -1230,6 +1256,17 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         self.core.run_unit(cmd).await
     }
 
+    async fn git_fetch_with_progress<'a>(
+        &self,
+        dir: &Path,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        let cmd = self.core.budget_diagnostics(
+            c_locale(self.cmd_in(dir, ["git", "fetch"])).timeout_grace(FETCH_TIMEOUT_GRACE),
+        );
+        self.core.run_with_progress(cmd, progress).await
+    }
+
     async fn git_fetch_from(&self, dir: &Path, remote: &str) -> Result<()> {
         // `--remote` is glob-matched too, so `exact:` keeps a `*` remote from
         // fetching from every configured remote. Idempotent → `retry` replays it
@@ -1258,6 +1295,22 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // deadline (matches `git_fetch`).
         let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
         self.core.run_unit(cmd).await
+    }
+
+    async fn git_push_with_progress<'a>(
+        &self,
+        dir: &Path,
+        bookmark: Option<BookmarkName>,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        let mut args = vec!["git", "push"];
+        let bookmark_pat = bookmark.as_ref().map(|b| exact(b.as_str()));
+        if let Some(name) = bookmark_pat.as_deref() {
+            args.push("-b");
+            args.push(name);
+        }
+        let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
+        self.core.run_with_progress(cmd, progress).await
     }
 
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()> {
@@ -1834,6 +1887,37 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // `cleanable` must be computed before the clone runs.
         let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
         let result = self.core.run_unit(command).await;
+        if result.is_err() {
+            vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
+        }
+        result
+    }
+
+    async fn git_clone_with_progress<'a>(
+        &self,
+        url: &str,
+        dest: &Path,
+        spec: GitClone,
+        progress: &'a mut ProgressCallback<'a>,
+    ) -> Result<()> {
+        reject_flag_like("url", url)?;
+        let command = self
+            .core
+            .command(["git", "clone", url])
+            .arg(dest)
+            .arg(if spec.colocate {
+                "--colocate"
+            } else {
+                "--no-colocate"
+            });
+        let command = self.core.budget_diagnostics(
+            command
+                .arg("--color")
+                .arg("never")
+                .timeout_grace(FETCH_TIMEOUT_GRACE),
+        );
+        let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
+        let result = self.core.run_with_progress(command, progress).await;
         if result.is_err() {
             vcs_cli_support::cleanup_failed_clone_dest(dest, cleanable);
         }
@@ -3249,6 +3333,86 @@ mod tests {
     async fn git_push_without_bookmark_is_bare() {
         let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "git", "push"], Reply::ok("")));
         jj.git_push(Path::new("."), None).await.expect("bare push");
+    }
+
+    #[tokio::test]
+    async fn network_progress_variants_stream_scripted_lifecycles() {
+        use std::sync::{Arc, Mutex};
+
+        let runner = ScriptedRunner::new()
+            .on(
+                ["jj", "git", "fetch"],
+                Reply::ok("fetch-out").with_stderr("fetch-progress"),
+            )
+            .on(
+                ["jj", "git", "push", "-b", "exact:feature"],
+                Reply::ok("push-out").with_stderr("push-progress"),
+            )
+            .on(
+                [
+                    "jj",
+                    "git",
+                    "clone",
+                    "https://x/r",
+                    "/dest",
+                    "--no-colocate",
+                ],
+                Reply::ok("clone-out").with_stderr("clone-progress"),
+            );
+        let jj = Jj::with_runner(runner);
+
+        for operation in 0..3 {
+            let names = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&names);
+            let mut progress = move |event: ProcessEvent| {
+                sink.lock().unwrap().push(event.name());
+            };
+            match operation {
+                0 => jj
+                    .git_fetch_with_progress(Path::new("/repo"), &mut progress)
+                    .await
+                    .unwrap(),
+                1 => jj
+                    .git_push_with_progress(Path::new("/repo"), Some(bn("feature")), &mut progress)
+                    .await
+                    .unwrap(),
+                2 => jj
+                    .git_clone_with_progress(
+                        "https://x/r",
+                        Path::new("/dest"),
+                        GitClone::separate(),
+                        &mut progress,
+                    )
+                    .await
+                    .unwrap(),
+                _ => unreachable!(),
+            }
+            drop(progress);
+            let names = names.lock().unwrap();
+            assert_eq!(names.first(), Some(&"started"));
+            assert!(names.contains(&"stdout"));
+            assert!(names.contains(&"stderr"));
+            assert_eq!(names.last(), Some(&"exited"));
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_clone_failure_keeps_the_cleanup_contract() {
+        use vcs_testkit::TempDir;
+
+        let root = TempDir::new("stream-clone-cleanup");
+        let dest = root.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+        let jj = Jj::with_runner(
+            ScriptedRunner::new().on(["jj", "git", "clone"], Reply::fail(1, "network failed")),
+        );
+        let mut progress = |_event: ProcessEvent| {};
+        assert!(
+            jj.git_clone_with_progress("https://x/r", &dest, GitClone::separate(), &mut progress)
+                .await
+                .is_err()
+        );
+        assert!(!dest.exists(), "a cleanable partial destination is removed");
     }
 
     #[tokio::test]

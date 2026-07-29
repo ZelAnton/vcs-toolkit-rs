@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
 use vcs_git::{
-    CheckoutTarget, DiffSpec, FileDiff, Git, GitApi, GitPush, OutputBudget, RefName, RevSpec,
-    StatusEntry, WorktreeAdd,
+    CheckoutTarget, DiffSpec, FileDiff, Git, GitApi, GitPush, OutputBudget, ProgressCallback,
+    RefName, RevSpec, StatusEntry, WorktreeAdd,
 };
 
 use crate::dto::{
@@ -297,6 +297,15 @@ pub(crate) async fn fetch<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<
     Ok(())
 }
 
+pub(crate) async fn fetch_with_progress<'a, R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    git.fetch_with_progress(dir, progress).await?;
+    Ok(())
+}
+
 pub(crate) async fn fetch_from<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
@@ -320,6 +329,21 @@ pub(crate) async fn push<R: ProcessRunner>(git: &Git<R>, dir: &Path, branch: &st
     // no separate set-upstream step, and `-u` on later pushes is idempotent.
     git.push(dir, GitPush::branch(RefName::new(branch)?).set_upstream())
         .await?;
+    Ok(())
+}
+
+pub(crate) async fn push_with_progress<'a, R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    branch: &str,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    git.push_with_progress(
+        dir,
+        GitPush::branch(RefName::new(branch)?).set_upstream(),
+        progress,
+    )
+    .await?;
     Ok(())
 }
 
@@ -574,6 +598,23 @@ pub(crate) async fn clone<R: ProcessRunner>(
     dest: &Path,
     spec: &crate::dto::CloneSpec,
 ) -> Result<()> {
+    git.clone_repo(url, dest, clone_spec(spec)?).await?;
+    Ok(())
+}
+
+pub(crate) async fn clone_with_progress<'a, R: ProcessRunner>(
+    git: &Git<R>,
+    url: &str,
+    dest: &Path,
+    spec: &crate::dto::CloneSpec,
+    progress: &'a mut ProgressCallback<'a>,
+) -> Result<()> {
+    git.clone_repo_with_progress(url, dest, clone_spec(spec)?, progress)
+        .await?;
+    Ok(())
+}
+
+fn clone_spec(spec: &crate::dto::CloneSpec) -> Result<vcs_git::CloneSpec> {
     if spec.colocate.is_some() {
         return Err(Error::Unsupported(
             "git clone has no colocation option (`colocate` is jj-only — jj is what \
@@ -591,8 +632,7 @@ pub(crate) async fn clone<R: ProcessRunner>(
     if spec.bare {
         git_spec = git_spec.bare();
     }
-    git.clone_repo(url, dest, git_spec).await?;
-    Ok(())
+    Ok(git_spec)
 }
 
 /// Project a `git status --porcelain` entry into a [`FileChange`].
