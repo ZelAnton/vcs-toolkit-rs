@@ -1574,6 +1574,7 @@ dependencies = [
 name = "vcs-mcp"
 version = "0.7.0"
 dependencies = [
+ "async-trait",
  "processkit",
  "rmcp",
  "serde",

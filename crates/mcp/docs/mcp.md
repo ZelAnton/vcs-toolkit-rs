@@ -219,8 +219,11 @@ The `vcs-mcp` binary applies, in order:
    `repo_*` mutating tools are run **one at a time** behind a per-server write lock —
    two concurrent mutations (e.g. `repo_try_merge`'s materialize-then-rollback racing
    `repo_commit`) can't interleave and lose one's work. Read tools are **not**
-   serialized, so a read can still observe transient mid-mutation state; the `forge_*`
-   tools are remote calls and aren't behind this lock.
+   serialized, so a read can still observe transient mid-mutation state. Remote-only
+   `forge_*` mutations are not behind this lock either. The local-working-copy
+   exceptions — `forge_pr_checkout`, `forge_pr_merge`, and `forge_pr_close` (the
+   latter two can delete a branch and switch the checkout) — take the same repo lock
+   and therefore cannot interleave with `repo_*` mutations.
 7. **A content-output budget.** `repo_show_file`, `repo_diff`, and `forge_pr_diff`
    run under the `--max-output-bytes` ceiling (default 10 MiB), so a giant blob or
    diff can't be buffered whole into the server's (and then the JSON response's)

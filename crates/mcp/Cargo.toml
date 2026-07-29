@@ -60,6 +60,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-
 # The `ScriptedRunner` test seam to back a `Repo` with canned output (hermetic
 # tool tests — no real git needed).
 processkit.workspace = true
+# Implement a small delaying/barrier runner for the concurrency regression suite.
+async-trait = "0.1"
 # Real throwaway git/jj repos for the `#[ignore]` integration tests.
 vcs-testkit = { path = "../testkit" }
 

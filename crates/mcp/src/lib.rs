@@ -249,4 +249,6 @@ impl ServerHandler for VcsMcpServer {
 pub mod guide {}
 
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
 mod tests;
