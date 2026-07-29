@@ -44,6 +44,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   branch tip.
 
 ### Changed
+- Split the growing crate root into focused internal modules: command specs and
+  validated inputs live in `specs.rs`, transaction/rollback support in
+  `transaction.rs`, and synchronous Drop cleanup in `blocking.rs`. Existing
+  root exports and public signatures are unchanged. (T-137.)
 - `JjApi::remote_list` now runs `jj git remote list` with
   `--ignore-working-copy`. Listing static remote configuration no longer
   snapshots the working copy or records a jj operation; its parsed remotes are
