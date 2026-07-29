@@ -20,8 +20,10 @@
 //!   `--flag=value` form of one.
 //! - A value that **looks like a secret** (a `ghp_`/`github_pat_`/`glpat-`/… token
 //!   prefix, an `x-access-token:` embed) is replaced with `<redacted>`.
-//! - A **URL with embedded credentials** (`scheme://user:pass@host/…`) keeps its
-//!   host/path but masks the userinfo (`scheme://<redacted>@host/…`).
+//! - A **URL with userinfo** (`scheme://user@host/…` or
+//!   `scheme://user:pass@host/…`) keeps its host/path but masks the userinfo
+//!   (`scheme://<redacted>@host/…`). The conventional non-secret
+//!   `ssh://git@host/…` form remains visible.
 //! - Any **long free-text** value (a PR/issue body, a commit message) is truncated
 //!   to [`MAX_VALUE_LEN`] characters plus a length marker.
 //!
@@ -356,7 +358,7 @@ fn error_category(err: &Error) -> &'static str {
 }
 
 /// Redact a command's argv for display: mask secret-bearing values, mask the
-/// userinfo of a credentialed URL, and truncate long free text — see the
+/// userinfo of a URL, and truncate long free text — see the
 /// [module docs](self) for the full policy. Returns one display string per input
 /// argument, in order. The policy is **fail-closed**: when in doubt it masks.
 ///
@@ -436,10 +438,11 @@ fn redact_value(value: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// If `value` is a URL of the form `scheme://userinfo@host/…` whose `userinfo`
-/// carries a password (`user:secret`), return it with the userinfo masked
-/// (`scheme://<redacted>@host/…`); otherwise `None`. Keeps the host/path visible
-/// for diagnostics while never printing an embedded credential.
+/// If `value` is a URL of the form `scheme://userinfo@host/…`, return it with the
+/// userinfo masked (`scheme://<redacted>@host/…`). The conventional
+/// `ssh://git@host/…` transport identity is the sole allowlisted exception. Keeps
+/// the host/path visible for diagnostics while never printing a token used as a
+/// username (or any other unexpected userinfo).
 fn mask_url_userinfo(value: &str) -> Option<String> {
     let scheme_end = value.find("://")?;
     let after = &value[scheme_end + 3..];
@@ -454,9 +457,10 @@ fn mask_url_userinfo(value: &str) -> Option<String> {
     let authority = after.split(['/', '?', '#']).next().unwrap_or(after);
     let at = authority.rfind('@')?;
     let userinfo = &authority[..at];
-    // Only mask when there is a password component (`user:secret`); a bare
-    // `user@host` (no colon) is not a secret and stays visible.
-    if !userinfo.contains(':') {
+    // `git@` in an SSH URL is the standard, non-secret transport identity. Any
+    // other userinfo is fail-closed: PATs are commonly supplied as the username
+    // without a colon (e.g. `https://ghp_…@github.com/o/r.git`).
+    if value[..scheme_end].eq_ignore_ascii_case("ssh") && userinfo == "git" {
         return None;
     }
     Some(format!(
@@ -620,9 +624,38 @@ mod tests {
         assert_eq!(out[0], "clone");
         assert_eq!(out[1], "https://<redacted>@github.com/o/r.git");
         assert!(!out[1].contains("tokensecret"));
-        // A bare `user@host` (no password component) stays visible.
+        // The conventional SSH transport identity stays visible.
         let out = redact_args(&argv(&["fetch", "ssh://git@github.com/o/r.git"]));
         assert_eq!(out[1], "ssh://git@github.com/o/r.git");
+    }
+
+    #[test]
+    fn url_userinfo_token_usernames_are_masked() {
+        for (url, secret) in [
+            (
+                "https://ghp_THIS_MUST_NOT_LEAK@github.com/o/r.git",
+                "ghp_THIS_MUST_NOT_LEAK",
+            ),
+            (
+                "https://glpat-THIS_MUST_NOT_LEAK@gitlab.com/o/r.git",
+                "glpat-THIS_MUST_NOT_LEAK",
+            ),
+            (
+                "https://x-access-token@github.com/o/r.git",
+                "x-access-token",
+            ),
+        ] {
+            let out = redact_args(&argv(&["clone", url]));
+            assert_eq!(
+                out[1],
+                "https://<redacted>@".to_string() + url.split('@').nth(1).unwrap()
+            );
+            assert!(
+                !out[1].contains(secret),
+                "userinfo leaked from {url}: {}",
+                out[1]
+            );
+        }
     }
 
     #[test]

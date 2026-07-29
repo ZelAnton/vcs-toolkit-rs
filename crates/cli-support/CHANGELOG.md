@@ -85,6 +85,11 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   far-past-the-cap fixtures. No ceiling was re-tuned. (T-130.)
 
 ### Fixed
+- `redact_args` now treats URL userinfo as secret-bearing by default. In
+  particular, clone URLs that put a GitHub/GitLab PAT in the username slot
+  (`https://ghp_…@…`, `https://glpat-…@…`) no longer leak it to a command
+  observer; the only visible userinfo is the conventional non-secret
+  `ssh://git@host/…` transport identity. (T-131.)
 - `redact_args`/`redact_value` no longer mistake part of a URL's path or query for
   embedded credentials. `mask_url_userinfo` now searches for the `userinfo@` only
   within the URL's **authority** component (up to the first `/`, `?`, or `#`), the
