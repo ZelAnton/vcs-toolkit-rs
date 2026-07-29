@@ -345,6 +345,9 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `issue_close` | `issue close <n>` | |
 | `issue_reopen` | `issue reopen <n>` | |
 | `issue_comment` | `issue comment <n> --body <body>` | returns comment URL |
+| `workflow_list` | `workflow list --limit 50 --json id,name,path,state` | active workflows |
+| `workflow_list_with` | `workflow list --limit <n> [--all] --json id,name,path,state` | via `WorkflowList`; zero rejected before spawn |
+| `workflow_view` | `workflow list --limit 2147483647 --all --json id,name,path,state` | resolves id/name/filename/path; current `workflow view` has no JSON mode, so no human output is scraped |
 | `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs |
 | `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id` |
 | `run_watch` | `run watch <id>`, then `run view <id>` | **blocks** until the run finishes |
@@ -367,8 +370,8 @@ escape hatches](../crates/github/docs/github.md#raw-escape-hatches).
 
 `browse`, `cache`, `codespace`, `extension`, `gist`, `label`, `org`, `project`,
 `pr lock`/`reopen`/`status`, `repo clone`/`create`/`fork`/`edit`/`sync`/`list`,
-`ruleset`, `search`, `secret`, `ssh-key`, `variable`, `workflow` (`list`/`view`/
-`enable`/`disable` — `workflow run` is modeled as `workflow_dispatch`). Reach any
+`ruleset`, `search`, `secret`, `ssh-key`, `variable`, `workflow enable`/`disable`
+(`workflow list`/`view` and `workflow run` are modeled). Reach any
 of these through `run`/`run_raw`, or `api` for a raw REST/GraphQL call.
 
 ## glab (`vcs-gitlab` — the GitLab CLI)

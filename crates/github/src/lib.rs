@@ -15,8 +15,8 @@
 //!
 //! Check auth · view the repo · the full pull-request lifecycle (list / view /
 //! create / merge / mark-ready / close, review / comment, CI checks, feedback) ·
-//! issues · releases · GitHub Actions runs (list / view / watch, plus dispatch a
-//! workflow / rerun / cancel a run). One tiny call to start:
+//! issues · releases · GitHub Actions workflows and runs (list / view / watch,
+//! plus dispatch a workflow / rerun / cancel a run). One tiny call to start:
 //!
 //! ```no_run
 //! use std::path::Path;
@@ -33,7 +33,7 @@
 //!   on `&dyn GitHubApi` (or generically on `impl GitHubApi`) so a test can swap
 //!   the real client for a double. Repo-scoped methods take the working
 //!   directory as the first argument and return typed results ([`PullRequest`],
-//!   [`Issue`], [`RepoView`], [`CheckRun`], [`WorkflowRun`], [`Release`],
+//!   [`Issue`], [`RepoView`], [`CheckRun`], [`Workflow`], [`WorkflowRun`], [`Release`],
 //!   [`PrFeedback`], …) or a structured [`Error`].
 //! - **[`GitHub`]** — the real client. [`GitHub::new`] uses the job-backed
 //!   runner; [`GitHub::with_runner`] injects a fake one for tests. It is generic
@@ -54,7 +54,9 @@
 //!   [`pr_close`](GitHubApi::pr_close), [`pr_checkout`](GitHubApi::pr_checkout),
 //!   [`pr_review`](GitHubApi::pr_review),
 //!   [`pr_comment`](GitHubApi::pr_comment), [`pr_edit`](GitHubApi::pr_edit), [`pr_checks`](GitHubApi::pr_checks),
-//!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions runs
+//!   [`pr_feedback`](GitHubApi::pr_feedback), [`pr_diff`](GitHubApi::pr_diff), …); Actions
+//!   workflows ([`workflow_list`](GitHubApi::workflow_list),
+//!   [`workflow_view`](GitHubApi::workflow_view)) and runs
 //!   ([`run_list`](GitHubApi::run_list), [`run_view`](GitHubApi::run_view),
 //!   [`run_watch`](GitHubApi::run_watch) — *blocking*, bounded by the client
 //!   timeout — plus the run-control verbs
@@ -67,6 +69,8 @@
 //!   [`run`](GitHubApi::run) / [`api`](GitHubApi::api) for anything unmodelled.
 //! - **Builder specs** for the multi-option commands — [`PrList`] / [`IssueList`]
 //!   select state and limit while the parameterless list methods remain open/100;
+//!   [`WorkflowList`] selects disabled inclusion and a limit while its shorthand
+//!   remains active-only/50;
 //!   [`PrCreate`] (title/body
 //!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
 //!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
@@ -160,7 +164,7 @@ pub use processkit::CancellationToken;
 mod parse;
 pub use parse::{
     CheckBucket, CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, RepoView, Review,
-    WorkflowRun,
+    Workflow, WorkflowRun,
 };
 // Re-exported so `vcs_github::FileDiff` (and the types nested in it) resolve
 // without a direct `vcs-diff` dependency — `pr_diff` returns `vcs-diff`'s model
@@ -300,6 +304,46 @@ impl Default for IssueList {
     }
 }
 
+/// Filters for [`GitHubApi::workflow_list_with`] (`gh workflow list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorkflowList {
+    /// Include disabled workflows (`--all`). Disabled workflows are hidden by
+    /// default by `gh`.
+    pub include_disabled: bool,
+    /// Maximum number of workflows (`--limit`).
+    pub limit: usize,
+}
+
+impl WorkflowList {
+    /// Active workflows, up to gh's default of 50 — the compatibility default
+    /// used by [`GitHubApi::workflow_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Include disabled workflows (`--all`).
+    pub fn all(mut self) -> Self {
+        self.include_disabled = true;
+        self
+    }
+
+    /// Set the maximum number of workflows returned.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for WorkflowList {
+    fn default() -> Self {
+        Self {
+            include_disabled: false,
+            limit: 50,
+        }
+    }
+}
+
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
@@ -311,6 +355,11 @@ const ISSUE_VIEW_FIELDS: &str =
     "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";
 const RUN_FIELDS: &str =
     "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
+const WORKFLOW_FIELDS: &str = "id,name,path,state";
+// `gh workflow view` has no JSON mode. Resolve a typed view through the JSON
+// inventory instead; this signed-32-bit maximum asks gh to paginate until the
+// repository is exhausted without overflowing gh's `int` on 32-bit builds.
+const WORKFLOW_VIEW_LOOKUP_LIMIT: usize = i32::MAX as usize;
 // `gh run watch` refreshes its table about every three seconds. Five minutes without
 // either stream progressing therefore signals a wedged watcher, while still allowing
 // an otherwise healthy CI run to last for hours.
@@ -357,6 +406,51 @@ fn reject_invalid_labels(operation: &str, labels: &[String]) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn resolve_workflow(workflows: Vec<Workflow>, selector: &str) -> Result<Workflow> {
+    if selector.is_empty() {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workflow_view selector must not be empty",
+            ),
+        ));
+    }
+
+    let numeric_id = selector.parse::<u64>().ok();
+    let selector_lower = selector.to_lowercase();
+    let is_file = selector_lower.ends_with(".yml") || selector_lower.ends_with(".yaml");
+    let mut matches: Vec<_> = workflows
+        .into_iter()
+        .filter(|workflow| {
+            if let Some(id) = numeric_id {
+                workflow.id == id
+            } else if is_file {
+                workflow.path == selector
+                    || workflow
+                        .path
+                        .rsplit('/')
+                        .next()
+                        .is_some_and(|file| file == selector)
+            } else {
+                workflow.name.to_lowercase() == selector_lower
+            }
+        })
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches.pop().expect("length checked")),
+        0 => Err(Error::parse(
+            BINARY,
+            format!("could not find workflow {selector:?}"),
+        )),
+        count => Err(Error::parse(
+            BINARY,
+            format!("workflow selector {selector:?} is ambiguous ({count} matches)"),
+        )),
+    }
 }
 
 /// The GitHub host an operation targets: SaaS `github.com` or a **GitHub
@@ -1227,7 +1321,39 @@ pub trait GitHubApi: Send + Sync {
     /// use — `gh pr diff` emits the same git-format diff `git diff` does.
     async fn pr_diff(&self, dir: &Path, number: u64) -> Result<Vec<FileDiff>>;
 
-    // --- Actions runs ------------------------------------------------------
+    // --- Actions workflows and runs ---------------------------------------
+
+    /// Active workflow definitions (`gh workflow list --limit 50 --json …`).
+    /// Disabled workflows are hidden; use [`workflow_list_with`](GitHubApi::workflow_list_with)
+    /// with [`WorkflowList::all`] to include them. **Defaulted** to
+    /// `ErrorReason::Unsupported` so external trait implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn workflow_list(&self, dir: &Path) -> Result<Vec<Workflow>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "workflow_list".into(),
+        }))
+    }
+    /// Workflow definitions selected by `spec` (`--all` / `--limit`). A zero
+    /// limit is rejected before spawning. **Defaulted** to
+    /// `ErrorReason::Unsupported` so external trait implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn workflow_list_with(&self, dir: &Path, spec: WorkflowList) -> Result<Vec<Workflow>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "workflow_list_with".into(),
+        }))
+    }
+    /// Resolve one workflow by numeric id, display name (case-insensitive), or
+    /// workflow filename/path. Current `gh workflow view` has no `--json` mode,
+    /// so this resolves against the complete disabled-inclusive JSON inventory
+    /// from `gh workflow list` rather than scraping human-readable output.
+    /// **Defaulted** to `ErrorReason::Unsupported` so external trait implementers
+    /// keep compiling.
+    #[allow(unused_variables)]
+    async fn workflow_view(&self, dir: &Path, selector: &str) -> Result<Workflow> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "workflow_view".into(),
+        }))
+    }
 
     /// Recent workflow runs, newest first (`gh run list --limit <n>
     /// [--branch <b>] --json …`). `branch` is an owned `Option<String>` to keep
@@ -1846,6 +1972,42 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             .await
     }
 
+    async fn workflow_list(&self, dir: &Path) -> Result<Vec<Workflow>> {
+        self.workflow_list_with(dir, WorkflowList::default()).await
+    }
+
+    async fn workflow_list_with(&self, dir: &Path, spec: WorkflowList) -> Result<Vec<Workflow>> {
+        reject_zero_limit("workflow_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
+        let mut args = vec!["workflow", "list", "--limit", limit.as_str()];
+        if spec.include_disabled {
+            args.push("--all");
+        }
+        args.extend(["--json", WORKFLOW_FIELDS]);
+        self.core
+            .try_parse(self.core.command_in(dir, args), |s| {
+                vcs_cli_support::json::from_json(BINARY, s)
+            })
+            .await
+    }
+
+    async fn workflow_view(&self, dir: &Path, selector: &str) -> Result<Workflow> {
+        if selector.is_empty() {
+            return resolve_workflow(Vec::new(), selector);
+        }
+        // `gh workflow view` deliberately has no JSON exporter. `workflow list`
+        // delegates to gh's paginated Actions workflow API and exposes exactly the
+        // typed fields we need, so request an effectively-unbounded inventory and
+        // resolve the same id/name/file selector forms without scraping text.
+        let workflows = self
+            .workflow_list_with(
+                dir,
+                WorkflowList::new().all().limit(WORKFLOW_VIEW_LOOKUP_LIMIT),
+            )
+            .await?;
+        resolve_workflow(workflows, selector)
+    }
+
     async fn run_list(
         &self,
         dir: &Path,
@@ -2237,6 +2399,9 @@ vcs_cli_support::at_forwarders! {
         fn pr_edit(number: u64, edit: PrEdit) -> Result<()>;
         fn pr_feedback(number: u64) -> Result<PrFeedback>;
         fn pr_diff(number: u64) -> Result<Vec<FileDiff>>;
+        fn workflow_list() -> Result<Vec<Workflow>>;
+        fn workflow_list_with(spec: WorkflowList) -> Result<Vec<Workflow>>;
+        fn workflow_view(selector: &str) -> Result<Workflow>;
         fn run_list(limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
         fn run_view(id: u64) -> Result<WorkflowRun>;
         fn run_watch(id: u64) -> Result<WorkflowRun>;
@@ -3719,6 +3884,130 @@ mod tests {
                 "run", "list", "--limit", "5", "--branch", "main", "--json", RUN_FIELDS
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_list_builds_default_and_disabled_inclusive_argv() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec);
+        gh.workflow_list(Path::new("/r")).await.expect("list");
+        gh.at(Path::new("/r"))
+            .workflow_list_with(WorkflowList::new().all().limit(75))
+            .await
+            .expect("list all");
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "workflow",
+                "list",
+                "--limit",
+                "50",
+                "--json",
+                WORKFLOW_FIELDS
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "workflow",
+                "list",
+                "--limit",
+                "75",
+                "--all",
+                "--json",
+                WORKFLOW_FIELDS
+            ]
+        );
+        assert_eq!(calls[1].cwd.as_deref(), Some(Path::new("/r")));
+    }
+
+    #[tokio::test]
+    async fn workflow_list_rejects_zero_limit_before_spawn() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let err = GitHub::with_runner(&rec)
+            .workflow_list_with(Path::new("/r"), WorkflowList::new().limit(0))
+            .await
+            .unwrap_err();
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn workflow_view_resolves_id_name_filename_and_path_from_json_inventory() {
+        let json = r#"[
+            {"id":17,"name":"CI","path":".github/workflows/ci.yml","state":"active"},
+            {"id":18,"name":"Deploy","path":".github/workflows/deploy.yaml","state":"disabled_manually"}
+        ]"#;
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new().on(["gh", "workflow", "list"], Reply::ok(json)),
+        );
+        let gh = GitHub::with_runner(&rec);
+
+        assert_eq!(
+            gh.workflow_view(Path::new("/r"), "17").await.unwrap().id,
+            17
+        );
+        assert_eq!(
+            gh.workflow_view(Path::new("/r"), "ci").await.unwrap().id,
+            17
+        );
+        assert_eq!(
+            gh.workflow_view(Path::new("/r"), "deploy.yaml")
+                .await
+                .unwrap()
+                .id,
+            18
+        );
+        assert_eq!(
+            gh.workflow_view(Path::new("/r"), ".github/workflows/ci.yml")
+                .await
+                .unwrap()
+                .id,
+            17
+        );
+
+        for call in rec.calls() {
+            assert_eq!(
+                call.args_str(),
+                [
+                    "workflow",
+                    "list",
+                    "--limit",
+                    WORKFLOW_VIEW_LOOKUP_LIMIT.to_string().as_str(),
+                    "--all",
+                    "--json",
+                    WORKFLOW_FIELDS
+                ]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_view_reports_empty_missing_and_ambiguous_selectors() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            r#"[
+                {"id":17,"name":"CI","path":".github/workflows/ci.yml","state":"active"},
+                {"id":18,"name":"ci","path":".github/workflows/other.yml","state":"active"}
+            ]"#,
+        ));
+        let gh = GitHub::with_runner(&rec);
+
+        let empty = gh.workflow_view(Path::new("/r"), "").await.unwrap_err();
+        assert!(vcs_cli_support::is_invalid_input(&empty));
+        assert!(rec.calls().is_empty(), "empty selector must not spawn");
+
+        for selector in ["missing", "CI"] {
+            assert!(matches!(
+                gh.workflow_view(Path::new("/r"), selector)
+                    .await
+                    .unwrap_err()
+                    .reason(),
+                ErrorReason::Parse { .. }
+            ));
+        }
+        assert_eq!(rec.calls().len(), 2);
     }
 
     // run_watch blocks on `run watch` (no `--exit-status`, so a failed run still

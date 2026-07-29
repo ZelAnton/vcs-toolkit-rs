@@ -251,6 +251,24 @@ pub struct WorkflowRun {
     pub created_at: String,
 }
 
+/// A GitHub Actions workflow definition (`gh workflow list --json …`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
+pub struct Workflow {
+    /// The workflow's repository-scoped database id.
+    pub id: u64,
+    /// Display name from the workflow file.
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub name: String,
+    /// Repository-relative workflow file path (normally `.github/workflows/*.yml`).
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub path: String,
+    /// GitHub state, e.g. `"active"`, `"disabled_manually"`, or
+    /// `"disabled_inactivity"`.
+    #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
+    pub state: String,
+}
+
 /// gh's coarse categorisation of a [`CheckRun`]'s state — the field to branch on
 /// when deciding whether CI passed. `gh` derives it from the raw `state`; this is
 /// the typed form of its `pass`/`fail`/`pending`/`skipping`/`cancel` strings.
@@ -822,6 +840,24 @@ mod tests {
         assert_eq!(runs[0].status, "in_progress");
         assert_eq!(runs[0].conclusion, "");
         assert_eq!(runs[0].workflow_name, "CI");
+    }
+
+    #[test]
+    fn parses_workflow_inventory() {
+        let json = r#"[
+            {"id": 17, "name": "CI", "path": ".github/workflows/ci.yml",
+             "state": "active"},
+            {"id": 18, "name": null, "path": null, "state": null}
+        ]"#;
+        let workflows: Vec<Workflow> =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse workflows");
+        assert_eq!(workflows[0].id, 17);
+        assert_eq!(workflows[0].name, "CI");
+        assert_eq!(workflows[0].path, ".github/workflows/ci.yml");
+        assert_eq!(workflows[0].state, "active");
+        assert_eq!(workflows[1].name, "");
+        assert_eq!(workflows[1].path, "");
+        assert_eq!(workflows[1].state, "");
     }
 
     #[test]

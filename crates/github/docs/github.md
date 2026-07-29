@@ -355,9 +355,12 @@ let full = gh.issue_view(repo, 3).await?; // a single issue, body + url populate
 # Ok(()) }
 ```
 
-## Actions runs
+## Actions workflows and runs
 
 ```rust,ignore
+async fn workflow_list(&self, dir: &Path) -> Result<Vec<Workflow>>;
+async fn workflow_list_with(&self, dir: &Path, spec: WorkflowList) -> Result<Vec<Workflow>>;
+async fn workflow_view(&self, dir: &Path, selector: &str) -> Result<Workflow>;
 async fn run_list(&self, dir: &Path, limit: u64, branch: Option<String>) -> Result<Vec<WorkflowRun>>;
 async fn run_view(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
 async fn run_watch(&self, dir: &Path, id: u64) -> Result<WorkflowRun>;
@@ -365,6 +368,16 @@ async fn workflow_dispatch(&self, dir: &Path, spec: WorkflowDispatch) -> Result<
 async fn run_rerun(&self, dir: &Path, id: u64, scope: RerunScope) -> Result<()>;
 async fn run_cancel(&self, dir: &Path, id: u64) -> Result<()>;
 ```
+
+`workflow_list` returns up to 50 active workflow definitions. Use
+`workflow_list_with(WorkflowList::new().all().limit(n))` to include disabled
+workflows and choose the cap. `workflow_view` resolves a numeric database id,
+display name (case-insensitive), filename, or repository-relative path. Current
+`gh workflow view` has no JSON exporter, so the typed method resolves against a
+disabled-inclusive, fully paginated `gh workflow list --json id,name,path,state`
+inventory; it never scrapes the human-readable summary. Missing or ambiguous
+selectors return a structured parse error, and an empty selector is rejected
+before spawning.
 
 `run_list` returns recent runs, newest first, capped at `limit`; `branch`
 (owned `Option<String>`, again for `mockall`) adds `--branch <b>` when `Some`.
@@ -518,6 +531,12 @@ From `run_list` / `run_view` / `run_watch`. Fields: `database_id: u64` (the
 gh reports an **empty string until the run completes** (not `null`),
 `workflow_name: String`, `head_branch: String`, `event: String`, `url: String`,
 `created_at: String` (ISO 8601).
+
+### `Workflow`
+
+From `workflow_list` / `workflow_list_with` / `workflow_view`. Fields:
+`id: u64`, `name: String`, `path: String`, and `state: String` (`"active"`,
+`"disabled_manually"`, or `"disabled_inactivity"`; future values remain strings).
 
 ### `CheckRun`
 

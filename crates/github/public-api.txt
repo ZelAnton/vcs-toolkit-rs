@@ -1220,6 +1220,84 @@ impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workf
 impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_dispatch::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_dispatch::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_dispatch::Expectation
+pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list
+pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::new() -> Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::marker::Send for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::marker::Sync for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with
+pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::new() -> Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::WorkflowList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::WorkflowList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::WorkflowList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::WorkflowList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_github::WorkflowList> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::WorkflowList) -> bool + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::WorkflowList) -> bool + 'static
+impl core::default::Default for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::marker::Send for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::marker::Sync for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view
+pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::new() -> Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_github::Workflow>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str) -> processkit::error::Result<vcs_github::Workflow> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &str) -> processkit::error::Result<vcs_github::Workflow> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str) -> processkit::error::Result<vcs_github::Workflow> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &str) -> processkit::error::Result<vcs_github::Workflow> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<str> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str) -> bool + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &str) -> bool + 'static
+impl core::default::Default for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::marker::Send for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::marker::Sync for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
 pub mod vcs_github::guide
 #[non_exhaustive] pub enum vcs_github::CheckBucket
 pub vcs_github::CheckBucket::Cancel
@@ -1478,6 +1556,9 @@ pub fn vcs_github::GitHub<R>::run_view<'life0, 'life1, 'async_trait>(&'life0 sel
 pub fn vcs_github::GitHub<R>::run_watch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::WorkflowRun>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_github::GitHub<R>::workflow_dispatch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowDispatch) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_view<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 impl<R> core::marker::Freeze for vcs_github::GitHub<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for vcs_github::GitHub<R>
 impl<R> core::marker::Sync for vcs_github::GitHub<R>
@@ -1535,6 +1616,9 @@ pub async fn vcs_github::GitHubAt<'a, R>::run_view(&self, u64) -> processkit::er
 pub async fn vcs_github::GitHubAt<'a, R>::run_watch(&self, u64) -> processkit::error::Result<vcs_github::WorkflowRun>
 pub async fn vcs_github::GitHubAt<'a, R>::version(&self) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_github::GitHubAt<'a, R>::workflow_dispatch(&self, vcs_github::WorkflowDispatch) -> processkit::error::Result<()>
+pub async fn vcs_github::GitHubAt<'a, R>::workflow_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>
+pub async fn vcs_github::GitHubAt<'a, R>::workflow_list_with(&self, vcs_github::WorkflowList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>
+pub async fn vcs_github::GitHubAt<'a, R>::workflow_view(&self, &str) -> processkit::error::Result<vcs_github::Workflow>
 impl<R: processkit::runner::ProcessRunner> core::clone::Clone for vcs_github::GitHubAt<'_, R>
 pub fn vcs_github::GitHubAt<'_, R>::clone(&self) -> Self
 impl<R: processkit::runner::ProcessRunner> core::marker::Copy for vcs_github::GitHubAt<'_, R>
@@ -1716,6 +1800,9 @@ pub fn vcs_github::MockGitHubApi::expect_run_view(&mut self) -> &mut vcs_github:
 pub fn vcs_github::MockGitHubApi::expect_run_watch(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__run_watch::Expectation
 pub fn vcs_github::MockGitHubApi::expect_version(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__version::Expectation
 pub fn vcs_github::MockGitHubApi::expect_workflow_dispatch(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_dispatch::Expectation
+pub fn vcs_github::MockGitHubApi::expect_workflow_list(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list::Expectation
+pub fn vcs_github::MockGitHubApi::expect_workflow_list_with(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_list_with::Expectation
+pub fn vcs_github::MockGitHubApi::expect_workflow_view(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__workflow_view::Expectation
 impl core::default::Default for vcs_github::MockGitHubApi
 pub fn vcs_github::MockGitHubApi::default() -> Self
 impl core::fmt::Debug for vcs_github::MockGitHubApi
@@ -1767,6 +1854,9 @@ pub fn vcs_github::MockGitHubApi::run_view<'life0, 'life1, 'async_trait>(&'life0
 pub fn vcs_github::MockGitHubApi::run_watch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::WorkflowRun>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_github::MockGitHubApi::workflow_dispatch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowDispatch) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_view<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 impl core::marker::Freeze for vcs_github::MockGitHubApi
 impl core::marker::Send for vcs_github::MockGitHubApi
 impl core::marker::Sync for vcs_github::MockGitHubApi
@@ -2051,6 +2141,28 @@ impl core::marker::Unpin for vcs_github::ReviewAction
 impl core::marker::UnsafeUnpin for vcs_github::ReviewAction
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::ReviewAction
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::ReviewAction
+#[non_exhaustive] pub struct vcs_github::Workflow
+pub vcs_github::Workflow::id: u64
+pub vcs_github::Workflow::name: alloc::string::String
+pub vcs_github::Workflow::path: alloc::string::String
+pub vcs_github::Workflow::state: alloc::string::String
+impl core::clone::Clone for vcs_github::Workflow
+pub fn vcs_github::Workflow::clone(&self) -> vcs_github::Workflow
+impl core::cmp::Eq for vcs_github::Workflow
+impl core::cmp::PartialEq for vcs_github::Workflow
+pub fn vcs_github::Workflow::eq(&self, &vcs_github::Workflow) -> bool
+impl core::fmt::Debug for vcs_github::Workflow
+pub fn vcs_github::Workflow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_github::Workflow
+impl<'de> serde_core::de::Deserialize<'de> for vcs_github::Workflow
+pub fn vcs_github::Workflow::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_github::Workflow
+impl core::marker::Send for vcs_github::Workflow
+impl core::marker::Sync for vcs_github::Workflow
+impl core::marker::Unpin for vcs_github::Workflow
+impl core::marker::UnsafeUnpin for vcs_github::Workflow
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::Workflow
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::Workflow
 #[non_exhaustive] pub struct vcs_github::WorkflowDispatch
 pub vcs_github::WorkflowDispatch::fields: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
 pub vcs_github::WorkflowDispatch::git_ref: core::option::Option<alloc::string::String>
@@ -2070,6 +2182,30 @@ impl core::marker::Unpin for vcs_github::WorkflowDispatch
 impl core::marker::UnsafeUnpin for vcs_github::WorkflowDispatch
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::WorkflowDispatch
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::WorkflowDispatch
+#[non_exhaustive] pub struct vcs_github::WorkflowList
+pub vcs_github::WorkflowList::include_disabled: bool
+pub vcs_github::WorkflowList::limit: usize
+impl vcs_github::WorkflowList
+pub fn vcs_github::WorkflowList::all(self) -> Self
+pub fn vcs_github::WorkflowList::limit(self, usize) -> Self
+pub fn vcs_github::WorkflowList::new() -> Self
+impl core::clone::Clone for vcs_github::WorkflowList
+pub fn vcs_github::WorkflowList::clone(&self) -> vcs_github::WorkflowList
+impl core::cmp::Eq for vcs_github::WorkflowList
+impl core::cmp::PartialEq for vcs_github::WorkflowList
+pub fn vcs_github::WorkflowList::eq(&self, &vcs_github::WorkflowList) -> bool
+impl core::default::Default for vcs_github::WorkflowList
+pub fn vcs_github::WorkflowList::default() -> Self
+impl core::fmt::Debug for vcs_github::WorkflowList
+pub fn vcs_github::WorkflowList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_github::WorkflowList
+impl core::marker::Freeze for vcs_github::WorkflowList
+impl core::marker::Send for vcs_github::WorkflowList
+impl core::marker::Sync for vcs_github::WorkflowList
+impl core::marker::Unpin for vcs_github::WorkflowList
+impl core::marker::UnsafeUnpin for vcs_github::WorkflowList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::WorkflowList
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::WorkflowList
 #[non_exhaustive] pub struct vcs_github::WorkflowRun
 pub vcs_github::WorkflowRun::conclusion: alloc::string::String
 pub vcs_github::WorkflowRun::created_at: alloc::string::String
@@ -2146,6 +2282,9 @@ pub fn vcs_github::GitHubApi::run_view<'life0, 'life1, 'async_trait>(&'life0 sel
 pub fn vcs_github::GitHubApi::run_watch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::WorkflowRun>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_github::GitHubApi::workflow_dispatch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowDispatch) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHubApi::workflow_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHubApi::workflow_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHubApi::workflow_view<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 impl vcs_github::GitHubApi for vcs_github::MockGitHubApi
 pub fn vcs_github::MockGitHubApi::api<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::MockGitHubApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -2193,6 +2332,9 @@ pub fn vcs_github::MockGitHubApi::run_view<'life0, 'life1, 'async_trait>(&'life0
 pub fn vcs_github::MockGitHubApi::run_watch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::WorkflowRun>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_github::MockGitHubApi::workflow_dispatch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowDispatch) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::workflow_view<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 impl<R: processkit::runner::ProcessRunner> vcs_github::GitHubApi for vcs_github::GitHub<R>
 pub fn vcs_github::GitHub<R>::api<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::GitHub<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -2240,3 +2382,6 @@ pub fn vcs_github::GitHub<R>::run_view<'life0, 'life1, 'async_trait>(&'life0 sel
 pub fn vcs_github::GitHub<R>::run_watch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::WorkflowRun>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::version<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_github::GitHub<R>::workflow_dispatch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowDispatch) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::WorkflowList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Workflow>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::workflow_view<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Workflow>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait

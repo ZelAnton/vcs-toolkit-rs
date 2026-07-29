@@ -10,6 +10,13 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Typed GitHub Actions workflow discovery.** `Workflow` exposes the `id`,
+  `name`, `path`, and `state` JSON fields; `workflow_list` and the
+  `WorkflowList`-driven `workflow_list_with` wrap `gh workflow list`, including
+  disabled workflows and configurable limits. `workflow_view` resolves an id,
+  case-insensitive display name, filename, or path against a complete
+  disabled-inclusive JSON inventory because current `gh workflow view` has no
+  JSON exporter; human-readable output is never scraped.
 - **PR/issue label management.** `PrCreate` and the new extensible
   `IssueCreate` accept creation labels; `pr_add_labels`/`pr_remove_labels` and
   `issue_add_labels`/`issue_remove_labels` map to `gh … edit` with repeated
