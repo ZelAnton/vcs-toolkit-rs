@@ -75,6 +75,8 @@ crates; tag releases as `vcs-git-v<version>`.
   re-tuned. (T-130.)
 
 ### Fixed
+- `GitApi::remote_list` now preserves interior spaces in local-path remote URLs
+  from `git remote -v`, and still prefers a matching fetch URL over push. (T-132.)
 - `GitApi::worktree_list` now parses CRLF-framed porcelain exactly like LF output:
   paths, branch/HEAD values, and valueless `bare`/`detached`/`locked` attributes no
   longer retain or compare against a trailing carriage return. (T-125.)

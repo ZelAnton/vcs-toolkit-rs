@@ -594,20 +594,32 @@ pub struct Remote {
 /// Parse `git remote -v` output into one row per configured remote.
 ///
 /// The normal format is `<name> <url> (fetch)` followed by a matching `(push)`
-/// row. Rows with a name and URL but no recognised direction are tolerated as a
-/// fallback, while a recognised fetch row always replaces an earlier fallback
-/// or push URL. Malformed/blank rows are ignored rather than aborting a whole
-/// listing because a future Git display-format change should remain diagnosable
-/// without making the configured remotes disappear behind a parser error.
+/// row. Only the first whitespace separates the name, and the direction is
+/// stripped as an exact trailing suffix, so legal local-path URLs retain interior
+/// spaces. Rows with a name and URL but no recognised direction are tolerated as a
+/// fallback, while a recognised fetch row always replaces an earlier fallback or
+/// push URL. Malformed/blank rows are ignored rather than aborting a whole listing
+/// because a future Git display-format change should remain diagnosable without
+/// making the configured remotes disappear behind a parser error.
 pub(crate) fn parse_remotes(output: &str) -> Vec<Remote> {
     let mut remotes: Vec<(Remote, bool)> = Vec::new();
 
     for line in output.lines() {
-        let mut fields = line.split_whitespace();
-        let (Some(name), Some(url)) = (fields.next(), fields.next()) else {
+        let line = line.trim();
+        let Some((name, rest)) = line.split_once(char::is_whitespace) else {
             continue;
         };
-        let is_fetch = matches!(fields.next(), Some("(fetch)"));
+        let rest = rest.trim_start();
+        let (url, is_fetch) = if let Some(url) = rest.strip_suffix(" (fetch)") {
+            (url, true)
+        } else if let Some(url) = rest.strip_suffix(" (push)") {
+            (url, false)
+        } else {
+            (rest, false)
+        };
+        if name.is_empty() || url.is_empty() {
+            continue;
+        }
 
         if let Some((remote, has_fetch)) =
             remotes.iter_mut().find(|(remote, _)| remote.name == name)
@@ -1221,6 +1233,20 @@ mod tests {
             vec![Remote {
                 name: "origin".into(),
                 url: "https://example.test/fetch.git".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn remotes_preserve_spaces_and_prefer_the_fetch_url() {
+        assert_eq!(
+            parse_remotes(
+                "origin C:/Users/John Doe/repo (push)\n\
+                 origin C:/Users/John Doe/fetch repo (fetch)\n"
+            ),
+            vec![Remote {
+                name: "origin".into(),
+                url: "C:/Users/John Doe/fetch repo".into(),
             }]
         );
     }
