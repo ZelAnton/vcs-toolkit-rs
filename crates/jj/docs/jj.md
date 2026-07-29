@@ -991,6 +991,9 @@ before spawning.
 
 ## See also
 
+- [Supported CLI versions](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/supported-clis.md) — the jj 0.38.0
+  validated floor and the pinned floor-to-latest CI lanes.
+
 - [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/) — the `vcs_jj::conflict` module (parse /
   render / resolve materialized jj conflict markers).
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — `MockJjApi` and `ScriptedRunner`.

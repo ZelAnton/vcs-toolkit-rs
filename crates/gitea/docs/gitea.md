@@ -232,6 +232,9 @@ deliberately want the process cwd.
 
 ## See also
 
+- [Supported CLI versions](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/supported-clis.md) — the tea 0.9.0
+  floor plus the 0.9.2/latest live-Gitea matrix.
+
 - [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the facade; note the Gitea `Unsupported` ops.
 - [vcs-github guide](https://docs.rs/vcs-github/latest/vcs_github/guide/) — the fuller-surfaced sibling this mirrors.
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature and the `ScriptedRunner` seam.

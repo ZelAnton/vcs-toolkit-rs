@@ -1269,6 +1269,9 @@ timeout rather than have it silently tripled. See [Process model & errors](https
 
 ## See also
 
+- [Supported CLI versions](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/supported-clis.md) — the git 2.31 floor,
+  `ensure_supported` behavior, and CI coverage.
+
 - [Conflict resolution](https://docs.rs/vcs-git/latest/vcs_git/guide/conflicts/) — `vcs_git::conflict`: parse conflict markers
   into structured regions and resolve a chosen side.
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature's `MockGitApi` and the

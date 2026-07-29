@@ -719,6 +719,9 @@ pub enum RerunScope {
 
 ## See also
 
+- [Supported CLI versions](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/supported-clis.md) — the gh 2.0.0 floor,
+  explicit preflight, and runner-provided integration coverage.
+
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature (`MockGitHubApi`) and the
   `ScriptedRunner` seam.
 - [Process model & errors](https://docs.rs/vcs-core/latest/vcs_core/guide/process_model/) — OS-job containment, timeouts, and

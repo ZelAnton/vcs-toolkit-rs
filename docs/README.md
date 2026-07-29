@@ -84,6 +84,8 @@ These apply across the wrapper crates:
 - **[CLI command coverage index](command-index.md)** — the reverse lookup, "I
   know the CLI command — what's the typed method?" (or "→ escape hatch"), for
   git/jj/gh/glab/tea; also a map of the untyped surface.
+- **[Supported CLI versions](supported-clis.md)** — the git/jj/gh/glab/tea
+  floors, preflight behavior, real-binary CI matrix, and floor-raising policy.
 
 ## How the guides relate
 

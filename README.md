@@ -450,6 +450,8 @@ Four seams, no extra configuration:
 
 Requires a Rust toolchain with the **2024 edition** (Rust 1.88+; the wrappers use
 let-chains). The real-binary tests additionally need `git` / `jj` / `gh` on `PATH`.
+See the [supported CLI version matrix](docs/supported-clis.md) for the five
+runtime floors, their preflight behavior, and exact/best-effort CI coverage.
 
 ```bash
 cargo build                         # build all crates

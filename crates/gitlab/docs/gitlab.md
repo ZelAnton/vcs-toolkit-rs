@@ -217,6 +217,9 @@ resolves the project against `dir`'s remote (its `at(dir)` form is `api(endpoint
 
 ## See also
 
+- [Supported CLI versions](https://github.com/ZelAnton/vcs-toolkit-rs/blob/main/docs/supported-clis.md) — the glab 1.25.0
+  floor and best-effort latest real-binary lanes.
+
 - [vcs-forge guide](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) — the facade that unifies this with GitHub/Gitea.
 - [vcs-github guide](https://docs.rs/vcs-github/latest/vcs_github/guide/) — the broader-surfaced sibling this mirrors.
 - [Testing & mocking](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/) — the `mock` feature and the `ScriptedRunner` seam.
