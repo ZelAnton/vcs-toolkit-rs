@@ -1204,7 +1204,7 @@ async fn forge_version_gated_mutation_maps_to_invalid_params() {
     assert!(err.message.contains("pr_create"), "{}", err.message);
 }
 
-// T-058: `forge_pr_checkout` and `forge_pr_merge` locally mutate the working
+// T-058/T-133: `forge_pr_checkout`, `forge_pr_merge`, and `forge_pr_close` locally mutate the working
 // copy (checkout/switch), so — unlike the other forge tools — they must go
 // through `begin_repo_write` and actually hold the same per-repo `write_lock`
 // as `repo_*` mutations, not just call the gate-only `require_write`. Prove it
@@ -1212,11 +1212,12 @@ async fn forge_version_gated_mutation_maps_to_invalid_params() {
 // rather than run past the lock acquisition, and must succeed once the lock is
 // released.
 #[tokio::test]
-async fn forge_pr_checkout_and_forge_pr_merge_hold_the_repo_write_lock() {
+async fn forge_pr_checkout_merge_and_close_hold_the_repo_write_lock() {
     let gh = vcs_forge::vcs_github::GitHub::with_runner(
         ScriptedRunner::new()
             .on(["gh", "pr", "checkout"], Reply::ok(""))
-            .on(["gh", "pr", "merge"], Reply::ok("")),
+            .on(["gh", "pr", "merge"], Reply::ok(""))
+            .on(["gh", "pr", "close"], Reply::ok("")),
     );
     let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
         "/repo",
@@ -1262,6 +1263,20 @@ async fn forge_pr_checkout_and_forge_pr_merge_hold_the_repo_write_lock() {
         "forge_pr_merge must block while the repo write lock is held elsewhere"
     );
 
+    let close_timed_out = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        server.forge_pr_close(Parameters(PrCloseParams {
+            number: 7,
+            delete_branch: true,
+        })),
+    )
+    .await
+    .is_err();
+    assert!(
+        close_timed_out,
+        "forge_pr_close must block while the repo write lock is held elsewhere"
+    );
+
     // Release the lock: both calls now go through and route to the wrapper.
     drop(outer_guard);
 
@@ -1286,6 +1301,19 @@ async fn forge_pr_checkout_and_forge_pr_merge_hold_the_repo_write_lock() {
         .expect("merge ok once the lock is free");
     assert!(
         result_json(&out).contains("merged"),
+        "{}",
+        result_json(&out)
+    );
+
+    let out = server
+        .forge_pr_close(Parameters(PrCloseParams {
+            number: 7,
+            delete_branch: true,
+        }))
+        .await
+        .expect("close ok once the lock is free");
+    assert!(
+        result_json(&out).contains("closed"),
         "{}",
         result_json(&out)
     );

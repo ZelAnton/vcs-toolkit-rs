@@ -62,6 +62,9 @@ crates; tag releases as `vcs-mcp-v<version>`.
   unit. (T-130.)
 
 ### Fixed
+- `forge_pr_close` now shares the per-repository write lock with repo mutations.
+  `gh pr close --delete-branch` can delete a local branch and switch the checkout,
+  so it no longer races concurrent working-copy mutations. (T-133.)
 - **`forge_pr_edit` now reports Gitea as unsupported.** Its tool and capability-map
   descriptions no longer claim Gitea support: `tea` has no `pr edit` subcommand, so
   calls return the facade's pre-spawn `Unsupported` error; use the Gitea REST API.

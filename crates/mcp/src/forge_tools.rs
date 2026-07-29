@@ -282,7 +282,10 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrCloseParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        self.require_write("forge_pr_close")?;
+        // `gh pr close --delete-branch` can delete the local branch and switch
+        // the checkout. Take the lock unconditionally, matching merge, so that
+        // a conditional `delete_branch` path cannot race a repo mutation.
+        let _write = self.begin_repo_write("forge_pr_close").await?;
         let mut spec = vcs_forge::PrClose::new(p.number);
         if p.delete_branch {
             spec = spec.delete_branch();

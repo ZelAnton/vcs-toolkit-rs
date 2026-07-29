@@ -129,13 +129,13 @@ pub struct VcsMcpServer {
     /// or collide on the repo lock. Forge tools are *predominantly* remote calls to
     /// a server that serializes on its side (and MCP clients typically issue tool
     /// calls sequentially), so most of them aren't gated by this (`forge_pr_create`,
-    /// `forge_issue_create`, `forge_pr_close`, `forge_pr_mark_ready`,
-    /// `forge_pr_comment`, `forge_pr_edit`). The exceptions are `forge_pr_checkout`
-    /// (fetches and switches the local checkout) and `forge_pr_merge` (which can
-    /// delete the local branch and switch the checkout via `delete_branch`) —
-    /// these *locally* mutate the working copy just like `repo_*` tools do, so
-    /// they take this same lock too, closing the local repo-state race, the one
-    /// R1 targets.
+    /// `forge_issue_create`, `forge_pr_mark_ready`, `forge_pr_comment`,
+    /// `forge_pr_edit`). The exceptions are `forge_pr_checkout` (fetches and
+    /// switches the local checkout), `forge_pr_merge`, and `forge_pr_close` (the
+    /// latter two can delete the local branch and switch the checkout via
+    /// `delete_branch`) — these *locally* mutate the working copy just like
+    /// `repo_*` tools do, so they take this same lock too, closing the local
+    /// repo-state race that R1 targets.
     write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
