@@ -10,6 +10,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Configurable PR and issue lists.** `PrList`/`IssueList` builders select
+  `open`/`closed`/`all` state and requested `--limit` through new `*_list_with`
+  methods and cwd-bound forwarders. `Merged` PR-only filtering is a structured
+  `Unsupported` before spawn because tea lacks it; the documented server cap
+  still applies. Existing methods remain open/100 defaults.
 - **`is_view_absence` — tell a confirmed issue/PR absence apart from a format drift.**
   `tea` has no single-item view, so `GiteaApi::issue_view`/`pr_view` synthesize one by
   paging `tea … list`; a number that is genuinely absent can therefore only be reported

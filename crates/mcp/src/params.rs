@@ -130,6 +130,91 @@ pub struct AnnotateParams {
     pub rev: Option<String>,
 }
 
+/// Filters for listing pull/merge requests. Omit either field for the facade
+/// default (`open`, limit 100).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct PrListParams {
+    /// State filter.
+    #[serde(default)]
+    pub state: Option<PrListStateArg>,
+    /// Maximum number requested from the forge CLI.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Pull/merge-request state accepted by [`PrListParams`].
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PrListStateArg {
+    /// Open pull/merge requests.
+    Open,
+    /// Closed, unmerged pull/merge requests.
+    Closed,
+    /// Merged pull/merge requests (unsupported by Gitea's `tea` CLI).
+    Merged,
+    /// Pull/merge requests in every state.
+    All,
+}
+
+impl From<PrListParams> for vcs_forge::PrList {
+    fn from(p: PrListParams) -> Self {
+        let mut spec = vcs_forge::PrList::new();
+        if let Some(state) = p.state {
+            spec = spec.state(match state {
+                PrListStateArg::Open => vcs_forge::PrListState::Open,
+                PrListStateArg::Closed => vcs_forge::PrListState::Closed,
+                PrListStateArg::Merged => vcs_forge::PrListState::Merged,
+                PrListStateArg::All => vcs_forge::PrListState::All,
+            });
+        }
+        if let Some(limit) = p.limit {
+            spec = spec.limit(limit);
+        }
+        spec
+    }
+}
+
+/// Filters for listing issues. Omit either field for the facade default (`open`,
+/// limit 100).
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct IssueListParams {
+    /// State filter.
+    #[serde(default)]
+    pub state: Option<IssueListStateArg>,
+    /// Maximum number requested from the forge CLI.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Issue state accepted by [`IssueListParams`].
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueListStateArg {
+    /// Open issues.
+    Open,
+    /// Closed issues.
+    Closed,
+    /// Issues in every state.
+    All,
+}
+
+impl From<IssueListParams> for vcs_forge::IssueList {
+    fn from(p: IssueListParams) -> Self {
+        let mut spec = vcs_forge::IssueList::new();
+        if let Some(state) = p.state {
+            spec = spec.state(match state {
+                IssueListStateArg::Open => vcs_forge::IssueListState::Open,
+                IssueListStateArg::Closed => vcs_forge::IssueListState::Closed,
+                IssueListStateArg::All => vcs_forge::IssueListState::All,
+            });
+        }
+        if let Some(limit) = p.limit {
+            spec = spec.limit(limit);
+        }
+        spec
+    }
+}
+
 /// A pull/merge request by number.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PrNumberParams {

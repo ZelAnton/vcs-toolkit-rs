@@ -345,6 +345,119 @@ impl MergeOption {
     pub const ALL: &'static [MergeOption] = &[MergeOption::Auto, MergeOption::DeleteBranch];
 }
 
+/// Which pull/merge requests [`Forge::pr_list_with`](crate::Forge::pr_list_with)
+/// returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum PrListState {
+    /// Open pull/merge requests.
+    #[default]
+    Open,
+    /// Closed, unmerged pull/merge requests.
+    Closed,
+    /// Merged pull/merge requests. Gitea's `tea` CLI cannot express this filter
+    /// and returns [`Unsupported`](crate::Error::Unsupported) before spawning.
+    Merged,
+    /// Pull/merge requests in every state.
+    All,
+}
+
+/// Portable filters for [`Forge::pr_list_with`](crate::Forge::pr_list_with).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct PrList {
+    /// State filter.
+    pub state: PrListState,
+    /// Maximum number requested from the CLI. Gitea servers may clamp this to
+    /// their configured page cap (commonly 50).
+    pub limit: usize,
+}
+
+impl PrList {
+    /// Open pull/merge requests, up to 100 — the compatibility default used by
+    /// [`Forge::pr_list`](crate::Forge::pr_list).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select a pull/merge-request state.
+    pub fn state(mut self, state: PrListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the maximum number requested from the CLI.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for PrList {
+    fn default() -> Self {
+        Self {
+            state: PrListState::Open,
+            limit: 100,
+        }
+    }
+}
+
+/// Which issues [`Forge::issue_list_with`](crate::Forge::issue_list_with) returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum IssueListState {
+    /// Open issues.
+    #[default]
+    Open,
+    /// Closed issues.
+    Closed,
+    /// Issues in every state.
+    All,
+}
+
+/// Portable filters for [`Forge::issue_list_with`](crate::Forge::issue_list_with).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct IssueList {
+    /// State filter.
+    pub state: IssueListState,
+    /// Maximum number requested from the CLI. Gitea servers may clamp this.
+    pub limit: usize,
+}
+
+impl IssueList {
+    /// Open issues, up to 100 — the compatibility default used by
+    /// [`Forge::issue_list`](crate::Forge::issue_list).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select an issue state.
+    pub fn state(mut self, state: IssueListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the maximum number requested from the CLI.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for IssueList {
+    fn default() -> Self {
+        Self {
+            state: IssueListState::Open,
+            limit: 100,
+        }
+    }
+}
+
 /// A pull request (GitHub) / merge request (GitLab) / pull request (Gitea),
 /// unified across the three forges.
 #[derive(Debug, Clone, PartialEq, Eq)]

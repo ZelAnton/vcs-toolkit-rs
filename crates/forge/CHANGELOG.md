@@ -18,6 +18,11 @@ crates; tag releases as `vcs-forge-v<version>`.
   `false` through `Forge::supports` for Gitea.
 
 ### Added
+- **Portable PR and issue list specifications.** `PrList`/`IssueList` and their
+  state enums flow through `Forge::pr_list_with`/`issue_list_with` and
+  `ForgeApi`; old methods remain open/100 shorthands. Gitea merged-only PR
+  listing is classifiable `Unsupported`, and zero limits are `InvalidInput`
+  before any CLI spawn.
 - **Pre-spawn CLI-version gate on mutating operations.** New
   `Error::VersionUnsupported { forge, operation, found, minimum }` variant (on the
   `#[non_exhaustive]` `Error`, so additive) and the classifier

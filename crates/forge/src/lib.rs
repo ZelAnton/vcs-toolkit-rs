@@ -57,7 +57,8 @@
 //!   yourself).
 //! - **Unified DTOs** — [`ForgePr`] (+ [`ForgePrState`]), [`ForgeIssue`]
 //!   (+ [`ForgeIssueState`]), [`ForgeRelease`], [`ForgeRepo`], [`CiStatus`]; the
-//!   inputs [`PrCreate`] (open-a-PR spec: `new(title, body)` then
+//!   inputs [`PrList`] / [`IssueList`] (state + limit; parameterless lists remain
+//!   open/100) and [`PrCreate`] (open-a-PR spec: `new(title, body)` then
 //!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
 //!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
@@ -162,8 +163,9 @@ mod gitlab_forge;
 
 pub use dto::{
     CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, MergeOption, MergeStrategy, PrClose,
-    PrCreate, PrEdit, PrMerge, ReleaseCreate, ReviewKind,
+    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, IssueList, IssueListState, MergeOption,
+    MergeStrategy, PrClose, PrCreate, PrEdit, PrList, PrListState, PrMerge, ReleaseCreate,
+    ReviewKind,
 };
 pub use error::{Error, Result};
 
@@ -532,11 +534,23 @@ impl<R: ProcessRunner> Forge<R> {
     /// **Gitea returns at most ~50** per its server page cap — drop to the underlying
     /// client and page for more).
     pub async fn pr_list(&self) -> Result<Vec<ForgePr>> {
+        self.pr_list_with(PrList::default()).await
+    }
+
+    /// Pull/merge requests selected by `spec`. A zero limit is rejected before
+    /// spawning. Gitea's CLI cannot select only merged PRs and returns
+    /// [`Unsupported`](Error::Unsupported) for that state.
+    pub async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>> {
+        if spec.limit == 0 {
+            return Err(Error::InvalidInput(
+                "pr_list_with limit must be greater than zero".into(),
+            ));
+        }
         match &self.backend {
-            Backend::GitHub(c) => github_forge::pr_list(c, &self.cwd).await,
-            Backend::GitLab(c) => gitlab_forge::pr_list(c, &self.cwd).await,
-            Backend::Gitea(c) => gitea_forge::pr_list(c, &self.cwd).await,
-            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_list")),
+            Backend::GitHub(c) => github_forge::pr_list_with(c, &self.cwd, spec).await,
+            Backend::GitLab(c) => gitlab_forge::pr_list_with(c, &self.cwd, spec).await,
+            Backend::Gitea(c) => gitea_forge::pr_list_with(c, &self.cwd, spec).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_list_with")),
         }
     }
 
@@ -946,11 +960,21 @@ impl<R: ProcessRunner> Forge<R> {
     /// returns at most ~50** per its server page cap — drop to the underlying client
     /// and page for more).
     pub async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
+        self.issue_list_with(IssueList::default()).await
+    }
+
+    /// Issues selected by `spec`. A zero limit is rejected before spawning.
+    pub async fn issue_list_with(&self, spec: IssueList) -> Result<Vec<ForgeIssue>> {
+        if spec.limit == 0 {
+            return Err(Error::InvalidInput(
+                "issue_list_with limit must be greater than zero".into(),
+            ));
+        }
         match &self.backend {
-            Backend::GitHub(c) => github_forge::issue_list(c, &self.cwd).await,
-            Backend::GitLab(c) => gitlab_forge::issue_list(c, &self.cwd).await,
-            Backend::Gitea(c) => gitea_forge::issue_list(c, &self.cwd).await,
-            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_list")),
+            Backend::GitHub(c) => github_forge::issue_list_with(c, &self.cwd, spec).await,
+            Backend::GitLab(c) => gitlab_forge::issue_list_with(c, &self.cwd, spec).await,
+            Backend::Gitea(c) => gitea_forge::issue_list_with(c, &self.cwd, spec).await,
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_list_with")),
         }
     }
 
@@ -1235,6 +1259,12 @@ pub trait ForgeApi: Send + Sync {
     async fn repo_view(&self) -> Result<ForgeRepo>;
     /// See [`Forge::pr_list`](crate::Forge::pr_list).
     async fn pr_list(&self) -> Result<Vec<ForgePr>>;
+    /// See [`Forge::pr_list_with`](crate::Forge::pr_list_with). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>> {
+        Err(Error::unsupported(self.kind(), "pr_list_with"))
+    }
     /// See [`Forge::pr_for_branch`](crate::Forge::pr_for_branch). **Defaulted** to
     /// `Error::Unsupported` so external trait implementers keep compiling when the
     /// crate bumps.
@@ -1298,6 +1328,12 @@ pub trait ForgeApi: Send + Sync {
     async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
     /// See [`Forge::issue_list`](crate::Forge::issue_list).
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>>;
+    /// See [`Forge::issue_list_with`](crate::Forge::issue_list_with). **Defaulted**
+    /// to `Error::Unsupported` so external trait implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn issue_list_with(&self, spec: IssueList) -> Result<Vec<ForgeIssue>> {
+        Err(Error::unsupported(self.kind(), "issue_list_with"))
+    }
     /// See [`Forge::issue_view`](crate::Forge::issue_view).
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
     /// See [`Forge::issue_create`](crate::Forge::issue_create).
@@ -1366,6 +1402,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn pr_list(&self) -> Result<Vec<ForgePr>> {
         self.pr_list().await
     }
+    async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>> {
+        self.pr_list_with(spec).await
+    }
     async fn pr_for_branch(&self, source_branch: &str) -> Result<Vec<ForgePr>> {
         self.pr_for_branch(source_branch).await
     }
@@ -1410,6 +1449,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn issue_list(&self) -> Result<Vec<ForgeIssue>> {
         self.issue_list().await
+    }
+    async fn issue_list_with(&self, spec: IssueList) -> Result<Vec<ForgeIssue>> {
+        self.issue_list_with(spec).await
     }
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue> {
         self.issue_view(number).await
@@ -2183,6 +2225,64 @@ mod tests {
     // Each backend's issue states map onto the unified ForgeIssueState — note
     // the three different spellings of "open": "OPEN" (gh), "opened" (glab),
     // "open" (tea) — all must read as Open, and "closed" (any case) as Closed.
+    #[tokio::test]
+    async fn list_specs_dispatch_filters_and_reject_unsupported_or_zero() {
+        let gh_rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = Forge::from_github("/repo", GitHub::with_runner(&gh_rec));
+        gh.pr_list_with(PrList::new().state(PrListState::Merged).limit(7))
+            .await
+            .expect("GitHub merged list");
+        assert_eq!(
+            gh_rec.only_call().args_str(),
+            [
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--limit",
+                "7",
+                "--json",
+                "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees,author,createdAt,updatedAt,milestone"
+            ]
+        );
+
+        let gl_rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gl = Forge::from_gitlab("/repo", GitLab::with_runner(&gl_rec));
+        gl.issue_list_with(IssueList::new().state(IssueListState::Closed).limit(11))
+            .await
+            .expect("GitLab closed issue list");
+        assert_eq!(
+            gl_rec.only_call().args_str(),
+            [
+                "issue",
+                "list",
+                "--closed",
+                "--per-page",
+                "11",
+                "--output",
+                "json"
+            ]
+        );
+
+        let tea_rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Forge::from_gitea("/repo", Gitea::with_runner(&tea_rec));
+        let err = tea
+            .pr_list_with(PrList::new().state(PrListState::Merged))
+            .await
+            .expect_err("Gitea merged-only is unsupported");
+        assert!(err.is_unsupported(), "{err:?}");
+        assert!(tea_rec.calls().is_empty(), "unsupported must not spawn");
+
+        let zero_rec = RecordingRunner::replying(Reply::ok("[]"));
+        let zero = Forge::from_github("/repo", GitHub::with_runner(&zero_rec));
+        let err = zero
+            .issue_list_with(IssueList::new().limit(0))
+            .await
+            .expect_err("zero limit");
+        assert!(err.is_invalid_input(), "{err:?}");
+        assert!(zero_rec.calls().is_empty(), "invalid limit must not spawn");
+    }
+
     #[tokio::test]
     async fn issue_list_maps_states_per_backend() {
         // gh's `issue_list` now fetches body+url too (widened field list), so they

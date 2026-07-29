@@ -69,7 +69,8 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | Method | Runs | Returns |
 |---|---|---|
 | `repo_view(dir)` | `glab repo view --output json` | [`RepoView`] |
-| `mr_list(dir)` | `glab mr list --output json` | `Vec<MergeRequest>` |
+| `mr_list(dir)` | `glab mr list --per-page 100 --output json` | `Vec<MergeRequest>` (open compatibility default) |
+| `mr_list_with(dir, spec)` | `glab mr list [--closed\|--merged\|--all] --per-page <limit> --output json` | `Vec<MergeRequest>` via `MrList` |
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
 | `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |
 | `mr_merge(dir, id, merge)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
@@ -142,7 +143,8 @@ for GitLab (withdraw an approval with `mr_revoke` instead).
 
 | Method | Runs | Returns |
 |---|---|---|
-| `issue_list(dir)` | `glab issue list --per-page 100 --output json` | `Vec<Issue>` |
+| `issue_list(dir)` | `glab issue list --per-page 100 --output json` | `Vec<Issue>` (open compatibility default) |
+| `issue_list_with(dir, spec)` | `glab issue list [--closed\|--all] --per-page <limit> --output json` | `Vec<Issue>` via `IssueList` |
 | `issue_view(dir, number)` | `glab issue view <number> --output json` | [`Issue`] |
 | `issue_create(dir, title, body)` | `glab issue create --title … --description … --yes` | `String` (the issue URL) |
 | `release_list(dir)` | `glab release list --per-page 100 --output json` | `Vec<Release>` |

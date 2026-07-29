@@ -10,6 +10,10 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Configurable PR and issue lists.** `PrList`/`IssueList` builders and their
+  state enums drive new `pr_list_with`/`issue_list_with` methods (`--state` and
+  `--limit`), including cwd-bound forwarders. Existing list methods remain the
+  open/100 compatibility defaults; zero limits fail before spawning.
 - **Source-branch PR lookup.** `GitHubApi::pr_list_for_source_branch(dir, head)`
   lists up to 100 PRs for one head branch in every state (`gh pr list --head
   <head> --state all --limit 100 --json …`), independent of base; empty is a

@@ -5,14 +5,16 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, PrClose as GhPrClose, PrCreate as GhPrCreate,
-    PrEdit as GhPrEdit, PrMerge as GhPrMerge, PullRequest, Release,
-    ReleaseCreate as GhReleaseCreate, RepoView, ReviewAction,
+    CheckRun, GitHub, GitHubApi, Issue, IssueList as GhIssueList,
+    IssueListState as GhIssueListState, PrClose as GhPrClose, PrCreate as GhPrCreate,
+    PrEdit as GhPrEdit, PrList as GhPrList, PrListState as GhPrListState, PrMerge as GhPrMerge,
+    PullRequest, Release, ReleaseCreate as GhReleaseCreate, RepoView, ReviewAction,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit, PrMerge, ReleaseCreate,
+    IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState, PrMerge,
+    ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -39,8 +41,23 @@ pub(crate) async fn repo_view<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> R
     Ok(map_repo(gh.repo_view(dir).await?))
 }
 
-pub(crate) async fn pr_list<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> Result<Vec<ForgePr>> {
-    Ok(gh.pr_list(dir).await?.into_iter().map(map_pr).collect())
+pub(crate) async fn pr_list_with<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    spec: PrList,
+) -> Result<Vec<ForgePr>> {
+    let state = match spec.state {
+        PrListState::Open => GhPrListState::Open,
+        PrListState::Closed => GhPrListState::Closed,
+        PrListState::Merged => GhPrListState::Merged,
+        PrListState::All => GhPrListState::All,
+    };
+    Ok(gh
+        .pr_list_with(dir, GhPrList::new().state(state).limit(spec.limit))
+        .await?
+        .into_iter()
+        .map(map_pr)
+        .collect())
 }
 
 pub(crate) async fn pr_for_branch<R: ProcessRunner>(
@@ -216,12 +233,18 @@ pub(crate) async fn pr_diff_within<R: ProcessRunner>(
     Ok(gh.pr_diff_within(dir, number, budget).await?)
 }
 
-pub(crate) async fn issue_list<R: ProcessRunner>(
+pub(crate) async fn issue_list_with<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
+    spec: IssueList,
 ) -> Result<Vec<ForgeIssue>> {
+    let state = match spec.state {
+        IssueListState::Open => GhIssueListState::Open,
+        IssueListState::Closed => GhIssueListState::Closed,
+        IssueListState::All => GhIssueListState::All,
+    };
     Ok(gh
-        .issue_list(dir)
+        .issue_list_with(dir, GhIssueList::new().state(state).limit(spec.limit))
         .await?
         .into_iter()
         .map(map_issue)

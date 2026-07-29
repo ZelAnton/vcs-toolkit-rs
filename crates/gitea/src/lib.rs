@@ -41,7 +41,9 @@
 //! - **[`GiteaAt`]** — a cwd-bound view ([`Gitea::at`]) whose repo-scoped methods
 //!   drop the leading `dir`, so `tea.at(dir).pr_list()` reads as
 //!   `tea.pr_list(dir)` — handy when one client drives one checkout.
-//! - **Specs & enums** — [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
+//! - **Specs & enums** — [`PrList`] / [`IssueList`] select state and requested
+//!   limit (merged-only PR filtering is structurally unsupported by tea),
+//!   [`PrCreate`] (`#[non_exhaustive]`, a constructor plus
 //!   chained `.head` / `.base` setters named after the flags they emit),
 //!   [`MergeStrategy`] (`Merge` / `Squash` / `Rebase` → `tea pr merge --style`),
 //!   and [`PrMerge`]
@@ -148,6 +150,135 @@ pub use parse::{Issue, PullRequest, Release};
 // of `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
 // [`GiteaCapabilities::version`].
 pub use vcs_diff::Version as GiteaVersion;
+
+/// Which pull requests [`GiteaApi::pr_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PrListState {
+    /// Open pull requests (the CLI default).
+    #[default]
+    Open,
+    /// Closed pull requests.
+    Closed,
+    /// Merged pull requests. `tea` cannot express this filter, so requesting it
+    /// returns `ErrorReason::Unsupported` before spawning.
+    Merged,
+    /// Pull requests in every state.
+    All,
+}
+
+impl PrListState {
+    fn as_arg(self) -> Option<&'static str> {
+        match self {
+            Self::Open => Some("open"),
+            Self::Closed => Some("closed"),
+            Self::Merged => None,
+            Self::All => Some("all"),
+        }
+    }
+}
+
+/// Filters for [`GiteaApi::pr_list_with`] (`tea pr list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrList {
+    /// State filter (`--state`).
+    pub state: PrListState,
+    /// Requested page size (`--limit`). The Gitea server may clamp it to its
+    /// configured maximum (commonly 50).
+    pub limit: usize,
+}
+
+impl PrList {
+    /// Open pull requests with a requested limit of 100 — the compatibility
+    /// default used by [`GiteaApi::pr_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select a pull-request state.
+    pub fn state(mut self, state: PrListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the requested page size.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for PrList {
+    fn default() -> Self {
+        Self {
+            state: PrListState::Open,
+            limit: 100,
+        }
+    }
+}
+
+/// Which issues [`GiteaApi::issue_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IssueListState {
+    /// Open issues (the CLI default).
+    #[default]
+    Open,
+    /// Closed issues.
+    Closed,
+    /// Issues in every state.
+    All,
+}
+
+impl IssueListState {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::All => "all",
+        }
+    }
+}
+
+/// Filters for [`GiteaApi::issue_list_with`] (`tea issues list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IssueList {
+    /// State filter (`--state`).
+    pub state: IssueListState,
+    /// Requested page size (`--limit`). The Gitea server may clamp it.
+    pub limit: usize,
+}
+
+impl IssueList {
+    /// Open issues with a requested limit of 100 — the compatibility default
+    /// used by [`GiteaApi::issue_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select an issue state.
+    pub fn state(mut self, state: IssueListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the requested page size.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for IssueList {
+    fn default() -> Self {
+        Self {
+            state: IssueListState::Open,
+            limit: 100,
+        }
+    }
+}
 
 /// Options for [`GiteaApi::pr_create`] (`tea pr create`).
 ///
@@ -478,6 +609,19 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
+fn reject_zero_limit(operation: &str, limit: usize) -> Result<()> {
+    if limit == 0 {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{operation} limit must be greater than zero"),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// What the installed `tea` binary supports, probed via
 /// [`GiteaApi::capabilities`]. A value type — the client holds no state, so
 /// probe once and keep the result (callers cache it). Mirrors
@@ -569,6 +713,16 @@ pub trait GiteaApi: Send + Sync {
     /// the requested limit — a busier repo is silently truncated here. For the full
     /// set, page via [`run`](GiteaApi::run) (`tea pr list --page N`) or the API.
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
+    /// Pull requests selected by `spec` (`--state` / `--limit`). `Merged` is a
+    /// structured `ErrorReason::Unsupported` because tea only accepts `open`,
+    /// `closed`, and `all`. A zero limit is rejected before spawning. **Defaulted**
+    /// to `Unsupported` so external implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "pr_list_with".into(),
+        }))
+    }
     /// A single pull request by number. `tea` has no single-PR view, so this
     /// **pages** through `tea pr list --state all` (`--page N`) and filters by
     /// number — correctly finding a PR past the server's ~50-row page cap, unlike a
@@ -661,6 +815,14 @@ pub trait GiteaApi: Send + Sync {
     /// `MAX_RESPONSE_ITEMS` (default 50), so this returns **at most ~50** open issues
     /// in one call — page via [`run`](GiteaApi::run) (`--page N`) for the rest.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
+    /// Issues selected by `spec` (`--state` / `--limit`). A zero limit is rejected
+    /// before spawning. **Defaulted** to `Unsupported` for external implementers.
+    #[allow(unused_variables)]
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_list_with".into(),
+        }))
+    }
     /// A single issue by number. `tea`'s bare-index view (`tea issues <number>`)
     /// renders Markdown and ignores `--output`, so — like [`pr_view`](GiteaApi::pr_view) —
     /// this is synthesized by **paging** `tea issues list --state all` (`--page N`) and
@@ -821,23 +983,53 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
+        self.pr_list_with(dir, PrList::default()).await
+    }
+
+    async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>> {
+        reject_zero_limit("pr_list_with", spec.limit)?;
+        let requested_state = spec.state;
+        let state = spec.state.as_arg().ok_or_else(|| {
+            Error::from(ErrorReason::Unsupported {
+                operation: "pr_list_with(state=merged)".into(),
+            })
+        })?;
+        let limit = spec.limit.to_string();
         // `--limit 100` raises tea's default page size (30), but the Gitea *server*
         // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
         // ~50 open PRs in one call — a repo with more is silently truncated here; page
         // via `run`/the API for the rest (see the trait doc). `--fields` selects the
         // table columns we parse — tea's default set omits `head`/`base`/`url`, so
         // without this the branches and URL would always be empty.
-        self.core
+        let mut prs = self
+            .core
             .try_parse(
                 self.core.command_in(
                     dir,
                     [
-                        "pr", "list", "--limit", "100", "--fields", PR_FIELDS, "--output", "csv",
+                        "pr",
+                        "list",
+                        "--state",
+                        state,
+                        "--limit",
+                        limit.as_str(),
+                        "--fields",
+                        PR_FIELDS,
+                        "--output",
+                        "csv",
                     ],
                 ),
                 parse::parse_pr_list,
             )
-            .await
+            .await?;
+        // Gitea represents merged PRs as closed at the issue layer, so some
+        // servers include them in `--state closed`. Preserve the portable
+        // `Closed` = closed-without-merge contract by using tea's parsed
+        // `merged` marker as the final discriminator.
+        if requested_state == PrListState::Closed {
+            prs.retain(|pr| !pr.merged);
+        }
+        Ok(prs)
     }
 
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest> {
@@ -1003,6 +1195,12 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
+        self.issue_list_with(dir, IssueList::default()).await
+    }
+
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        reject_zero_limit("issue_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
         // `--limit 100` raises tea's default page size (30), but the Gitea server
         // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
         // ~50 issues in one call (page via `run` for more), mirroring `pr_list`.
@@ -1015,8 +1213,10 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
                     [
                         "issues",
                         "list",
+                        "--state",
+                        spec.state.as_arg(),
                         "--limit",
-                        "100",
+                        limit.as_str(),
                         "--fields",
                         ISSUE_FIELDS,
                         "--output",
@@ -1222,6 +1422,7 @@ vcs_cli_support::at_forwarders! {
     }
     dir {
         fn pr_list() -> Result<Vec<PullRequest>>;
+        fn pr_list_with(spec: PrList) -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
@@ -1232,6 +1433,7 @@ vcs_cli_support::at_forwarders! {
         fn pr_approve(number: u64) -> Result<()>;
         fn pr_reject(number: u64, body: &str) -> Result<()>;
         fn issue_list() -> Result<Vec<Issue>>;
+        fn issue_list_with(spec: IssueList) -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn issue_close(number: u64) -> Result<()>;
@@ -1535,6 +1737,8 @@ mod tests {
             [
                 "pr",
                 "list",
+                "--state",
+                "open",
                 "--limit",
                 "100",
                 "--fields",
@@ -1542,6 +1746,44 @@ mod tests {
                 "--output",
                 "csv"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn pr_list_spec_maps_state_and_limit_and_rejects_merged() {
+        let csv = r#""index","title","state","head","base","url"
+"1","Closed","closed","h","main","u1"
+"2","Merged","merged","h","main","u2"
+"#;
+        let rec = RecordingRunner::replying(Reply::ok(csv));
+        let tea = Gitea::with_runner(&rec);
+        let prs = tea
+            .pr_list_with(
+                Path::new("/repo"),
+                PrList::new().state(PrListState::Closed).limit(7),
+            )
+            .await
+            .expect("closed PR list");
+        assert_eq!(prs.len(), 1, "merged PRs are not closed-unmerged");
+        assert_eq!(prs[0].title, "Closed");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "pr", "list", "--state", "closed", "--limit", "7", "--fields", PR_FIELDS,
+                "--output", "csv"
+            ]
+        );
+
+        let guarded = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&guarded);
+        let err = tea
+            .pr_list_with(Path::new("/repo"), PrList::new().state(PrListState::Merged))
+            .await
+            .expect_err("tea cannot select only merged PRs");
+        assert!(matches!(err.reason(), ErrorReason::Unsupported { .. }));
+        assert!(
+            guarded.calls().is_empty(),
+            "unsupported state must not spawn"
         );
     }
 
@@ -1792,6 +2034,8 @@ mod tests {
             [
                 "issues",
                 "list",
+                "--state",
+                "open",
                 "--limit",
                 "100",
                 "--fields",
@@ -1800,6 +2044,42 @@ mod tests {
                 "csv"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn issue_list_spec_maps_state_and_limit_and_rejects_zero() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&rec);
+        tea.issue_list_with(
+            Path::new("/repo"),
+            IssueList::new().state(IssueListState::All).limit(9),
+        )
+        .await
+        .expect("all issue list");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "issues",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "9",
+                "--fields",
+                ISSUE_FIELDS,
+                "--output",
+                "csv"
+            ]
+        );
+
+        let guarded = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&guarded);
+        assert!(
+            tea.issue_list_with(Path::new("/repo"), IssueList::new().limit(0))
+                .await
+                .is_err()
+        );
+        assert!(guarded.calls().is_empty(), "zero limit must not spawn");
     }
 
     // issue_view is synthesized by paging `tea issues list --state all` (csv) and

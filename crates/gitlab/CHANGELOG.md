@@ -10,6 +10,10 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Configurable MR and issue lists.** `MrList`/`IssueList` builders select state
+  and limit through new `mr_list_with`/`issue_list_with` methods. States map to
+  glab's `--closed`/`--merged`/`--all` flags and limits to `--per-page`; existing
+  methods remain open/100 defaults and zero is rejected before spawning.
 - **Source-branch MR lookup.** `GitLabApi::mr_list_for_source_branch(dir,
   source_branch)` lists up to 100 MRs for one source branch in every state
   (`glab mr list --source-branch <branch> --all --per-page 100 --output json`),

@@ -185,12 +185,15 @@ for an empty repository).
 
 ```rust,ignore
 async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
+async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>>;
 async fn pr_list_for_branch(&self, dir: &Path, head: &str, base: &str) -> Result<Vec<PullRequest>>;
 async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
 async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
 ```
 
-`pr_list` returns open PRs (gh's default). `pr_list_for_branch` passes
+`pr_list` is the compatibility shorthand for `PrList::new()` (open, limit 100).
+Use `pr_list_with` plus `PrListState::{Open, Closed, Merged, All}` and `.limit(n)`
+to query history; a zero limit is rejected before spawning. `pr_list_for_branch` passes
 `--state all`, so a closed or merged PR for the `head`→`base` pair is reported
 too — branch on each entry's `state`. Empty when none match.
 
@@ -318,11 +321,14 @@ for f in gh.pr_diff(repo, 7).await? {
 
 ```rust,ignore
 async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
+async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>>;
 async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
 async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
 ```
 
-`issue_list` fetches `number,title,state,body,url`, so the listed issues carry
+`issue_list` means open issues with limit 100. `issue_list_with` accepts
+`IssueListState::{Open, Closed, All}` plus `.limit(n)`. Both fetch
+`number,title,state,body,url`, so the listed issues carry
 `body`/`url` too (see [`Issue`](#issue)); `issue_view` returns the same fields for
 a single issue. `issue_create` returns the new issue's **URL**.
 

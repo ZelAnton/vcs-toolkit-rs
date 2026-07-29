@@ -33,11 +33,20 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Open pull/merge requests on the configured forge (up to 100; ~50 on Gitea).",
+        description = "Pull/merge requests on the configured forge. Optional state: open (default), closed, merged, or all; optional limit defaults to 100. Gitea cannot filter merged-only and may clamp limits to its server page cap.",
         annotations(read_only_hint = true)
     )]
-    pub async fn forge_pr_list(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.pr_list().await.map_err(forge_err)?)
+    pub async fn forge_pr_list(
+        &self,
+        Parameters(p): Parameters<PrListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .forge()?
+                .pr_list_with(p.into())
+                .await
+                .map_err(forge_err)?,
+        )
     }
 
     #[tool(
@@ -91,11 +100,20 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "Open issues on the configured forge (up to 100; ~50 on Gitea).",
+        description = "Issues on the configured forge. Optional state: open (default), closed, or all; optional limit defaults to 100. Gitea may clamp limits to its server page cap.",
         annotations(read_only_hint = true)
     )]
-    pub async fn forge_issue_list(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.issue_list().await.map_err(forge_err)?)
+    pub async fn forge_issue_list(
+        &self,
+        Parameters(p): Parameters<IssueListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(
+            &self
+                .forge()?
+                .issue_list_with(p.into())
+                .await
+                .map_err(forge_err)?,
+        )
     }
 
     #[tool(

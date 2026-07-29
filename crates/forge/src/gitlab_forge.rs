@@ -5,13 +5,16 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitlab::{
-    CiStatus as GlCi, GitLab, GitLabApi, Issue, MergeRequest, MrCreate, MrEdit as GlMrEdit,
-    MrMerge, Release, ReleaseCreate as GlReleaseCreate, RepoView,
+    CiStatus as GlCi, GitLab, GitLabApi, Issue, IssueList as GlIssueList,
+    IssueListState as GlIssueListState, MergeRequest, MrCreate, MrEdit as GlMrEdit,
+    MrList as GlMrList, MrListState as GlMrListState, MrMerge, Release,
+    ReleaseCreate as GlReleaseCreate, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    MergeStrategy, PrCreate, PrEdit, PrMerge, ReleaseCreate,
+    IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState, PrMerge,
+    ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -38,11 +41,23 @@ pub(crate) async fn repo_view<R: ProcessRunner>(glab: &GitLab<R>, dir: &Path) ->
     Ok(map_project(glab.repo_view(dir).await?))
 }
 
-pub(crate) async fn pr_list<R: ProcessRunner>(
+pub(crate) async fn pr_list_with<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
+    spec: PrList,
 ) -> Result<Vec<ForgePr>> {
-    Ok(glab.mr_list(dir).await?.into_iter().map(map_mr).collect())
+    let state = match spec.state {
+        PrListState::Open => GlMrListState::Open,
+        PrListState::Closed => GlMrListState::Closed,
+        PrListState::Merged => GlMrListState::Merged,
+        PrListState::All => GlMrListState::All,
+    };
+    Ok(glab
+        .mr_list_with(dir, GlMrList::new().state(state).limit(spec.limit))
+        .await?
+        .into_iter()
+        .map(map_mr)
+        .collect())
 }
 
 pub(crate) async fn pr_for_branch<R: ProcessRunner>(
@@ -209,12 +224,18 @@ pub(crate) async fn pr_diff_within<R: ProcessRunner>(
     Ok(glab.mr_diff_within(dir, number, budget).await?)
 }
 
-pub(crate) async fn issue_list<R: ProcessRunner>(
+pub(crate) async fn issue_list_with<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
+    spec: IssueList,
 ) -> Result<Vec<ForgeIssue>> {
+    let state = match spec.state {
+        IssueListState::Open => GlIssueListState::Open,
+        IssueListState::Closed => GlIssueListState::Closed,
+        IssueListState::All => GlIssueListState::All,
+    };
     Ok(glab
-        .issue_list(dir)
+        .issue_list_with(dir, GlIssueList::new().state(state).limit(spec.limit))
         .await?
         .into_iter()
         .map(map_issue)

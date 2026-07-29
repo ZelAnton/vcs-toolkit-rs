@@ -166,6 +166,32 @@ impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_li
 impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_gitea::IssueList> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::IssueList) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::IssueList) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
 pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen
 pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
 impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
@@ -400,6 +426,32 @@ impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list:
 impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with
+pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::new() -> Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_gitea::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_gitea::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>> + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_gitea::PrList> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::PrList) -> bool + core::marker::Send + 'static
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_gitea::PrList) -> bool + 'static
+impl core::default::Default for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+pub fn vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::marker::Send for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::marker::Sync for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::marker::Unpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
 pub mod vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge
 pub struct vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
 impl vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
@@ -635,6 +687,28 @@ impl core::marker::UnsafeUnpin for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__ve
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::__mock_MockGiteaApi_GiteaApi::__version::Expectation
 pub mod vcs_gitea::guide
+#[non_exhaustive] pub enum vcs_gitea::IssueListState
+pub vcs_gitea::IssueListState::All
+pub vcs_gitea::IssueListState::Closed
+pub vcs_gitea::IssueListState::Open
+impl core::clone::Clone for vcs_gitea::IssueListState
+pub fn vcs_gitea::IssueListState::clone(&self) -> vcs_gitea::IssueListState
+impl core::cmp::Eq for vcs_gitea::IssueListState
+impl core::cmp::PartialEq for vcs_gitea::IssueListState
+pub fn vcs_gitea::IssueListState::eq(&self, &vcs_gitea::IssueListState) -> bool
+impl core::default::Default for vcs_gitea::IssueListState
+pub fn vcs_gitea::IssueListState::default() -> vcs_gitea::IssueListState
+impl core::fmt::Debug for vcs_gitea::IssueListState
+pub fn vcs_gitea::IssueListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_gitea::IssueListState
+impl core::marker::StructuralPartialEq for vcs_gitea::IssueListState
+impl core::marker::Freeze for vcs_gitea::IssueListState
+impl core::marker::Send for vcs_gitea::IssueListState
+impl core::marker::Sync for vcs_gitea::IssueListState
+impl core::marker::Unpin for vcs_gitea::IssueListState
+impl core::marker::UnsafeUnpin for vcs_gitea::IssueListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::IssueListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::IssueListState
 #[non_exhaustive] pub enum vcs_gitea::MergeStrategy
 pub vcs_gitea::MergeStrategy::Merge
 pub vcs_gitea::MergeStrategy::Rebase
@@ -655,6 +729,29 @@ impl core::marker::Unpin for vcs_gitea::MergeStrategy
 impl core::marker::UnsafeUnpin for vcs_gitea::MergeStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::MergeStrategy
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::MergeStrategy
+#[non_exhaustive] pub enum vcs_gitea::PrListState
+pub vcs_gitea::PrListState::All
+pub vcs_gitea::PrListState::Closed
+pub vcs_gitea::PrListState::Merged
+pub vcs_gitea::PrListState::Open
+impl core::clone::Clone for vcs_gitea::PrListState
+pub fn vcs_gitea::PrListState::clone(&self) -> vcs_gitea::PrListState
+impl core::cmp::Eq for vcs_gitea::PrListState
+impl core::cmp::PartialEq for vcs_gitea::PrListState
+pub fn vcs_gitea::PrListState::eq(&self, &vcs_gitea::PrListState) -> bool
+impl core::default::Default for vcs_gitea::PrListState
+pub fn vcs_gitea::PrListState::default() -> vcs_gitea::PrListState
+impl core::fmt::Debug for vcs_gitea::PrListState
+pub fn vcs_gitea::PrListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_gitea::PrListState
+impl core::marker::StructuralPartialEq for vcs_gitea::PrListState
+impl core::marker::Freeze for vcs_gitea::PrListState
+impl core::marker::Send for vcs_gitea::PrListState
+impl core::marker::Sync for vcs_gitea::PrListState
+impl core::marker::Unpin for vcs_gitea::PrListState
+impl core::marker::UnsafeUnpin for vcs_gitea::PrListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrListState
 pub struct vcs_gitea::Gitea<R: processkit::runner::ProcessRunner>
 impl vcs_gitea::Gitea<processkit::runner::JobRunner>
 pub fn vcs_gitea::Gitea<processkit::runner::JobRunner>::new() -> Self
@@ -685,6 +782,7 @@ pub fn vcs_gitea::Gitea<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 se
 pub fn vcs_gitea::Gitea<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -694,6 +792,7 @@ pub fn vcs_gitea::Gitea<R>::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'l
 pub fn vcs_gitea::Gitea<R>::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -718,6 +817,7 @@ pub async fn vcs_gitea::GiteaAt<'a, R>::issue_close(&self, u64) -> processkit::e
 pub async fn vcs_gitea::GiteaAt<'a, R>::issue_comment(&self, u64, &str) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_gitea::GiteaAt<'a, R>::issue_create(&self, &str, &str) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_gitea::GiteaAt<'a, R>::issue_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::issue_list_with(&self, vcs_gitea::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>
 pub async fn vcs_gitea::GiteaAt<'a, R>::issue_reopen(&self, u64) -> processkit::error::Result<()>
 pub async fn vcs_gitea::GiteaAt<'a, R>::issue_view(&self, u64) -> processkit::error::Result<vcs_gitea::Issue>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_approve(&self, u64) -> processkit::error::Result<()>
@@ -727,6 +827,7 @@ pub async fn vcs_gitea::GiteaAt<'a, R>::pr_comment(&self, u64, &str) -> processk
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_create(&self, vcs_gitea::PrCreate) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_edit(&self, u64, vcs_gitea::PrEdit) -> processkit::error::Result<()>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>
+pub async fn vcs_gitea::GiteaAt<'a, R>::pr_list_with(&self, vcs_gitea::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_merge(&self, u64, vcs_gitea::PrMerge) -> processkit::error::Result<()>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_reject(&self, u64, &str) -> processkit::error::Result<()>
 pub async fn vcs_gitea::GiteaAt<'a, R>::pr_view(&self, u64) -> processkit::error::Result<vcs_gitea::PullRequest>
@@ -790,6 +891,30 @@ impl core::marker::Unpin for vcs_gitea::Issue
 impl core::marker::UnsafeUnpin for vcs_gitea::Issue
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::Issue
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::Issue
+#[non_exhaustive] pub struct vcs_gitea::IssueList
+pub vcs_gitea::IssueList::limit: usize
+pub vcs_gitea::IssueList::state: vcs_gitea::IssueListState
+impl vcs_gitea::IssueList
+pub fn vcs_gitea::IssueList::limit(self, usize) -> Self
+pub fn vcs_gitea::IssueList::new() -> Self
+pub fn vcs_gitea::IssueList::state(self, vcs_gitea::IssueListState) -> Self
+impl core::clone::Clone for vcs_gitea::IssueList
+pub fn vcs_gitea::IssueList::clone(&self) -> vcs_gitea::IssueList
+impl core::cmp::Eq for vcs_gitea::IssueList
+impl core::cmp::PartialEq for vcs_gitea::IssueList
+pub fn vcs_gitea::IssueList::eq(&self, &vcs_gitea::IssueList) -> bool
+impl core::default::Default for vcs_gitea::IssueList
+pub fn vcs_gitea::IssueList::default() -> Self
+impl core::fmt::Debug for vcs_gitea::IssueList
+pub fn vcs_gitea::IssueList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::IssueList
+impl core::marker::Freeze for vcs_gitea::IssueList
+impl core::marker::Send for vcs_gitea::IssueList
+impl core::marker::Sync for vcs_gitea::IssueList
+impl core::marker::Unpin for vcs_gitea::IssueList
+impl core::marker::UnsafeUnpin for vcs_gitea::IssueList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::IssueList
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::IssueList
 pub struct vcs_gitea::MockGiteaApi
 impl vcs_gitea::MockGiteaApi
 pub fn vcs_gitea::MockGiteaApi::checkpoint(&mut self)
@@ -801,6 +926,7 @@ pub fn vcs_gitea::MockGiteaApi::expect_issue_close(&mut self) -> &mut vcs_gitea:
 pub fn vcs_gitea::MockGiteaApi::expect_issue_comment(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_comment::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_issue_create(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_create::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_issue_list(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_issue_list_with(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_list_with::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_issue_reopen(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_reopen::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_issue_view(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__issue_view::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_approve(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_approve::Expectation
@@ -810,6 +936,7 @@ pub fn vcs_gitea::MockGiteaApi::expect_pr_comment(&mut self) -> &mut vcs_gitea::
 pub fn vcs_gitea::MockGiteaApi::expect_pr_create(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_create::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_edit(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_edit::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_list(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list::Expectation
+pub fn vcs_gitea::MockGiteaApi::expect_pr_list_with(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_list_with::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_merge(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_merge::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_reject(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_reject::Expectation
 pub fn vcs_gitea::MockGiteaApi::expect_pr_view(&mut self) -> &mut vcs_gitea::__mock_MockGiteaApi_GiteaApi::__pr_view::Expectation
@@ -830,6 +957,7 @@ pub fn vcs_gitea::MockGiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life
 pub fn vcs_gitea::MockGiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -839,6 +967,7 @@ pub fn vcs_gitea::MockGiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>
 pub fn vcs_gitea::MockGiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -899,6 +1028,30 @@ impl core::marker::Unpin for vcs_gitea::PrEdit
 impl core::marker::UnsafeUnpin for vcs_gitea::PrEdit
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrEdit
 impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrEdit
+#[non_exhaustive] pub struct vcs_gitea::PrList
+pub vcs_gitea::PrList::limit: usize
+pub vcs_gitea::PrList::state: vcs_gitea::PrListState
+impl vcs_gitea::PrList
+pub fn vcs_gitea::PrList::limit(self, usize) -> Self
+pub fn vcs_gitea::PrList::new() -> Self
+pub fn vcs_gitea::PrList::state(self, vcs_gitea::PrListState) -> Self
+impl core::clone::Clone for vcs_gitea::PrList
+pub fn vcs_gitea::PrList::clone(&self) -> vcs_gitea::PrList
+impl core::cmp::Eq for vcs_gitea::PrList
+impl core::cmp::PartialEq for vcs_gitea::PrList
+pub fn vcs_gitea::PrList::eq(&self, &vcs_gitea::PrList) -> bool
+impl core::default::Default for vcs_gitea::PrList
+pub fn vcs_gitea::PrList::default() -> Self
+impl core::fmt::Debug for vcs_gitea::PrList
+pub fn vcs_gitea::PrList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_gitea::PrList
+impl core::marker::Freeze for vcs_gitea::PrList
+impl core::marker::Send for vcs_gitea::PrList
+impl core::marker::Sync for vcs_gitea::PrList
+impl core::marker::Unpin for vcs_gitea::PrList
+impl core::marker::UnsafeUnpin for vcs_gitea::PrList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_gitea::PrList
+impl core::panic::unwind_safe::UnwindSafe for vcs_gitea::PrList
 #[non_exhaustive] pub struct vcs_gitea::PrMerge
 pub vcs_gitea::PrMerge::auto: bool
 pub vcs_gitea::PrMerge::delete_branch: bool
@@ -996,6 +1149,7 @@ pub fn vcs_gitea::GiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life0 se
 pub fn vcs_gitea::GiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::GiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_gitea::GiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1005,6 +1159,7 @@ pub fn vcs_gitea::GiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'l
 pub fn vcs_gitea::GiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::GiteaApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::GiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1021,6 +1176,7 @@ pub fn vcs_gitea::MockGiteaApi::issue_close<'life0, 'life1, 'async_trait>(&'life
 pub fn vcs_gitea::MockGiteaApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1030,6 +1186,7 @@ pub fn vcs_gitea::MockGiteaApi::pr_comment<'life0, 'life1, 'life2, 'async_trait>
 pub fn vcs_gitea::MockGiteaApi::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::MockGiteaApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::MockGiteaApi::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1046,6 +1203,7 @@ pub fn vcs_gitea::Gitea<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 se
 pub fn vcs_gitea::Gitea<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_approve<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1055,6 +1213,7 @@ pub fn vcs_gitea::Gitea<R>::pr_comment<'life0, 'life1, 'life2, 'async_trait>(&'l
 pub fn vcs_gitea::Gitea<R>::pr_create<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_edit<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_gitea::Gitea<R>::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_gitea::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_gitea::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_gitea::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_reject<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_gitea::Gitea<R>::pr_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_gitea::PullRequest>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

@@ -1,5 +1,28 @@
 pub mod vcs_mcp
 pub mod vcs_mcp::guide
+pub enum vcs_mcp::IssueListStateArg
+pub vcs_mcp::IssueListStateArg::All
+pub vcs_mcp::IssueListStateArg::Closed
+pub vcs_mcp::IssueListStateArg::Open
+impl core::clone::Clone for vcs_mcp::IssueListStateArg
+pub fn vcs_mcp::IssueListStateArg::clone(&self) -> vcs_mcp::IssueListStateArg
+impl core::fmt::Debug for vcs_mcp::IssueListStateArg
+pub fn vcs_mcp::IssueListStateArg::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_mcp::IssueListStateArg
+impl schemars::JsonSchema for vcs_mcp::IssueListStateArg
+pub fn vcs_mcp::IssueListStateArg::inline_schema() -> bool
+pub fn vcs_mcp::IssueListStateArg::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::IssueListStateArg::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::IssueListStateArg::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::IssueListStateArg
+pub fn vcs_mcp::IssueListStateArg::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::IssueListStateArg
+impl core::marker::Send for vcs_mcp::IssueListStateArg
+impl core::marker::Sync for vcs_mcp::IssueListStateArg
+impl core::marker::Unpin for vcs_mcp::IssueListStateArg
+impl core::marker::UnsafeUnpin for vcs_mcp::IssueListStateArg
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::IssueListStateArg
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::IssueListStateArg
 pub enum vcs_mcp::MergeStrategyArg
 pub vcs_mcp::MergeStrategyArg::Merge
 pub vcs_mcp::MergeStrategyArg::Rebase
@@ -25,6 +48,30 @@ impl core::marker::Unpin for vcs_mcp::MergeStrategyArg
 impl core::marker::UnsafeUnpin for vcs_mcp::MergeStrategyArg
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::MergeStrategyArg
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::MergeStrategyArg
+pub enum vcs_mcp::PrListStateArg
+pub vcs_mcp::PrListStateArg::All
+pub vcs_mcp::PrListStateArg::Closed
+pub vcs_mcp::PrListStateArg::Merged
+pub vcs_mcp::PrListStateArg::Open
+impl core::clone::Clone for vcs_mcp::PrListStateArg
+pub fn vcs_mcp::PrListStateArg::clone(&self) -> vcs_mcp::PrListStateArg
+impl core::fmt::Debug for vcs_mcp::PrListStateArg
+pub fn vcs_mcp::PrListStateArg::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_mcp::PrListStateArg
+impl schemars::JsonSchema for vcs_mcp::PrListStateArg
+pub fn vcs_mcp::PrListStateArg::inline_schema() -> bool
+pub fn vcs_mcp::PrListStateArg::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::PrListStateArg::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::PrListStateArg::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::PrListStateArg
+pub fn vcs_mcp::PrListStateArg::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::PrListStateArg
+impl core::marker::Send for vcs_mcp::PrListStateArg
+impl core::marker::Sync for vcs_mcp::PrListStateArg
+impl core::marker::Unpin for vcs_mcp::PrListStateArg
+impl core::marker::UnsafeUnpin for vcs_mcp::PrListStateArg
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::PrListStateArg
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::PrListStateArg
 pub enum vcs_mcp::WriteGate
 pub vcs_mcp::WriteGate::All
 pub vcs_mcp::WriteGate::None
@@ -199,6 +246,29 @@ impl core::marker::Unpin for vcs_mcp::IssueCreateParams
 impl core::marker::UnsafeUnpin for vcs_mcp::IssueCreateParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::IssueCreateParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::IssueCreateParams
+pub struct vcs_mcp::IssueListParams
+pub vcs_mcp::IssueListParams::limit: core::option::Option<usize>
+pub vcs_mcp::IssueListParams::state: core::option::Option<vcs_mcp::IssueListStateArg>
+impl core::convert::From<vcs_mcp::IssueListParams> for vcs_forge::dto::IssueList
+pub fn vcs_forge::dto::IssueList::from(vcs_mcp::IssueListParams) -> Self
+impl core::default::Default for vcs_mcp::IssueListParams
+pub fn vcs_mcp::IssueListParams::default() -> vcs_mcp::IssueListParams
+impl core::fmt::Debug for vcs_mcp::IssueListParams
+pub fn vcs_mcp::IssueListParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::IssueListParams
+pub fn vcs_mcp::IssueListParams::inline_schema() -> bool
+pub fn vcs_mcp::IssueListParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::IssueListParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::IssueListParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::IssueListParams
+pub fn vcs_mcp::IssueListParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::IssueListParams
+impl core::marker::Send for vcs_mcp::IssueListParams
+impl core::marker::Sync for vcs_mcp::IssueListParams
+impl core::marker::Unpin for vcs_mcp::IssueListParams
+impl core::marker::UnsafeUnpin for vcs_mcp::IssueListParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::IssueListParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::IssueListParams
 pub struct vcs_mcp::IssueNumberParams
 pub vcs_mcp::IssueNumberParams::number: u64
 impl core::fmt::Debug for vcs_mcp::IssueNumberParams
@@ -351,6 +421,29 @@ impl core::marker::Unpin for vcs_mcp::PrForBranchParams
 impl core::marker::UnsafeUnpin for vcs_mcp::PrForBranchParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::PrForBranchParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::PrForBranchParams
+pub struct vcs_mcp::PrListParams
+pub vcs_mcp::PrListParams::limit: core::option::Option<usize>
+pub vcs_mcp::PrListParams::state: core::option::Option<vcs_mcp::PrListStateArg>
+impl core::convert::From<vcs_mcp::PrListParams> for vcs_forge::dto::PrList
+pub fn vcs_forge::dto::PrList::from(vcs_mcp::PrListParams) -> Self
+impl core::default::Default for vcs_mcp::PrListParams
+pub fn vcs_mcp::PrListParams::default() -> vcs_mcp::PrListParams
+impl core::fmt::Debug for vcs_mcp::PrListParams
+pub fn vcs_mcp::PrListParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::PrListParams
+pub fn vcs_mcp::PrListParams::inline_schema() -> bool
+pub fn vcs_mcp::PrListParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::PrListParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::PrListParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::PrListParams
+pub fn vcs_mcp::PrListParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::PrListParams
+impl core::marker::Send for vcs_mcp::PrListParams
+impl core::marker::Sync for vcs_mcp::PrListParams
+impl core::marker::Unpin for vcs_mcp::PrListParams
+impl core::marker::UnsafeUnpin for vcs_mcp::PrListParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::PrListParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::PrListParams
 pub struct vcs_mcp::PrMergeParams
 pub vcs_mcp::PrMergeParams::auto: bool
 pub vcs_mcp::PrMergeParams::delete_branch: bool
@@ -572,7 +665,7 @@ pub fn vcs_mcp::VcsMcpServer::forge_issue_comment(&self, rmcp::handler::server::
 pub fn vcs_mcp::VcsMcpServer::forge_issue_comment_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_create(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueCreateParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_create_tool_attr() -> rmcp::model::tool::Tool
-pub fn vcs_mcp::VcsMcpServer::forge_issue_list(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_issue_list(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueListParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_list_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_reopen(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_reopen_tool_attr() -> rmcp::model::tool::Tool
@@ -596,7 +689,7 @@ pub fn vcs_mcp::VcsMcpServer::forge_pr_edit(&self, rmcp::handler::server::wrappe
 pub fn vcs_mcp::VcsMcpServer::forge_pr_edit_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_for_branch(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrForBranchParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_for_branch_tool_attr() -> rmcp::model::tool::Tool
-pub fn vcs_mcp::VcsMcpServer::forge_pr_list(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_pr_list(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrListParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_list_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_mark_ready(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_mark_ready_tool_attr() -> rmcp::model::tool::Tool

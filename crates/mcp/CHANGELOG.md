@@ -10,6 +10,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **PR/issue list filters.** `forge_pr_list` now accepts optional
+  `state=open|closed|merged|all` and `limit`; `forge_issue_list` accepts optional
+  `state=open|closed|all` and `limit`. Omitting them preserves open/100, while
+  unsupported Gitea merged-only requests and zero limits surface as
+  `invalid_params`.
 - `forge_pr_for_branch` read tool (`{ source_branch }`): returns every GitHub PR
   / GitLab MR for that source branch regardless of target or state through
   `Forge::pr_for_branch`; Gitea reports `Unsupported`. It is ungated and uses

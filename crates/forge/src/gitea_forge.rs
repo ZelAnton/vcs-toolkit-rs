@@ -11,13 +11,14 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, PrCreate as GtPrCreate, PrMerge as GtPrMerge, PullRequest, Release,
-    ReleaseCreate as GtReleaseCreate,
+    Gitea, GiteaApi, Issue, IssueList as GtIssueList, IssueListState as GtIssueListState,
+    PrCreate as GtPrCreate, PrList as GtPrList, PrListState as GtPrListState, PrMerge as GtPrMerge,
+    PullRequest, Release, ReleaseCreate as GtReleaseCreate,
 };
 
 use crate::dto::{
-    ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, MergeStrategy, PrCreate,
-    PrMerge, ReleaseCreate,
+    ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, IssueList, IssueListState,
+    MergeStrategy, PrCreate, PrList, PrListState, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -40,8 +41,23 @@ pub(crate) async fn version_support<R: ProcessRunner>(
     }
 }
 
-pub(crate) async fn pr_list<R: ProcessRunner>(tea: &Gitea<R>, dir: &Path) -> Result<Vec<ForgePr>> {
-    Ok(tea.pr_list(dir).await?.into_iter().map(map_pr).collect())
+pub(crate) async fn pr_list_with<R: ProcessRunner>(
+    tea: &Gitea<R>,
+    dir: &Path,
+    spec: PrList,
+) -> Result<Vec<ForgePr>> {
+    let state = match spec.state {
+        PrListState::Open => GtPrListState::Open,
+        PrListState::Closed => GtPrListState::Closed,
+        PrListState::Merged => GtPrListState::Merged,
+        PrListState::All => GtPrListState::All,
+    };
+    Ok(tea
+        .pr_list_with(dir, GtPrList::new().state(state).limit(spec.limit))
+        .await?
+        .into_iter()
+        .map(map_pr)
+        .collect())
 }
 
 pub(crate) async fn pr_view<R: ProcessRunner>(
@@ -145,12 +161,18 @@ pub(crate) async fn pr_request_changes<R: ProcessRunner>(
     Ok(())
 }
 
-pub(crate) async fn issue_list<R: ProcessRunner>(
+pub(crate) async fn issue_list_with<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,
+    spec: IssueList,
 ) -> Result<Vec<ForgeIssue>> {
+    let state = match spec.state {
+        IssueListState::Open => GtIssueListState::Open,
+        IssueListState::Closed => GtIssueListState::Closed,
+        IssueListState::All => GtIssueListState::All,
+    };
     Ok(tea
-        .issue_list(dir)
+        .issue_list_with(dir, GtIssueList::new().state(state).limit(spec.limit))
         .await?
         .into_iter()
         .map(map_issue)

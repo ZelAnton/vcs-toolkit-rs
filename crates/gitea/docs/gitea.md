@@ -7,18 +7,15 @@ note below). This guide is the full reference — every command by theme, with e
 
 `vcs-gitea` drives the Gitea (and Forgejo) CLI (`tea`) from Rust. Every operation
 is `async`, runs inside an OS job (via [`processkit`]) so a `tea` subprocess is
-never orphaned, and returns the structured `processkit::Error`. Commands ask for
-`--output json` and are deserialized into typed structs; the crate never scrapes
-human-readable output.
+never orphaned, and returns the structured `processkit::Error`. Read commands ask
+for `--output csv` and parse tea's quoted delimiter table into typed structs; the
+crate never scrapes human-readable output.
 
-> **`tea --output json` is not the Gitea REST shape.** Its **list** commands
-> serialize tea's print-*table* — a JSON array of string-maps whose keys are
-> snake-cased column headers (which can contain spaces/slashes) and whose values
-> are **all strings** (no `html_url`, no nested branch objects, no typed bools);
-> we pick columns with `--fields`. Its **detail** view (`issues <n>`) is a
-> separate *typed* object. The parsers model both shapes (pinned by
-> verified-shape unit tests); the `#[ignore]` real-`tea` tests are the definitive
-> contract check.
+> **`tea --output csv` is a print-table format, not the Gitea REST shape.** We
+> choose columns with `--fields` and parse the quoted header/rows. `tea` 0.9.x
+> does not provide usable structured single-item PR/issue views, so both typed
+> view methods page these list tables and filter by number. Hermetic parser/argv
+> tests pin the contract; ignored live tests are the drift check.
 
 The surface is the **lean pull-request lifecycle** `tea` actually supports. It is
 deliberately **narrower** than `vcs-github` / `vcs-gitlab` — see the capability
@@ -33,7 +30,7 @@ Requires the `tea` binary on `PATH`, configured via `tea login add`.
 [`processkit`]: https://crates.io/crates/processkit
 
 > ⚠️ **CLI surface tracks the installed `tea`, not a frozen contract.** The argv
-> the code builds and the JSON it parses are pinned by the hermetic tests; the
+> the code builds and the CSV it parses are pinned by the hermetic tests; the
 > `#[ignore]` integration smoke tests additionally check, against the real binary
 > in CI, that `tea` integrates at all (`version` + `auth_status`). The PR
 > **lifecycle** argv follows the documented `tea` CLI but is **not** exercised
@@ -42,7 +39,7 @@ Requires the `tea` binary on `PATH`, configured via `tea login add`.
 
 ## What `tea` does **not** do
 
-`tea` has no single-PR `view`, no current-repo view, no draft toggle, no
+`tea` has no usable single-PR or single-issue structured `view`, no current-repo view, no draft toggle, no
 PR-checks command, and no single-release view (`tea releases` ignores any
 positional and always lists). Consequences:
 
@@ -51,13 +48,13 @@ positional and always lists). Consequences:
   `MAX_RESPONSE_ITEMS` (default 50), so a single large `--limit` is silently clamped
   — paging is what lets `pr_view` find a PR past that cap instead of a false "not
   found". It stops at the first empty page (a genuine absence → `ErrorReason::Parse`) or a
-  large safety bound. (`issue_view`, by contrast, is a *first-class* `tea issues
-  <index>` — see [Issues & releases](#issues--releases).)
+  large safety bound. `issue_view` uses the same paging strategy because the
+  bare-index issue command renders Markdown and ignores `--output`.
 - **`repo_view`, `pr_mark_ready`, `pr_checks`, and `release_view` are simply
   absent** from `GiteaApi`. Through the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade they return
   `Error::Unsupported` for the Gitea backend (`err.is_unsupported()`).
 - **No labels/assignees/author/timestamp/milestone columns.** `tea`'s PR/issue
-  table output (and the issue detail view) carries none of these, so this crate's
+  table output carries none of these, so this crate's
   `PullRequest`/`Issue`/`Release` types don't model them either — through the
   [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/) facade a
   Gitea-backed `ForgePr`/`ForgeIssue`/`ForgeRelease` reports `labels`,
@@ -86,15 +83,16 @@ let authed = tea.auth_status().await?; // bool — a non-empty `tea login list`
 ```
 
 `tea` has no per-instance `auth status`, so `auth_status` reads
-`tea login list --output json` and reports whether at least one login is
+`tea login list --output csv` and reports whether at least one login is
 configured.
 
 ## Pull requests
 
 | Method | Runs | Returns |
 |---|---|---|
-| `pr_list(dir)` | `tea pr list --limit 100 --fields index,title,state,head,base,url --output json` | `Vec<PullRequest>` |
-| `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output json` (paged) + filter | [`PullRequest`] |
+| `pr_list(dir)` | `tea pr list --state open --limit 100 --fields index,title,state,head,base,url --output csv` | `Vec<PullRequest>` (compatibility default) |
+| `pr_list_with(dir, spec)` | `tea pr list --state open\|closed\|all --limit <limit> --fields … --output csv` | `Vec<PullRequest>` via `PrList`; `Merged` is `Unsupported` |
+| `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output csv` (paged) + filter | [`PullRequest`] |
 | `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …]` | `String` |
 | `pr_merge(dir, number, merge)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
@@ -156,21 +154,23 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 
 | Method | Runs | Returns |
 |---|---|---|
-| `issue_list(dir)` | `tea issues list --limit 100 --fields index,title,state,body,url --output json` | `Vec<Issue>` |
-| `issue_view(dir, number)` | `tea issues <number> --output json` | [`Issue`] |
+| `issue_list(dir)` | `tea issues list --state open --limit 100 --fields index,title,state,body,url --output csv` | `Vec<Issue>` (compatibility default) |
+| `issue_list_with(dir, spec)` | `tea issues list --state open\|closed\|all --limit <limit> --fields … --output csv` | `Vec<Issue>` via `IssueList` |
+| `issue_view(dir, number)` | `tea issues list --state all --page N --output csv` (paged) + filter | [`Issue`] |
 | `issue_create(dir, title, body)` | `tea issues create --title … --description …` | `String` |
-| `release_list(dir)` | `tea releases list --limit 100 --output json` | `Vec<Release>` |
+| `release_list(dir)` | `tea releases list --limit 100 --output csv` | `Vec<Release>` |
 | `release_create(dir, spec)` | `tea releases create --tag <tag> [--title …] [--note …] [--draft] [--prerelease]` | `String` (tea's output) |
 | `release_delete(dir, tag)` | `tea releases delete <tag>` | `()` |
 
-The list methods pass `--limit 100`, but the Gitea **server** caps a page at
+The compatibility list methods request `state=open, limit=100`; the `*_with`
+forms select other states and limits. `tea` cannot filter merged-only PRs, so
+`PrListState::Merged` is a structured `Unsupported` without spawning. The Gitea **server** caps a page at
 `MAX_RESPONSE_ITEMS` (default 50), so each returns **at most ~50** rows in one call —
 a busier repo is silently truncated. Page beyond that through `run` (`--page N`) or
 the API. `issue_list` also pins `--fields` to fetch `body`/`url` (tea's default issue
-columns omit them). Unlike `pr_view` (which pages and filters the string-table),
-**`issue_view` is a first-class
-single-issue view** — `tea issues <number>` (the bare-index form), which returns a
-*typed* detail object (numeric `index`), a different shape from the list.
+columns omit them). Like `pr_view`, **`issue_view` is synthesized by paging and
+filtering** because `tea issues <number>` (the bare-index form) renders Markdown
+and ignores `--output`.
 `issue_create`, like `pr_create`, returns tea's textual summary verbatim — its
 final line is the new issue's URL, but there is no flag to shape the output, so it
 is **not** a parsed URL. There is intentionally **no `release_view`**: `tea
@@ -179,8 +179,7 @@ doesn't exist in `tea` (the [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_f
 `Unsupported`).
 
 `Issue` carries `number` (tea's `index`), `title`, `state` (`"open"`/`"closed"`),
-`body`, and `url` — from tea's table columns (list) or the typed detail object
-(`issue_view`).
+`body`, and `url` — from tea's table columns for both list and synthesized view.
 
 `Release` carries `tag` (tea's `Tag-Name` column), `title`, `published_at` (e.g.
 `"2023-07-26T13:02:36Z"`, empty for an unpublished draft), and `draft`/`prerelease`
@@ -205,7 +204,7 @@ merge`), passes no confirmation flag.
 for issue in tea.issue_list(repo).await? {
     println!("#{} [{}] {}", issue.number, issue.state, issue.title);
 }
-let one = tea.issue_view(repo, 7).await?;        // first-class single-issue view
+let one = tea.issue_view(repo, 7).await?;        // paged list + filter
 for rel in tea.release_list(repo).await? {
     println!("{} — {}", rel.tag, rel.title);
 }

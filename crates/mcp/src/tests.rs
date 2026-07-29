@@ -466,7 +466,10 @@ async fn flag_like_revspec_surfaces_as_invalid_params() {
 #[tokio::test]
 async fn forge_tools_error_without_a_forge() {
     let server = git_server(ScriptedRunner::new(), WriteGate::All);
-    let err = server.forge_pr_list().await.expect_err("no forge");
+    let err = server
+        .forge_pr_list(Parameters(PrListParams::default()))
+        .await
+        .expect_err("no forge");
     assert!(
         format!("{err:?}").contains("no forge"),
         "should mention no forge: {err:?}"
@@ -524,7 +527,10 @@ async fn forge_issue_tools_route_and_gate() {
     let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
     let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
 
-    let out = server.forge_issue_list().await.expect("issue list ok");
+    let out = server
+        .forge_issue_list(Parameters(IssueListParams::default()))
+        .await
+        .expect("issue list ok");
     assert!(result_json(&out).contains("Bug"));
 
     let err = server
@@ -535,6 +541,42 @@ async fn forge_issue_tools_route_and_gate() {
         .await
         .expect_err("gated");
     assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+}
+
+#[tokio::test]
+async fn forge_list_tools_forward_optional_state_and_limit() {
+    let runner = ScriptedRunner::new()
+        .on(
+            ["gh", "pr", "list", "--state", "merged", "--limit", "7"],
+            Reply::ok("[]"),
+        )
+        .on(
+            ["gh", "issue", "list", "--state", "closed", "--limit", "9"],
+            Reply::ok("[]"),
+        );
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(runner);
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+    server
+        .forge_pr_list(Parameters(PrListParams {
+            state: Some(PrListStateArg::Merged),
+            limit: Some(7),
+        }))
+        .await
+        .expect("filtered PR list");
+    server
+        .forge_issue_list(Parameters(IssueListParams {
+            state: Some(IssueListStateArg::Closed),
+            limit: Some(9),
+        }))
+        .await
+        .expect("filtered issue list");
 }
 
 // The three issue-lifecycle mutations are write-gated: refused under

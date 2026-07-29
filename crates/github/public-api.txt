@@ -232,6 +232,32 @@ impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue
 impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list::Expectation
+pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with
+pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::new() -> Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_github::IssueList> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::IssueList) -> bool + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::IssueList) -> bool + 'static
+impl core::default::Default for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::marker::Send for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::marker::Sync for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
 pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_reopen
 pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_reopen::Expectation
 impl vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_reopen::Expectation
@@ -570,6 +596,32 @@ impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_li
 impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_for_source_branch::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_for_source_branch::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_for_source_branch::Expectation
+pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with
+pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::new() -> Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_github::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>> + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_github::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>> + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_github::PrList> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::PrList) -> bool + core::marker::Send + 'static
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_github::PrList) -> bool + 'static
+impl core::default::Default for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+pub fn vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::marker::Send for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::marker::Sync for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::marker::Unpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::marker::UnsafeUnpin for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
 pub mod vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_mark_ready
 pub struct vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_mark_ready::Expectation
 impl vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_mark_ready::Expectation
@@ -1071,6 +1123,28 @@ impl core::marker::Unpin for vcs_github::CheckBucket
 impl core::marker::UnsafeUnpin for vcs_github::CheckBucket
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::CheckBucket
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::CheckBucket
+#[non_exhaustive] pub enum vcs_github::IssueListState
+pub vcs_github::IssueListState::All
+pub vcs_github::IssueListState::Closed
+pub vcs_github::IssueListState::Open
+impl core::clone::Clone for vcs_github::IssueListState
+pub fn vcs_github::IssueListState::clone(&self) -> vcs_github::IssueListState
+impl core::cmp::Eq for vcs_github::IssueListState
+impl core::cmp::PartialEq for vcs_github::IssueListState
+pub fn vcs_github::IssueListState::eq(&self, &vcs_github::IssueListState) -> bool
+impl core::default::Default for vcs_github::IssueListState
+pub fn vcs_github::IssueListState::default() -> vcs_github::IssueListState
+impl core::fmt::Debug for vcs_github::IssueListState
+pub fn vcs_github::IssueListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_github::IssueListState
+impl core::marker::StructuralPartialEq for vcs_github::IssueListState
+impl core::marker::Freeze for vcs_github::IssueListState
+impl core::marker::Send for vcs_github::IssueListState
+impl core::marker::Sync for vcs_github::IssueListState
+impl core::marker::Unpin for vcs_github::IssueListState
+impl core::marker::UnsafeUnpin for vcs_github::IssueListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::IssueListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::IssueListState
 #[non_exhaustive] pub enum vcs_github::MergeStrategy
 pub vcs_github::MergeStrategy::Merge
 pub vcs_github::MergeStrategy::Rebase
@@ -1091,6 +1165,29 @@ impl core::marker::Unpin for vcs_github::MergeStrategy
 impl core::marker::UnsafeUnpin for vcs_github::MergeStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::MergeStrategy
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::MergeStrategy
+#[non_exhaustive] pub enum vcs_github::PrListState
+pub vcs_github::PrListState::All
+pub vcs_github::PrListState::Closed
+pub vcs_github::PrListState::Merged
+pub vcs_github::PrListState::Open
+impl core::clone::Clone for vcs_github::PrListState
+pub fn vcs_github::PrListState::clone(&self) -> vcs_github::PrListState
+impl core::cmp::Eq for vcs_github::PrListState
+impl core::cmp::PartialEq for vcs_github::PrListState
+pub fn vcs_github::PrListState::eq(&self, &vcs_github::PrListState) -> bool
+impl core::default::Default for vcs_github::PrListState
+pub fn vcs_github::PrListState::default() -> vcs_github::PrListState
+impl core::fmt::Debug for vcs_github::PrListState
+pub fn vcs_github::PrListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_github::PrListState
+impl core::marker::StructuralPartialEq for vcs_github::PrListState
+impl core::marker::Freeze for vcs_github::PrListState
+impl core::marker::Send for vcs_github::PrListState
+impl core::marker::Sync for vcs_github::PrListState
+impl core::marker::Unpin for vcs_github::PrListState
+impl core::marker::UnsafeUnpin for vcs_github::PrListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::PrListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::PrListState
 #[non_exhaustive] pub enum vcs_github::RerunScope
 pub vcs_github::RerunScope::All
 pub vcs_github::RerunScope::FailedOnly
@@ -1213,6 +1310,7 @@ pub fn vcs_github::GitHub<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHub<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1226,6 +1324,7 @@ pub fn vcs_github::GitHub<R>::pr_feedback<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHub<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_list_for_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_list_for_source_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_github::GitHub<R>::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_mark_ready<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_review<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::ReviewAction) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1261,6 +1360,7 @@ pub async fn vcs_github::GitHubAt<'a, R>::issue_close(&self, u64) -> processkit:
 pub async fn vcs_github::GitHubAt<'a, R>::issue_comment(&self, u64, &str) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_github::GitHubAt<'a, R>::issue_create(&self, &str, &str) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_github::GitHubAt<'a, R>::issue_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>
+pub async fn vcs_github::GitHubAt<'a, R>::issue_list_with(&self, vcs_github::IssueList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>
 pub async fn vcs_github::GitHubAt<'a, R>::issue_reopen(&self, u64) -> processkit::error::Result<()>
 pub async fn vcs_github::GitHubAt<'a, R>::issue_view(&self, u64) -> processkit::error::Result<vcs_github::Issue>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_checkout(&self, u64) -> processkit::error::Result<()>
@@ -1274,6 +1374,7 @@ pub async fn vcs_github::GitHubAt<'a, R>::pr_feedback(&self, u64) -> processkit:
 pub async fn vcs_github::GitHubAt<'a, R>::pr_list(&self) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_list_for_branch(&self, &str, &str) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_list_for_source_branch(&self, &str) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>
+pub async fn vcs_github::GitHubAt<'a, R>::pr_list_with(&self, vcs_github::PrList) -> processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_mark_ready(&self, u64) -> processkit::error::Result<()>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_merge(&self, u64, vcs_github::PrMerge) -> processkit::error::Result<()>
 pub async fn vcs_github::GitHubAt<'a, R>::pr_review(&self, u64, vcs_github::ReviewAction) -> processkit::error::Result<()>
@@ -1378,6 +1479,30 @@ impl core::marker::Unpin for vcs_github::Issue
 impl core::marker::UnsafeUnpin for vcs_github::Issue
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::Issue
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::Issue
+#[non_exhaustive] pub struct vcs_github::IssueList
+pub vcs_github::IssueList::limit: usize
+pub vcs_github::IssueList::state: vcs_github::IssueListState
+impl vcs_github::IssueList
+pub fn vcs_github::IssueList::limit(self, usize) -> Self
+pub fn vcs_github::IssueList::new() -> Self
+pub fn vcs_github::IssueList::state(self, vcs_github::IssueListState) -> Self
+impl core::clone::Clone for vcs_github::IssueList
+pub fn vcs_github::IssueList::clone(&self) -> vcs_github::IssueList
+impl core::cmp::Eq for vcs_github::IssueList
+impl core::cmp::PartialEq for vcs_github::IssueList
+pub fn vcs_github::IssueList::eq(&self, &vcs_github::IssueList) -> bool
+impl core::default::Default for vcs_github::IssueList
+pub fn vcs_github::IssueList::default() -> Self
+impl core::fmt::Debug for vcs_github::IssueList
+pub fn vcs_github::IssueList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_github::IssueList
+impl core::marker::Freeze for vcs_github::IssueList
+impl core::marker::Send for vcs_github::IssueList
+impl core::marker::Sync for vcs_github::IssueList
+impl core::marker::Unpin for vcs_github::IssueList
+impl core::marker::UnsafeUnpin for vcs_github::IssueList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::IssueList
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::IssueList
 pub struct vcs_github::MockGitHubApi
 impl vcs_github::MockGitHubApi
 pub fn vcs_github::MockGitHubApi::checkpoint(&mut self)
@@ -1391,6 +1516,7 @@ pub fn vcs_github::MockGitHubApi::expect_issue_close(&mut self) -> &mut vcs_gith
 pub fn vcs_github::MockGitHubApi::expect_issue_comment(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_comment::Expectation
 pub fn vcs_github::MockGitHubApi::expect_issue_create(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_create::Expectation
 pub fn vcs_github::MockGitHubApi::expect_issue_list(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list::Expectation
+pub fn vcs_github::MockGitHubApi::expect_issue_list_with(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_list_with::Expectation
 pub fn vcs_github::MockGitHubApi::expect_issue_reopen(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_reopen::Expectation
 pub fn vcs_github::MockGitHubApi::expect_issue_view(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__issue_view::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_checkout(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_checkout::Expectation
@@ -1404,6 +1530,7 @@ pub fn vcs_github::MockGitHubApi::expect_pr_feedback(&mut self) -> &mut vcs_gith
 pub fn vcs_github::MockGitHubApi::expect_pr_list(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_list_for_branch(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_for_branch::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_list_for_source_branch(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_for_source_branch::Expectation
+pub fn vcs_github::MockGitHubApi::expect_pr_list_with(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_list_with::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_mark_ready(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_mark_ready::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_merge(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_merge::Expectation
 pub fn vcs_github::MockGitHubApi::expect_pr_review(&mut self) -> &mut vcs_github::__mock_MockGitHubApi_GitHubApi::__pr_review::Expectation
@@ -1435,6 +1562,7 @@ pub fn vcs_github::MockGitHubApi::issue_close<'life0, 'life1, 'async_trait>(&'li
 pub fn vcs_github::MockGitHubApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1448,6 +1576,7 @@ pub fn vcs_github::MockGitHubApi::pr_feedback<'life0, 'life1, 'async_trait>(&'li
 pub fn vcs_github::MockGitHubApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_list_for_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_list_for_source_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_github::MockGitHubApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_mark_ready<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_review<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::ReviewAction) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1557,6 +1686,30 @@ impl core::marker::Unpin for vcs_github::PrFeedback
 impl core::marker::UnsafeUnpin for vcs_github::PrFeedback
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::PrFeedback
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::PrFeedback
+#[non_exhaustive] pub struct vcs_github::PrList
+pub vcs_github::PrList::limit: usize
+pub vcs_github::PrList::state: vcs_github::PrListState
+impl vcs_github::PrList
+pub fn vcs_github::PrList::limit(self, usize) -> Self
+pub fn vcs_github::PrList::new() -> Self
+pub fn vcs_github::PrList::state(self, vcs_github::PrListState) -> Self
+impl core::clone::Clone for vcs_github::PrList
+pub fn vcs_github::PrList::clone(&self) -> vcs_github::PrList
+impl core::cmp::Eq for vcs_github::PrList
+impl core::cmp::PartialEq for vcs_github::PrList
+pub fn vcs_github::PrList::eq(&self, &vcs_github::PrList) -> bool
+impl core::default::Default for vcs_github::PrList
+pub fn vcs_github::PrList::default() -> Self
+impl core::fmt::Debug for vcs_github::PrList
+pub fn vcs_github::PrList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_github::PrList
+impl core::marker::Freeze for vcs_github::PrList
+impl core::marker::Send for vcs_github::PrList
+impl core::marker::Sync for vcs_github::PrList
+impl core::marker::Unpin for vcs_github::PrList
+impl core::marker::UnsafeUnpin for vcs_github::PrList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::PrList
+impl core::panic::unwind_safe::UnwindSafe for vcs_github::PrList
 #[non_exhaustive] pub struct vcs_github::PrMerge
 pub vcs_github::PrMerge::auto: bool
 pub vcs_github::PrMerge::delete_branch: bool
@@ -1781,6 +1934,7 @@ pub fn vcs_github::GitHubApi::issue_close<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHubApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::GitHubApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHubApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHubApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1794,6 +1948,7 @@ pub fn vcs_github::GitHubApi::pr_feedback<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHubApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::pr_list_for_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHubApi::pr_list_for_source_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_github::GitHubApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::pr_mark_ready<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHubApi::pr_review<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::ReviewAction) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1821,6 +1976,7 @@ pub fn vcs_github::MockGitHubApi::issue_close<'life0, 'life1, 'async_trait>(&'li
 pub fn vcs_github::MockGitHubApi::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::MockGitHubApi::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1834,6 +1990,7 @@ pub fn vcs_github::MockGitHubApi::pr_feedback<'life0, 'life1, 'async_trait>(&'li
 pub fn vcs_github::MockGitHubApi::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_list_for_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_list_for_source_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_github::MockGitHubApi::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_mark_ready<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::MockGitHubApi::pr_review<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::ReviewAction) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1861,6 +2018,7 @@ pub fn vcs_github::GitHub<R>::issue_close<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHub<R>::issue_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_create<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_github::GitHub<R>::issue_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::Issue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_reopen<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::issue_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_github::Issue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_checkout<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -1874,6 +2032,7 @@ pub fn vcs_github::GitHub<R>::pr_feedback<'life0, 'life1, 'async_trait>(&'life0 
 pub fn vcs_github::GitHub<R>::pr_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_list_for_branch<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_list_for_source_branch<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub fn vcs_github::GitHub<R>::pr_list_with<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_github::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_github::PullRequest>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_mark_ready<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_merge<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_github::GitHub<R>::pr_review<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, u64, vcs_github::ReviewAction) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

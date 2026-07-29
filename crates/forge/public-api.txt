@@ -183,6 +183,30 @@ impl core::marker::Unpin for vcs_forge::ForgePrState
 impl core::marker::UnsafeUnpin for vcs_forge::ForgePrState
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ForgePrState
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgePrState
+#[non_exhaustive] pub enum vcs_forge::IssueListState
+pub vcs_forge::IssueListState::All
+pub vcs_forge::IssueListState::Closed
+pub vcs_forge::IssueListState::Open
+impl core::clone::Clone for vcs_forge::IssueListState
+pub fn vcs_forge::IssueListState::clone(&self) -> vcs_forge::IssueListState
+impl core::cmp::Eq for vcs_forge::IssueListState
+impl core::cmp::PartialEq for vcs_forge::IssueListState
+pub fn vcs_forge::IssueListState::eq(&self, &vcs_forge::IssueListState) -> bool
+impl core::default::Default for vcs_forge::IssueListState
+pub fn vcs_forge::IssueListState::default() -> vcs_forge::IssueListState
+impl core::fmt::Debug for vcs_forge::IssueListState
+pub fn vcs_forge::IssueListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_forge::IssueListState
+impl core::marker::StructuralPartialEq for vcs_forge::IssueListState
+impl serde_core::ser::Serialize for vcs_forge::IssueListState
+pub fn vcs_forge::IssueListState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::IssueListState
+impl core::marker::Send for vcs_forge::IssueListState
+impl core::marker::Sync for vcs_forge::IssueListState
+impl core::marker::Unpin for vcs_forge::IssueListState
+impl core::marker::UnsafeUnpin for vcs_forge::IssueListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::IssueListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::IssueListState
 #[non_exhaustive] pub enum vcs_forge::MergeOption
 pub vcs_forge::MergeOption::Auto
 pub vcs_forge::MergeOption::DeleteBranch
@@ -230,6 +254,31 @@ impl core::marker::Unpin for vcs_forge::MergeStrategy
 impl core::marker::UnsafeUnpin for vcs_forge::MergeStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::MergeStrategy
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::MergeStrategy
+#[non_exhaustive] pub enum vcs_forge::PrListState
+pub vcs_forge::PrListState::All
+pub vcs_forge::PrListState::Closed
+pub vcs_forge::PrListState::Merged
+pub vcs_forge::PrListState::Open
+impl core::clone::Clone for vcs_forge::PrListState
+pub fn vcs_forge::PrListState::clone(&self) -> vcs_forge::PrListState
+impl core::cmp::Eq for vcs_forge::PrListState
+impl core::cmp::PartialEq for vcs_forge::PrListState
+pub fn vcs_forge::PrListState::eq(&self, &vcs_forge::PrListState) -> bool
+impl core::default::Default for vcs_forge::PrListState
+pub fn vcs_forge::PrListState::default() -> vcs_forge::PrListState
+impl core::fmt::Debug for vcs_forge::PrListState
+pub fn vcs_forge::PrListState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_forge::PrListState
+impl core::marker::StructuralPartialEq for vcs_forge::PrListState
+impl serde_core::ser::Serialize for vcs_forge::PrListState
+pub fn vcs_forge::PrListState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::PrListState
+impl core::marker::Send for vcs_forge::PrListState
+impl core::marker::Sync for vcs_forge::PrListState
+impl core::marker::Unpin for vcs_forge::PrListState
+impl core::marker::UnsafeUnpin for vcs_forge::PrListState
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::PrListState
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::PrListState
 #[non_exhaustive] pub enum vcs_forge::ReviewKind
 pub vcs_forge::ReviewKind::Approve
 pub vcs_forge::ReviewKind::Comment
@@ -276,6 +325,7 @@ pub async fn vcs_forge::Forge<R>::issue_close(&self, u64) -> vcs_forge::Result<(
 pub async fn vcs_forge::Forge<R>::issue_comment(&self, u64, &str) -> vcs_forge::Result<alloc::string::String>
 pub async fn vcs_forge::Forge<R>::issue_create(&self, vcs_forge::IssueCreate) -> vcs_forge::Result<alloc::string::String>
 pub async fn vcs_forge::Forge<R>::issue_list(&self) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>
+pub async fn vcs_forge::Forge<R>::issue_list_with(&self, vcs_forge::IssueList) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>
 pub async fn vcs_forge::Forge<R>::issue_reopen(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_view(&self, u64) -> vcs_forge::Result<vcs_forge::ForgeIssue>
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
@@ -290,6 +340,7 @@ pub async fn vcs_forge::Forge<R>::pr_diff_within(&self, u64, vcs_cli_support::Ou
 pub async fn vcs_forge::Forge<R>::pr_edit(&self, u64, vcs_forge::PrEdit) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_for_branch(&self, &str) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>
 pub async fn vcs_forge::Forge<R>::pr_list(&self) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>
+pub async fn vcs_forge::Forge<R>::pr_list_with(&self, vcs_forge::PrList) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>
 pub async fn vcs_forge::Forge<R>::pr_mark_ready(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_merge(&self, u64, vcs_forge::PrMerge) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_request_changes(&self, u64, &str) -> vcs_forge::Result<()>
@@ -313,6 +364,7 @@ pub fn vcs_forge::Forge<R>::issue_close<'life0, 'async_trait>(&'life0 self, u64)
 pub fn vcs_forge::Forge<R>::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
@@ -326,6 +378,7 @@ pub fn vcs_forge::Forge<R>::pr_diff<'life0, 'async_trait>(&'life0 self, u64) -> 
 pub fn vcs_forge::Forge<R>::pr_edit<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_for_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -558,6 +611,32 @@ impl core::marker::Unpin for vcs_forge::IssueCreate
 impl core::marker::UnsafeUnpin for vcs_forge::IssueCreate
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::IssueCreate
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::IssueCreate
+#[non_exhaustive] pub struct vcs_forge::IssueList
+pub vcs_forge::IssueList::limit: usize
+pub vcs_forge::IssueList::state: vcs_forge::IssueListState
+impl vcs_forge::IssueList
+pub fn vcs_forge::IssueList::limit(self, usize) -> Self
+pub fn vcs_forge::IssueList::new() -> Self
+pub fn vcs_forge::IssueList::state(self, vcs_forge::IssueListState) -> Self
+impl core::clone::Clone for vcs_forge::IssueList
+pub fn vcs_forge::IssueList::clone(&self) -> vcs_forge::IssueList
+impl core::cmp::Eq for vcs_forge::IssueList
+impl core::cmp::PartialEq for vcs_forge::IssueList
+pub fn vcs_forge::IssueList::eq(&self, &vcs_forge::IssueList) -> bool
+impl core::default::Default for vcs_forge::IssueList
+pub fn vcs_forge::IssueList::default() -> Self
+impl core::fmt::Debug for vcs_forge::IssueList
+pub fn vcs_forge::IssueList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_forge::IssueList
+impl serde_core::ser::Serialize for vcs_forge::IssueList
+pub fn vcs_forge::IssueList::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::IssueList
+impl core::marker::Send for vcs_forge::IssueList
+impl core::marker::Sync for vcs_forge::IssueList
+impl core::marker::Unpin for vcs_forge::IssueList
+impl core::marker::UnsafeUnpin for vcs_forge::IssueList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::IssueList
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::IssueList
 #[non_exhaustive] pub struct vcs_forge::PrClose
 pub vcs_forge::PrClose::delete_branch: bool
 pub vcs_forge::PrClose::number: u64
@@ -633,6 +712,32 @@ impl core::marker::Unpin for vcs_forge::PrEdit
 impl core::marker::UnsafeUnpin for vcs_forge::PrEdit
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::PrEdit
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::PrEdit
+#[non_exhaustive] pub struct vcs_forge::PrList
+pub vcs_forge::PrList::limit: usize
+pub vcs_forge::PrList::state: vcs_forge::PrListState
+impl vcs_forge::PrList
+pub fn vcs_forge::PrList::limit(self, usize) -> Self
+pub fn vcs_forge::PrList::new() -> Self
+pub fn vcs_forge::PrList::state(self, vcs_forge::PrListState) -> Self
+impl core::clone::Clone for vcs_forge::PrList
+pub fn vcs_forge::PrList::clone(&self) -> vcs_forge::PrList
+impl core::cmp::Eq for vcs_forge::PrList
+impl core::cmp::PartialEq for vcs_forge::PrList
+pub fn vcs_forge::PrList::eq(&self, &vcs_forge::PrList) -> bool
+impl core::default::Default for vcs_forge::PrList
+pub fn vcs_forge::PrList::default() -> Self
+impl core::fmt::Debug for vcs_forge::PrList
+pub fn vcs_forge::PrList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_forge::PrList
+impl serde_core::ser::Serialize for vcs_forge::PrList
+pub fn vcs_forge::PrList::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::PrList
+impl core::marker::Send for vcs_forge::PrList
+impl core::marker::Sync for vcs_forge::PrList
+impl core::marker::Unpin for vcs_forge::PrList
+impl core::marker::UnsafeUnpin for vcs_forge::PrList
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::PrList
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::PrList
 #[non_exhaustive] pub struct vcs_forge::PrMerge
 pub vcs_forge::PrMerge::auto: bool
 pub vcs_forge::PrMerge::delete_branch: bool
@@ -698,6 +803,7 @@ pub fn vcs_forge::ForgeApi::issue_close<'life0, 'async_trait>(&'life0 self, u64)
 pub fn vcs_forge::ForgeApi::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::ForgeApi::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::kind(&self) -> vcs_forge::ForgeKind
@@ -711,6 +817,7 @@ pub fn vcs_forge::ForgeApi::pr_diff<'life0, 'async_trait>(&'life0 self, u64) -> 
 pub fn vcs_forge::ForgeApi::pr_edit<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_for_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::ForgeApi::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -728,6 +835,7 @@ pub fn vcs_forge::Forge<R>::issue_close<'life0, 'async_trait>(&'life0 self, u64)
 pub fn vcs_forge::Forge<R>::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
@@ -741,6 +849,7 @@ pub fn vcs_forge::Forge<R>::pr_diff<'life0, 'async_trait>(&'life0 self, u64) -> 
 pub fn vcs_forge::Forge<R>::pr_edit<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrEdit) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_for_branch<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

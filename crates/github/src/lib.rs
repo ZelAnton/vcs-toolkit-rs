@@ -65,7 +65,9 @@
 //!   [`issue_comment`](GitHubApi::issue_comment),
 //!   [`release_view`](GitHubApi::release_view), …); plus the escape hatches
 //!   [`run`](GitHubApi::run) / [`api`](GitHubApi::api) for anything unmodelled.
-//! - **Builder specs** for the multi-option commands — [`PrCreate`] (title/body
+//! - **Builder specs** for the multi-option commands — [`PrList`] / [`IssueList`]
+//!   select state and limit while the parameterless list methods remain open/100;
+//!   [`PrCreate`] (title/body
 //!   with optional `head`/`base`), [`PrEdit`] (optional `title` and/or `body`
 //!   for `pr edit`), [`PrMerge`] (strategy [`MergeStrategy`],
 //!   `--auto`, `--delete-branch`), [`PrClose`] (optional `--delete-branch`),
@@ -171,6 +173,133 @@ pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 // [`GitHubCapabilities::version`].
 pub use vcs_diff::Version as GitHubVersion;
 
+/// Which pull requests [`GitHubApi::pr_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PrListState {
+    /// Open pull requests (the CLI default).
+    #[default]
+    Open,
+    /// Closed, unmerged pull requests.
+    Closed,
+    /// Merged pull requests.
+    Merged,
+    /// Pull requests in every state.
+    All,
+}
+
+impl PrListState {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::Merged => "merged",
+            Self::All => "all",
+        }
+    }
+}
+
+/// Filters for [`GitHubApi::pr_list_with`] (`gh pr list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PrList {
+    /// State filter (`--state`).
+    pub state: PrListState,
+    /// Maximum number of pull requests (`--limit`).
+    pub limit: usize,
+}
+
+impl PrList {
+    /// Open pull requests, up to 100 — the compatibility default used by
+    /// [`GitHubApi::pr_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select a pull-request state.
+    pub fn state(mut self, state: PrListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the maximum number of pull requests returned.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for PrList {
+    fn default() -> Self {
+        Self {
+            state: PrListState::Open,
+            limit: 100,
+        }
+    }
+}
+
+/// Which issues [`GitHubApi::issue_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IssueListState {
+    /// Open issues (the CLI default).
+    #[default]
+    Open,
+    /// Closed issues.
+    Closed,
+    /// Issues in every state.
+    All,
+}
+
+impl IssueListState {
+    fn as_arg(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::All => "all",
+        }
+    }
+}
+
+/// Filters for [`GitHubApi::issue_list_with`] (`gh issue list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IssueList {
+    /// State filter (`--state`).
+    pub state: IssueListState,
+    /// Maximum number of issues (`--limit`).
+    pub limit: usize,
+}
+
+impl IssueList {
+    /// Open issues, up to 100 — the compatibility default used by
+    /// [`GitHubApi::issue_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select an issue state.
+    pub fn state(mut self, state: IssueListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the maximum number of issues returned.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for IssueList {
+    fn default() -> Self {
+        Self {
+            state: IssueListState::Open,
+            limit: 100,
+        }
+    }
+}
+
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
@@ -199,6 +328,19 @@ const RELEASE_VIEW_FIELDS: &str = "tagName,name,body,url,publishedAt,isDraft,isP
 /// defense-in-depth boundary for untrusted branch input.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+fn reject_zero_limit(operation: &str, limit: usize) -> Result<()> {
+    if limit == 0 {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{operation} limit must be greater than zero"),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// The GitHub host an operation targets: SaaS `github.com` or a **GitHub
@@ -904,6 +1046,15 @@ pub trait GitHubApi: Send + Sync {
     /// Pull requests for `dir` (`gh pr list --limit 100 --json …`). Returns up to
     /// 100 open PRs; use [`run`](GitHubApi::run) for more.
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
+    /// Pull requests selected by `spec` (`--state` / `--limit`). A zero limit is
+    /// rejected before spawning. **Defaulted** to `ErrorReason::Unsupported` so
+    /// external trait implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "pr_list_with".into(),
+        }))
+    }
     /// Pull requests whose source branch is `head`, in any state — open, closed,
     /// or merged (`gh pr list --head <head> --state all --limit 100 --json …`).
     /// Empty when none match; returns up to 100. A flag-like or empty `head` is
@@ -932,6 +1083,15 @@ pub trait GitHubApi: Send + Sync {
     /// Issues for `dir` (`gh issue list --limit 100 --json …`). Returns up to 100
     /// open issues; use [`run`](GitHubApi::run) for more.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
+    /// Issues selected by `spec` (`--state` / `--limit`). A zero limit is
+    /// rejected before spawning. **Defaulted** to `ErrorReason::Unsupported` so
+    /// external trait implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_list_with".into(),
+        }))
+    }
     /// Open a pull request, returning its URL (`gh pr create`) — see
     /// [`PrCreate`] for the title/body and the optional `head` (source branch;
     /// `None` = current branch) / `base` (target; `None` = repo default).
@@ -1311,10 +1471,27 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>> {
+        self.pr_list_with(dir, PrList::default()).await
+    }
+
+    async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>> {
+        reject_zero_limit("pr_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
         self.core
             .try_parse(
-                self.core
-                    .command_in(dir, ["pr", "list", "--limit", "100", "--json", PR_FIELDS]),
+                self.core.command_in(
+                    dir,
+                    [
+                        "pr",
+                        "list",
+                        "--state",
+                        spec.state.as_arg(),
+                        "--limit",
+                        limit.as_str(),
+                        "--json",
+                        PR_FIELDS,
+                    ],
+                ),
                 |s| vcs_cli_support::json::from_json(BINARY, s),
             )
             .await
@@ -1372,6 +1549,12 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
+        self.issue_list_with(dir, IssueList::default()).await
+    }
+
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        reject_zero_limit("issue_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
         self.core
             .try_parse(
                 self.core.command_in(
@@ -1379,8 +1562,10 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
                     [
                         "issue",
                         "list",
+                        "--state",
+                        spec.state.as_arg(),
                         "--limit",
-                        "100",
+                        limit.as_str(),
                         "--json",
                         ISSUE_LIST_FIELDS,
                     ],
@@ -1873,10 +2058,12 @@ vcs_cli_support::at_forwarders! {
         fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn pr_list() -> Result<Vec<PullRequest>>;
+        fn pr_list_with(spec: PrList) -> Result<Vec<PullRequest>>;
         fn pr_list_for_source_branch(head: &str) -> Result<Vec<PullRequest>>;
         fn pr_list_for_branch(head: &str, base: &str) -> Result<Vec<PullRequest>>;
         fn pr_view(number: u64) -> Result<PullRequest>;
         fn issue_list() -> Result<Vec<Issue>>;
+        fn issue_list_with(spec: IssueList) -> Result<Vec<Issue>>;
         fn pr_create(spec: PrCreate) -> Result<String>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_mark_ready(number: u64) -> Result<()>;
@@ -2250,13 +2437,17 @@ mod tests {
         let calls = rec.calls();
         assert_eq!(
             calls[0].args_str(),
-            ["pr", "list", "--limit", "100", "--json", PR_FIELDS]
+            [
+                "pr", "list", "--state", "open", "--limit", "100", "--json", PR_FIELDS
+            ]
         );
         assert_eq!(
             calls[1].args_str(),
             [
                 "issue",
                 "list",
+                "--state",
+                "open",
                 "--limit",
                 "100",
                 "--json",
@@ -2274,6 +2465,53 @@ mod tests {
                 RELEASE_LIST_FIELDS
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn list_specs_map_state_and_limit_and_reject_zero() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&rec);
+        gh.pr_list_with(
+            Path::new("/r"),
+            PrList::new().state(PrListState::Merged).limit(7),
+        )
+        .await
+        .expect("merged PR list");
+        gh.issue_list_with(
+            Path::new("/r"),
+            IssueList::new().state(IssueListState::All).limit(9),
+        )
+        .await
+        .expect("all issue list");
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "pr", "list", "--state", "merged", "--limit", "7", "--json", PR_FIELDS
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "issue",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "9",
+                "--json",
+                ISSUE_LIST_FIELDS
+            ]
+        );
+
+        let guarded = RecordingRunner::replying(Reply::ok("[]"));
+        let gh = GitHub::with_runner(&guarded);
+        assert!(
+            gh.pr_list_with(Path::new("/r"), PrList::new().limit(0))
+                .await
+                .is_err()
+        );
+        assert!(guarded.calls().is_empty(), "zero limit must not spawn");
     }
 
     // Without a base, `pr_create` must omit `--base` entirely. RecordingRunner

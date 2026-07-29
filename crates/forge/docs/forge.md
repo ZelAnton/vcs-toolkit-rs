@@ -57,6 +57,7 @@ client (the test seam); `forge.at(dir)` re-binds the cwd, sharing the client.
 pub async fn auth_status(&self)  -> Result<bool>;
 pub async fn repo_view(&self)    -> Result<ForgeRepo>;
 pub async fn pr_list(&self)      -> Result<Vec<ForgePr>>;
+pub async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>>;
 pub async fn pr_view(&self, number: u64) -> Result<ForgePr>;
 pub async fn pr_create(&self, spec: PrCreate) -> Result<String>;
 pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String>;
@@ -70,6 +71,7 @@ pub async fn pr_checkout(&self, number: u64) -> Result<()>; // gh/tea `pr checko
 pub async fn pr_checks(&self, number: u64) -> Result<CiStatus>;
 pub async fn pr_diff(&self, number: u64) -> Result<Vec<FileDiff>>;
 pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
+pub async fn issue_list_with(&self, spec: IssueList) -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
 pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
 pub async fn issue_close(&self, number: u64) -> Result<()>; // gh/glab `issue close`, tea `issues close`
@@ -80,6 +82,13 @@ pub async fn release_view(&self, tag: &str) -> Result<ForgeRelease>;
 pub async fn release_create(&self, spec: ReleaseCreate) -> Result<String>; // ReleaseCreate::new(tag)[.title(…)][.notes(…)][.draft()][.prerelease()] — draft/prerelease are GitHub/Gitea-only
 pub async fn release_delete(&self, tag: &str) -> Result<()>;
 ```
+
+The parameterless list methods preserve the original `open + limit 100`
+behaviour. `PrList` selects `PrListState::{Open, Closed, Merged, All}` and a
+limit; `IssueList` selects `IssueListState::{Open, Closed, All}`. Gitea maps
+merged-only PR listing to structural `Unsupported` because `tea` only exposes
+`open`, `closed`, and `all`; its server may also clamp any requested limit to
+the configured page cap. A zero limit is `InvalidInput` before any CLI spawn.
 
 [`PrCreate`] is the unified open-a-PR/MR spec —
 `PrCreate::new(title, body).source(branch).target(branch)`, where `source`
@@ -238,7 +247,9 @@ with [`Forge::supports_review_kind`] / [`Forge::supports_merge_option`] /
 | `release_view` | ✅ | ✅ | ❌ Unsupported (`tea releases` only lists — filter `release_list`) |
 | `pr_close` honours `delete_branch` | ✅ | ❌ Unsupported (rejected before spawn) | ❌ Unsupported (rejected before spawn) |
 | `pr_create` / `issue_create` return the **URL** | ✅ | ✅ | textual summary (tea ends `issue create` output with the URL; `pr create` prints none) |
-| `pr_list` / `issue_list` / `release_list` result cap (explicit, documented) | 100 | 100 | ~50 (server page cap) |
+| `pr_list_with` state filters | open / closed / merged / all | open / closed / merged / all | open / closed / all (`merged` Unsupported) |
+| `issue_list_with` state filters | open / closed / all | open / closed / all | open / closed / all |
+| default list limit / Gitea effective cap | 100 | 100 | requests 100; ~50 common server cap |
 
 Handle a gap **reactively** — call and classify the error:
 

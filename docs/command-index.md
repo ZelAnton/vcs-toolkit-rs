@@ -319,7 +319,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `auth_status_for` | `auth status --hostname <host>` | scoped to a `GitHubHost` |
 | `repo_view` | `repo view --json …` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
-| `pr_list` | `pr list --limit 100 --json …` | open PRs, ≤100 |
+| `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100 |
+| `pr_list_with` | `pr list --state open\|closed\|merged\|all --limit <n> --json …` | via `PrList`; zero rejected before spawn |
 | `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only |
 | `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state |
 | `Forge::pr_for_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; independent of target |
@@ -335,7 +336,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `pr_edit` | `pr edit <n> [--title <title>] [--body <body>]` | via `PrEdit`; ≥1 field required |
 | `pr_feedback` | `pr view <n> --json reviews,comments` | |
 | `pr_diff` | `pr diff <n> --color never` | parsed `Vec<FileDiff>` |
-| `issue_list` | `issue list --limit 100 --json …` | ≤100 |
+| `issue_list` | `issue list --state open --limit 100 --json …` | compatibility default: open issues, ≤100 |
+| `issue_list_with` | `issue list --state open\|closed\|all --limit <n> --json …` | via `IssueList`; zero rejected before spawn |
 | `issue_view` | `issue view <n> --json …` | |
 | `issue_create` | `issue create --title <t> --body <b>` | returns issue URL |
 | `issue_close` | `issue close <n>` | |
@@ -379,7 +381,8 @@ breadth.
 | `auth_status` | `auth status` | exit code only; see the glab#911 caveat in the guide |
 | `repo_view` | `repo view --output json` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
-| `mr_list` | `mr list --per-page 100 --output json` | ≤100 |
+| `mr_list` | `mr list --per-page 100 --output json` | compatibility default: open MRs, ≤100 |
+| `mr_list_with` | `mr list [--closed\|--merged\|--all] --per-page <n> --output json` | via `MrList`; no state flag means open; zero rejected before spawn |
 | `mr_list_for_source_branch` | `mr list --source-branch <source_branch> --all --per-page 100 --output json` | any state; source branch only |
 | `Forge::pr_for_branch` | `mr list --source-branch <source_branch> --all --per-page 100 --output json` | any state; independent of target |
 | `mr_view` | `mr view <number> --output json` | `number` is GitLab's `iid` |
@@ -394,7 +397,8 @@ breadth.
 | `mr_revoke` | `mr revoke <id>` | withdraws an approval |
 | `mr_checks` | `mr view <id> --output json` (reads `head_pipeline.status`) | bucketed `CiStatus` |
 | `mr_diff` | `mr diff <id> --color never` | parsed `Vec<FileDiff>` |
-| `issue_list` | `issue list --per-page 100 --output json` | ≤100 |
+| `issue_list` | `issue list --per-page 100 --output json` | compatibility default: open issues, ≤100 |
+| `issue_list_with` | `issue list [--closed\|--all] --per-page <n> --output json` | via `IssueList`; no state flag means open; zero rejected before spawn |
 | `issue_view` | `issue view <number> --output json` | |
 | `issue_create` | `issue create --title … --description … --yes` | returns issue URL |
 | `issue_close` | `issue close <id>` | |
@@ -430,10 +434,11 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 
 | Method | Runs | Notes |
 |---|---|---|
-| `auth_status` | `login list --output json`, non-empty | `tea` has no per-instance auth status |
-| `pr_list` | `pr list --output json` | ≤~50 (Gitea server page cap) |
+| `auth_status` | `login list --output csv`, non-empty | `tea` has no per-instance auth status |
+| `pr_list` | `pr list --state open --limit 100 --fields … --output csv` | compatibility default; ≤~50 (Gitea server page cap) |
+| `pr_list_with` | `pr list --state open\|closed\|all --limit <n> --fields … --output csv` | `merged` is `Unsupported` before spawn |
 | `Forge::pr_for_branch` | Unsupported | `tea` has no source-branch filter |
-| `pr_view` | `pr list --state all` (paged) + filter | synthesized — `tea` has no single-PR view |
+| `pr_view` | `pr list --state all --page <n> --output csv` (paged) + filter | synthesized — `tea` has no single-PR view |
 | `pr_create` | `pr create --title … --description … [--head …] [--base …]` | via `PrCreate`; returns tea's text output, **not** a URL |
 | `pr_merge` | `pr merge <number> --style merge\|rebase\|squash` | via `PrMerge`; no `auto`/`delete_branch` (`Unsupported`) |
 | `pr_close` | `pr close <number>` | |
@@ -442,13 +447,14 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | `pr_edit` | **Unsupported** (`tea` has no `pr edit` subcommand) | Use the Gitea REST API to edit title or description. |
 | `pr_approve` | `pr approve <number>` | |
 | `pr_reject` | `pr reject <number> <reason>` | required reason; flag-guarded |
-| `issue_list` | `issues list --output json` | ≤~50 |
-| `issue_view` | `issues <number> --output json` | first-class single-issue view (unlike `pr_view`) |
+| `issue_list` | `issues list --state open --limit 100 --fields … --output csv` | compatibility default; ≤~50 |
+| `issue_list_with` | `issues list --state open\|closed\|all --limit <n> --fields … --output csv` | zero rejected before spawn |
+| `issue_view` | `issues list --state all --page <n> --output csv` (paged) + filter | synthesized because the bare-index view is Markdown |
 | `issue_create` | `issues create --title … --description …` | returns text output |
 | `issue_close` | `issues close <index>` | |
 | `issue_reopen` | `issues reopen <index>` | |
 | `issue_comment` | `comment <index> <body>` | shared with PRs; flag-guarded body |
-| `release_list` | `releases list --output json` | ≤~50 |
+| `release_list` | `releases list --limit 100 --output csv` | ≤~50 |
 | `release_create` | `releases create --tag <tag> [--title …] [--note …] [--draft] [--prerelease]` | via `ReleaseCreate` |
 | `release_delete` | `releases delete <tag>` | flag-guarded tag |
 | `version` | `--version` | |

@@ -53,7 +53,9 @@
 //! - **[`GitLabAt`]** — a cwd-bound view ([`GitLab::at`]) whose project-scoped
 //!   methods drop the leading `dir`, so `glab.at(dir).mr_list()` reads as
 //!   `glab.mr_list(dir)` — handy when one client drives one checkout.
-//! - **Builder specs** for the multi-option commands — [`MrCreate`] (title, body,
+//! - **Builder specs** for the multi-option commands — [`MrList`] / [`IssueList`]
+//!   select state and first-page limit while the parameterless list methods remain
+//!   open/100; [`MrCreate`] (title, body,
 //!   optional source/target branch), [`MrEdit`] (optional `title` and/or `body` for
 //!   `mr update`), and [`MrMerge`] (the [`MergeStrategy`] `Merge`/`Squash`/`Rebase`
 //!   plus the gh-style `auto`/`delete_branch` options, which `glab` reports
@@ -149,6 +151,133 @@ pub use vcs_diff::{ChangeKind, DiffLine, FileDiff, Hunk};
 // `vcs_diff::Version`), so a consumer needn't name `vcs-diff` to read
 // [`GitLabCapabilities::version`].
 pub use vcs_diff::Version as GitLabVersion;
+
+/// Which merge requests [`GitLabApi::mr_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MrListState {
+    /// Open merge requests (the CLI default).
+    #[default]
+    Open,
+    /// Closed, unmerged merge requests (`--closed`).
+    Closed,
+    /// Merged merge requests (`--merged`).
+    Merged,
+    /// Merge requests in every state (`--all`).
+    All,
+}
+
+impl MrListState {
+    fn flag(self) -> Option<&'static str> {
+        match self {
+            Self::Open => None,
+            Self::Closed => Some("--closed"),
+            Self::Merged => Some("--merged"),
+            Self::All => Some("--all"),
+        }
+    }
+}
+
+/// Filters for [`GitLabApi::mr_list_with`] (`glab mr list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MrList {
+    /// State filter.
+    pub state: MrListState,
+    /// Number of merge requests requested from the first page (`--per-page`).
+    pub limit: usize,
+}
+
+impl MrList {
+    /// Open merge requests, up to 100 — the compatibility default used by
+    /// [`GitLabApi::mr_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select a merge-request state.
+    pub fn state(mut self, state: MrListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the requested first-page size.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for MrList {
+    fn default() -> Self {
+        Self {
+            state: MrListState::Open,
+            limit: 100,
+        }
+    }
+}
+
+/// Which issues [`GitLabApi::issue_list_with`] returns.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum IssueListState {
+    /// Open issues (the CLI default).
+    #[default]
+    Open,
+    /// Closed issues (`--closed`).
+    Closed,
+    /// Issues in every state (`--all`).
+    All,
+}
+
+impl IssueListState {
+    fn flag(self) -> Option<&'static str> {
+        match self {
+            Self::Open => None,
+            Self::Closed => Some("--closed"),
+            Self::All => Some("--all"),
+        }
+    }
+}
+
+/// Filters for [`GitLabApi::issue_list_with`] (`glab issue list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IssueList {
+    /// State filter.
+    pub state: IssueListState,
+    /// Number of issues requested from the first page (`--per-page`).
+    pub limit: usize,
+}
+
+impl IssueList {
+    /// Open issues, up to 100 — the compatibility default used by
+    /// [`GitLabApi::issue_list`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select an issue state.
+    pub fn state(mut self, state: IssueListState) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// Set the requested first-page size.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
+impl Default for IssueList {
+    fn default() -> Self {
+        Self {
+            state: IssueListState::Open,
+            limit: 100,
+        }
+    }
+}
 
 /// Options for [`GitLabApi::mr_create`] (`glab mr create`).
 ///
@@ -265,6 +394,19 @@ pub const BINARY: &str = "glab";
 /// untrusted branch input.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+fn reject_zero_limit(operation: &str, limit: usize) -> Result<()> {
+    if limit == 0 {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{operation} limit must be greater than zero"),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Guard against glab's dash-sentinel quirk: a description/comment body that is
@@ -579,6 +721,16 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab mr list --per-page 100 --output json`). Returns up to 100 (100 is
     /// the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
     async fn mr_list(&self, dir: &Path) -> Result<Vec<MergeRequest>>;
+    /// Merge requests selected by `spec`. Maps state to glab's `--closed`,
+    /// `--merged`, or `--all` flags and limit to `--per-page`. A zero limit is
+    /// rejected before spawning. **Defaulted** to `ErrorReason::Unsupported` so
+    /// external trait implementers keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn mr_list_with(&self, dir: &Path, spec: MrList) -> Result<Vec<MergeRequest>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "mr_list_with".into(),
+        }))
+    }
     /// Merge requests whose source branch is `source_branch`, in any state
     /// (`glab mr list --source-branch <branch> --all --per-page 100 --output
     /// json`). Empty when none match; returns up to 100. A flag-like or empty
@@ -700,6 +852,15 @@ pub trait GitLabApi: Send + Sync {
     /// (`glab issue list --per-page 100 --output json`). Returns up to 100 (100
     /// is the GitLab API per-page max); use [`run`](GitLabApi::run) for more.
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
+    /// Issues selected by `spec`. Maps state to glab's `--closed` / `--all`
+    /// flags and limit to `--per-page`. A zero limit is rejected before spawning.
+    /// **Defaulted** to `ErrorReason::Unsupported` for external implementers.
+    #[allow(unused_variables)]
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_list_with".into(),
+        }))
+    }
     /// A single issue by its project-scoped id (`iid`)
     /// (`glab issue view <number> --output json`).
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
@@ -880,14 +1041,21 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn mr_list(&self, dir: &Path) -> Result<Vec<MergeRequest>> {
-        // `--per-page 100` (the GitLab API max) overrides glab's default page size
-        // of 30, which would otherwise silently truncate the list.
+        self.mr_list_with(dir, MrList::default()).await
+    }
+
+    async fn mr_list_with(&self, dir: &Path, spec: MrList) -> Result<Vec<MergeRequest>> {
+        reject_zero_limit("mr_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
+        let mut args = vec!["mr", "list"];
+        if let Some(flag) = spec.state.flag() {
+            args.push(flag);
+        }
+        args.extend(["--per-page", limit.as_str(), "--output", "json"]);
         self.core
-            .try_parse(
-                self.core
-                    .command_in(dir, ["mr", "list", "--per-page", "100", "--output", "json"]),
-                |s| vcs_cli_support::json::from_json(BINARY, s),
-            )
+            .try_parse(self.core.command_in(dir, args), |s| {
+                vcs_cli_support::json::from_json(BINARY, s)
+            })
             .await
     }
 
@@ -1088,16 +1256,21 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>> {
-        // `--per-page 100` (the GitLab API max) overrides glab's default page
-        // size of 30, which would otherwise silently truncate the list.
+        self.issue_list_with(dir, IssueList::default()).await
+    }
+
+    async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>> {
+        reject_zero_limit("issue_list_with", spec.limit)?;
+        let limit = spec.limit.to_string();
+        let mut args = vec!["issue", "list"];
+        if let Some(flag) = spec.state.flag() {
+            args.push(flag);
+        }
+        args.extend(["--per-page", limit.as_str(), "--output", "json"]);
         self.core
-            .try_parse(
-                self.core.command_in(
-                    dir,
-                    ["issue", "list", "--per-page", "100", "--output", "json"],
-                ),
-                |s| vcs_cli_support::json::from_json(BINARY, s),
-            )
+            .try_parse(self.core.command_in(dir, args), |s| {
+                vcs_cli_support::json::from_json(BINARY, s)
+            })
             .await
     }
 
@@ -1310,6 +1483,7 @@ vcs_cli_support::at_forwarders! {
         fn api(endpoint: &str) -> Result<String>;
         fn repo_view() -> Result<RepoView>;
         fn mr_list() -> Result<Vec<MergeRequest>>;
+        fn mr_list_with(spec: MrList) -> Result<Vec<MergeRequest>>;
         fn mr_list_for_source_branch(source_branch: &str) -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
@@ -1324,6 +1498,7 @@ vcs_cli_support::at_forwarders! {
         fn mr_checks(number: u64) -> Result<CiStatus>;
         fn mr_diff(number: u64) -> Result<Vec<FileDiff>>;
         fn issue_list() -> Result<Vec<Issue>>;
+        fn issue_list_with(spec: IssueList) -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
         fn issue_close(number: u64) -> Result<()>;
@@ -1544,6 +1719,58 @@ mod tests {
             rec.only_call().args_str(),
             ["mr", "list", "--per-page", "100", "--output", "json"]
         );
+    }
+
+    #[tokio::test]
+    async fn list_specs_map_state_and_limit_and_reject_zero() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let glab = GitLab::with_runner(&rec);
+        glab.mr_list_with(
+            Path::new("/repo"),
+            MrList::new().state(MrListState::Merged).limit(7),
+        )
+        .await
+        .expect("merged MR list");
+        glab.issue_list_with(
+            Path::new("/repo"),
+            IssueList::new().state(IssueListState::All).limit(9),
+        )
+        .await
+        .expect("all issue list");
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "mr",
+                "list",
+                "--merged",
+                "--per-page",
+                "7",
+                "--output",
+                "json"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "issue",
+                "list",
+                "--all",
+                "--per-page",
+                "9",
+                "--output",
+                "json"
+            ]
+        );
+
+        let guarded = RecordingRunner::replying(Reply::ok("[]"));
+        let glab = GitLab::with_runner(&guarded);
+        assert!(
+            glab.issue_list_with(Path::new("/repo"), IssueList::new().limit(0))
+                .await
+                .is_err()
+        );
+        assert!(guarded.calls().is_empty(), "zero limit must not spawn");
     }
 
     // Source-branch lookup covers open, closed, and merged MRs, and refuses a

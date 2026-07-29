@@ -30,7 +30,7 @@
 //!   [`forge_pr_for_branch`](VcsMcpServer::forge_pr_for_branch),
 //!   [`forge_pr_create`](VcsMcpServer::forge_pr_create), …) over the `Forge` one.
 //! - **Parameter structs** — one `Deserialize` + `JsonSchema` struct per
-//!   tool-with-arguments ([`CommitParams`], [`PrCreateParams`],
+//!   tool-with-arguments ([`CommitParams`], [`PrListParams`], [`IssueListParams`], [`PrCreateParams`],
 //!   [`MergeStrategyArg`], …); their schema is the tool's advertised input schema.
 //!
 //! # Tools & the write gate
