@@ -72,7 +72,8 @@ best-effort (the next API call is the real test); `false`/timeout are faithful.
 | `mr_list(dir)` | `glab mr list --per-page 100 --output json` | `Vec<MergeRequest>` (open compatibility default) |
 | `mr_list_with(dir, spec)` | `glab mr list [--closed\|--merged\|--all] --per-page <limit> --output json` | `Vec<MergeRequest>` via `MrList` |
 | `mr_view(dir, id)` | `glab mr view <id> --output json` | [`MergeRequest`] |
-| `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] --yes` | `String` (the MR URL) |
+| `mr_create(dir, spec)` | `glab mr create --title … --description … [--source-branch …] [--target-branch …] [--label …] --yes` | `String` (the MR URL) |
+| `mr_add_labels` / `mr_remove_labels` | `glab mr update <id> --label\|--unlabel <name> … --yes` | `()` |
 | `mr_merge(dir, id, merge)` | `glab mr merge <id> --yes --auto-merge=false [--squash\|--rebase]` | `()` |
 | `mr_mark_ready(dir, id)` | `glab mr update <id> --ready` | `()` |
 | `mr_close(dir, id)` | `glab mr close <id>` | `()` |
@@ -112,8 +113,8 @@ the pipeline into `Passing` / `Failing` / `Pending` / `None`.
 
 `mr_create` takes an [`MrCreate`] spec — build it through `MrCreate::new(title,
 body)` and chain the optional `.source(b)` (`--source-branch`; `None` = the
-current branch) / `.target(b)` (`--target-branch`; `None` = the project default)
-setters. Public fields: `title: String`, `body: String`, `source: Option<String>`,
+current branch) / `.target(b)` (`--target-branch`; `None` = the project default) /
+`.labels(vec![…])` setters. Public fields: `title: String`, `body: String`, `source: Option<String>`,
 `target: Option<String>`.
 
 A `body` that is *exactly* `"-"` is refused before glab ever spawns
@@ -146,7 +147,8 @@ for GitLab (withdraw an approval with `mr_revoke` instead).
 | `issue_list(dir)` | `glab issue list --per-page 100 --output json` | `Vec<Issue>` (open compatibility default) |
 | `issue_list_with(dir, spec)` | `glab issue list [--closed\|--all] --per-page <limit> --output json` | `Vec<Issue>` via `IssueList` |
 | `issue_view(dir, number)` | `glab issue view <number> --output json` | [`Issue`] |
-| `issue_create(dir, title, body)` | `glab issue create --title … --description … --yes` | `String` (the issue URL) |
+| `issue_create(dir, title, body)` / `issue_create_with(dir, spec)` | `glab issue create --title … --description … [--label …] --yes` | `String` (the issue URL) |
+| `issue_add_labels` / `issue_remove_labels` | `glab issue update <id> --label\|--unlabel <name> …` | `()` |
 | `release_list(dir)` | `glab release list --per-page 100 --output json` | `Vec<Release>` |
 | `release_view(dir, tag)` | `glab release view <tag> --output json` | [`Release`] |
 | `release_create(dir, spec)` | `glab release create <tag> [--name …] [--notes …]` | `String` (glab's output) |
@@ -155,7 +157,9 @@ for GitLab (withdraw an approval with `mr_revoke` instead).
 The list methods pin `--per-page 100` (the GitLab API per-page max) so glab's
 default page size of 30 can't silently truncate them; reach beyond 100 through
 `run`. `issue_create` passes `--yes` to skip glab's interactive submission prompt,
-mirroring `mr_create`. `release_view`'s / `release_create`'s / `release_delete`'s
+mirroring `mr_create`; `issue_create_with(IssueCreate)` adds repeated label flag
+values. Existing MR/issue labels use `mr_add_labels` / `mr_remove_labels` and
+`issue_add_labels` / `issue_remove_labels`. `release_view`'s / `release_create`'s / `release_delete`'s
 bare `<tag>` positional is flag-injection guarded (a leading `-` or empty value is
 refused before any process spawns).
 

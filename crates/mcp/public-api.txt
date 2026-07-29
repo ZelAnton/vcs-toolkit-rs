@@ -229,6 +229,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::IssueCommentParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::IssueCommentParams
 pub struct vcs_mcp::IssueCreateParams
 pub vcs_mcp::IssueCreateParams::body: alloc::string::String
+pub vcs_mcp::IssueCreateParams::labels: alloc::vec::Vec<alloc::string::String>
 pub vcs_mcp::IssueCreateParams::title: alloc::string::String
 impl core::fmt::Debug for vcs_mcp::IssueCreateParams
 pub fn vcs_mcp::IssueCreateParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -287,6 +288,25 @@ impl core::marker::Unpin for vcs_mcp::IssueNumberParams
 impl core::marker::UnsafeUnpin for vcs_mcp::IssueNumberParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::IssueNumberParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::IssueNumberParams
+pub struct vcs_mcp::LabelsParams
+pub vcs_mcp::LabelsParams::labels: alloc::vec::Vec<alloc::string::String>
+pub vcs_mcp::LabelsParams::number: u64
+impl core::fmt::Debug for vcs_mcp::LabelsParams
+pub fn vcs_mcp::LabelsParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::LabelsParams
+pub fn vcs_mcp::LabelsParams::inline_schema() -> bool
+pub fn vcs_mcp::LabelsParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::LabelsParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::LabelsParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::LabelsParams
+pub fn vcs_mcp::LabelsParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::LabelsParams
+impl core::marker::Send for vcs_mcp::LabelsParams
+impl core::marker::Sync for vcs_mcp::LabelsParams
+impl core::marker::Unpin for vcs_mcp::LabelsParams
+impl core::marker::UnsafeUnpin for vcs_mcp::LabelsParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::LabelsParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::LabelsParams
 pub struct vcs_mcp::LogParams
 pub vcs_mcp::LogParams::max: usize
 pub vcs_mcp::LogParams::revspec_or_revset: alloc::string::String
@@ -364,6 +384,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::PrCommentParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::PrCommentParams
 pub struct vcs_mcp::PrCreateParams
 pub vcs_mcp::PrCreateParams::body: alloc::string::String
+pub vcs_mcp::PrCreateParams::labels: alloc::vec::Vec<alloc::string::String>
 pub vcs_mcp::PrCreateParams::source: core::option::Option<alloc::string::String>
 pub vcs_mcp::PrCreateParams::target: core::option::Option<alloc::string::String>
 pub vcs_mcp::PrCreateParams::title: alloc::string::String
@@ -659,6 +680,8 @@ pub fn vcs_mcp::VcsMcpServer::forge_auth_status(&self) -> core::pin::Pin<alloc::
 pub fn vcs_mcp::VcsMcpServer::forge_auth_status_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_info(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_info_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::forge_issue_add_labels(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::LabelsParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_issue_add_labels_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_close(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_close_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_comment(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueCommentParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
@@ -667,10 +690,14 @@ pub fn vcs_mcp::VcsMcpServer::forge_issue_create(&self, rmcp::handler::server::w
 pub fn vcs_mcp::VcsMcpServer::forge_issue_create_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_list(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueListParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_list_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::forge_issue_remove_labels(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::LabelsParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_issue_remove_labels_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_reopen(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_reopen_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_issue_view(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::IssueNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_issue_view_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::forge_pr_add_labels(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::LabelsParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_pr_add_labels_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_approve(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_approve_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_checkout(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
@@ -695,6 +722,8 @@ pub fn vcs_mcp::VcsMcpServer::forge_pr_mark_ready(&self, rmcp::handler::server::
 pub fn vcs_mcp::VcsMcpServer::forge_pr_mark_ready_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_merge(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrMergeParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_merge_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::forge_pr_remove_labels(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::LabelsParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::forge_pr_remove_labels_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_request_changes(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrRequestChangesParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::forge_pr_request_changes_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::forge_pr_view(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PrNumberParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>

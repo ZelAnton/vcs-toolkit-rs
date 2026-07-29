@@ -11,14 +11,15 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitea::{
-    Gitea, GiteaApi, Issue, IssueList as GtIssueList, IssueListState as GtIssueListState,
-    PrCreate as GtPrCreate, PrList as GtPrList, PrListState as GtPrListState, PrMerge as GtPrMerge,
-    PullRequest, Release, ReleaseCreate as GtReleaseCreate,
+    Gitea, GiteaApi, Issue, IssueCreate as GtIssueCreate, IssueList as GtIssueList,
+    IssueListState as GtIssueListState, PrCreate as GtPrCreate, PrList as GtPrList,
+    PrListState as GtPrListState, PrMerge as GtPrMerge, PullRequest, Release,
+    ReleaseCreate as GtReleaseCreate,
 };
 
 use crate::dto::{
-    ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, IssueList, IssueListState,
-    MergeStrategy, PrCreate, PrList, PrListState, PrMerge, ReleaseCreate,
+    ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, IssueCreate, IssueList,
+    IssueListState, MergeStrategy, PrCreate, PrList, PrListState, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -81,6 +82,7 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
     if let Some(target) = spec.target {
         create = create.base(target);
     }
+    create = create.labels(spec.labels);
     Ok(tea.pr_create(dir, create).await?)
 }
 
@@ -190,10 +192,10 @@ pub(crate) async fn issue_view<R: ProcessRunner>(
 pub(crate) async fn issue_create<R: ProcessRunner>(
     tea: &Gitea<R>,
     dir: &Path,
-    title: &str,
-    body: &str,
+    spec: IssueCreate,
 ) -> Result<String> {
-    Ok(tea.issue_create(dir, title, body).await?)
+    let create = GtIssueCreate::new(spec.title, spec.body).labels(spec.labels);
+    Ok(tea.issue_create_with(dir, create).await?)
 }
 
 pub(crate) async fn issue_close<R: ProcessRunner>(

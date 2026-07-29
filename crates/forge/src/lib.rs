@@ -59,8 +59,9 @@
 //!   (+ [`ForgeIssueState`]), [`ForgeRelease`], [`ForgeRepo`], [`CiStatus`]; the
 //!   inputs [`PrList`] / [`IssueList`] (state + limit; parameterless lists remain
 //!   open/100) and [`PrCreate`] (open-a-PR spec: `new(title, body)` then
-//!   `.source(branch)` / `.target(branch)`, defaulting to the current branch and
-//!   repo default) and [`MergeStrategy`] (`Merge` / `Squash` / `Rebase`). Each
+//!   `.source(branch)` / `.target(branch)` / `.labels(vec![…])`, defaulting to
+//!   the current branch and repo default) and [`MergeStrategy`] (`Merge` /
+//!   `Squash` / `Rebase`). Each
 //!   normalises the three CLIs' shapes — e.g. GitLab's `iid` becomes `number`, and
 //!   `OPEN` / `opened` / `open` all read as one state. Fields a backend can't
 //!   report follow a **per-field support contract** — they are `Option` (a PR's
@@ -73,7 +74,8 @@
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
-//!   [`pr_edit`](Forge::pr_edit) / [`pr_merge`](Forge::pr_merge) /
+//!   [`pr_edit`](Forge::pr_edit) / [`pr_add_labels`](Forge::pr_add_labels) /
+//!   [`pr_remove_labels`](Forge::pr_remove_labels) / [`pr_merge`](Forge::pr_merge) /
 //!   [`pr_approve`](Forge::pr_approve) /
 //!   [`pr_request_changes`](Forge::pr_request_changes) /
 //!   [`pr_mark_ready`](Forge::pr_mark_ready) / [`pr_close`](Forge::pr_close) /
@@ -82,16 +84,22 @@
 //!   map ([`capabilities`](Forge::capabilities)); issues ([`issue_list`](Forge::issue_list) /
 //!   [`issue_view`](Forge::issue_view) / [`issue_create`](Forge::issue_create) /
 //!   [`issue_close`](Forge::issue_close) / [`issue_reopen`](Forge::issue_reopen) /
-//!   [`issue_comment`](Forge::issue_comment));
+//!   [`issue_comment`](Forge::issue_comment) / label mutation
+//!   ([`issue_add_labels`](Forge::issue_add_labels) /
+//!   [`issue_remove_labels`](Forge::issue_remove_labels)));
 //!   releases ([`release_list`](Forge::release_list) /
 //!   [`release_view`](Forge::release_view) / [`release_create`](Forge::release_create) /
 //!   [`release_delete`](Forge::release_delete)). List ops cap at 100 — drop to the
 //!   wrapped client for more.
 //! - **Capability gaps** — `tea` has no current-repo view, draft toggle, checks
-//!   command, single-release view, or diff view, so on a Gitea handle
+//!   command, PR/issue edit command for label mutation, single-release view, or
+//!   diff view, so on a Gitea handle
 //!   [`repo_view`](Forge::repo_view), [`pr_mark_ready`](Forge::pr_mark_ready),
 //!   [`pr_checks`](Forge::pr_checks), [`release_view`](Forge::release_view), and
-//!   [`pr_diff`](Forge::pr_diff) return [`Error::Unsupported`] **without
+//!   [`pr_diff`](Forge::pr_diff), [`pr_add_labels`](Forge::pr_add_labels),
+//!   [`pr_remove_labels`](Forge::pr_remove_labels),
+//!   [`issue_add_labels`](Forge::issue_add_labels), and
+//!   [`issue_remove_labels`](Forge::issue_remove_labels) return [`Error::Unsupported`] **without
 //!   spawning**. GitLab's review model is approve/revoke, so
 //!   [`pr_request_changes`](Forge::pr_request_changes) is
 //!   [`Unsupported`](Error::Unsupported) on a GitLab handle (approve and
@@ -415,8 +423,8 @@ impl<R: ProcessRunner> Forge<R> {
     /// [`ReleaseCreate`](ForgeOp::ReleaseCreate), [`ReleaseDelete`](ForgeOp::ReleaseDelete),
     /// and the three issue-lifecycle ops [`IssueClose`](ForgeOp::IssueClose) /
     /// [`IssueReopen`](ForgeOp::IssueReopen) / [`IssueComment`](ForgeOp::IssueComment)
-    /// but has no current-repo view, PR edit or draft-toggle command, PR checks,
-    /// single-release view, or diff view; and an [`Unknown`](ForgeKind::Unknown) backend (no
+    /// but has no current-repo view, PR/issue edit or draft-toggle command, PR checks,
+    /// single-release view, diff view, or existing-object label mutation; and an [`Unknown`](ForgeKind::Unknown) backend (no
     /// classified CLI) supports nothing at all (every operation returns
     /// `Unsupported`). Every other facade operation works on all three real backends.
     /// (`release_create` is supported on all three even though its `draft`/`prerelease`
@@ -437,16 +445,18 @@ impl<R: ProcessRunner> Forge<R> {
             // `true` here made a UI render every op as available, each click then
             // failing with `Unsupported`.)
             (ForgeKind::Unknown, _) => false,
-            // The six operations `tea` can't do (it *does* ship approve/reject and
+            // The eight operations `tea` can't do (it *does* ship approve/reject and
             // checkout); GitHub does everything.
             (
                 ForgeKind::Gitea,
                 ForgeOp::RepoView
                 | ForgeOp::PrEdit
+                | ForgeOp::PrLabels
                 | ForgeOp::PrMarkReady
                 | ForgeOp::PrChecks
                 | ForgeOp::ReleaseView
-                | ForgeOp::PrDiff,
+                | ForgeOp::PrDiff
+                | ForgeOp::IssueLabels,
             ) => false,
             // Route the request-changes operation through the shared review-kind table
             // so this operation-grain answer and
@@ -588,6 +598,45 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitLab(c) => gitlab_forge::pr_create(c, &self.cwd, spec).await,
             Backend::Gitea(c) => gitea_forge::pr_create(c, &self.cwd, spec).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_create")),
+        }
+    }
+
+    /// Add labels to an existing PR/MR. GitHub and GitLab support this through
+    /// their edit/update commands; Gitea is structurally [`Unsupported`](Error::Unsupported)
+    /// because `tea 0.9.2` has no corresponding command.
+    pub async fn pr_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => {
+                validate_labels("pr_add_labels", labels)?;
+                self.gate_version("pr_add_labels").await?;
+                github_forge::pr_add_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::GitLab(c) => {
+                validate_labels("pr_add_labels", labels)?;
+                self.gate_version("pr_add_labels").await?;
+                gitlab_forge::pr_add_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_add_labels")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_add_labels")),
+        }
+    }
+
+    /// Remove labels from an existing PR/MR. See [`pr_add_labels`](Forge::pr_add_labels)
+    /// for backend support and validation.
+    pub async fn pr_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => {
+                validate_labels("pr_remove_labels", labels)?;
+                self.gate_version("pr_remove_labels").await?;
+                github_forge::pr_remove_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::GitLab(c) => {
+                validate_labels("pr_remove_labels", labels)?;
+                self.gate_version("pr_remove_labels").await?;
+                gitlab_forge::pr_remove_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "pr_remove_labels")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "pr_remove_labels")),
         }
     }
 
@@ -993,12 +1042,49 @@ impl<R: ProcessRunner> Forge<R> {
     /// (The same honest-output contract as [`pr_create`](Forge::pr_create).)
     pub async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
         self.gate_version("issue_create").await?;
-        let IssueCreate { title, body } = &spec;
         match &self.backend {
-            Backend::GitHub(c) => github_forge::issue_create(c, &self.cwd, title, body).await,
-            Backend::GitLab(c) => gitlab_forge::issue_create(c, &self.cwd, title, body).await,
-            Backend::Gitea(c) => gitea_forge::issue_create(c, &self.cwd, title, body).await,
+            Backend::GitHub(c) => github_forge::issue_create(c, &self.cwd, spec).await,
+            Backend::GitLab(c) => gitlab_forge::issue_create(c, &self.cwd, spec).await,
+            Backend::Gitea(c) => gitea_forge::issue_create(c, &self.cwd, spec).await,
             Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_create")),
+        }
+    }
+
+    /// Add labels to an existing issue. GitHub and GitLab support this; Gitea is
+    /// structurally [`Unsupported`](Error::Unsupported) because `tea` has no issue-edit command.
+    pub async fn issue_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => {
+                validate_labels("issue_add_labels", labels)?;
+                self.gate_version("issue_add_labels").await?;
+                github_forge::issue_add_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::GitLab(c) => {
+                validate_labels("issue_add_labels", labels)?;
+                self.gate_version("issue_add_labels").await?;
+                gitlab_forge::issue_add_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "issue_add_labels")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_add_labels")),
+        }
+    }
+
+    /// Remove labels from an existing issue. See
+    /// [`issue_add_labels`](Forge::issue_add_labels) for backend support and validation.
+    pub async fn issue_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        match &self.backend {
+            Backend::GitHub(c) => {
+                validate_labels("issue_remove_labels", labels)?;
+                self.gate_version("issue_remove_labels").await?;
+                github_forge::issue_remove_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::GitLab(c) => {
+                validate_labels("issue_remove_labels", labels)?;
+                self.gate_version("issue_remove_labels").await?;
+                gitlab_forge::issue_remove_labels(c, &self.cwd, number, labels).await
+            }
+            Backend::Gitea(_) => Err(unsupported(ForgeKind::Gitea, "issue_remove_labels")),
+            Backend::Unknown => Err(unsupported(ForgeKind::Unknown, "issue_remove_labels")),
         }
     }
 
@@ -1118,6 +1204,15 @@ fn unsupported(forge: ForgeKind, operation: &'static str) -> Error {
     Error::unsupported(forge, operation)
 }
 
+fn validate_labels(operation: &str, labels: &[String]) -> Result<()> {
+    if labels.is_empty() || labels.iter().any(|label| label.trim().is_empty()) {
+        return Err(Error::InvalidInput(format!(
+            "{operation} requires at least one non-empty label"
+        )));
+    }
+    Ok(())
+}
+
 /// The "what the CLI ships" map for GitHub. `version`/`supported`/`authed` are
 /// left unset; the caller (`Forge::capabilities`) overwrites them from the
 /// version + auth probes and zeroes the op flags if unsupported or unauthed.
@@ -1126,6 +1221,7 @@ fn static_github_caps() -> ForgeCapabilities {
         pr_create: true,
         pr_comment: true,
         pr_edit: true,
+        pr_labels: true,
         pr_checks: true,
         pr_merge: true,
         pr_approve: true,
@@ -1134,6 +1230,7 @@ fn static_github_caps() -> ForgeCapabilities {
         issue_close: true,
         issue_reopen: true,
         issue_comment: true,
+        issue_labels: true,
         release_create: true,
         release_delete: true,
         version: None,
@@ -1150,6 +1247,7 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         pr_create: true,
         pr_comment: true,
         pr_edit: true,
+        pr_labels: true,
         pr_checks: true,
         pr_merge: true,
         pr_approve: true,
@@ -1161,6 +1259,7 @@ fn static_gitlab_caps() -> ForgeCapabilities {
         issue_close: true,
         issue_reopen: true,
         issue_comment: true,
+        issue_labels: true,
         // `glab` ships `release create`/`release delete`. The `draft`/`prerelease`
         // create *options* are unsupported on GitLab, but the create command itself
         // is available — that per-option gap is enforced at call time, not here.
@@ -1184,6 +1283,7 @@ fn static_gitea_caps() -> ForgeCapabilities {
         pr_create: true,
         pr_comment: true,
         pr_edit: false,
+        pr_labels: false,
         pr_checks: false,
         pr_merge: true,
         // `tea` ships both `pr approve` and `pr reject` (request-changes).
@@ -1195,6 +1295,7 @@ fn static_gitea_caps() -> ForgeCapabilities {
         issue_close: true,
         issue_reopen: true,
         issue_comment: true,
+        issue_labels: false,
         // `tea` ships `releases create` (with draft/prerelease) and `releases delete`.
         release_create: true,
         release_delete: true,
@@ -1213,6 +1314,7 @@ fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.pr_create = false;
     caps.pr_comment = false;
     caps.pr_edit = false;
+    caps.pr_labels = false;
     caps.pr_checks = false;
     caps.pr_merge = false;
     caps.pr_approve = false;
@@ -1221,6 +1323,7 @@ fn zero_ops(caps: &mut ForgeCapabilities) {
     caps.issue_close = false;
     caps.issue_reopen = false;
     caps.issue_comment = false;
+    caps.issue_labels = false;
     caps.release_create = false;
     caps.release_delete = false;
 }
@@ -1276,6 +1379,18 @@ pub trait ForgeApi: Send + Sync {
     async fn pr_view(&self, number: u64) -> Result<ForgePr>;
     /// See [`Forge::pr_create`](crate::Forge::pr_create).
     async fn pr_create(&self, spec: PrCreate) -> Result<String>;
+    /// See [`Forge::pr_add_labels`](crate::Forge::pr_add_labels). **Defaulted** to
+    /// `Error::Unsupported` so external implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn pr_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_add_labels"))
+    }
+    /// See [`Forge::pr_remove_labels`](crate::Forge::pr_remove_labels). **Defaulted**
+    /// to `Error::Unsupported` so external implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn pr_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "pr_remove_labels"))
+    }
     /// See [`Forge::pr_comment`](crate::Forge::pr_comment). **Defaulted** to
     /// `Error::Unsupported` so external trait implementers keep compiling
     /// when the crate bumps.
@@ -1338,6 +1453,18 @@ pub trait ForgeApi: Send + Sync {
     async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
     /// See [`Forge::issue_create`](crate::Forge::issue_create).
     async fn issue_create(&self, spec: IssueCreate) -> Result<String>;
+    /// See [`Forge::issue_add_labels`](crate::Forge::issue_add_labels). **Defaulted**
+    /// to `Error::Unsupported` so external implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn issue_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "issue_add_labels"))
+    }
+    /// See [`Forge::issue_remove_labels`](crate::Forge::issue_remove_labels).
+    /// **Defaulted** to `Error::Unsupported` so external implementers keep compiling.
+    #[allow(unused_variables)]
+    async fn issue_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::unsupported(self.kind(), "issue_remove_labels"))
+    }
     /// See [`Forge::issue_close`](crate::Forge::issue_close). **Defaulted** to
     /// `Error::Unsupported` so external trait implementers keep compiling when the
     /// crate bumps.
@@ -1414,6 +1541,12 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     async fn pr_create(&self, spec: PrCreate) -> Result<String> {
         self.pr_create(spec).await
     }
+    async fn pr_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        self.pr_add_labels(number, labels).await
+    }
+    async fn pr_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        self.pr_remove_labels(number, labels).await
+    }
     async fn pr_comment(&self, number: u64, body: &str) -> Result<String> {
         self.pr_comment(number, body).await
     }
@@ -1458,6 +1591,12 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn issue_create(&self, spec: IssueCreate) -> Result<String> {
         self.issue_create(spec).await
+    }
+    async fn issue_add_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        self.issue_add_labels(number, labels).await
+    }
+    async fn issue_remove_labels(&self, number: u64, labels: &[String]) -> Result<()> {
+        self.issue_remove_labels(number, labels).await
     }
     async fn issue_close(&self, number: u64) -> Result<()> {
         self.issue_close(number).await
@@ -1689,7 +1828,7 @@ mod tests {
         assert_eq!(pr.target_branch, "main");
     }
 
-    // The Gitea backend reports the six unmodelled ops as Unsupported, naming
+    // The Gitea backend reports its structurally unmodelled ops as Unsupported, naming
     // the operation — and without spawning anything.
     #[tokio::test]
     async fn gitea_unsupported_ops_error_without_spawning() {
@@ -1882,6 +2021,7 @@ mod tests {
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
         assert!(caps.pr_edit);
+        assert!(caps.pr_labels);
         assert!(caps.pr_checks);
         assert!(caps.pr_merge);
         assert!(caps.pr_approve);
@@ -1890,6 +2030,7 @@ mod tests {
         assert!(caps.issue_close, "gh ships `issue close`");
         assert!(caps.issue_reopen, "gh ships `issue reopen`");
         assert!(caps.issue_comment, "gh ships `issue comment`");
+        assert!(caps.issue_labels);
         assert!(caps.release_create, "gh ships `release create`");
         assert!(caps.release_delete, "gh ships `release delete`");
         assert!(caps.authed);
@@ -1924,12 +2065,14 @@ mod tests {
         assert!(!caps.pr_create);
         assert!(!caps.pr_comment);
         assert!(!caps.pr_edit);
+        assert!(!caps.pr_labels);
         assert!(!caps.pr_checks);
         assert!(!caps.pr_merge);
         assert!(!caps.issue_create);
         assert!(!caps.issue_close);
         assert!(!caps.issue_reopen);
         assert!(!caps.issue_comment);
+        assert!(!caps.issue_labels);
     }
 
     // A `gh` **below the version floor** zeroes the op flags exactly like an
@@ -1987,8 +2130,8 @@ mod tests {
         assert!(!caps.pr_create && !caps.issue_create, "ops zeroed");
     }
 
-    // Gitea's static map is the intersection of its CLI: `pr_edit` and `pr_checks`
-    // are false when authed on a modern `tea` (no such tea commands).
+    // Gitea's static map is the intersection of its CLI: `pr_edit`, `pr_checks`,
+    // `pr_labels`, and `issue_labels` are false when authed on a modern `tea`.
     // Everything else is `true` post-fork. `capabilities()` probes `tea --version`
     // too, so script a modern banner above the 0.9 floor.
     #[tokio::test]
@@ -2022,11 +2165,13 @@ mod tests {
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
         assert!(!caps.pr_edit, "gitea has no pr edit command");
+        assert!(!caps.pr_labels, "gitea has no PR label edit command");
         assert!(!forge.supports(ForgeOp::PrEdit));
         assert!(caps.pr_merge);
         assert!(caps.pr_approve, "tea ships `pr approve`");
         assert!(caps.pr_request_changes, "tea ships `pr reject`");
         assert!(caps.issue_create);
+        assert!(!caps.issue_labels, "gitea has no issue edit command");
         assert!(caps.release_create, "tea ships `releases create`");
         assert!(caps.release_delete, "tea ships `releases delete`");
     }
@@ -2047,6 +2192,7 @@ mod tests {
         assert!(caps.pr_create);
         assert!(caps.pr_comment);
         assert!(caps.pr_edit);
+        assert!(caps.pr_labels);
         assert!(caps.pr_checks);
         assert!(caps.pr_merge);
         assert!(caps.pr_approve, "glab ships `mr approve`");
@@ -2055,6 +2201,7 @@ mod tests {
             "GitLab has no request-changes review action"
         );
         assert!(caps.issue_create);
+        assert!(caps.issue_labels);
         assert!(
             caps.release_create,
             "glab ships `release create` (the draft/prerelease options are a separate gap)"
@@ -3071,8 +3218,8 @@ mod tests {
 
     // A CLI **confirmed** below the crate's version floor refuses every mutating op
     // with `VersionUnsupported` BEFORE the mutating command spawns — only the
-    // `--version` probe runs, never the mutation. Covers the four core mutating ops
-    // (pr_create / pr_edit / pr_merge / issue_create) on GitHub and GitLab, plus the
+    // `--version` probe runs, never the mutation. Covers the core mutating ops
+    // (including label mutations) on GitHub and GitLab, plus the
     // Gitea operations that tea can actually perform (GitHub 1.14 < 2.0, GitLab
     // 1.20 < 1.25, Gitea 0.8 < 0.9).
     #[tokio::test]
@@ -3118,6 +3265,9 @@ mod tests {
             &rec,
             f.issue_create(IssueCreate::new("T", "B")).await.map(|_| ()),
         );
+        let rec = old_gh();
+        let f = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        assert_gated(&rec, f.pr_add_labels(7, &["bug".into()]).await);
 
         // GitLab — glab 1.20.0 is below the 1.25 floor.
         let old_glab = || {
@@ -3140,6 +3290,9 @@ mod tests {
             &rec,
             f.issue_create(IssueCreate::new("T", "B")).await.map(|_| ()),
         );
+        let rec = old_glab();
+        let f = Forge::from_gitlab("/repo", GitLab::with_runner(&rec));
+        assert_gated(&rec, f.issue_remove_labels(7, &["bug".into()]).await);
 
         // Gitea — tea 0.8.0 is below the 0.9 floor (K-062: 0.9 is exactly the floor,
         // so 0.8 is the first version strictly below it that must gate).
@@ -3345,6 +3498,162 @@ mod tests {
             .await
             .expect("tea exactly at the 0.9 floor must not be gated");
         assert_eq!(out, "created");
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use processkit::testing::{RecordingRunner, Reply};
+
+    fn operation_calls(rec: &RecordingRunner) -> Vec<Vec<String>> {
+        rec.calls()
+            .into_iter()
+            .filter(|call| call.args_str() != ["--version"])
+            .map(|call| call.args_str())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn label_specs_and_mutations_map_through_the_facade() {
+        let labels = vec!["-urgent".to_string(), "help wanted".to_string()];
+
+        let gh_rec = RecordingRunner::replying(Reply::ok("ok\n"));
+        let gh = Forge::from_github("/repo", GitHub::with_runner(&gh_rec));
+        gh.pr_create(PrCreate::new("T", "B").labels(labels.clone()))
+            .await
+            .unwrap();
+        gh.issue_create(IssueCreate::new("I", "D").labels(labels.clone()))
+            .await
+            .unwrap();
+        gh.pr_add_labels(7, &labels).await.unwrap();
+        gh.issue_remove_labels(9, &labels).await.unwrap();
+        let calls = operation_calls(&gh_rec);
+        assert_eq!(
+            calls[0],
+            [
+                "pr",
+                "create",
+                "--title",
+                "T",
+                "--body",
+                "B",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[1],
+            [
+                "issue",
+                "create",
+                "--title",
+                "I",
+                "--body",
+                "D",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[2],
+            [
+                "pr",
+                "edit",
+                "7",
+                "--add-label",
+                "-urgent",
+                "--add-label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[3],
+            [
+                "issue",
+                "edit",
+                "9",
+                "--remove-label",
+                "-urgent",
+                "--remove-label",
+                "help wanted"
+            ]
+        );
+
+        let gl_rec = RecordingRunner::replying(Reply::ok("ok\n"));
+        let gl = Forge::from_gitlab("/repo", GitLab::with_runner(&gl_rec));
+        gl.pr_remove_labels(7, &labels).await.unwrap();
+        gl.issue_add_labels(9, &labels).await.unwrap();
+        let calls = operation_calls(&gl_rec);
+        assert_eq!(
+            calls[0],
+            [
+                "mr",
+                "update",
+                "7",
+                "--unlabel",
+                "-urgent",
+                "--unlabel",
+                "help wanted",
+                "--yes"
+            ]
+        );
+        assert_eq!(
+            calls[1],
+            [
+                "issue",
+                "update",
+                "9",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+
+        let tea_rec = RecordingRunner::replying(Reply::ok("ok\n"));
+        let tea = Forge::from_gitea("/repo", Gitea::with_runner(&tea_rec));
+        tea.issue_create(IssueCreate::new("I", "D").labels(labels.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            operation_calls(&tea_rec)[0],
+            [
+                "issues",
+                "create",
+                "--title",
+                "I",
+                "--description",
+                "D",
+                "--labels",
+                "-urgent,help wanted"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn gitea_existing_labels_are_predictably_unsupported() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let forge = Forge::from_gitea("/repo", Gitea::with_runner(&rec));
+        let labels = vec!["bug".to_string()];
+        for err in [
+            forge.pr_add_labels(1, &labels).await.unwrap_err(),
+            forge.pr_remove_labels(1, &labels).await.unwrap_err(),
+            forge.issue_add_labels(1, &labels).await.unwrap_err(),
+            forge.issue_remove_labels(1, &labels).await.unwrap_err(),
+        ] {
+            assert!(err.is_unsupported(), "{err:?}");
+        }
+        assert!(!forge.supports(ForgeOp::PrLabels));
+        assert!(!forge.supports(ForgeOp::IssueLabels));
+        assert!(
+            rec.calls().is_empty(),
+            "structural gaps must not probe or spawn"
+        );
     }
 }
 

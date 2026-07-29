@@ -343,6 +343,22 @@ fn reject_zero_limit(operation: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
+/// Reject a label mutation that cannot change anything, or a label name the CLI
+/// cannot resolve. Label names otherwise stay unfiltered: they are always passed
+/// in a flag-value slot, so a leading `-` is data rather than another option.
+fn reject_invalid_labels(operation: &str, labels: &[String]) -> Result<()> {
+    if labels.is_empty() || labels.iter().any(|label| label.trim().is_empty()) {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{operation} requires at least one non-empty label"),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// The GitHub host an operation targets: SaaS `github.com` or a **GitHub
 /// Enterprise Server** (GHES) host. `gh` picks the credential environment variable
 /// it reads *per host* — `GH_TOKEN` for github.com, `GH_ENTERPRISE_TOKEN` for a
@@ -649,6 +665,8 @@ pub struct PrCreate {
     pub head: Option<String>,
     /// The target branch (`--base`); `None` = the repo default.
     pub base: Option<String>,
+    /// Labels to apply (`--label <name>`, repeated).
+    pub labels: Vec<String>,
 }
 
 impl PrCreate {
@@ -660,6 +678,7 @@ impl PrCreate {
             body: body.into(),
             head: None,
             base: None,
+            labels: Vec::new(),
         }
     }
 
@@ -672,6 +691,41 @@ impl PrCreate {
     /// Set the target branch (`--base`).
     pub fn base(mut self, base: impl Into<String>) -> Self {
         self.base = Some(base.into());
+        self
+    }
+
+    /// Apply these labels when opening the pull request.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
+        self
+    }
+}
+
+/// Options for [`GitHubApi::issue_create_with`] (`gh issue create`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IssueCreate {
+    /// The issue title (`--title`).
+    pub title: String,
+    /// The issue body (`--body`).
+    pub body: String,
+    /// Labels to apply (`--label <name>`, repeated).
+    pub labels: Vec<String>,
+}
+
+impl IssueCreate {
+    /// An issue with no labels.
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+            labels: Vec::new(),
+        }
+    }
+
+    /// Apply these labels when opening the issue.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
         self
     }
 }
@@ -1111,6 +1165,20 @@ pub trait GitHubApi: Send + Sync {
     /// Close a pull request without merging (`gh pr close <n>
     /// [--delete-branch]`); see [`PrClose`].
     async fn pr_close(&self, dir: &Path, number: u64, spec: PrClose) -> Result<()>;
+    /// Add labels to an existing pull request (`gh pr edit <n> --add-label <name>`).
+    #[allow(unused_variables)]
+    async fn pr_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "pr_add_labels".into(),
+        }))
+    }
+    /// Remove labels from an existing pull request (`gh pr edit <n> --remove-label <name>`).
+    #[allow(unused_variables)]
+    async fn pr_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "pr_remove_labels".into(),
+        }))
+    }
     /// Check out a pull request's branch into the working copy at `dir`
     /// (`gh pr checkout <n>`) — the head branch is fetched and switched to, so a
     /// subsequent build/test/edit runs against the PR locally. Mutates the working
@@ -1256,6 +1324,32 @@ pub trait GitHubApi: Send + Sync {
     /// Open an issue, returning its URL
     /// (`gh issue create --title <title> --body <body>`).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+    /// Open an issue from an extensible spec, including labels. The default keeps
+    /// old external trait implementations source-compatible and supports the
+    /// label-free case through [`issue_create`](GitHubApi::issue_create).
+    async fn issue_create_with(&self, dir: &Path, spec: IssueCreate) -> Result<String> {
+        if spec.labels.is_empty() {
+            self.issue_create(dir, &spec.title, &spec.body).await
+        } else {
+            Err(Error::from(ErrorReason::Unsupported {
+                operation: "issue_create_with(labels)".into(),
+            }))
+        }
+    }
+    /// Add labels to an existing issue (`gh issue edit <n> --add-label <name>`).
+    #[allow(unused_variables)]
+    async fn issue_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_add_labels".into(),
+        }))
+    }
+    /// Remove labels from an existing issue (`gh issue edit <n> --remove-label <name>`).
+    #[allow(unused_variables)]
+    async fn issue_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_remove_labels".into(),
+        }))
+    }
     /// A single issue by number, with `body`/`url` filled
     /// (`gh issue view <n> --json …`).
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
@@ -1592,6 +1686,13 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             args.push("--base");
             args.push(base);
         }
+        if !spec.labels.is_empty() {
+            reject_invalid_labels("pr_create", &spec.labels)?;
+            for label in &spec.labels {
+                args.push("--label");
+                args.push(label);
+            }
+        }
         self.core.run(self.core.command_in(dir, args)).await
     }
 
@@ -1864,12 +1965,71 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     }
 
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
-        self.core
-            .run(
-                self.core
-                    .command_in(dir, ["issue", "create", "--title", title, "--body", body]),
-            )
+        self.issue_create_with(dir, IssueCreate::new(title, body))
             .await
+    }
+
+    async fn issue_create_with(&self, dir: &Path, spec: IssueCreate) -> Result<String> {
+        if !spec.labels.is_empty() {
+            reject_invalid_labels("issue_create_with", &spec.labels)?;
+        }
+        let mut args = vec![
+            "issue",
+            "create",
+            "--title",
+            spec.title.as_str(),
+            "--body",
+            spec.body.as_str(),
+        ];
+        for label in &spec.labels {
+            args.push("--label");
+            args.push(label);
+        }
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("pr_add_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["pr", "edit", number.as_str()];
+        for label in labels {
+            args.push("--add-label");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn pr_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("pr_remove_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["pr", "edit", number.as_str()];
+        for label in labels {
+            args.push("--remove-label");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn issue_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("issue_add_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["issue", "edit", number.as_str()];
+        for label in labels {
+            args.push("--add-label");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn issue_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("issue_remove_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["issue", "edit", number.as_str()];
+        for label in labels {
+            args.push("--remove-label");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue> {
@@ -2065,6 +2225,8 @@ vcs_cli_support::at_forwarders! {
         fn issue_list() -> Result<Vec<Issue>>;
         fn issue_list_with(spec: IssueList) -> Result<Vec<Issue>>;
         fn pr_create(spec: PrCreate) -> Result<String>;
+        fn pr_add_labels(number: u64, labels: &[String]) -> Result<()>;
+        fn pr_remove_labels(number: u64, labels: &[String]) -> Result<()>;
         fn pr_merge(number: u64, merge: PrMerge) -> Result<()>;
         fn pr_mark_ready(number: u64) -> Result<()>;
         fn pr_close(number: u64, spec: PrClose) -> Result<()>;
@@ -2082,6 +2244,9 @@ vcs_cli_support::at_forwarders! {
         fn run_rerun(id: u64, scope: RerunScope) -> Result<()>;
         fn run_cancel(id: u64) -> Result<()>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn issue_create_with(spec: IssueCreate) -> Result<String>;
+        fn issue_add_labels(number: u64, labels: &[String]) -> Result<()>;
+        fn issue_remove_labels(number: u64, labels: &[String]) -> Result<()>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_close(number: u64) -> Result<()>;
         fn issue_reopen(number: u64) -> Result<()>;
@@ -3893,6 +4058,137 @@ mod tests {
         let mut mock = MockGitHubApi::new();
         mock.expect_auth_status().returning(|| Ok(true));
         assert!(mock.auth_status().await.unwrap());
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use processkit::testing::{RecordingRunner, Reply};
+
+    #[tokio::test]
+    async fn label_create_and_mutation_argv_are_exact_and_flag_values() {
+        let rec = RecordingRunner::replying(Reply::ok("https://example.test/1\n"));
+        let gh = GitHub::with_runner(&rec);
+        let labels = vec!["-urgent".to_string(), "help wanted".to_string()];
+
+        gh.pr_create(
+            Path::new("/repo"),
+            PrCreate::new("T", "B").labels(labels.clone()),
+        )
+        .await
+        .unwrap();
+        gh.issue_create_with(
+            Path::new("/repo"),
+            IssueCreate::new("I", "D").labels(labels.clone()),
+        )
+        .await
+        .unwrap();
+        gh.at(Path::new("/repo"))
+            .pr_add_labels(7, &labels)
+            .await
+            .unwrap();
+        gh.pr_remove_labels(Path::new("/repo"), 7, &labels)
+            .await
+            .unwrap();
+        gh.issue_add_labels(Path::new("/repo"), 9, &labels)
+            .await
+            .unwrap();
+        gh.issue_remove_labels(Path::new("/repo"), 9, &labels)
+            .await
+            .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "pr",
+                "create",
+                "--title",
+                "T",
+                "--body",
+                "B",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "issue",
+                "create",
+                "--title",
+                "I",
+                "--body",
+                "D",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            [
+                "pr",
+                "edit",
+                "7",
+                "--add-label",
+                "-urgent",
+                "--add-label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(calls[2].cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(
+            calls[3].args_str(),
+            [
+                "pr",
+                "edit",
+                "7",
+                "--remove-label",
+                "-urgent",
+                "--remove-label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[4].args_str(),
+            [
+                "issue",
+                "edit",
+                "9",
+                "--add-label",
+                "-urgent",
+                "--add-label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[5].args_str(),
+            [
+                "issue",
+                "edit",
+                "9",
+                "--remove-label",
+                "-urgent",
+                "--remove-label",
+                "help wanted"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_label_mutation_is_rejected_before_spawn() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let err = GitHub::with_runner(&rec)
+            .pr_add_labels(Path::new("/repo"), 1, &[])
+            .await
+            .unwrap_err();
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty());
     }
 }
 

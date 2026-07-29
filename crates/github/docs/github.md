@@ -189,6 +189,8 @@ async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest
 async fn pr_list_for_branch(&self, dir: &Path, head: &str, base: &str) -> Result<Vec<PullRequest>>;
 async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest>;
 async fn pr_create(&self, dir: &Path, spec: PrCreate) -> Result<String>;
+async fn pr_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()>;
+async fn pr_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()>;
 ```
 
 `pr_list` is the compatibility shorthand for `PrList::new()` (open, limit 100).
@@ -200,7 +202,9 @@ too — branch on each entry's `state`. Empty when none match.
 `pr_create` returns the new PR's **URL** (trimmed stdout). It takes a
 [`PrCreate`](#prcreate) spec carrying the title/body and the optional `head`
 (`None` = the current branch) and `base` (`None` = the repo default) branches;
-each branch is appended as `--head <b>` / `--base <b>` only when set.
+each branch is appended as `--head <b>` / `--base <b>` only when set. Chain
+`.labels(vec![…])` to repeat `--label <name>` at creation; the add/remove methods
+use `gh pr edit --add-label` / `--remove-label` for existing PRs.
 
 ```rust,ignore
 # use vcs_github::{GitHub, GitHubApi, PrCreate};
@@ -324,20 +328,28 @@ async fn issue_list(&self, dir: &Path) -> Result<Vec<Issue>>;
 async fn issue_list_with(&self, dir: &Path, spec: IssueList) -> Result<Vec<Issue>>;
 async fn issue_view(&self, dir: &Path, number: u64) -> Result<Issue>;
 async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+async fn issue_create_with(&self, dir: &Path, spec: IssueCreate) -> Result<String>;
+async fn issue_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()>;
+async fn issue_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()>;
 ```
 
 `issue_list` means open issues with limit 100. `issue_list_with` accepts
 `IssueListState::{Open, Closed, All}` plus `.limit(n)`. Both fetch
 `number,title,state,body,url`, so the listed issues carry
 `body`/`url` too (see [`Issue`](#issue)); `issue_view` returns the same fields for
-a single issue. `issue_create` returns the new issue's **URL**.
+a single issue. `issue_create` returns the new issue's **URL** and preserves the
+original string-based compatibility surface. `issue_create_with` accepts
+`IssueCreate::new(title, body).labels(vec![…])`; existing labels are changed with
+`issue_add_labels` / `issue_remove_labels`.
 
 ```rust,ignore
-# use vcs_github::{GitHub, GitHubApi};
+# use vcs_github::{GitHub, GitHubApi, IssueCreate};
 use std::path::Path;
 # async fn demo(repo: &Path) -> Result<(), processkit::Error> {
 let gh = GitHub::new();
-let url = gh.issue_create(repo, "Flaky test", "`pr_checks` hangs on …").await?;
+let url = gh.issue_create_with(repo,
+    IssueCreate::new("Flaky test", "`pr_checks` hangs on …")
+        .labels(vec!["bug".into(), "ci".into()])).await?;
 let full = gh.issue_view(repo, 3).await?; // a single issue, body + url populated
 # let _ = (url, full);
 # Ok(()) }

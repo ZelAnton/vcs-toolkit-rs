@@ -537,6 +537,7 @@ async fn forge_issue_tools_route_and_gate() {
         .forge_issue_create(Parameters(IssueCreateParams {
             title: "t".into(),
             body: "b".into(),
+            labels: Vec::new(),
         }))
         .await
         .expect_err("gated");
@@ -1238,6 +1239,7 @@ async fn forge_version_gated_mutation_maps_to_invalid_params() {
             body: "B".into(),
             source: None,
             target: None,
+            labels: Vec::new(),
         }))
         .await
         .expect_err("an old gh must version-gate the mutation");
@@ -2105,4 +2107,73 @@ async fn repo_rename_branch_is_gated() {
     let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
     assert_eq!(value["renamed"]["old"], "old", "{text}");
     assert_eq!(value["renamed"]["new"], "new", "{text}");
+}
+
+#[tokio::test]
+async fn forge_label_tool_is_gated_and_forwards_flag_values() {
+    for name in [
+        "forge_pr_add_labels",
+        "forge_pr_remove_labels",
+        "forge_issue_add_labels",
+        "forge_issue_remove_labels",
+    ] {
+        assert!(WRITE_TOOLS.contains(&name), "{name} must be write-gated");
+    }
+
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new()
+            .on(["gh", "--version"], Reply::ok("gh version 2.95.0\n"))
+            .on(
+                [
+                    "gh",
+                    "pr",
+                    "edit",
+                    "7",
+                    "--add-label",
+                    "-urgent",
+                    "--add-label",
+                    "help wanted",
+                ],
+                Reply::ok(""),
+            ),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+
+    let readonly = VcsMcpServer::from_handles(repo.clone(), Some(forge.clone()), WriteGate::None);
+    let params = || {
+        Parameters(LabelsParams {
+            number: 7,
+            labels: vec!["-urgent".into(), "help wanted".into()],
+        })
+    };
+    readonly
+        .forge_pr_add_labels(params())
+        .await
+        .expect_err("label mutation must be gated");
+
+    let writable = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::All);
+    let out = writable
+        .forge_pr_add_labels(params())
+        .await
+        .expect("label mutation forwards");
+    let json = result_json(&out);
+    assert!(json.contains("-urgent"), "{json}");
+    assert!(json.contains("help wanted"), "{json}");
+}
+
+#[test]
+fn create_labels_are_optional_in_mcp_json() {
+    let pr: PrCreateParams =
+        serde_json::from_str(r#"{"title":"T","body":"B","source":null,"target":null}"#)
+            .expect("labels omitted");
+    assert!(pr.labels.is_empty());
+
+    let issue: IssueCreateParams =
+        serde_json::from_str(r#"{"title":"T","body":"B"}"#).expect("labels omitted");
+    assert!(issue.labels.is_empty());
 }

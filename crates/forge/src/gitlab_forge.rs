@@ -5,16 +5,16 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_gitlab::{
-    CiStatus as GlCi, GitLab, GitLabApi, Issue, IssueList as GlIssueList,
-    IssueListState as GlIssueListState, MergeRequest, MrCreate, MrEdit as GlMrEdit,
-    MrList as GlMrList, MrListState as GlMrListState, MrMerge, Release,
+    CiStatus as GlCi, GitLab, GitLabApi, Issue, IssueCreate as GlIssueCreate,
+    IssueList as GlIssueList, IssueListState as GlIssueListState, MergeRequest, MrCreate,
+    MrEdit as GlMrEdit, MrList as GlMrList, MrListState as GlMrListState, MrMerge, Release,
     ReleaseCreate as GlReleaseCreate, RepoView,
 };
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState, PrMerge,
-    ReleaseCreate,
+    IssueCreate, IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState,
+    PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -94,7 +94,28 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
     if let Some(target) = spec.target {
         create = create.target(target);
     }
+    create = create.labels(spec.labels);
     Ok(glab.mr_create(dir, create).await?)
+}
+
+pub(crate) async fn pr_add_labels<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    glab.mr_add_labels(dir, number, labels).await?;
+    Ok(())
+}
+
+pub(crate) async fn pr_remove_labels<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    glab.mr_remove_labels(dir, number, labels).await?;
+    Ok(())
 }
 
 pub(crate) async fn mr_comment<R: ProcessRunner>(
@@ -253,10 +274,30 @@ pub(crate) async fn issue_view<R: ProcessRunner>(
 pub(crate) async fn issue_create<R: ProcessRunner>(
     glab: &GitLab<R>,
     dir: &Path,
-    title: &str,
-    body: &str,
+    spec: IssueCreate,
 ) -> Result<String> {
-    Ok(glab.issue_create(dir, title, body).await?)
+    let create = GlIssueCreate::new(spec.title, spec.body).labels(spec.labels);
+    Ok(glab.issue_create_with(dir, create).await?)
+}
+
+pub(crate) async fn issue_add_labels<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    glab.issue_add_labels(dir, number, labels).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_remove_labels<R: ProcessRunner>(
+    glab: &GitLab<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    glab.issue_remove_labels(dir, number, labels).await?;
+    Ok(())
 }
 
 pub(crate) async fn issue_close<R: ProcessRunner>(

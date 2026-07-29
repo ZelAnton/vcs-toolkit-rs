@@ -60,6 +60,8 @@ pub async fn pr_list(&self)      -> Result<Vec<ForgePr>>;
 pub async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>>;
 pub async fn pr_view(&self, number: u64) -> Result<ForgePr>;
 pub async fn pr_create(&self, spec: PrCreate) -> Result<String>;
+pub async fn pr_add_labels(&self, number: u64, labels: &[String]) -> Result<()>;
+pub async fn pr_remove_labels(&self, number: u64, labels: &[String]) -> Result<()>;
 pub async fn pr_comment(&self, number: u64, body: &str) -> Result<String>;
 pub async fn pr_edit(&self, number: u64, edit: PrEdit) -> Result<()>;
 pub async fn pr_merge(&self, number: u64, merge: PrMerge) -> Result<()>; // PrMerge::squash()[.auto()][.delete_branch()] — auto/delete_branch are GitHub-only
@@ -74,6 +76,8 @@ pub async fn issue_list(&self)   -> Result<Vec<ForgeIssue>>;
 pub async fn issue_list_with(&self, spec: IssueList) -> Result<Vec<ForgeIssue>>;
 pub async fn issue_view(&self, number: u64) -> Result<ForgeIssue>;
 pub async fn issue_create(&self, spec: IssueCreate) -> Result<String>; // IssueCreate::new(title, body)
+pub async fn issue_add_labels(&self, number: u64, labels: &[String]) -> Result<()>;
+pub async fn issue_remove_labels(&self, number: u64, labels: &[String]) -> Result<()>;
 pub async fn issue_close(&self, number: u64) -> Result<()>; // gh/glab `issue close`, tea `issues close`
 pub async fn issue_reopen(&self, number: u64) -> Result<()>; // gh/glab `issue reopen`, tea `issues reopen`
 pub async fn issue_comment(&self, number: u64, body: &str) -> Result<String>; // gh `issue comment --body`, glab `issue note -m`, tea `comment <n>`
@@ -94,7 +98,13 @@ the configured page cap. A zero limit is `InvalidInput` before any CLI spawn.
 `PrCreate::new(title, body).source(branch).target(branch)`, where `source`
 defaults to the current branch and `target` to the repo default; the facade maps
 them to each CLI's own flags (gh/tea `--head`/`--base`, glab
-`--source-branch`/`--target-branch`).
+`--source-branch`/`--target-branch`). Both `PrCreate` and `IssueCreate` accept
+`.labels(vec![…])`; each backend maps those to its creation flags.
+
+Existing-object label mutation is portable across GitHub and GitLab. Gitea
+returns structural `Unsupported` before probing/spawning because `tea 0.9.2` has
+no PR/issue edit command. Empty label sets and empty names are `InvalidInput` on
+supported backends; leading `-` remains safe because every label occupies a flag-value slot.
 
 [`PrEdit`] is the unified edit spec — `PrEdit::new().title(t).body(b)`, each field
 optional; `pr_edit` rejects both-`None` with `Error::InvalidInput` before any
@@ -235,6 +245,9 @@ with [`Forge::supports_review_kind`] / [`Forge::supports_merge_option`] /
 | `pr_approve` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
 | `issue_close` / `issue_reopen` / `issue_comment` | ✅ | ✅ | ✅ |
+| creation labels on `pr_create` / `issue_create` | ✅ | ✅ | ✅ (`--labels a,b`) |
+| `pr_add_labels` / `pr_remove_labels` | ✅ | ✅ | ❌ Unsupported |
+| `issue_add_labels` / `issue_remove_labels` | ✅ | ✅ | ❌ Unsupported |
 | `release_create` / `release_delete` | ✅ | ✅ | ✅ |
 | `release_create` honours `draft` / `prerelease` | ✅ | ❌ Unsupported (GitLab has no draft/pre-release concept) | ✅ |
 | `pr_merge` honours `auto` / `delete_branch` | ✅ | ❌ Unsupported (rejected before spawn) | ❌ Unsupported (rejected before spawn) |

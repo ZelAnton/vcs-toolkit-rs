@@ -10,6 +10,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Forge label tools.** PR/issue creation params accept optional `labels`, and
+  four write-gated tools add/remove labels on existing PRs/issues. GitHub and
+  GitLab are supported; Gitea surfaces `invalid_params` from its structural
+  `Unsupported` capability. `forge_info` now reports `pr_labels`/`issue_labels`.
 - **PR/issue list filters.** `forge_pr_list` now accepts optional
   `state=open|closed|merged|all` and `limit`; `forge_issue_list` accepts optional
   `state=open|closed|all` and `limit`. Omitting them preserves open/100, while

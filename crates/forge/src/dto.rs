@@ -217,6 +217,10 @@ pub enum ForgeOp {
     /// [`pr_edit`](crate::Forge::pr_edit) — edit a PR/MR title and/or body.
     /// Unsupported on Gitea because `tea` has no `pr edit` subcommand.
     PrEdit,
+    /// [`pr_add_labels`](crate::Forge::pr_add_labels) /
+    /// [`pr_remove_labels`](crate::Forge::pr_remove_labels) — change labels on an
+    /// existing PR/MR. Unsupported on Gitea because `tea` has no edit command.
+    PrLabels,
     /// [`pr_mark_ready`](crate::Forge::pr_mark_ready) — flip a draft PR to ready.
     PrMarkReady,
     /// [`pr_checks`](crate::Forge::pr_checks) — coarse CI status for a PR.
@@ -262,6 +266,10 @@ pub enum ForgeOp {
     /// Supported on all three real backends (`gh issue comment` / `glab issue note` /
     /// `tea comment`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
     IssueComment,
+    /// [`issue_add_labels`](crate::Forge::issue_add_labels) /
+    /// [`issue_remove_labels`](crate::Forge::issue_remove_labels) — change labels
+    /// on an existing issue. Unsupported on Gitea because `tea` has no edit command.
+    IssueLabels,
 }
 
 impl ForgeOp {
@@ -274,6 +282,7 @@ impl ForgeOp {
     pub const ALL: &'static [ForgeOp] = &[
         ForgeOp::RepoView,
         ForgeOp::PrEdit,
+        ForgeOp::PrLabels,
         ForgeOp::PrMarkReady,
         ForgeOp::PrChecks,
         ForgeOp::ReleaseView,
@@ -286,6 +295,7 @@ impl ForgeOp {
         ForgeOp::IssueClose,
         ForgeOp::IssueReopen,
         ForgeOp::IssueComment,
+        ForgeOp::IssueLabels,
     ];
 }
 
@@ -1013,6 +1023,8 @@ pub struct PrCreate {
     pub source: Option<String>,
     /// Target (base) branch; `None` = the repository default.
     pub target: Option<String>,
+    /// Labels to apply when creating the PR/MR.
+    pub labels: Vec<String>,
 }
 
 impl PrCreate {
@@ -1023,6 +1035,7 @@ impl PrCreate {
             body: body.into(),
             source: None,
             target: None,
+            labels: Vec::new(),
         }
     }
 
@@ -1035,6 +1048,12 @@ impl PrCreate {
     /// Open against this target (base) branch instead of the repo default.
     pub fn target(mut self, branch: impl Into<String>) -> Self {
         self.target = Some(branch.into());
+        self
+    }
+
+    /// Apply these labels when opening the PR/MR.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
         self
     }
 }
@@ -1053,6 +1072,8 @@ pub struct IssueCreate {
     pub title: String,
     /// Body / description (may be empty).
     pub body: String,
+    /// Labels to apply when creating the issue.
+    pub labels: Vec<String>,
 }
 
 impl IssueCreate {
@@ -1061,7 +1082,14 @@ impl IssueCreate {
         Self {
             title: title.into(),
             body: body.into(),
+            labels: Vec::new(),
         }
+    }
+
+    /// Apply these labels when opening the issue.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
+        self
     }
 }
 
@@ -1317,6 +1345,8 @@ pub struct ForgeCapabilities {
     pub pr_comment: bool,
     /// The CLI can edit a PR/MR's title and/or body.
     pub pr_edit: bool,
+    /// The CLI can add/remove labels on an existing PR/MR.
+    pub pr_labels: bool,
     /// The CLI can report a PR/MR's CI status (passing / failing / pending /
     /// none).
     pub pr_checks: bool,
@@ -1341,6 +1371,8 @@ pub struct ForgeCapabilities {
     /// The CLI can post a comment to an existing issue (`gh issue comment` / `glab
     /// issue note` / `tea comment`).
     pub issue_comment: bool,
+    /// The CLI can add/remove labels on an existing issue.
+    pub issue_labels: bool,
     /// The CLI can create a release (`gh release create` / `glab release create` /
     /// `tea releases create`). The `draft`/`prerelease` *options* are a separate
     /// GitLab gap (see [`ReleaseCreate`]); this flag only reports that the CLI ships
@@ -1361,7 +1393,7 @@ pub struct ForgeCapabilities {
     /// `false`, since the ops can't be guaranteed. The version twin of
     /// [`authed`](Self::authed): both must hold for an op flag to be `true`.
     pub supported: bool,
-    /// The CLI reports an authenticated session. The six op flags are all
+    /// The CLI reports an authenticated session. The per-operation flags are all
     /// `false` when this is `false` (or when [`supported`](Self::supported) is);
     /// the spec's per-op table is the intersection. **Best-effort for GitLab:**
     /// `glab auth status` can exit `0` while unauthenticated ([gitlab-org/cli#911]),
@@ -1381,6 +1413,7 @@ impl ForgeCapabilities {
             pr_create: false,
             pr_comment: false,
             pr_edit: false,
+            pr_labels: false,
             pr_checks: false,
             pr_merge: false,
             pr_approve: false,
@@ -1389,6 +1422,7 @@ impl ForgeCapabilities {
             issue_close: false,
             issue_reopen: false,
             issue_comment: false,
+            issue_labels: false,
             release_create: false,
             release_delete: false,
             version: None,
@@ -1415,6 +1449,12 @@ impl ForgeCapabilities {
     /// Mark `pr_edit` available.
     pub fn pr_edit(mut self) -> Self {
         self.pr_edit = true;
+        self
+    }
+
+    /// Mark existing-PR/MR label mutation available.
+    pub fn pr_labels(mut self) -> Self {
+        self.pr_labels = true;
         self
     }
 
@@ -1445,6 +1485,12 @@ impl ForgeCapabilities {
     /// Mark `issue_create` available.
     pub fn issue_create(mut self) -> Self {
         self.issue_create = true;
+        self
+    }
+
+    /// Mark existing-issue label mutation available.
+    pub fn issue_labels(mut self) -> Self {
+        self.issue_labels = true;
         self
     }
 
@@ -1733,17 +1779,27 @@ mod tests {
                 patch: 1
             })
         );
-        assert!(!caps.pr_comment && !caps.pr_edit && !caps.pr_checks && !caps.issue_create);
+        assert!(
+            !caps.pr_comment
+                && !caps.pr_edit
+                && !caps.pr_labels
+                && !caps.pr_checks
+                && !caps.issue_create
+                && !caps.issue_labels
+        );
         assert!(!caps.pr_approve && !caps.pr_request_changes);
         // The remaining setters land their own fields too.
         let rest = ForgeCapabilities::all_false()
             .pr_comment()
             .pr_edit()
+            .pr_labels()
             .pr_checks()
             .pr_approve()
             .pr_request_changes()
-            .issue_create();
+            .issue_create()
+            .issue_labels();
         assert!(rest.pr_comment && rest.pr_edit && rest.pr_checks && rest.issue_create);
+        assert!(rest.pr_labels && rest.issue_labels);
         assert!(rest.pr_approve && rest.pr_request_changes);
         assert!(!rest.pr_create && !rest.pr_merge && !rest.authed);
     }

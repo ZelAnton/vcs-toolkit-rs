@@ -10,6 +10,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Creation labels for PRs and issues.** `PrCreate` and the new extensible
+  `IssueCreate` accept labels and encode them in tea's comma-separated
+  `--labels` value. Existing-object add/remove methods are present as defaulted
+  trait operations but structurally return `Unsupported`, matching tea 0.9.2's
+  lack of PR/issue edit commands.
 - **Configurable PR and issue lists.** `PrList`/`IssueList` builders select
   `open`/`closed`/`all` state and requested `--limit` through new `*_list_with`
   methods and cwd-bound forwarders. `Merged` PR-only filtering is a structured

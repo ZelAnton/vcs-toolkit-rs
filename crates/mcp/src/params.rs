@@ -242,6 +242,9 @@ pub struct PrCreateParams {
     /// Target/base branch; omit for the repo default.
     #[serde(default)]
     pub target: Option<String>,
+    /// Labels to apply while creating the PR/MR.
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 /// Merge a pull/merge request.
@@ -322,6 +325,18 @@ pub struct IssueCreateParams {
     pub title: String,
     /// Body / description.
     pub body: String,
+    /// Labels to apply while creating the issue.
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+/// Add or remove labels on an existing PR/MR or issue.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct LabelsParams {
+    /// The PR/MR or issue number (GitLab uses the project-scoped `iid`).
+    pub number: u64,
+    /// One or more non-empty label names.
+    pub labels: Vec<String>,
 }
 
 /// Post a comment to an existing issue.

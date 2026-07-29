@@ -325,7 +325,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state |
 | `Forge::pr_for_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; independent of target |
 | `pr_view` | `pr view <n> --json …` | |
-| `pr_create` | `pr create` | via `PrCreate`; returns URL |
+| `pr_create` | `pr create … [--label <name> …]` | via `PrCreate`; returns URL |
+| `pr_add_labels` / `pr_remove_labels` | `pr edit <n> --add-label\|--remove-label <name> …` | repeated flag-value pairs; empty sets rejected |
 | `pr_merge` | `pr merge <n> --merge\|--squash\|--rebase [--auto] [--delete-branch]` | via `PrMerge` |
 | `pr_mark_ready` | `pr ready <n>` | |
 | `pr_close` | `pr close <n> [--delete-branch]` | via `PrClose` |
@@ -339,7 +340,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `issue_list` | `issue list --state open --limit 100 --json …` | compatibility default: open issues, ≤100 |
 | `issue_list_with` | `issue list --state open\|closed\|all --limit <n> --json …` | via `IssueList`; zero rejected before spawn |
 | `issue_view` | `issue view <n> --json …` | |
-| `issue_create` | `issue create --title <t> --body <b>` | returns issue URL |
+| `issue_create` / `issue_create_with` | `issue create --title <t> --body <b> [--label <name> …]` | compatibility strings or extensible `IssueCreate`; returns issue URL |
+| `issue_add_labels` / `issue_remove_labels` | `issue edit <n> --add-label\|--remove-label <name> …` | repeated flag-value pairs; empty sets rejected |
 | `issue_close` | `issue close <n>` | |
 | `issue_reopen` | `issue reopen <n>` | |
 | `issue_comment` | `issue comment <n> --body <body>` | returns comment URL |
@@ -393,6 +395,7 @@ breadth.
 | `mr_checkout` | `mr checkout <id>` | mutates the working copy |
 | `mr_comment` | `mr note <id> -m <message>` | returns command output |
 | `mr_edit` | `mr update <id> [--title <title>] [--description <body>] --yes` | via `MrEdit`; ≥1 field required |
+| `mr_add_labels` / `mr_remove_labels` | `mr update <id> --label\|--unlabel <name> … --yes` | repeated flag-value pairs; empty sets rejected |
 | `mr_approve` | `mr approve <id>` | GitLab's approve/revoke review model (no "request changes") |
 | `mr_revoke` | `mr revoke <id>` | withdraws an approval |
 | `mr_checks` | `mr view <id> --output json` (reads `head_pipeline.status`) | bucketed `CiStatus` |
@@ -400,7 +403,8 @@ breadth.
 | `issue_list` | `issue list --per-page 100 --output json` | compatibility default: open issues, ≤100 |
 | `issue_list_with` | `issue list [--closed\|--all] --per-page <n> --output json` | via `IssueList`; no state flag means open; zero rejected before spawn |
 | `issue_view` | `issue view <number> --output json` | |
-| `issue_create` | `issue create --title … --description … --yes` | returns issue URL |
+| `issue_create` / `issue_create_with` | `issue create --title … --description … [--label <name> …] --yes` | compatibility strings or extensible `IssueCreate`; returns issue URL |
+| `issue_add_labels` / `issue_remove_labels` | `issue update <id> --label\|--unlabel <name> …` | repeated flag-value pairs; empty sets rejected |
 | `issue_close` | `issue close <id>` | |
 | `issue_reopen` | `issue reopen <id>` | |
 | `issue_comment` | `issue note <id> -m <body>` | returns command output; dash-sentinel-guarded body |
@@ -439,7 +443,8 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | `pr_list_with` | `pr list --state open\|closed\|all --limit <n> --fields … --output csv` | `merged` is `Unsupported` before spawn |
 | `Forge::pr_for_branch` | Unsupported | `tea` has no source-branch filter |
 | `pr_view` | `pr list --state all --page <n> --output csv` (paged) + filter | synthesized — `tea` has no single-PR view |
-| `pr_create` | `pr create --title … --description … [--head …] [--base …]` | via `PrCreate`; returns tea's text output, **not** a URL |
+| `pr_create` | `pr create --title … --description … [--head …] [--base …] [--labels a,b]` | via `PrCreate`; returns tea's text output, **not** a URL |
+| `pr_add_labels` / `pr_remove_labels` | **Unsupported** | `tea 0.9.2` has no PR edit command; creation labels remain supported. |
 | `pr_merge` | `pr merge <number> --style merge\|rebase\|squash` | via `PrMerge`; no `auto`/`delete_branch` (`Unsupported`) |
 | `pr_close` | `pr close <number>` | |
 | `pr_checkout` | `pr checkout <number>` | mutates the working copy |
@@ -450,7 +455,8 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | `issue_list` | `issues list --state open --limit 100 --fields … --output csv` | compatibility default; ≤~50 |
 | `issue_list_with` | `issues list --state open\|closed\|all --limit <n> --fields … --output csv` | zero rejected before spawn |
 | `issue_view` | `issues list --state all --page <n> --output csv` (paged) + filter | synthesized because the bare-index view is Markdown |
-| `issue_create` | `issues create --title … --description …` | returns text output |
+| `issue_create` / `issue_create_with` | `issues create --title … --description … [--labels a,b]` | compatibility strings or extensible `IssueCreate`; returns text output |
+| `issue_add_labels` / `issue_remove_labels` | **Unsupported** | `tea 0.9.2` has no issue edit command; creation labels remain supported. |
 | `issue_close` | `issues close <index>` | |
 | `issue_reopen` | `issues reopen <index>` | |
 | `issue_comment` | `comment <index> <body>` | shared with PRs; flag-guarded body |

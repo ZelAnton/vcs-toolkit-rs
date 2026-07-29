@@ -294,6 +294,8 @@ pub struct MrCreate {
     pub source: Option<String>,
     /// The target branch (`--target-branch`); `None` = the project default.
     pub target: Option<String>,
+    /// Labels to apply (`--label <name>`, repeated).
+    pub labels: Vec<String>,
 }
 
 impl MrCreate {
@@ -305,6 +307,7 @@ impl MrCreate {
             body: body.into(),
             source: None,
             target: None,
+            labels: Vec::new(),
         }
     }
 
@@ -317,6 +320,41 @@ impl MrCreate {
     /// Set the target branch (`--target-branch`) instead of the project default.
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
+        self
+    }
+
+    /// Apply these labels when opening the merge request.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
+        self
+    }
+}
+
+/// Options for [`GitLabApi::issue_create_with`] (`glab issue create`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IssueCreate {
+    /// The issue title (`--title`).
+    pub title: String,
+    /// The issue description (`--description`).
+    pub body: String,
+    /// Labels to apply (`--label <name>`, repeated).
+    pub labels: Vec<String>,
+}
+
+impl IssueCreate {
+    /// An issue with no labels.
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: body.into(),
+            labels: Vec::new(),
+        }
+    }
+
+    /// Apply these labels when opening the issue.
+    pub fn labels(mut self, labels: impl Into<Vec<String>>) -> Self {
+        self.labels = labels.into();
         self
     }
 }
@@ -403,6 +441,21 @@ fn reject_zero_limit(operation: &str, limit: usize) -> Result<()> {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("{operation} limit must be greater than zero"),
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Label names travel in flag-value slots, so leading dashes are safe data.
+/// Reject only mutations that cannot change anything and empty label names.
+fn reject_invalid_labels(operation: &str, labels: &[String]) -> Result<()> {
+    if labels.is_empty() || labels.iter().any(|label| label.trim().is_empty()) {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{operation} requires at least one non-empty label"),
             ),
         ));
     }
@@ -763,6 +816,20 @@ pub trait GitLabApi: Send + Sync {
     /// before anything spawns, so a headless caller never hangs waiting on an
     /// editor/stdin that never comes.
     async fn mr_create(&self, dir: &Path, spec: MrCreate) -> Result<String>;
+    /// Add labels to an existing merge request (`glab mr update <id> --label <name>`).
+    #[allow(unused_variables)]
+    async fn mr_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "mr_add_labels".into(),
+        }))
+    }
+    /// Remove labels from an existing merge request (`glab mr update <id> --unlabel <name>`).
+    #[allow(unused_variables)]
+    async fn mr_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "mr_remove_labels".into(),
+        }))
+    }
     /// Merge a merge request **immediately** (`glab mr merge <id> --yes
     /// --auto-merge=false [--squash|--rebase]`) — `--auto-merge=false` overrides
     /// glab's default of enabling merge-when-pipeline-succeeds. Takes a [`MrMerge`]
@@ -871,6 +938,31 @@ pub trait GitLabApi: Send + Sync {
     /// dash-sentinel guard on `body` (refused with an `ErrorReason::Spawn` whose
     /// source is `io::ErrorKind::InvalidInput` before anything spawns).
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String>;
+    /// Open an issue from an extensible spec, including labels. The default keeps
+    /// old external trait implementations source-compatible for label-free calls.
+    async fn issue_create_with(&self, dir: &Path, spec: IssueCreate) -> Result<String> {
+        if spec.labels.is_empty() {
+            self.issue_create(dir, &spec.title, &spec.body).await
+        } else {
+            Err(Error::from(ErrorReason::Unsupported {
+                operation: "issue_create_with(labels)".into(),
+            }))
+        }
+    }
+    /// Add labels to an existing issue (`glab issue update <id> --label <name>`).
+    #[allow(unused_variables)]
+    async fn issue_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_add_labels".into(),
+        }))
+    }
+    /// Remove labels from an existing issue (`glab issue update <id> --unlabel <name>`).
+    #[allow(unused_variables)]
+    async fn issue_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "issue_remove_labels".into(),
+        }))
+    }
     /// Close an issue (`glab issue close <id>`). `number` is a `u64`, so the bare
     /// `<id>` positional can never look like a flag — nothing to guard. **Defaulted**
     /// to `ErrorReason::Unsupported` so external implementers keep compiling when the crate
@@ -1120,7 +1212,38 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
             args.push("--target-branch");
             args.push(target);
         }
+        if !spec.labels.is_empty() {
+            reject_invalid_labels("mr_create", &spec.labels)?;
+            for label in &spec.labels {
+                args.push("--label");
+                args.push(label);
+            }
+        }
         self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn mr_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("mr_add_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["mr", "update", number.as_str()];
+        for label in labels {
+            args.push("--label");
+            args.push(label);
+        }
+        args.push("--yes");
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn mr_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("mr_remove_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["mr", "update", number.as_str()];
+        for label in labels {
+            args.push("--unlabel");
+            args.push(label);
+        }
+        args.push("--yes");
+        self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn mr_merge(&self, dir: &Path, number: u64, merge: MrMerge) -> Result<()> {
@@ -1286,25 +1409,55 @@ impl<R: ProcessRunner> GitLabApi for GitLab<R> {
     }
 
     async fn issue_create(&self, dir: &Path, title: &str, body: &str) -> Result<String> {
+        self.issue_create_with(dir, IssueCreate::new(title, body))
+            .await
+    }
+
+    async fn issue_create_with(&self, dir: &Path, spec: IssueCreate) -> Result<String> {
         // A literal `-` description is glab's stdin/editor sentinel, not the
         // string itself — refuse it before spawning (see `reject_dash_sentinel`).
-        reject_dash_sentinel("description", body)?;
+        reject_dash_sentinel("description", spec.body.as_str())?;
+        if !spec.labels.is_empty() {
+            reject_invalid_labels("issue_create_with", &spec.labels)?;
+        }
         // `--yes` skips glab's interactive submission confirmation (a headless
         // run would otherwise hang on the prompt) — same as `mr_create`.
-        self.core
-            .run(self.core.command_in(
-                dir,
-                [
-                    "issue",
-                    "create",
-                    "--title",
-                    title,
-                    "--description",
-                    body,
-                    "--yes",
-                ],
-            ))
-            .await
+        let mut args = vec![
+            "issue",
+            "create",
+            "--title",
+            spec.title.as_str(),
+            "--description",
+            spec.body.as_str(),
+        ];
+        for label in &spec.labels {
+            args.push("--label");
+            args.push(label);
+        }
+        args.push("--yes");
+        self.core.run(self.core.command_in(dir, args)).await
+    }
+
+    async fn issue_add_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("issue_add_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["issue", "update", number.as_str()];
+        for label in labels {
+            args.push("--label");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
+    }
+
+    async fn issue_remove_labels(&self, dir: &Path, number: u64, labels: &[String]) -> Result<()> {
+        reject_invalid_labels("issue_remove_labels", labels)?;
+        let number = number.to_string();
+        let mut args = vec!["issue", "update", number.as_str()];
+        for label in labels {
+            args.push("--unlabel");
+            args.push(label);
+        }
+        self.core.run_unit(self.core.command_in(dir, args)).await
     }
 
     async fn issue_close(&self, dir: &Path, number: u64) -> Result<()> {
@@ -1487,6 +1640,8 @@ vcs_cli_support::at_forwarders! {
         fn mr_list_for_source_branch(source_branch: &str) -> Result<Vec<MergeRequest>>;
         fn mr_view(number: u64) -> Result<MergeRequest>;
         fn mr_create(spec: MrCreate) -> Result<String>;
+        fn mr_add_labels(number: u64, labels: &[String]) -> Result<()>;
+        fn mr_remove_labels(number: u64, labels: &[String]) -> Result<()>;
         fn mr_merge(number: u64, merge: MrMerge) -> Result<()>;
         fn mr_mark_ready(number: u64) -> Result<()>;
         fn mr_close(number: u64) -> Result<()>;
@@ -1501,6 +1656,9 @@ vcs_cli_support::at_forwarders! {
         fn issue_list_with(spec: IssueList) -> Result<Vec<Issue>>;
         fn issue_view(number: u64) -> Result<Issue>;
         fn issue_create(title: &str, body: &str) -> Result<String>;
+        fn issue_create_with(spec: IssueCreate) -> Result<String>;
+        fn issue_add_labels(number: u64, labels: &[String]) -> Result<()>;
+        fn issue_remove_labels(number: u64, labels: &[String]) -> Result<()>;
         fn issue_close(number: u64) -> Result<()>;
         fn issue_reopen(number: u64) -> Result<()>;
         fn issue_comment(number: u64, body: &str) -> Result<String>;
@@ -2592,6 +2750,141 @@ mod tests {
         let mut mock = MockGitLabApi::new();
         mock.expect_auth_status().returning(|| Ok(true));
         assert!(mock.auth_status().await.unwrap());
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use processkit::testing::{RecordingRunner, Reply};
+
+    #[tokio::test]
+    async fn label_create_and_mutation_argv_are_exact_and_flag_values() {
+        let rec = RecordingRunner::replying(Reply::ok("https://example.test/1\n"));
+        let glab = GitLab::with_runner(&rec);
+        let labels = vec!["-urgent".to_string(), "help wanted".to_string()];
+
+        glab.mr_create(
+            Path::new("/repo"),
+            MrCreate::new("T", "B").labels(labels.clone()),
+        )
+        .await
+        .unwrap();
+        glab.issue_create_with(
+            Path::new("/repo"),
+            IssueCreate::new("I", "D").labels(labels.clone()),
+        )
+        .await
+        .unwrap();
+        glab.mr_add_labels(Path::new("/repo"), 7, &labels)
+            .await
+            .unwrap();
+        glab.mr_remove_labels(Path::new("/repo"), 7, &labels)
+            .await
+            .unwrap();
+        glab.at(Path::new("/repo"))
+            .issue_add_labels(9, &labels)
+            .await
+            .unwrap();
+        glab.issue_remove_labels(Path::new("/repo"), 9, &labels)
+            .await
+            .unwrap();
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "mr",
+                "create",
+                "--title",
+                "T",
+                "--description",
+                "B",
+                "--yes",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "issue",
+                "create",
+                "--title",
+                "I",
+                "--description",
+                "D",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted",
+                "--yes"
+            ]
+        );
+        assert_eq!(
+            calls[2].args_str(),
+            [
+                "mr",
+                "update",
+                "7",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted",
+                "--yes"
+            ]
+        );
+        assert_eq!(
+            calls[3].args_str(),
+            [
+                "mr",
+                "update",
+                "7",
+                "--unlabel",
+                "-urgent",
+                "--unlabel",
+                "help wanted",
+                "--yes"
+            ]
+        );
+        assert_eq!(
+            calls[4].args_str(),
+            [
+                "issue",
+                "update",
+                "9",
+                "--label",
+                "-urgent",
+                "--label",
+                "help wanted"
+            ]
+        );
+        assert_eq!(calls[4].cwd.as_deref(), Some(Path::new("/repo")));
+        assert_eq!(
+            calls[5].args_str(),
+            [
+                "issue",
+                "update",
+                "9",
+                "--unlabel",
+                "-urgent",
+                "--unlabel",
+                "help wanted"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_label_mutation_is_rejected_before_spawn() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let err = GitLab::with_runner(&rec)
+            .issue_remove_labels(Path::new("/repo"), 1, &[])
+            .await
+            .unwrap_err();
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty());
     }
 }
 

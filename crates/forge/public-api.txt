@@ -127,12 +127,14 @@ impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgeKind
 #[non_exhaustive] pub enum vcs_forge::ForgeOp
 pub vcs_forge::ForgeOp::IssueClose
 pub vcs_forge::ForgeOp::IssueComment
+pub vcs_forge::ForgeOp::IssueLabels
 pub vcs_forge::ForgeOp::IssueReopen
 pub vcs_forge::ForgeOp::PrApprove
 pub vcs_forge::ForgeOp::PrCheckout
 pub vcs_forge::ForgeOp::PrChecks
 pub vcs_forge::ForgeOp::PrDiff
 pub vcs_forge::ForgeOp::PrEdit
+pub vcs_forge::ForgeOp::PrLabels
 pub vcs_forge::ForgeOp::PrMarkReady
 pub vcs_forge::ForgeOp::PrRequestChanges
 pub vcs_forge::ForgeOp::ReleaseCreate
@@ -321,14 +323,17 @@ pub fn vcs_forge::Forge<R>::from_gitea(impl core::convert::Into<std::path::PathB
 pub fn vcs_forge::Forge<R>::from_github(impl core::convert::Into<std::path::PathBuf>, vcs_github::GitHub<R>) -> Self
 pub fn vcs_forge::Forge<R>::from_gitlab(impl core::convert::Into<std::path::PathBuf>, vcs_gitlab::GitLab<R>) -> Self
 pub fn vcs_forge::Forge<R>::from_unknown(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub async fn vcs_forge::Forge<R>::issue_add_labels(&self, u64, &[alloc::string::String]) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_close(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_comment(&self, u64, &str) -> vcs_forge::Result<alloc::string::String>
 pub async fn vcs_forge::Forge<R>::issue_create(&self, vcs_forge::IssueCreate) -> vcs_forge::Result<alloc::string::String>
 pub async fn vcs_forge::Forge<R>::issue_list(&self) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>
 pub async fn vcs_forge::Forge<R>::issue_list_with(&self, vcs_forge::IssueList) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>
+pub async fn vcs_forge::Forge<R>::issue_remove_labels(&self, u64, &[alloc::string::String]) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_reopen(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_view(&self, u64) -> vcs_forge::Result<vcs_forge::ForgeIssue>
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
+pub async fn vcs_forge::Forge<R>::pr_add_labels(&self, u64, &[alloc::string::String]) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_approve(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_checkout(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_checks(&self, u64) -> vcs_forge::Result<vcs_forge::CiStatus>
@@ -343,6 +348,7 @@ pub async fn vcs_forge::Forge<R>::pr_list(&self) -> vcs_forge::Result<alloc::vec
 pub async fn vcs_forge::Forge<R>::pr_list_with(&self, vcs_forge::PrList) -> vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>
 pub async fn vcs_forge::Forge<R>::pr_mark_ready(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_merge(&self, u64, vcs_forge::PrMerge) -> vcs_forge::Result<()>
+pub async fn vcs_forge::Forge<R>::pr_remove_labels(&self, u64, &[alloc::string::String]) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_request_changes(&self, u64, &str) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::pr_view(&self, u64) -> vcs_forge::Result<vcs_forge::ForgePr>
 pub async fn vcs_forge::Forge<R>::release_create(&self, vcs_forge::ReleaseCreate) -> vcs_forge::Result<alloc::string::String>
@@ -360,14 +366,17 @@ impl<R: processkit::runner::ProcessRunner> vcs_forge::ForgeApi for vcs_forge::Fo
 pub fn vcs_forge::Forge<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::cwd(&self) -> &std::path::Path
+pub fn vcs_forge::Forge<R>::issue_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_close<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::issue_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
+pub fn vcs_forge::Forge<R>::pr_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_approve<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_checkout<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_checks<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::CiStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -381,6 +390,7 @@ pub fn vcs_forge::Forge<R>::pr_list<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_forge::Forge<R>::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::pr_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgePr>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::release_create<'life0, 'async_trait>(&'life0 self, vcs_forge::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -400,12 +410,14 @@ pub vcs_forge::ForgeCapabilities::authed: bool
 pub vcs_forge::ForgeCapabilities::issue_close: bool
 pub vcs_forge::ForgeCapabilities::issue_comment: bool
 pub vcs_forge::ForgeCapabilities::issue_create: bool
+pub vcs_forge::ForgeCapabilities::issue_labels: bool
 pub vcs_forge::ForgeCapabilities::issue_reopen: bool
 pub vcs_forge::ForgeCapabilities::pr_approve: bool
 pub vcs_forge::ForgeCapabilities::pr_checks: bool
 pub vcs_forge::ForgeCapabilities::pr_comment: bool
 pub vcs_forge::ForgeCapabilities::pr_create: bool
 pub vcs_forge::ForgeCapabilities::pr_edit: bool
+pub vcs_forge::ForgeCapabilities::pr_labels: bool
 pub vcs_forge::ForgeCapabilities::pr_merge: bool
 pub vcs_forge::ForgeCapabilities::pr_request_changes: bool
 pub vcs_forge::ForgeCapabilities::release_create: bool
@@ -416,11 +428,13 @@ impl vcs_forge::ForgeCapabilities
 pub fn vcs_forge::ForgeCapabilities::all_false() -> Self
 pub fn vcs_forge::ForgeCapabilities::authed(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::issue_create(self) -> Self
+pub fn vcs_forge::ForgeCapabilities::issue_labels(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_approve(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_checks(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_comment(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_create(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_edit(self) -> Self
+pub fn vcs_forge::ForgeCapabilities::pr_labels(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_merge(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::pr_request_changes(self) -> Self
 pub fn vcs_forge::ForgeCapabilities::release_create(self) -> Self
@@ -591,8 +605,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ForgeRepo
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgeRepo
 #[non_exhaustive] pub struct vcs_forge::IssueCreate
 pub vcs_forge::IssueCreate::body: alloc::string::String
+pub vcs_forge::IssueCreate::labels: alloc::vec::Vec<alloc::string::String>
 pub vcs_forge::IssueCreate::title: alloc::string::String
 impl vcs_forge::IssueCreate
+pub fn vcs_forge::IssueCreate::labels(self, impl core::convert::Into<alloc::vec::Vec<alloc::string::String>>) -> Self
 pub fn vcs_forge::IssueCreate::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for vcs_forge::IssueCreate
 pub fn vcs_forge::IssueCreate::clone(&self) -> vcs_forge::IssueCreate
@@ -662,10 +678,12 @@ impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::PrClose
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::PrClose
 #[non_exhaustive] pub struct vcs_forge::PrCreate
 pub vcs_forge::PrCreate::body: alloc::string::String
+pub vcs_forge::PrCreate::labels: alloc::vec::Vec<alloc::string::String>
 pub vcs_forge::PrCreate::source: core::option::Option<alloc::string::String>
 pub vcs_forge::PrCreate::target: core::option::Option<alloc::string::String>
 pub vcs_forge::PrCreate::title: alloc::string::String
 impl vcs_forge::PrCreate
+pub fn vcs_forge::PrCreate::labels(self, impl core::convert::Into<alloc::vec::Vec<alloc::string::String>>) -> Self
 pub fn vcs_forge::PrCreate::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_forge::PrCreate::source(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_forge::PrCreate::target(self, impl core::convert::Into<alloc::string::String>) -> Self
@@ -799,14 +817,17 @@ pub trait vcs_forge::ForgeApi: core::marker::Send + core::marker::Sync
 pub fn vcs_forge::ForgeApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::cwd(&self) -> &std::path::Path
+pub fn vcs_forge::ForgeApi::issue_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_close<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::ForgeApi::issue_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::kind(&self) -> vcs_forge::ForgeKind
+pub fn vcs_forge::ForgeApi::pr_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_approve<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_checkout<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_checks<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::CiStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -820,6 +841,7 @@ pub fn vcs_forge::ForgeApi::pr_list<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_forge::ForgeApi::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::ForgeApi::pr_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::pr_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgePr>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::release_create<'life0, 'async_trait>(&'life0 self, vcs_forge::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -831,14 +853,17 @@ impl<R: processkit::runner::ProcessRunner> vcs_forge::ForgeApi for vcs_forge::Fo
 pub fn vcs_forge::Forge<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::cwd(&self) -> &std::path::Path
+pub fn vcs_forge::Forge<R>::issue_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_close<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_comment<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_create<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::IssueList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgeIssue>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::issue_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_reopen<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::issue_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeIssue>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::kind(&self) -> vcs_forge::ForgeKind
+pub fn vcs_forge::Forge<R>::pr_add_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_approve<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_checkout<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_checks<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::CiStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
@@ -852,6 +877,7 @@ pub fn vcs_forge::Forge<R>::pr_list<'life0, 'async_trait>(&'life0 self) -> core:
 pub fn vcs_forge::Forge<R>::pr_list_with<'life0, 'async_trait>(&'life0 self, vcs_forge::PrList) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::vec::Vec<vcs_forge::ForgePr>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_mark_ready<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_merge<'life0, 'async_trait>(&'life0 self, u64, vcs_forge::PrMerge) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn vcs_forge::Forge<R>::pr_remove_labels<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_request_changes<'life0, 'life1, 'async_trait>(&'life0 self, u64, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::Forge<R>::pr_view<'life0, 'async_trait>(&'life0 self, u64) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgePr>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::release_create<'life0, 'async_trait>(&'life0 self, vcs_forge::ReleaseCreate) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait

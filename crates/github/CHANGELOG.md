@@ -10,6 +10,11 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **PR/issue label management.** `PrCreate` and the new extensible
+  `IssueCreate` accept creation labels; `pr_add_labels`/`pr_remove_labels` and
+  `issue_add_labels`/`issue_remove_labels` map to `gh … edit` with repeated
+  flag-value arguments. The original string-based `issue_create` remains as a
+  compatibility shorthand through `issue_create_with`.
 - **Configurable PR and issue lists.** `PrList`/`IssueList` builders and their
   state enums drive new `pr_list_with`/`issue_list_with` methods (`--state` and
   `--limit`), including cwd-bound forwarders. Existing list methods remain the

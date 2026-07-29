@@ -18,6 +18,11 @@ crates; tag releases as `vcs-forge-v<version>`.
   `false` through `Forge::supports` for Gitea.
 
 ### Added
+- **Cross-forge PR/issue label management.** `PrCreate`/`IssueCreate` carry
+  creation labels on every backend. Four facade and `ForgeApi` methods add or
+  remove labels on existing PRs/issues on GitHub and GitLab; Gitea reports a
+  structural `Unsupported`. `ForgeOp::{PrLabels,IssueLabels}` and capability
+  fields make that gap predictable.
 - **Portable PR and issue list specifications.** `PrList`/`IssueList` and their
   state enums flow through `Forge::pr_list_with`/`issue_list_with` and
   `ForgeApi`; old methods remain open/100 shorthands. Gitea merged-only PR
@@ -27,8 +32,9 @@ crates; tag releases as `vcs-forge-v<version>`.
   `Error::VersionUnsupported { forge, operation, found, minimum }` variant (on the
   `#[non_exhaustive]` `Error`, so additive) and the classifier
   `Error::is_version_gated()`. Every **mutating** operation (`pr_create`,
-  `pr_comment`, `pr_edit`, `pr_merge`, `pr_approve`, `pr_request_changes`,
-  `pr_mark_ready`, `pr_close`, `pr_checkout`, `issue_create`, `issue_close`,
+  `pr_comment`, `pr_edit`, `pr_add_labels`, `pr_remove_labels`, `pr_merge`, `pr_approve`, `pr_request_changes`,
+  `pr_mark_ready`, `pr_close`, `pr_checkout`, `issue_create`, `issue_add_labels`,
+  `issue_remove_labels`, `issue_close`,
   `issue_reopen`, `issue_comment`, `release_create`, `release_delete`) now refuses
   with this typed error **before spawning** when the operation is supported by its
   backend and the installed `gh`/`glab`/`tea` is

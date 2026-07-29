@@ -10,6 +10,11 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **MR/issue label management.** `MrCreate` and the new extensible
+  `IssueCreate` accept creation labels; `mr_add_labels`/`mr_remove_labels` and
+  `issue_add_labels`/`issue_remove_labels` map to `glab … update` with repeated
+  `--label`/`--unlabel` flag values. The original string-based `issue_create`
+  remains a compatibility shorthand through `issue_create_with`.
 - **Configurable MR and issue lists.** `MrList`/`IssueList` builders select state
   and limit through new `mr_list_with`/`issue_list_with` methods. States map to
   glab's `--closed`/`--merged`/`--all` flags and limits to `--per-page`; existing

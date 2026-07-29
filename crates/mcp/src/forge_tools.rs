@@ -175,7 +175,7 @@ impl VcsMcpServer {
         // genuine bare-positional slot is guarded in its own wrapper.
         let out = self
             .forge()?
-            .issue_create(vcs_forge::IssueCreate::new(p.title, p.body))
+            .issue_create(vcs_forge::IssueCreate::new(p.title, p.body).labels(p.labels))
             .await
             .map_err(forge_err)?;
         ok_json(&serde_json::json!({ "output": out }))
@@ -241,6 +241,38 @@ impl VcsMcpServer {
     }
 
     #[tool(
+        description = "Add labels to an existing issue. Supported on GitHub/GitLab; Gitea reports unsupported. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_issue_add_labels(
+        &self,
+        Parameters(p): Parameters<LabelsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_issue_add_labels")?;
+        self.forge()?
+            .issue_add_labels(p.number, &p.labels)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "number": p.number, "labels_added": p.labels }))
+    }
+
+    #[tool(
+        description = "Remove labels from an existing issue. Supported on GitHub/GitLab; Gitea reports unsupported. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_issue_remove_labels(
+        &self,
+        Parameters(p): Parameters<LabelsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_issue_remove_labels")?;
+        self.forge()?
+            .issue_remove_labels(p.number, &p.labels)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "number": p.number, "labels_removed": p.labels }))
+    }
+
+    #[tool(
         description = "Open a pull/merge request, returning the CLI's output (the URL on success). Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
@@ -259,8 +291,41 @@ impl VcsMcpServer {
         if let Some(target) = p.target {
             spec = spec.target(target);
         }
+        spec = spec.labels(p.labels);
         let out = self.forge()?.pr_create(spec).await.map_err(forge_err)?;
         ok_json(&serde_json::json!({ "output": out }))
+    }
+
+    #[tool(
+        description = "Add labels to an existing PR/MR. Supported on GitHub/GitLab; Gitea reports unsupported. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_add_labels(
+        &self,
+        Parameters(p): Parameters<LabelsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_add_labels")?;
+        self.forge()?
+            .pr_add_labels(p.number, &p.labels)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "number": p.number, "labels_added": p.labels }))
+    }
+
+    #[tool(
+        description = "Remove labels from an existing PR/MR. Supported on GitHub/GitLab; Gitea reports unsupported. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn forge_pr_remove_labels(
+        &self,
+        Parameters(p): Parameters<LabelsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.require_write("forge_pr_remove_labels")?;
+        self.forge()?
+            .pr_remove_labels(p.number, &p.labels)
+            .await
+            .map_err(forge_err)?;
+        ok_json(&serde_json::json!({ "number": p.number, "labels_removed": p.labels }))
     }
 
     #[tool(

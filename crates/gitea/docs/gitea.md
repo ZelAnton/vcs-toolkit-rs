@@ -93,7 +93,8 @@ configured.
 | `pr_list(dir)` | `tea pr list --state open --limit 100 --fields index,title,state,head,base,url --output csv` | `Vec<PullRequest>` (compatibility default) |
 | `pr_list_with(dir, spec)` | `tea pr list --state open\|closed\|all --limit <limit> --fields … --output csv` | `Vec<PullRequest>` via `PrList`; `Merged` is `Unsupported` |
 | `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output csv` (paged) + filter | [`PullRequest`] |
-| `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …]` | `String` |
+| `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …] [--labels a,b]` | `String` |
+| `pr_add_labels` / `pr_remove_labels` | **Unsupported** (`tea` has no PR edit subcommand) | Use the Gitea REST API. |
 | `pr_merge(dir, number, merge)` | `tea pr merge <number> --style merge\|rebase\|squash` | `()` |
 | `pr_close(dir, number)` | `tea pr close <number>` | `()` |
 | `pr_comment(dir, number, body)` | `tea comment <number> <body>` | `String` |
@@ -134,7 +135,9 @@ merge-when-checks flag), so setting either makes `pr_merge` return
 `pr_create` takes a [`PrCreate`] spec — build it through `PrCreate::new(title,
 body)` and chain the optional `.head(b)` (`--head`; `None` = the current branch) /
 `.base(b)` (`--base`; `None` = the repo default) setters. Public fields:
-`title: String`, `body: String`, `head: Option<String>`, `base: Option<String>`.
+`title: String`, `body: String`, `head: Option<String>`, `base: Option<String>`,
+`labels: Vec<String>`. Creation labels are encoded in tea's single comma-separated
+`--labels` value; a label containing a comma is rejected rather than silently split.
 Unlike `gh`/`glab`, `tea` prints a **textual summary** on success, not the new
 PR's URL (it has no flag to shape create output), so do **not** parse the returned
 `String` as a URL.
@@ -157,7 +160,8 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 | `issue_list(dir)` | `tea issues list --state open --limit 100 --fields index,title,state,body,url --output csv` | `Vec<Issue>` (compatibility default) |
 | `issue_list_with(dir, spec)` | `tea issues list --state open\|closed\|all --limit <limit> --fields … --output csv` | `Vec<Issue>` via `IssueList` |
 | `issue_view(dir, number)` | `tea issues list --state all --page N --output csv` (paged) + filter | [`Issue`] |
-| `issue_create(dir, title, body)` | `tea issues create --title … --description …` | `String` |
+| `issue_create(dir, title, body)` / `issue_create_with(dir, spec)` | `tea issues create --title … --description … [--labels a,b]` | `String` |
+| `issue_add_labels` / `issue_remove_labels` | **Unsupported** (`tea` has no issue edit subcommand) | Use the Gitea REST API. |
 | `release_list(dir)` | `tea releases list --limit 100 --output csv` | `Vec<Release>` |
 | `release_create(dir, spec)` | `tea releases create --tag <tag> [--title …] [--note …] [--draft] [--prerelease]` | `String` (tea's output) |
 | `release_delete(dir, tag)` | `tea releases delete <tag>` | `()` |
@@ -171,7 +175,9 @@ the API. `issue_list` also pins `--fields` to fetch `body`/`url` (tea's default 
 columns omit them). Like `pr_view`, **`issue_view` is synthesized by paging and
 filtering** because `tea issues <number>` (the bare-index form) renders Markdown
 and ignores `--output`.
-`issue_create`, like `pr_create`, returns tea's textual summary verbatim — its
+`issue_create_with(IssueCreate)` adds creation labels while the original
+`issue_create(title, body)` remains the compatibility shorthand. `issue_create`,
+like `pr_create`, returns tea's textual summary verbatim — its
 final line is the new issue's URL, but there is no flag to shape the output, so it
 is **not** a parsed URL. There is intentionally **no `release_view`**: `tea
 releases` takes no positional and always lists, so a single-release-by-tag view

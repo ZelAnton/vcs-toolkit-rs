@@ -5,7 +5,7 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, IssueList as GhIssueList,
+    CheckRun, GitHub, GitHubApi, Issue, IssueCreate as GhIssueCreate, IssueList as GhIssueList,
     IssueListState as GhIssueListState, PrClose as GhPrClose, PrCreate as GhPrCreate,
     PrEdit as GhPrEdit, PrList as GhPrList, PrListState as GhPrListState, PrMerge as GhPrMerge,
     PullRequest, Release, ReleaseCreate as GhReleaseCreate, RepoView, ReviewAction,
@@ -13,8 +13,8 @@ use vcs_github::{
 
 use crate::dto::{
     CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState, PrMerge,
-    ReleaseCreate,
+    IssueCreate, IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState,
+    PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
@@ -94,7 +94,28 @@ pub(crate) async fn pr_create<R: ProcessRunner>(
     if let Some(target) = spec.target {
         create = create.base(target);
     }
+    create = create.labels(spec.labels);
     Ok(gh.pr_create(dir, create).await?)
+}
+
+pub(crate) async fn pr_add_labels<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    gh.pr_add_labels(dir, number, labels).await?;
+    Ok(())
+}
+
+pub(crate) async fn pr_remove_labels<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    gh.pr_remove_labels(dir, number, labels).await?;
+    Ok(())
 }
 
 pub(crate) async fn pr_comment<R: ProcessRunner>(
@@ -262,10 +283,30 @@ pub(crate) async fn issue_view<R: ProcessRunner>(
 pub(crate) async fn issue_create<R: ProcessRunner>(
     gh: &GitHub<R>,
     dir: &Path,
-    title: &str,
-    body: &str,
+    spec: IssueCreate,
 ) -> Result<String> {
-    Ok(gh.issue_create(dir, title, body).await?)
+    let create = GhIssueCreate::new(spec.title, spec.body).labels(spec.labels);
+    Ok(gh.issue_create_with(dir, create).await?)
+}
+
+pub(crate) async fn issue_add_labels<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    gh.issue_add_labels(dir, number, labels).await?;
+    Ok(())
+}
+
+pub(crate) async fn issue_remove_labels<R: ProcessRunner>(
+    gh: &GitHub<R>,
+    dir: &Path,
+    number: u64,
+    labels: &[String],
+) -> Result<()> {
+    gh.issue_remove_labels(dir, number, labels).await?;
+    Ok(())
 }
 
 pub(crate) async fn issue_close<R: ProcessRunner>(
