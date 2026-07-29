@@ -3026,7 +3026,7 @@ pub fn workspace_root_matches(root: &Path, path: &Path) -> bool {
 /// job-containment), so reserve them for short-lived cleanup.
 pub mod blocking {
     use std::io;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::process::Command;
 
     /// Forget a workspace synchronously (`jj workspace forget <name>`).
@@ -3078,7 +3078,7 @@ pub mod blocking {
                 "workspace",
                 "list",
                 "-T",
-                "name ++ \"\\n\"",
+                super::parse::WORKSPACE_NAME_TEMPLATE,
                 "--color",
                 "never",
             ])
@@ -3094,11 +3094,7 @@ pub mod blocking {
         // --name` — remembered so a no-match doesn't silently hide a workspace we
         // merely failed to place (it may be the very one at `path`).
         let mut unresolved: Vec<String> = Vec::new();
-        for name in String::from_utf8_lossy(&out.stdout).lines() {
-            let name = name.trim();
-            if name.is_empty() {
-                continue;
-            }
+        for name in super::parse::parse_workspace_names(&String::from_utf8_lossy(&out.stdout)) {
             let root = Command::new(super::BINARY)
                 .current_dir(dir)
                 .args([
@@ -3106,19 +3102,19 @@ pub mod blocking {
                     "workspace",
                     "root",
                     "--name",
-                    name,
+                    &name,
                     "--color",
                     "never",
                 ])
                 .output();
             match root {
                 Ok(r) if r.status.success() => {
-                    let p = PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string());
+                    let p = super::parse::workspace_root_from_bytes(&r.stdout);
                     if super::workspace_root_matches(&p, path) {
-                        return Ok(Some(name.to_string()));
+                        return Ok(Some(name));
                     }
                 }
-                _ => unresolved.push(name.to_string()),
+                _ => unresolved.push(name),
             }
         }
         if unresolved.is_empty() {

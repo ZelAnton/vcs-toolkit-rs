@@ -151,6 +151,10 @@ pub(crate) const CHANGE_TEMPLATE: &str = "change_id.short() ++ \"\\t\" ++ commit
 /// are the space-joined `.escape_json()` of each local bookmark name.
 pub(crate) const WORKSPACE_TEMPLATE: &str = "name.escape_json() ++ \"\\t\" ++ target.commit_id() ++ \"\\t\" ++ target.local_bookmarks().map(|b| b.name().escape_json()).join(\" \") ++ \"\\n\"";
 
+/// Minimal template for the blocking workspace-name probe. JSON framing keeps a
+/// name containing whitespace, quotes, or a newline on one unambiguous row.
+pub(crate) const WORKSPACE_NAME_TEMPLATE: &str = "name.escape_json() ++ \"\\n\"";
+
 /// `jj log -T` template rendering a commit's local bookmark names as space-joined
 /// `.escape_json()` strings (so a name with a comma survives — the old comma-join
 /// mangled it). Drives `current_bookmark`/`trunk` via [`first_bookmark_name`].
@@ -616,6 +620,15 @@ pub(crate) fn parse_workspaces(output: &str) -> Vec<Workspace> {
         .collect()
 }
 
+/// Parse rows produced by [`WORKSPACE_NAME_TEMPLATE`].
+pub(crate) fn parse_workspace_names(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(decode_json_field)
+        .collect()
+}
+
 /// Parse `jj diff --summary`: each line is `<status-letter> <path>`. For a rename
 /// (`R`) or copy (`C`) jj renders the path as `prefix{old => new}suffix` rather than
 /// a plain path, so those are expanded into the real new path (and the old path is
@@ -1011,6 +1024,14 @@ mod tests {
             PathBuf::from("/repo/ws")
         );
         assert_eq!(workspace_root_from_bytes(b"\n"), PathBuf::new());
+    }
+
+    #[test]
+    fn workspace_names_decode_json_framing() {
+        assert_eq!(
+            parse_workspace_names("\"default\"\n\"space and \\\"quote\\\"\"\n\"line\\nfeed\"\n"),
+            ["default", "space and \"quote\"", "line\nfeed"]
+        );
     }
 
     // A workspace root whose bytes are not valid UTF-8 (legal on Unix) survives

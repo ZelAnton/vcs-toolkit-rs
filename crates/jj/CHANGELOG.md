@@ -81,6 +81,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   per-stream unit; nothing here was re-tuned. (T-130.)
 
 ### Fixed
+- The blocking workspace resolver used by Drop cleanup now decodes `jj workspace
+  root` through the same raw-byte parser as the async API, preserving non-UTF-8
+  Unix roots and trailing spaces/tabs. Its workspace-name probe now uses JSON
+  framing too, so unusual names cannot corrupt row boundaries. (T-135.)
 - **`resolve_list` now reads jj's machine-oriented `file list` template instead
   of parsing `resolve --list`'s human-facing table.** It runs `jj file list -r
   <revset> -T 'if(conflict, path ++ "\0")'`: jj evaluates `conflict` on each
