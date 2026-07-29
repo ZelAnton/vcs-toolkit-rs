@@ -75,6 +75,10 @@ crates; tag releases as `vcs-git-v<version>`.
   re-tuned. (T-130.)
 
 ### Fixed
+- `blocking::worktree_remove`, the synchronous Drop-cleanup path, now clears the
+  same Git repository redirectors as the normal client before running its
+  destructive command, preventing an inherited `GIT_DIR` from retargeting it.
+  (T-134.)
 - `GitApi::remote_list` now preserves interior spaces in local-path remote URLs
   from `git remote -v`, and still prefers a matching fetch URL over push. (T-132.)
 - `GitApi::worktree_list` now parses CRLF-framed porcelain exactly like LF output:
