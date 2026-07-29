@@ -16,7 +16,7 @@ use vcs_jj::{
 
 use crate::dto::{
     AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, Remote, RepoSnapshot, WorktreeInfo,
+    OperationLogEntry, OperationState, Remote, RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -123,6 +123,23 @@ pub(crate) async fn local_branches_readonly<R: ProcessRunner>(
     dir: &Path,
 ) -> Result<Vec<String>> {
     local_branches_with(jj, dir, Observe::ReadOnly).await
+}
+
+pub(crate) async fn op_log<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    max: usize,
+) -> Result<Vec<OperationLogEntry>> {
+    Ok(jj
+        .op_log(dir, max)
+        .await?
+        .into_iter()
+        .map(|op| OperationLogEntry::new(op.id, op.user, op.time, op.description))
+        .collect())
+}
+
+pub(crate) async fn undo<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<()> {
+    Ok(jj.op_undo(dir).await?)
 }
 
 pub(crate) async fn branch_exists<R: ProcessRunner>(

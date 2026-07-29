@@ -52,17 +52,17 @@ pub(crate) struct RepoInfo<'a> {
     pub(crate) forge: Option<&'static str>,
 }
 
-/// Map a `vcs-core` error into an MCP error. The facade reports a refused
-/// *input* (e.g. `commit_paths` with an empty path set) as an
-/// `InvalidInput` io error — that's the client's call to fix, so surface it as
-/// an invalid-params error rather than an internal one.
+/// Map a `vcs-core` error into an MCP error. Refused input and operations that
+/// the selected backend structurally does not support are client-actionable, so
+/// surface them as invalid params rather than internal server failures.
 pub(crate) fn core_err(e: vcs_core::Error) -> ErrorData {
     // A bad-argument failure — a facade precondition (`Error::Io`/`InvalidInput`)
     // OR the boundary refusal of a flag-like/malformed ref/revision (which the
     // facade now raises as `Error::Vcs` carrying an `InvalidInput` spawn source
     // when it converts a tool string into a validated newtype) — is a client-facing
-    // invalid-request, not an internal error. `is_invalid_input` classifies both.
-    if e.is_invalid_input() {
+    // invalid-request, not an internal error. `is_invalid_input` classifies both;
+    // `is_unsupported` covers honest backend asymmetries such as Git op-log access.
+    if e.is_invalid_input() || e.is_unsupported() {
         ErrorData::invalid_params(e.to_string(), None)
     } else {
         ErrorData::internal_error(e.to_string(), None)

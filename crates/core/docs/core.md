@@ -440,6 +440,8 @@ name or revision the backend understands.
 
 ```rust,ignore
 pub async fn try_merge(&self, source: &str)    -> Result<MergeProbe>;
+pub async fn op_log(&self, max: usize)         -> Result<Vec<OperationLogEntry>>;
+pub async fn undo(&self)                       -> Result<()>;
 pub async fn in_progress_state(&self)          -> Result<OperationState>;
 pub async fn continue_in_progress(&self)       -> Result<OperationState>;
 pub async fn abort_in_progress(&self)          -> Result<OperationState>;
@@ -469,7 +471,16 @@ match repo.try_merge("feature").await? {
 # Ok(()) }
 ```
 
-The remaining three deal with operation state, and this is the sharpest
+`op_log` and `undo` form the facade's operation-recovery boundary. On jj,
+`op_log(max)` returns the newest operations as typed `OperationLogEntry` values
+and runs `op log --at-op=@ --ignore-working-copy`, so inspecting recovery history
+does not snapshot the working copy or record/reconcile an operation. `undo` runs
+the top-level `jj undo` command used throughout the supported jj 0.38+ range. On
+git both methods return `Error::Unsupported`: reflog plus reset is neither a
+repository-wide operation history nor a faithful undo analogue. Restoring an
+arbitrary operation id remains available from the jj-specific client.
+
+The remaining state methods deal with operation state, and this is the sharpest
 git-vs-jj asymmetry the facade has to paper over. git models an in-progress merge,
 rebase, `am`, cherry-pick, revert, or bisect as *paused on-disk state* (`MERGE_HEAD`,
 a `rebase-*` dir, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`); jj has no
@@ -502,7 +513,8 @@ than silently reported still in progress. It returns the fresh *post-call* state
 state's own git command (`merge --abort` / `rebase --abort` / `am --abort` /
 `cherry-pick --abort` / `revert --abort` / `bisect reset`; jj: a **no-op** —
 nothing is ever paused; roll back explicitly via the jj client's `transaction` /
-`op_restore`). It returns the fresh *post-call* state — `Clear` when nothing was,
+`op_restore`; or use the facade's `op_log` and `undo`). It returns the fresh
+*post-call* state — `Clear` when nothing was,
 or remains, in progress.
 
 ## Worktrees / workspaces
@@ -658,6 +670,21 @@ Unifies the backends' different models of "mid-operation":
 | `Revert`   | A git revert is in progress (`REVERT_HEAD` present). Aborts with `revert --abort`, continues with `revert --continue`. git only. |
 | `Bisect`   | A git bisect session is in progress (`BISECT_LOG` present). Aborts with `bisect reset`; it has *no* continue step (bisect advances by `git bisect good`/`bad`), so `continue_in_progress` returns `Error::Unsupported`. git only. |
 | `Conflict` | The working copy has an unresolved conflict — chiefly jj, which records conflicts on the change rather than pausing an operation. On git this surfaces from `continue_in_progress`, not `in_progress_state`. |
+
+### `OperationLogEntry`
+
+One typed jj operation-log row returned by `Repo::op_log`; git reports the
+operation-log surface as `Error::Unsupported`.
+
+```rust,ignore
+#[non_exhaustive]
+pub struct OperationLogEntry {
+    pub id: String,          // short operation id
+    pub user: String,        // OS-level user@host
+    pub time: String,        // operation start timestamp
+    pub description: String, // first description line
+}
+```
 
 ### `RepoSnapshot`
 

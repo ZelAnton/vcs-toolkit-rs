@@ -344,6 +344,24 @@ impl core::marker::Unpin for vcs_mcp::NewChildParams
 impl core::marker::UnsafeUnpin for vcs_mcp::NewChildParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::NewChildParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::NewChildParams
+pub struct vcs_mcp::OpLogParams
+pub vcs_mcp::OpLogParams::max: usize
+impl core::fmt::Debug for vcs_mcp::OpLogParams
+pub fn vcs_mcp::OpLogParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OpLogParams
+pub fn vcs_mcp::OpLogParams::inline_schema() -> bool
+pub fn vcs_mcp::OpLogParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OpLogParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OpLogParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OpLogParams
+pub fn vcs_mcp::OpLogParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OpLogParams
+impl core::marker::Send for vcs_mcp::OpLogParams
+impl core::marker::Sync for vcs_mcp::OpLogParams
+impl core::marker::Unpin for vcs_mcp::OpLogParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OpLogParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OpLogParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OpLogParams
 pub struct vcs_mcp::PrCloseParams
 pub vcs_mcp::PrCloseParams::delete_branch: bool
 pub vcs_mcp::PrCloseParams::number: u64
@@ -775,6 +793,8 @@ pub fn vcs_mcp::VcsMcpServer::repo_log(&self, rmcp::handler::server::wrapper::pa
 pub fn vcs_mcp::VcsMcpServer::repo_log_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_new_child(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::NewChildParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_new_child_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::repo_op_log(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OpLogParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::repo_op_log_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_push(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::PushParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_push_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_rebase(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::RebaseParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
@@ -793,6 +813,8 @@ pub fn vcs_mcp::VcsMcpServer::repo_status(&self) -> core::pin::Pin<alloc::boxed:
 pub fn vcs_mcp::VcsMcpServer::repo_status_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_try_merge(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::TryMergeParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_try_merge_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::repo_undo(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::repo_undo_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_worktrees(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_worktrees_tool_attr() -> rmcp::model::tool::Tool
 impl core::clone::Clone for vcs_mcp::VcsMcpServer

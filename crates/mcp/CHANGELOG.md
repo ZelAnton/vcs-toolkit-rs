@@ -10,6 +10,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- `repo_op_log` and `repo_undo` expose jj operation-log recovery through the
+  `vcs-core` facade. `repo_op_log` is an ungated true read using
+  `--at-op=@ --ignore-working-copy`; `repo_undo` is write-gated and runs
+  top-level `jj undo`. Git reports both as client-facing `invalid_params` from
+  its structural `Unsupported` capability.
 - **Forge label tools.** PR/issue creation params accept optional `labels`, and
   four write-gated tools add/remove labels on existing PRs/issues. GitHub and
   GitLab are supported; Gitea surfaces `invalid_params` from its structural

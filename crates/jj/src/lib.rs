@@ -674,11 +674,12 @@ pub trait JjApi: Send + Sync {
     /// a risky sequence to roll back to.
     async fn op_head(&self, dir: &Path) -> Result<String>;
     /// The newest `limit` operations, newest first (`op log --no-graph
-    /// --limit n`).
+    /// --limit n --at-op=@ --ignore-working-copy`). This is a pure read: it
+    /// neither snapshots the working copy nor reconciles divergent operations.
     async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>>;
     /// Restore the repo to an operation (`op restore <id>`).
     async fn op_restore(&self, dir: &Path, op_id: &str) -> Result<()>;
-    /// Undo the latest operation (`op undo`).
+    /// Undo the latest operation (`undo`). (`op undo` was removed in jj 0.39.)
     async fn op_undo(&self, dir: &Path) -> Result<()>;
 
     // --- Workspaces ----------------------------------------------------------
@@ -1992,7 +1993,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         let limit = limit.to_string();
         self.core
             .parse(
-                self.cmd_in(
+                self.cmd_in_wc(
                     dir,
                     [
                         "op",
@@ -2002,7 +2003,9 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
                         limit.as_str(),
                         "-T",
                         parse::OP_TEMPLATE,
+                        "--at-op=@",
                     ],
+                    WorkingCopy::Ignore,
                 ),
                 parse::parse_operations,
             )
@@ -2017,7 +2020,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn op_undo(&self, dir: &Path) -> Result<()> {
-        self.core.run_unit(self.cmd_in(dir, ["op", "undo"])).await
+        self.core.run_unit(self.cmd_in(dir, ["undo"])).await
     }
 
     async fn workspace_list(&self, dir: &Path) -> Result<Vec<Workspace>> {
@@ -4457,6 +4460,26 @@ mod tests {
         assert_eq!(ops[0].description, "new empty commit");
         let args = rec.only_call().args_str();
         assert_eq!(&args[..5], &["op", "log", "--no-graph", "--limit", "5"]);
+        assert!(args.iter().any(|arg| arg == "--at-op=@"));
+        assert!(args.iter().any(|arg| arg == "--ignore-working-copy"));
+    }
+
+    #[tokio::test]
+    async fn op_undo_uses_the_supported_top_level_command() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        Jj::with_runner(&rec)
+            .op_undo(Path::new("/repo"))
+            .await
+            .expect("undo");
+        let call = rec.only_call();
+        assert_eq!(call.args_str()[0], "undo");
+        assert!(
+            !call
+                .args_str()
+                .windows(2)
+                .any(|args| args == ["op", "undo"])
+        );
+        assert_eq!(call.cwd.as_deref(), Some(Path::new("/repo")));
     }
 
     // evolog must use the commit-context template (bare `change_id` doesn't

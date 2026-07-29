@@ -104,6 +104,17 @@ impl VcsMcpServer {
         )
     }
 
+    #[tool(
+        description = "Recent repository operation-log entries, newest first (jj only; Git reports unsupported). This is a true read: jj runs with --at-op=@ --ignore-working-copy, so it neither snapshots the working copy nor records/reconciles operations.",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_op_log(
+        &self,
+        Parameters(p): Parameters<OpLogParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok_json(&self.repo.op_log(p.max).await.map_err(core_err)?)
+    }
+
     // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
     // NOT readOnlyHint; still callable without a write gate). A plain `jj file show`
     // snapshots the working copy first, exactly like the other repo_* reads.
@@ -256,6 +267,16 @@ impl VcsMcpServer {
         let _write = self.begin_repo_write("repo_rebase").await?;
         self.repo.rebase(&p.onto).await.map_err(core_err)?;
         ok_json(&serde_json::json!({ "rebased_onto": p.onto }))
+    }
+
+    #[tool(
+        description = "Undo the latest repository operation through jj's operation log (jj only; Git reports unsupported). Requires write access (--allow-write, or --allow-tools repo_undo).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_undo(&self) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_undo").await?;
+        self.repo.undo().await.map_err(core_err)?;
+        ok_json(&serde_json::json!({ "undone": true }))
     }
 
     #[tool(

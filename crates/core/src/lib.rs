@@ -86,6 +86,8 @@
 //!   [`rebase`](Repo::rebase).
 //! - **Merge & operation state** — [`try_merge`](Repo::try_merge) (a
 //!   trace-free conflict probe → [`MergeProbe`]),
+//!   [`op_log`](Repo::op_log) / [`undo`](Repo::undo) (jj operation recovery;
+//!   structurally unsupported on git),
 //!   [`in_progress_state`](Repo::in_progress_state) /
 //!   [`abort_in_progress`](Repo::abort_in_progress) /
 //!   [`continue_in_progress`](Repo::continue_in_progress) → [`OperationState`].
@@ -120,8 +122,10 @@
 //! - **Full `merge`** — jj composes `new` + `squash` + bookmark moves; git runs a
 //!   single command. Only the *conflict probe* unifies, as
 //!   [`try_merge`](Repo::try_merge).
-//! - **Operation rollback** — jj's `op restore` has no faithful git analogue; use
-//!   [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client.
+//! - **Restore a specific operation** — [`op_log`](Repo::op_log) and
+//!   [`undo`](Repo::undo) expose the portable recovery boundary, with structural
+//!   `Unsupported` on git. Restoring an arbitrary operation id remains jj-specific;
+//!   use [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client.
 //! - **Range / revset queries** — commit counts and diff stats over a range: git's
 //!   `a..b` and jj's revsets aren't interchangeable, so neither is forced onto a
 //!   shared signature.
@@ -190,8 +194,9 @@ mod jj_backend;
 
 pub use dto::{
     AnnotationLine, BackendKind, BranchDelete, ChangeKind, CloneSpec, Commit, CreateOutcome,
-    DiffStat, FileChange, FileDiff, MergeProbe, OperationState, Remote, RepoSnapshot,
-    UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo, WorktreeRemove,
+    DiffStat, FileChange, FileDiff, MergeProbe, OperationLogEntry, OperationState, Remote,
+    RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo,
+    WorktreeRemove,
 };
 pub use error::{Error, Result};
 // The shared output-budget knob (from the CLI-support plumbing, via `vcs-git`): a
@@ -975,7 +980,7 @@ impl<R: ProcessRunner> Repo<R> {
     /// default mode, which first **snapshots the working copy** (imports any bare
     /// filesystem edit into a fresh `@`) and **records a new operation** in the op
     /// log. That is a bookkeeping side effect, not a content mutation (no tracked
-    /// file/ref changes, and it is transparently undoable via `jj op undo`), but it
+    /// file/ref changes, and it is transparently undoable via `jj undo`), but it
     /// is not a *no-op* read either. A genuinely non-recording read exists
     /// (`--ignore-working-copy`, wired up as `vcs_jj`'s `_ignoring_working_copy`
     /// client methods and this crate's [`snapshot_readonly`](Self::snapshot_readonly)
@@ -1309,6 +1314,35 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Recent repository operations, newest first. On jj this delegates to the
+    /// typed operation log using `--at-op=@ --ignore-working-copy`, so the read
+    /// records no working-copy snapshot and does not reconcile divergent op heads.
+    /// Git returns [`Error::Unsupported`]: its reflog does not model jj's
+    /// repository-wide operation history or restore semantics faithfully.
+    pub async fn op_log(&self, max: usize) -> Result<Vec<OperationLogEntry>> {
+        match &self.backend {
+            Backend::Git(_) => Err(Error::Unsupported(
+                "operation log is available only on the jj backend".into(),
+            )),
+            Backend::Jj(j) => jj_backend::op_log(j, &self.cwd, max).await,
+        }
+    }
+
+    /// Undo the most recent repository operation. On jj this runs top-level
+    /// `jj undo`, which works across the supported jj 0.38+ range and restores
+    /// repository state through the operation log. Git returns
+    /// [`Error::Unsupported`] rather than guessing at a destructive reflog/reset
+    /// analogue. This mutates repository and working-copy state; callers must
+    /// serialize it with other repository writes.
+    pub async fn undo(&self) -> Result<()> {
+        match &self.backend {
+            Backend::Git(_) => Err(Error::Unsupported(
+                "operation undo is available only on the jj backend".into(),
+            )),
+            Backend::Jj(j) => jj_backend::undo(j, &self.cwd).await,
+        }
+    }
+
     /// Abort the in-progress operation, if any (git: `merge --abort` /
     /// `rebase --abort`; jj: a no-op — there are no paused operations, roll back
     /// explicitly via `Jj::transaction` / `op_restore`). Returns the fresh
@@ -1615,6 +1649,8 @@ facade_trait! {
         fn new_child(reference: &str) -> Result<()>;
         fn rebase(onto: &str) -> Result<()>;
         fn try_merge(source: &str) -> Result<MergeProbe>;
+        fn op_log(max: usize) -> Result<Vec<OperationLogEntry>>;
+        fn undo() -> Result<()>;
         fn abort_in_progress() -> Result<OperationState>;
         fn continue_in_progress() -> Result<OperationState>;
         fn in_progress_state() -> Result<OperationState>;
@@ -1627,11 +1663,56 @@ facade_trait! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::testing::{Reply, ScriptedRunner};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
     // The shared sandbox fixture — a unique temp dir removed on drop. Using the
     // testkit's one impl instead of a private copy means the wrappers/facades
     // don't each carry a fixture that could drift.
     use vcs_testkit::TempDir;
+
+    #[tokio::test]
+    async fn jj_operation_log_is_read_only_and_undo_uses_top_level_command() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["jj", "op", "log"],
+                    Reply::ok(
+                        "abc\t\"agent@host\"\t2026-07-29T10:00:00+02:00\t\"describe commit\"\n",
+                    ),
+                )
+                .on(["jj", "undo"], Reply::ok("")),
+        );
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+
+        let operations = repo.op_log(5).await.expect("op log");
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].id, "abc");
+        assert_eq!(operations[0].description, "describe commit");
+        repo.undo().await.expect("undo");
+
+        let calls = rec.calls();
+        assert!(calls[0].args_str().iter().any(|arg| arg == "--at-op=@"));
+        assert!(
+            calls[0]
+                .args_str()
+                .iter()
+                .any(|arg| arg == "--ignore-working-copy")
+        );
+        assert_eq!(calls[1].args_str()[0], "undo");
+        assert_eq!(calls[1].cwd.as_deref(), Some(repo.cwd()));
+    }
+
+    #[tokio::test]
+    async fn git_operation_log_and_undo_are_structurally_unsupported() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&rec));
+
+        assert!(repo.op_log(5).await.unwrap_err().is_unsupported());
+        assert!(repo.undo().await.unwrap_err().is_unsupported());
+        assert!(
+            rec.calls().is_empty(),
+            "unsupported operations must not spawn"
+        );
+    }
 
     // --- discover ------------------------------------------------------------
 

@@ -13,6 +13,13 @@ crates; tag releases as `vcs-jj-v<version>`.
   `git_clone_with_progress` methods with ScriptedRunner-replayable process
   lifecycle/output events and the existing failed-clone cleanup contract.
 
+### Changed
+- **Operation-log reads no longer mutate the log, and undo works on current jj.**
+  `op_log` now uses `--at-op=@ --ignore-working-copy`, avoiding working-copy
+  snapshots and divergent-operation reconciliation while inspecting history.
+  `op_undo` now invokes top-level `jj undo`; deprecated `jj op undo` was removed
+  in jj 0.39, inside this crate's supported 0.38-to-current range.
+
 ### Added
 - `JjApi::remote_add`, `remote_list`, `remote_remove`, `remote_rename`, and
   `remote_set_url`: typed management of jj Git remotes, including the public

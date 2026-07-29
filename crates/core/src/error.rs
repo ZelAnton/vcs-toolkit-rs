@@ -44,13 +44,12 @@ pub enum Error {
     /// [`vcs_jj::Rollback`] carries which case it was (and, for a failed restore, the
     /// underlying cause).
     Rollback(vcs_jj::Rollback),
-    /// The requested action has no meaningful mapping for the repository's current
-    /// in-progress state, so it is refused **explicitly** rather than performed as a
-    /// misleading success. Currently raised by
+    /// The requested action has no meaningful mapping for the selected backend or
+    /// repository state, so it is refused **explicitly** rather than performed as a
+    /// misleading success. Examples: jj operation-log recovery on Git, or
     /// [`Repo::continue_in_progress`](crate::Repo::continue_in_progress) during a
-    /// `git bisect`: a bisect advances by marking commits good/bad, not by a
-    /// `--continue` step, so "continue" cannot be honoured. Carries a short message
-    /// naming the situation. Classified by
+    /// `git bisect` (a bisect advances by marking commits good/bad, not by a
+    /// `--continue` step). Carries a short message naming the situation. Classified by
     /// [`is_unsupported`](Error::is_unsupported); a language binding maps it to an
     /// `unsupported`/`ValueError`-style error.
     Unsupported(String),
@@ -138,8 +137,9 @@ impl Error {
     }
 
     /// Whether this is an [`Unsupported`](Error::Unsupported) action — the caller
-    /// asked for something the repository's current in-progress state cannot
-    /// honour (e.g. `continue_in_progress` during a `git bisect`). Distinct from
+    /// asked for something the selected backend/state cannot honour (e.g.
+    /// operation-log recovery on Git, or `continue_in_progress` during a bisect).
+    /// Distinct from
     /// [`is_invalid_input`](Error::is_invalid_input) (a *bad argument*): the
     /// argument was fine, the *state* just has no such step. Mirrors
     /// `vcs_forge::Error::is_unsupported`, so the two facades name the concept the

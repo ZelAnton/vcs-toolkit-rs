@@ -14,6 +14,12 @@ crates; tag releases as `vcs-core-v<version>`.
   without hiding backend retries behind a terminal `Exited` event.
 
 ### Added
+- `Repo::op_log(max)` / `VcsRepo::op_log` and `Repo::undo` /
+  `VcsRepo::undo` expose typed repository-operation recovery. The jj backend
+  returns `OperationLogEntry` values without snapshotting the working copy
+  (`--at-op=@ --ignore-working-copy`) and undoes through top-level `jj undo`;
+  Git reports a structural `Error::Unsupported` rather than guessing at a
+  destructive reflog/reset equivalent.
 - `Repo::clone(backend, url, dest, spec)` and the unified `CloneSpec` DTO:
   backend-agnostic repository cloning on the facade. Clone is the one operation with
   **no repository yet** (nothing to hang a `Repo` method off), so it is an associated

@@ -14,6 +14,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "repo_commit",
     "repo_checkout",
     "repo_rebase",
+    "repo_undo",
     "repo_abort_in_progress",
     "repo_continue_in_progress",
     "repo_new_child",

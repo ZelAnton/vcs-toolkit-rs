@@ -224,6 +224,45 @@ impl BackendKind {
     }
 }
 
+/// One repository operation-log entry.
+///
+/// Currently populated by the jj backend; Git returns
+/// [`Error::Unsupported`](crate::Error::Unsupported) for operation-log recovery
+/// because reflog/reset is not a faithful equivalent of jj's repository-wide
+/// operation history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct OperationLogEntry {
+    /// Short operation id accepted by jj's operation commands.
+    pub id: String,
+    /// OS-level `user@host` that ran the operation.
+    pub user: String,
+    /// Operation start timestamp in RFC 3339 form.
+    pub time: String,
+    /// First line of the operation description.
+    pub description: String,
+}
+
+impl OperationLogEntry {
+    /// Build an operation-log entry. Primarily useful for custom facade
+    /// implementations and tests; [`Repo::op_log`](crate::Repo::op_log) constructs
+    /// these from the backend's typed output.
+    pub fn new(
+        id: impl Into<String>,
+        user: impl Into<String>,
+        time: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            user: user.into(),
+            time: time.into(),
+            description: description.into(),
+        }
+    }
+}
+
 /// How a file changed in the working copy — the shared [`vcs_diff::ChangeKind`]
 /// (one type across the wrappers and the facade, no remapping). The status-code
 /// mappers in the backends turn git's `XY` codes / jj's letters into it.
@@ -705,6 +744,21 @@ pub enum CreateOutcome {
 #[cfg(all(test, feature = "serde"))]
 mod serde_tests {
     use super::*;
+
+    #[test]
+    fn operation_log_entry_serializes_to_named_fields() {
+        let entry = OperationLogEntry::new(
+            "abc",
+            "agent@host",
+            "2026-07-29T10:00:00+02:00",
+            "describe commit",
+        );
+        let value = serde_json::to_value(entry).unwrap();
+        assert_eq!(value["id"], "abc");
+        assert_eq!(value["user"], "agent@host");
+        assert_eq!(value["time"], "2026-07-29T10:00:00+02:00");
+        assert_eq!(value["description"], "describe commit");
+    }
 
     #[test]
     fn snapshot_and_file_change_serialize_to_clean_json() {

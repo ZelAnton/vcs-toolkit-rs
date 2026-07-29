@@ -3,11 +3,18 @@ use processkit::testing::{Reply, ScriptedRunner};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use vcs_core::vcs_git::Git;
+use vcs_core::vcs_jj::Jj;
 
 /// A git-backed server over a scripted runner — no real binary, no forge.
 fn git_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
     let repo: Arc<dyn VcsRepo> =
         Arc::new(Repo::from_git("/repo", "/repo", Git::with_runner(runner)));
+    VcsMcpServer::from_handles(repo, None, writes)
+}
+
+/// A jj-backed server over a scripted runner — no real binary, no forge.
+fn jj_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_jj("/repo", "/repo", Jj::with_runner(runner)));
     VcsMcpServer::from_handles(repo, None, writes)
 }
 
@@ -92,6 +99,33 @@ async fn repo_log_returns_commit_json() {
     assert!(json.contains("deadbeef"), "{json}");
     assert!(json.contains("Fix bug"), "{json}");
     assert!(json.contains("Jane"), "{json}");
+}
+
+#[tokio::test]
+async fn repo_op_log_is_ungated_readonly_and_returns_typed_json() {
+    assert!(!WRITE_TOOLS.contains(&"repo_op_log"));
+    let server = jj_server(
+        ScriptedRunner::new().on(
+            ["jj", "op", "log"],
+            Reply::ok("abc\t\"agent@host\"\t2026-07-29T10:00:00+02:00\t\"describe commit\"\n"),
+        ),
+        WriteGate::None,
+    );
+    let out = server
+        .repo_op_log(Parameters(OpLogParams { max: 5 }))
+        .await
+        .expect("repo_op_log ok");
+    let json = result_json(&out);
+    assert!(json.contains("abc"), "{json}");
+    assert!(json.contains("agent@host"), "{json}");
+    assert!(json.contains("describe commit"), "{json}");
+
+    let git = git_server(ScriptedRunner::new(), WriteGate::None);
+    let err = git
+        .repo_op_log(Parameters(OpLogParams { max: 5 }))
+        .await
+        .expect_err("Git has no faithful operation-log equivalent");
+    assert!(format!("{err:?}").contains("unsupported"), "{err:?}");
 }
 
 // `repo_annotate` is an ungated read tool that serializes the facade's
@@ -1753,6 +1787,7 @@ fn jj_snapshotting_read_tools_are_not_read_only_but_non_destructive() {
 fn truly_read_only_tools_keep_read_only_hint() {
     let tools = [
         ("repo_info", VcsMcpServer::repo_info_tool_attr()),
+        ("repo_op_log", VcsMcpServer::repo_op_log_tool_attr()),
         (
             "forge_auth_status",
             VcsMcpServer::forge_auth_status_tool_attr(),
@@ -1947,6 +1982,29 @@ async fn repo_rebase_is_gated_and_rebases() {
         .expect("text content");
     let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
     assert_eq!(value["rebased_onto"], "main", "{text}");
+}
+
+#[tokio::test]
+async fn repo_undo_is_write_gated_and_uses_jj_operation_recovery() {
+    assert!(WRITE_TOOLS.contains(&"repo_undo"));
+
+    let readonly = jj_server(ScriptedRunner::new(), WriteGate::None);
+    let err = readonly.repo_undo().await.expect_err("repo_undo is gated");
+    assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+
+    let writable = jj_server(
+        ScriptedRunner::new().on(["jj", "undo"], Reply::ok("")),
+        WriteGate::All,
+    );
+    let out = writable.repo_undo().await.expect("repo_undo ok");
+    assert!(result_json(&out).contains("undone"));
+
+    let git = git_server(ScriptedRunner::new(), WriteGate::All);
+    let err = git
+        .repo_undo()
+        .await
+        .expect_err("Git has no faithful operation undo");
+    assert!(format!("{err:?}").contains("unsupported"), "{err:?}");
 }
 
 #[tokio::test]

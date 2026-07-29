@@ -110,6 +110,13 @@ pub struct LogParams {
     pub max: usize,
 }
 
+/// List recent repository operation-log entries (jj only).
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OpLogParams {
+    /// Maximum number of operations to return, newest first.
+    pub max: usize,
+}
+
 /// Read a file's content at a revision.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ShowFileParams {

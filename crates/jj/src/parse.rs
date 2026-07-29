@@ -208,7 +208,7 @@ pub(crate) const EVOLOG_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\" 
 
 /// `jj op log -T` template: `id\t"<user>"\t<start-time>\t"<description>"`, one row
 /// per operation. The user and description are `.escape_json()`-framed (either can
-/// hold a tab); the id is short (what `op restore`/`op undo` accept) and the
+/// hold a tab); the id is short (what `op restore` accepts) and the
 /// timestamp is a separator-free `%:z` RFC-3339.
 pub(crate) const OP_TEMPLATE: &str = "id.short() ++ \"\\t\" ++ user.escape_json() ++ \"\\t\" ++ time.start().format(\"%Y-%m-%dT%H:%M:%S%:z\") ++ \"\\t\" ++ description.first_line().escape_json() ++ \"\\n\"";
 
@@ -232,7 +232,7 @@ pub(crate) const ANNOTATE_TEMPLATE: &str = "commit.change_id().short() ++ \"\\t\
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Operation {
-    /// Short operation id — what `op restore`/`op undo` take.
+    /// Short operation id accepted by `op restore`.
     pub id: String,
     /// The OS-level `user@host` that ran the operation (not the configured
     /// jj author).

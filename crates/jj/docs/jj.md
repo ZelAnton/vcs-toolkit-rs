@@ -641,16 +641,19 @@ jj.workspace_forget(repo, "feature").await?;
 
 ```rust,ignore
 async fn op_head(&self, dir: &Path) -> Result<String>;
-async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>>;
+async fn op_log(&self, dir: &Path, limit: usize) -> Result<Vec<Operation>>; // read-only
 async fn op_restore(&self, dir: &Path, op_id: &str) -> Result<()>;
 async fn op_undo(&self, dir: &Path) -> Result<()>;
 ```
 
 `op_head` returns the current operation id (`op log --no-graph --limit 1`) —
 capture it before a risky sequence to roll back to. `op_log` returns the newest
-`limit` [`Operation`]s, newest first. `op_restore` restores the repo to an
-operation (`op restore <id>`; the id is guarded). `op_undo` undoes the latest
-operation. (`transaction` is the higher-level wrapper around capture + restore.)
+`limit` [`Operation`]s, newest first, using `--at-op=@ --ignore-working-copy`
+so inspection neither snapshots the working copy nor reconciles divergent
+operations. `op_restore` restores the repo to an operation (`op restore <id>`;
+the id is guarded). `op_undo` undoes the latest operation with top-level
+`jj undo` (the deprecated `jj op undo` was removed in jj 0.39). `transaction`
+is the higher-level wrapper around capture + restore.
 
 ```rust,ignore
 # use std::path::Path;
@@ -828,7 +831,7 @@ One `jj op log` row.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | `String` | Short operation id — what `op restore`/`op undo` take. |
+| `id` | `String` | Short operation id accepted by `op restore`. |
 | `user` | `String` | OS-level `user@host` that ran the operation (not the jj author). |
 | `time` | `String` | Start timestamp, RFC 3339 (colon offset, e.g. `…+02:00`). |
 | `description` | `String` | First line of the operation description (e.g. `new empty commit`). |

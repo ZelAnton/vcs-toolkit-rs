@@ -78,9 +78,10 @@ These are the query tools — **always callable**, regardless of the write gate.
 Their MCP *annotation* splits by whether the query can perturb the backend it
 reads (see the Safety model's "annotation honesty on jj" note):
 
-- **`readOnlyHint`** — genuinely read-only on **both** backends: `repo_info` (it
-  spawns no backend command at all) and every `forge_*` read tool (they drive the
-  forge CLI, not the repo working copy).
+- **`readOnlyHint`** — genuinely read-only wherever they are supported:
+  `repo_info` (it spawns no backend command at all), `repo_op_log` (jj runs it
+  with `--at-op=@ --ignore-working-copy`; Git reports `Unsupported`), and every
+  `forge_*` read tool (they drive the forge CLI, not the repo working copy).
 - **`destructiveHint = false` + `idempotentHint = true`** (not `readOnlyHint`) —
   every `repo_*` query that, on **jj**, runs a default working-copy-**snapshotting**
   command and so records a (reversible, append-only) op-log operation: `repo_status`,
@@ -96,6 +97,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_diff_stat` | — | Aggregate insertion/deletion/file counts for the working copy. |
 | `repo_diff` | — | The full parsed working-copy diff, one file entry per changed file — same scope as `repo_diff_stat` (git: working tree vs `HEAD`, excludes untracked files; jj: `@` vs its parent, includes newly-added files). Runs under the content-output budget (see below). |
 | `repo_log` | `{ revspec_or_revset, max }` | Up to `max` commits reachable from `revspec_or_revset` (a git revspec or jj revset), most-recent-first. `author`/`date` are null on jj. |
+| `repo_op_log` | `{ max }` | Up to `max` recent repository operations, newest first. jj only; runs with `--at-op=@ --ignore-working-copy`, so this true read records no snapshot or operation. Git reports `invalid_params` from structural `Unsupported`. |
 | `repo_annotate` | `{ path, rev? }` | Per-line attribution at optional git revspec / jj revset. Each line has id, line, and content; `author`/`date` are null on jj. |
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
@@ -122,8 +124,9 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
 | `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `{ rebased_onto }`. Requires `--allow-write`. |
-| `repo_abort_in_progress` | — | Abort the in-progress repository operation, if any. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; recover through the operation log instead. Requires `--allow-write`. |
-| `repo_continue_in_progress` | — | Continue the in-progress repository operation after resolving conflicts. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; resolving conflicted files is the continuation, and recovery is through the operation log. Requires `--allow-write`. |
+| `repo_undo` | — | Undo the latest repository operation through top-level `jj undo`; returns `{ undone: true }`. jj only; Git reports `invalid_params` from structural `Unsupported`. Requires `--allow-write` (or `--allow-tools repo_undo`). |
+| `repo_abort_in_progress` | — | Abort the in-progress repository operation, if any. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; inspect `repo_op_log` and recover with `repo_undo` instead. Requires `--allow-write`. |
+| `repo_continue_in_progress` | — | Continue the in-progress repository operation after resolving conflicts. Returns `{ operation_state }`, the post-call state. On jj this is a reporting no-op; resolving conflicted files is the continuation, and recovery is available through `repo_op_log`/`repo_undo`. Requires `--allow-write`. |
 | `repo_new_child` | `{ reference }` | Start new work on top of a branch, bookmark, or revision. On git this checks out `reference`; on jj it creates an undescribed child change. Returns `{ new_child_of }`. Requires `--allow-write`. |
 | `repo_create_branch` | `{ name }` | Create a local branch or bookmark at the current head, without switching the working copy (`git branch <name>` / `jj bookmark create <name> -r @`). Returns `{ created_branch }`. Requires `--allow-write`. |
 | `repo_delete_branch` | `{ name, force? }` | Delete a local branch or bookmark. `force` defaults to `false`, deletes an unmerged git branch when true, and is ignored by jj. Returns `{ deleted_branch, force }`. Requires `--allow-write`. |
@@ -179,7 +182,9 @@ The `vcs-mcp` binary applies, in order:
    `repo_commit` and `repo_push` but not the worktree or forge mutations).
 2. **Tool annotations.** Mutating tools are annotated `destructiveHint` so an MCP
    client can surface a confirmation prompt. Only the tools that are read-only on
-   **both** backends carry `readOnlyHint` (`repo_info`, the `forge_*` reads); the
+   every backend where they are supported carry `readOnlyHint` (`repo_info`,
+   `repo_op_log`, the
+   `forge_*` reads); the
    `repo_*` queries that snapshot the jj working copy carry
    `destructiveHint = false` + `idempotentHint = true` instead of `readOnlyHint`,
    because on jj they record a (reversible) op-log operation — see the "annotation
@@ -222,7 +227,7 @@ The `vcs-mcp` binary applies, in order:
    memory — exceeding it returns `OutputTooLarge`, never a silently truncated
    result.
 8. **Annotation honesty on jj (no `readOnlyHint` on the snapshotting reads).** On a
-   jj-backed repo, every `repo_*` query except `repo_info` (`repo_status`,
+   jj-backed repo, every `repo_*` query except `repo_info` and `repo_op_log` (`repo_status`,
    `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`, `repo_annotate`,
    `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`) runs a
    plain jj command in jj's default working-copy-**snapshotting** mode: it imports any
@@ -231,14 +236,16 @@ The `vcs-mcp` binary applies, in order:
    and recording an op-log operation *is* a state change — so these tools deliberately
    **do not** claim `readOnlyHint`. They are annotated `destructiveHint = false` +
    `idempotentHint = true` instead: the op-log entry is append-only and fully
-   reversible (`jj op undo`) and changes no tracked content, refs, or bookmarks, and a
+   reversible (`jj undo`) and changes no tracked content, refs, or bookmarks, and a
    re-run with no interim edit records nothing further — but it is not *nothing*, so
    the annotation stays honest rather than redefining `readOnlyHint` in prose. (On the
    git backend these same tools are ordinary reads; the annotation is the conservative
    cross-backend truth, since a read-only operation is trivially non-destructive and
    idempotent.) They remain **callable without a write gate** — a snapshot mutates no
    tracked content or refs, so it needs no `--allow-write`. A genuinely non-recording
-   read exists internally (`--ignore-working-copy`, exposed as `vcs-core`'s
+   read exists through `repo_op_log`, which pairs `--ignore-working-copy` with
+   `--at-op=@` so even operation-head reconciliation is suppressed. The same
+   mode also exists internally, exposed as `vcs-core`'s
    `snapshot_readonly`/`local_branches_readonly` and used by `vcs-watch`'s polling
    loop) but is deliberately **not** wired into these MCP tools: it reports the state
    of the *last recorded* operation rather than the live working tree, so a bare edit

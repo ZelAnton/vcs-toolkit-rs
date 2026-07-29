@@ -275,9 +275,9 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 | `workspace_add` | `workspace add --name <name> -r <base> <path>` | via `WorkspaceAdd` |
 | `workspace_forget` | `workspace forget <name>` | |
 | `op_head` | `op log --no-graph --limit 1` | capture before a risky sequence |
-| `op_log` | `op log --no-graph --limit n` | newest first |
+| `op_log` | `op log --no-graph --limit n --at-op=@ --ignore-working-copy` | newest first; no snapshot or op-head reconciliation |
 | `op_restore` | `op restore <id>` | |
-| `op_undo` | `op undo` | |
+| `op_undo` | `undo` | top-level form works across the supported jj 0.38+ range |
 
 ### Discovery & raw escape hatches
 
