@@ -42,6 +42,10 @@ crates; tag releases as `vcs-git-v<version>`.
   documented in the security guide. (T-096.)
 
 ### Changed
+- Split the growing crate root into focused internal modules: command specs,
+  validated ref/revision types, and capability metadata now live in `specs.rs`;
+  synchronous Drop cleanup lives in `blocking.rs`. Existing root exports and
+  public signatures are unchanged. (T-136.)
 - **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
   **Breaking** through this crate's own re-exported `vcs_git::Error`: `processkit::Error`
   is no longer an enum but an opaque, pointer-sized wrapper around a boxed `ErrorReason`
