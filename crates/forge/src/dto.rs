@@ -214,13 +214,6 @@ fn host_of(url: &str) -> Option<&str> {
 pub enum ForgeOp {
     /// [`repo_view`](crate::Forge::repo_view) — current repo/project metadata.
     RepoView,
-    /// [`pr_edit`](crate::Forge::pr_edit) — edit a PR/MR title and/or body.
-    /// Unsupported on Gitea because `tea` has no `pr edit` subcommand.
-    PrEdit,
-    /// [`pr_add_labels`](crate::Forge::pr_add_labels) /
-    /// [`pr_remove_labels`](crate::Forge::pr_remove_labels) — change labels on an
-    /// existing PR/MR. Unsupported on Gitea because `tea` has no edit command.
-    PrLabels,
     /// [`pr_mark_ready`](crate::Forge::pr_mark_ready) — flip a draft PR to ready.
     PrMarkReady,
     /// [`pr_checks`](crate::Forge::pr_checks) — coarse CI status for a PR.
@@ -243,6 +236,12 @@ pub enum ForgeOp {
     /// approve/revoke, with no request-changes action); available on GitHub
     /// (`gh pr review --request-changes`) and Gitea (`tea pr reject`).
     PrRequestChanges,
+    // Keep new variants appended after the eight variants published in 0.7.0:
+    // downstream code may cast this fieldless enum, so inserting above an
+    // existing variant changes that variant's discriminant.
+    /// [`pr_edit`](crate::Forge::pr_edit) — edit a PR/MR title and/or body.
+    /// Unsupported on Gitea because `tea` has no `pr edit` subcommand.
+    PrEdit,
     /// [`release_create`](crate::Forge::release_create) — create a release. Supported
     /// on all three real backends (`gh release create` / `glab release create` /
     /// `tea releases create`); only an [`Unknown`](ForgeKind::Unknown) handle lacks it.
@@ -270,6 +269,10 @@ pub enum ForgeOp {
     /// [`issue_remove_labels`](crate::Forge::issue_remove_labels) — change labels
     /// on an existing issue. Unsupported on Gitea because `tea` has no edit command.
     IssueLabels,
+    /// [`pr_add_labels`](crate::Forge::pr_add_labels) /
+    /// [`pr_remove_labels`](crate::Forge::pr_remove_labels) — change labels on an
+    /// existing PR/MR. Unsupported on Gitea because `tea` has no edit command.
+    PrLabels,
 }
 
 impl ForgeOp {
@@ -1528,6 +1531,30 @@ impl ForgeCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forge_op_preserves_published_discriminants() {
+        for (operation, expected) in [
+            (ForgeOp::RepoView, 0),
+            (ForgeOp::PrMarkReady, 1),
+            (ForgeOp::PrChecks, 2),
+            (ForgeOp::ReleaseView, 3),
+            (ForgeOp::PrDiff, 4),
+            (ForgeOp::PrCheckout, 5),
+            (ForgeOp::PrApprove, 6),
+            (ForgeOp::PrRequestChanges, 7),
+            (ForgeOp::PrEdit, 8),
+            (ForgeOp::ReleaseCreate, 9),
+            (ForgeOp::ReleaseDelete, 10),
+            (ForgeOp::IssueClose, 11),
+            (ForgeOp::IssueReopen, 12),
+            (ForgeOp::IssueComment, 13),
+            (ForgeOp::IssueLabels, 14),
+            (ForgeOp::PrLabels, 15),
+        ] {
+            assert_eq!(operation as isize, expected);
+        }
+    }
 
     #[test]
     fn from_remote_url_classifies_saas_hosts() {
