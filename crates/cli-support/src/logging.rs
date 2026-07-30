@@ -18,8 +18,8 @@
 //! - The value after a **sensitive flag** (`--token`, `--password`, `--secret`,
 //!   `--authorization`, …) is replaced with `<redacted>`, as is the value of a
 //!   `--flag=value` form of one.
-//! - A value that **looks like a secret** (a `ghp_`/`github_pat_`/`glpat-`/… token
-//!   prefix, an `x-access-token:` embed) is replaced with `<redacted>`.
+//! - A value that **contains a secret shape** (a `ghp_`/`github_pat_`/`glpat-`/…
+//!   token prefix, or an `x-access-token:` embed) is replaced with `<redacted>`.
 //! - A **URL with userinfo** (`scheme://user@host/…` or
 //!   `scheme://user:pass@host/…`) keeps its host/path but masks the userinfo
 //!   (`scheme://<redacted>@host/…`). The conventional non-secret
@@ -83,9 +83,10 @@ const SENSITIVE_FLAGS: &[&str] = &[
     "pat",
 ];
 
-/// Case-insensitive prefixes that mark a value as a known secret/token shape, so
-/// it is masked wholesale even in a positional slot. Covers the forge PATs the
-/// workspace touches plus a few common provider tokens; extend as needed.
+/// Case-insensitive token prefixes that mark any containing free-text value as
+/// secret-bearing, so it is masked wholesale even in a positional slot. Covers
+/// the forge PATs the workspace touches plus a few common provider tokens; extend
+/// as needed.
 const SECRET_PREFIXES: &[&str] = &[
     "ghp_",
     "gho_",
@@ -418,7 +419,7 @@ fn is_sensitive_flag(name: &str) -> bool {
     SENSITIVE_FLAGS.contains(&name.as_str())
 }
 
-/// Redact a single free-text value: mask it wholesale if it looks like a secret,
+/// Redact a single free-text value: mask it wholesale if it contains a secret shape,
 /// mask the userinfo of a credentialed URL, then truncate if it is long.
 fn redact_value(value: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
@@ -426,16 +427,32 @@ fn redact_value(value: &str) -> std::borrow::Cow<'_, str> {
         return Cow::Borrowed(value);
     }
     let lower = value.to_ascii_lowercase();
-    if SECRET_PREFIXES.iter().any(|p| lower.starts_with(p)) || lower.contains("x-access-token:") {
-        return Cow::Owned(REDACTED.to_string());
-    }
     if let Some(masked) = mask_url_userinfo(value) {
+        // Preserve the useful host/path after removing userinfo, unless a second
+        // token shape remains elsewhere (for example in the URL path/query).
+        // In that case mask the whole value so URL-specific redaction cannot hide
+        // a later leak from the generic scanner.
+        let masked_lower = masked.to_ascii_lowercase();
+        if contains_secret_shape(&masked_lower) {
+            return Cow::Owned(REDACTED.to_string());
+        }
         return Cow::Owned(truncate(&masked));
+    }
+    // Tokens are often embedded in a sentence, config fragment, or `--body=...`
+    // value rather than occupying the entire argv slot. Fail closed on the shape
+    // anywhere in free text; a false positive only hides one diagnostic value.
+    if contains_secret_shape(&lower) {
+        return Cow::Owned(REDACTED.to_string());
     }
     match truncate_cow(value) {
         Some(t) => Cow::Owned(t),
         None => Cow::Borrowed(value),
     }
+}
+
+/// Whether an already-lowercased value contains a token form this crate knows.
+fn contains_secret_shape(lower: &str) -> bool {
+    SECRET_PREFIXES.iter().any(|p| lower.contains(p)) || lower.contains("x-access-token:")
 }
 
 /// If `value` is a URL of the form `scheme://userinfo@host/…`, return it with the
@@ -473,12 +490,33 @@ fn mask_url_userinfo(value: &str) -> Option<String> {
 /// Truncate `value` to [`MAX_VALUE_LEN`] characters plus a `…(<n> chars)` marker,
 /// or `None` if it already fits. Char-boundary safe.
 fn truncate_cow(value: &str) -> Option<String> {
+    // `redact_args` is safe to apply at every logging boundary, including to a
+    // value an upstream decorator already redacted. Preserve only our exact
+    // truncation shape: accepting an arbitrary `…(n chars)` suffix would let a
+    // caller bypass the cap with a much longer forged value.
+    if is_canonical_truncation(value) {
+        return None;
+    }
     let count = value.chars().count();
     if count <= MAX_VALUE_LEN {
         return None;
     }
     let head: String = value.chars().take(MAX_VALUE_LEN).collect();
     Some(format!("{head}…({count} chars)"))
+}
+
+/// Whether `value` is exactly the output shape produced by [`truncate_cow`].
+fn is_canonical_truncation(value: &str) -> bool {
+    let Some((head, marker)) = value.rsplit_once("…(") else {
+        return false;
+    };
+    let Some(original_len) = marker
+        .strip_suffix(" chars)")
+        .and_then(|digits| digits.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    head.chars().count() == MAX_VALUE_LEN && original_len > MAX_VALUE_LEN
 }
 
 /// Truncate an already-owned value the same way, in place of a no-op when it fits.
@@ -490,6 +528,7 @@ fn truncate(value: &str) -> String {
 mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply};
+    use proptest::prelude::*;
     use std::sync::Mutex;
 
     /// Build an `OsString` argv from `&str`s.
@@ -701,6 +740,144 @@ mod tests {
         let out = redact_args(&argv(&["pr", "create", &format!("--body={body}")]));
         assert!(out[2].starts_with("--body=x"));
         assert!(out[2].contains("chars)"));
+    }
+
+    fn harmless_args() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec("[a-z0-9./_]{0,24}", 0..6)
+    }
+
+    fn known_token() -> impl Strategy<Value = String> {
+        (prop::sample::select(SECRET_PREFIXES), "[A-Za-z0-9_-]{8,48}")
+            .prop_map(|(prefix, suffix)| format!("{prefix}{suffix}"))
+    }
+
+    fn opaque_secret() -> impl Strategy<Value = String> {
+        "LEAK_[A-Za-z0-9_-]{8,48}"
+    }
+
+    /// Generate each supported secret-bearing argv shape with unrelated values
+    /// before and after it, so sequence-aware masking is exercised at arbitrary
+    /// positions rather than only in a two-element fixture.
+    fn secret_argv() -> impl Strategy<Value = (Vec<OsString>, String)> {
+        (
+            harmless_args(),
+            harmless_args(),
+            known_token(),
+            opaque_secret(),
+            prop::sample::select(SENSITIVE_FLAGS),
+            "[a-z0-9 =:;]{0,24}",
+            "[a-z0-9 =:;]{0,24}",
+            0_u8..8,
+        )
+            .prop_map(|(before, after, token, opaque, flag, left, right, shape)| {
+                let mut args = before;
+                let secret = match shape {
+                    0 => {
+                        args.push(format!("{left}{token}{right}"));
+                        token
+                    }
+                    1 => {
+                        args.extend([format!("--{flag}"), opaque.clone()]);
+                        opaque
+                    }
+                    2 => {
+                        args.push(format!("--{flag}={opaque}"));
+                        opaque
+                    }
+                    3 => {
+                        args.push(format!("https://user:{opaque}@example.test/owner/repo.git"));
+                        opaque
+                    }
+                    4 => {
+                        args.push(format!("https://{token}@example.test/owner/repo.git"));
+                        token
+                    }
+                    5 => {
+                        args.push(format!(
+                            "https://x-access-token:{opaque}@example.test/owner/repo.git"
+                        ));
+                        opaque
+                    }
+                    6 => {
+                        args.push(format!("--body={left}{token}{right}"));
+                        token
+                    }
+                    _ => {
+                        args.push(format!(
+                            "https://user:{opaque}@example.test/{left}{token}{right}"
+                        ));
+                        token
+                    }
+                };
+                args.extend(after);
+                (args.into_iter().map(OsString::from).collect(), secret)
+            })
+    }
+
+    fn unicode_string(max_chars: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<char>(), 0..max_chars)
+            .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// Security invariant: the exact generated secret literal never reaches
+        /// any rendered argv slot, regardless of its position or supported shape.
+        #[test]
+        fn generated_secret_literals_never_survive((args, secret) in secret_argv()) {
+            let redacted = redact_args(&args);
+            prop_assert!(
+                redacted.iter().all(|arg| !arg.contains(&secret)),
+                "secret {secret:?} survived in {redacted:?}"
+            );
+        }
+
+        /// Arbitrary Unicode argv — flags included — must be total and stable if
+        /// multiple logging decorators apply the same security boundary.
+        #[test]
+        fn arbitrary_argv_is_panic_free_and_idempotent(
+            args in prop::collection::vec(unicode_string(512), 0..24)
+        ) {
+            let args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
+            let once = redact_args(&args);
+            let twice_input: Vec<OsString> = once.iter().map(OsString::from).collect();
+            prop_assert_eq!(redact_args(&twice_input), once);
+        }
+
+        /// Exercise the truncation boundary with genuinely large, multibyte text;
+        /// char-based clipping must neither panic nor split a code point.
+        #[test]
+        fn huge_multibyte_values_are_panic_free_and_idempotent(
+            chars in prop::collection::vec(
+                prop::sample::select(vec!['é', 'Ж', '漢', '🦀']),
+                (MAX_VALUE_LEN + 1)..4096,
+            )
+        ) {
+            let value: String = chars.into_iter().collect();
+            let once = redact_args(&[OsString::from(value)]);
+            let twice_input: Vec<OsString> = once.iter().map(OsString::from).collect();
+            prop_assert_eq!(redact_args(&twice_input), once);
+        }
+    }
+
+    // Unix argv can contain byte sequences that are not valid UTF-8. Feed such
+    // fragments through `to_string_lossy` and the char-safe truncator as well;
+    // the Windows property above covers every representable Unicode `OsString`.
+    #[cfg(unix)]
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn arbitrary_os_bytes_are_panic_free_and_idempotent(
+            bytes in prop::collection::vec(any::<u8>(), 0..4096)
+        ) {
+            use std::os::unix::ffi::OsStringExt;
+
+            let once = redact_args(&[OsString::from_vec(bytes)]);
+            let twice_input: Vec<OsString> = once.iter().map(OsString::from).collect();
+            prop_assert_eq!(redact_args(&twice_input), once);
+        }
     }
 
     #[tokio::test]

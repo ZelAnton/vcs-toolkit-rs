@@ -24,7 +24,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   construction. Argv is redacted before it reaches an observer (`redact_args`,
   also public): a value after a sensitive flag (`--token`/`--password`/…) or the
   value of a `--flag=value` form is masked, a secret-shaped token
-  (`ghp_`/`github_pat_`/`glpat-`/… prefix, `x-access-token:`) is masked, a URL's
+  (`ghp_`/`github_pat_`/`glpat-`/… prefix, `x-access-token:`) embedded anywhere in
+  free text is masked, a URL's
   embedded credentials are masked (host/path kept), and long free text (a PR/issue
   body, a commit message) is truncated — a fail-closed policy that upholds the
   workspace's "token never in argv" contract as defence in depth (the environment,
@@ -90,6 +91,12 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   far-past-the-cap fixtures. No ceiling was re-tuned. (T-130.)
 
 ### Fixed
+- Command-log argv redaction is now idempotent: a second redaction pass preserves
+  the exact canonical `…(<n> chars)` output of the first instead of truncating its
+  marker again. Known token shapes are now detected anywhere within free text and
+  non-sensitive flag values, not only at the start of an argv slot. Property tests
+  cover secret non-disclosure across token, sensitive-flag, and URL-userinfo shapes;
+  arbitrary/large Unicode; and invalid Unix argv bytes.
 - `redact_args` now treats URL userinfo as secret-bearing by default. In
   particular, clone URLs that put a GitHub/GitLab PAT in the username slot
   (`https://ghp_…@…`, `https://glpat-…@…`) no longer leak it to a command
