@@ -52,7 +52,15 @@ Run the parser benchmarks locally with a POSIX shell:
 ```bash
 bash scripts/bench
 # or a single crate while iterating:
-cargo bench --release -p vcs-git
+cargo bench --locked -p vcs-git --bench conflict_parse
+
+# Save and compare named Criterion baselines:
+bash scripts/bench --save-baseline before
+# ...make the change under test...
+bash scripts/bench --save-baseline after
+critcmp before after -t 10 --list
+# The scheduled lane's conservative machine decision (Python stdlib only):
+python scripts/bench-regression before after 10
 ```
 
 The fixtures are generated in each benchmark source, rather than stored as large
@@ -64,10 +72,17 @@ the HTML report to `target/criterion/report/index.html` (with per-benchmark repo
 beneath `target/criterion/`); open it in a browser to compare the current sample with
 the saved baseline and inspect the distributions/charts.
 
-CI deliberately runs only `cargo bench --no-run --locked`, which compiles every
-benchmark and fails on a compile error without collecting timing data or enforcing a
-performance threshold. Run the benchmarks locally for numbers: shared CI runners are
-too noisy for performance conclusions.
+Required pull-request CI deliberately runs only `cargo bench --no-run --locked`, which
+compiles every benchmark and fails on a compile error without turning noisy timing
+into a PR gate. The separate weekly, non-gating
+[scheduled benchmark lane](.github/workflows/scheduled-benchmarks.yml) restores the
+previous Criterion baseline from a 90-day artifact, renders the aggregate comparison
+with `critcmp`, and flags a benchmark only when the current median's 95% confidence
+interval is wholly more than 10% slower than the baseline interval in **two** complete
+runs. A confirmed regression opens or refreshes one tracking issue and retains the old
+baseline; a clean/noisy result advances it. For an accepted intentional shift, run the
+workflow manually with `reset_baseline=true`. Use the commands above for a local
+before/after comparison; local numbers remain the right evidence for small changes.
 
 ## Conventions
 

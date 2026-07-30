@@ -194,8 +194,9 @@ jobs:
       # and the `tracing` per-command events.
       - run: cargo test --workspace --all-features
 
-  # Compile Criterion benchmarks, but never run timing measurements on noisy shared
-  # runners. This is an ordinary required `run` step: a non-zero cargo exit code
+  # Required PR CI compiles Criterion benchmarks without collecting timings on its
+  # noisy shared runners (the isolated weekly lane owns confirmed measurements).
+  # This is an ordinary required `run` step: a non-zero cargo exit code
   # fails the job, so stale benchmark APIs or manifests cannot silently drift.
   benchmarks:
     name: benchmark compilation

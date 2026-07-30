@@ -92,7 +92,7 @@ test_release_order_covers_all() {
 # strictly before it. This is the property that keeps `cargo publish` from
 # uploading a dependent before its dependency is live on crates.io.
 test_release_order_is_topological() {
-  local order pos=0 name dep ok=1
+  local order name dep ok=1
   order="$(release_order)"
   # position of each crate in the order (1-based)
   index_of() {
@@ -218,7 +218,7 @@ test_manifest_deps_match() {
   local name dir declared actual
   for name in $(release_order); do
     dir="$REPO_ROOT/$(crate_dir "$name")"
-    declared="$(printf '%s\n' $(crate_deps "$name") | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    declared="$(crate_deps "$name" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
     actual="$(manifest_deps "$dir")"
     assert_eq "crate_deps($name) matches $(crate_dir "$name")/Cargo.toml [dependencies]" \
       "$declared" "$actual"

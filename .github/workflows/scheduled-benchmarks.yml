@@ -1,0 +1,268 @@
+# Weekly, report-only parser benchmark tracking. Required PR CI only compiles
+# Criterion targets because shared runners are noisy; this isolated lane samples
+# them, compares with the previous weekly artifact, and reports only a large
+# regression confirmed by two independent current runs. It never runs on PRs and
+# never changes ci.yml's required jobs.
+name: Scheduled Parser Benchmarks
+
+on:
+  schedule:
+    # Saturday 05:29 UTC: off the hour and separate from the Monday CLI-drift
+    # and Wednesday mutation-testing lanes.
+    - cron: "29 5 * * 6"
+  workflow_dispatch:
+    inputs:
+      reset_baseline:
+        description: "Seed a new weekly baseline instead of comparing"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('scheduled-benchmarks-manual-{0}', github.run_id) || 'scheduled-benchmarks-schedule' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  REGRESSION_THRESHOLD_PERCENT: "10"
+
+jobs:
+  benchmarks:
+    name: parser benchmarks (report-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: taiki-e/install-action@critcmp
+
+      - name: Restore the latest weekly baseline artifact
+        id: restore
+        run: |
+          set -euo pipefail
+          mkdir -p target baseline-download
+          found=false
+          if [ "${{ inputs.reset_baseline || false }}" != "true" ]; then
+            mapfile -t previous_runs < <(
+              gh run list --workflow scheduled-benchmarks.yml --branch main \
+                --status completed --limit 20 --json databaseId \
+                --jq '.[].databaseId'
+            )
+            for run_id in "${previous_runs[@]}"; do
+              rm -rf baseline-download
+              mkdir baseline-download
+              if gh run download "$run_id" --name parser-benchmark-data \
+                --dir baseline-download >/dev/null 2>&1 \
+                && [ -f baseline-download/parser-benchmark-baseline.tar.gz ]; then
+                tar -xzf baseline-download/parser-benchmark-baseline.tar.gz -C target
+                echo "Restored baseline from run $run_id"
+                found=true
+                break
+              fi
+            done
+          fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+      - name: Measure candidate or seed the first baseline
+        run: |
+          if [ "${{ steps.restore.outputs.found }}" = "true" ]; then
+            bash scripts/bench --save-baseline candidate
+          else
+            bash scripts/bench --save-baseline weekly
+          fi
+
+      - name: Compare first measurement
+        if: steps.restore.outputs.found == 'true'
+        id: first
+        run: |
+          set -euo pipefail
+          critcmp weekly candidate -t "$REGRESSION_THRESHOLD_PERCENT" --list \
+            | tee benchmark-comparison.txt
+          set +e
+          python3 scripts/bench-regression weekly candidate \
+            "$REGRESSION_THRESHOLD_PERCENT" > first-regressions.tsv
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "suspect=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "suspect=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Re-measure suspected regressions
+        if: steps.first.outputs.suspect == 'true'
+        run: bash scripts/bench --save-baseline confirmation
+
+      - name: Require the same regression in both measurements
+        if: steps.first.outputs.suspect == 'true'
+        id: confirm
+        run: |
+          set -euo pipefail
+          critcmp weekly candidate confirmation \
+            -t "$REGRESSION_THRESHOLD_PERCENT" --list \
+            | tee benchmark-comparison.txt
+          set +e
+          python3 scripts/bench-regression weekly confirmation \
+            "$REGRESSION_THRESHOLD_PERCENT" > second-regressions.tsv
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            exit "$status"
+          fi
+          awk -F '\t' \
+            'NR == FNR { seen[$1] = 1; next } ($1 in seen)' \
+            first-regressions.tsv second-regressions.tsv \
+            > confirmed-regressions.tsv
+          if [ -s confirmed-regressions.tsv ]; then
+            echo "regression=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "regression=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Promote a clean measurement to next week's baseline
+        if: >-
+          steps.restore.outputs.found == 'true' &&
+          steps.confirm.outputs.regression != 'true'
+        run: |
+          set -euo pipefail
+          source=candidate
+          if [ "${{ steps.first.outputs.suspect }}" = "true" ]; then
+            source=confirmation
+          fi
+          mapfile -d '' old < <(find target/criterion -type d -name weekly -print0)
+          for dir in "${old[@]}"; do
+            rm -rf "$dir"
+          done
+          promoted=0
+          while IFS= read -r -d '' dir; do
+            cp -a "$dir" "${dir%/"$source"}/weekly"
+            promoted=$((promoted + 1))
+          done < <(find target/criterion -type d -name "$source" -print0)
+          if [ "$promoted" -eq 0 ]; then
+            echo "No $source baselines were produced" >&2
+            exit 1
+          fi
+          echo "Promoted $promoted benchmark baselines from $source"
+
+      - name: Add benchmark summary
+        if: always()
+        run: |
+          {
+            echo "### Scheduled parser benchmarks (report-only)"
+            if [ "${{ steps.restore.outputs.found }}" != "true" ]; then
+              echo "Seeded a new weekly baseline; no comparison was possible."
+            else
+              echo "Threshold: ${REGRESSION_THRESHOLD_PERCENT}% beyond non-overlapping median confidence intervals."
+              echo "First pass suspect: ${{ steps.first.outputs.suspect || 'false' }}"
+              echo "Confirmed in both passes: ${{ steps.confirm.outputs.regression || 'false' }}"
+            fi
+            if [ -s benchmark-comparison.txt ]; then
+              echo
+              echo '<details><summary>critcmp report</summary>'
+              echo
+              echo '```text'
+              cat benchmark-comparison.txt
+              echo '```'
+              echo '</details>'
+            fi
+            if [ -s confirmed-regressions.tsv ]; then
+              echo
+              echo 'Confirmed regressions:'
+              echo '```text'
+              cat confirmed-regressions.tsv
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report confirmed regression as a tracking issue
+        if: steps.confirm.outputs.regression == 'true'
+        run: |
+          set -euo pipefail
+          title="Scheduled parser benchmark regression"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          details="$(cat confirmed-regressions.tsv)"
+          body="The weekly parser benchmark lane found the same conservative regression in two independent measurements. The candidate median's 95% CI lower bound exceeded the previous baseline median's upper bound by more than ${REGRESSION_THRESHOLD_PERCENT}%.
+
+          Run: ${run_url}
+
+          Confirmed regressions (benchmark, baseline upper ns, current lower ns, minimum regression):
+
+          \`\`\`text
+          ${details}
+          \`\`\`
+
+          This workflow is report-only and never gates a PR. Investigate with the artifact and the local commands in CONTRIBUTING.md. The previous weekly baseline is retained until a clean run, or use workflow_dispatch with reset_baseline=true after accepting an intentional shift."
+          existing="$(gh issue list --state all --search "in:title \"$title\"" \
+            --json number,title --jq '.[] | select(.title == "Scheduled parser benchmark regression") | .number' \
+            | head -1)"
+          if [ -n "${existing:-}" ]; then
+            gh issue reopen "$existing" >/dev/null 2>&1 || true
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Package the retained weekly baseline
+        if: success()
+        run: |
+          set -euo pipefail
+          rm -rf benchmark-baseline-stage
+          mkdir -p benchmark-baseline-stage/criterion
+          copied=0
+          while IFS= read -r -d '' dir; do
+            relative="${dir#target/criterion/}"
+            destination="benchmark-baseline-stage/criterion/${relative%/weekly}"
+            mkdir -p "$destination"
+            cp -a "$dir" "$destination/weekly"
+            copied=$((copied + 1))
+          done < <(find target/criterion -type d -name weekly -print0)
+          if [ "$copied" -eq 0 ]; then
+            echo "No weekly baselines available to package" >&2
+            exit 1
+          fi
+          tar -czf parser-benchmark-baseline.tar.gz \
+            -C benchmark-baseline-stage criterion
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: parser-benchmark-data
+          path: |
+            parser-benchmark-baseline.tar.gz
+            benchmark-comparison.txt
+            first-regressions.tsv
+            second-regressions.tsv
+            confirmed-regressions.tsv
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Report benchmark-lane failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          title="Scheduled parser benchmark workflow failed"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="The report-only scheduled parser benchmark workflow failed before it could make or publish a trustworthy comparison.
+
+          Run: ${run_url}
+
+          This does not gate regular CI or PRs. Inspect the failed step, repair the benchmark infrastructure, then close this issue."
+          existing="$(gh issue list --state open --search "in:title \"$title\"" \
+            --json number,title --jq '.[] | select(.title == "Scheduled parser benchmark workflow failed") | .number' \
+            | head -1)"
+          if [ -n "${existing:-}" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

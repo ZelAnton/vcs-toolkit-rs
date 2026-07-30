@@ -4,30 +4,47 @@
 #
 # The fixtures are built in the benchmark sources, so this leaves no large static
 # test data in the repository. CI compiles these targets with `--no-run`; timing
-# measurements intentionally stay local because shared runners are noisy.
+# measurements are also sampled by the weekly report-only benchmark lane, whose
+# high threshold and confirmation run account for shared-runner noise.
 
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage: scripts/bench [--help]
+       scripts/bench --save-baseline NAME
+       scripts/bench --baseline NAME
 
 Runs the Criterion parser benchmarks in release mode for vcs-diff, vcs-git, and
 vcs-jj. Reports are written below target/criterion/. Open
 target/criterion/report/index.html (or an individual benchmark's index.html) in
 a browser to compare the current run with Criterion's saved baseline.
 
-CI only compiles these targets with `cargo bench --no-run --locked`; it never
-runs timing measurements or applies performance thresholds.
+`--save-baseline NAME` stores this run under a Criterion baseline name.
+`--baseline NAME` samples the current code and compares it with that saved
+baseline. Baseline names must start with a letter or digit and may then contain
+letters, digits, dots, underscores, and hyphens.
+
+Required pull-request CI only compiles these targets with
+`cargo bench --no-run --locked`. The separate scheduled benchmark workflow runs
+timings weekly, confirms large changes twice, and reports through a tracking issue.
 EOF
 }
 
+BENCH_ARGS=()
 case "${1:-}" in
-  "")
-    ;;
+  "") ;;
   -h|--help)
     usage
     exit 0
+    ;;
+  --save-baseline|--baseline)
+    if [ "$#" -ne 2 ] || [[ ! "${2:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      echo "bench: $1 requires one safe baseline name" >&2
+      usage >&2
+      exit 2
+    fi
+    BENCH_ARGS=("$1" "$2")
     ;;
   *)
     echo "bench: unknown option: $1" >&2
@@ -40,10 +57,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-for crate in vcs-diff vcs-git vcs-jj; do
+# Name every Criterion target explicitly. A package-wide `cargo bench -p ...`
+# also launches the library's libtest harness; forwarding `--save-baseline` to
+# that harness fails because it is a Criterion-only flag.
+BENCH_TARGETS=(
+  "vcs-diff:diff_parse"
+  "vcs-git:porcelain_v2"
+  "vcs-git:conflict_parse"
+  "vcs-jj:conflict_parse"
+)
+
+for entry in "${BENCH_TARGETS[@]}"; do
+  crate="${entry%%:*}"
+  target="${entry#*:}"
   echo
-  echo "==> cargo bench --release -p $crate"
-  cargo bench --release -p "$crate"
+  # `cargo bench` already selects the optimized bench profile; unlike
+  # `cargo run`, it has no `--release` flag on current Cargo.
+  echo "==> cargo bench --locked -p $crate --bench $target -- ${BENCH_ARGS[*]}"
+  cargo bench --locked -p "$crate" --bench "$target" -- "${BENCH_ARGS[@]}"
 done
 
 echo

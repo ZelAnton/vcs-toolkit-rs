@@ -199,7 +199,7 @@ jobs:
           PLAN: ${{ runner.temp }}/plan.tsv
         run: |
           set -euo pipefail
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name dir version _; do
             cur=$(grep -m1 -oP '(?<=^version = ")[^"]+' "$dir/Cargo.toml")
             if [ "$cur" = "$version" ]; then
               echo "$name already at $version (first release) — no bump"
@@ -328,7 +328,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.lock
           msg="Release:"
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name dir version _; do
             git add "$dir/Cargo.toml" "$dir/CHANGELOG.md"
             msg="${msg} ${name} v${version},"
           done < "$PLAN"
@@ -367,7 +367,7 @@ jobs:
           set -uo pipefail
           source scripts/release/lib.sh
           fail=0
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name _ _ prev; do
             if [ -z "$prev" ]; then
               echo "semver: skip $name (first release — no published baseline)"
               continue
@@ -422,7 +422,7 @@ jobs:
           set -euo pipefail
           source scripts/release/lib.sh
           planned=""
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name _; do
             planned="$planned $name"
           done < "$PLAN"
           # Which crates already have a crates.io release (a `<crate>-v*` tag) —
@@ -452,7 +452,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
           set -uo pipefail
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name _; do
             attempt=0; max=3
             while :; do
               attempt=$((attempt + 1))
@@ -486,7 +486,7 @@ jobs:
         run: |
           set -euo pipefail
           refs=("HEAD:refs/heads/${BRANCH}")
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name _ version _; do
             git tag "${name}-v${version}"
             refs+=("refs/tags/${name}-v${version}")
           done < "$PLAN"
@@ -504,7 +504,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          while IFS=$'\t' read -r name dir version prev; do
+          while IFS=$'\t' read -r name _ version _; do
             tag="${name}-v${version}"
             notes="${NOTES_DIR}/${name}-notes.md"
             attempt=0; max=3

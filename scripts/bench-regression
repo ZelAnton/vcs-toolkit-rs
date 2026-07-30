@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Conservatively compare two named Criterion baselines.
+
+A benchmark is reported only when the candidate median's 95% confidence-
+interval lower bound is more than THRESHOLD percent above the baseline median's
+upper bound. This is the machine decision behind the scheduled lane; critcmp
+remains the human-readable aggregate report.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from pathlib import Path
+import re
+import sys
+from typing import NoReturn
+
+
+USAGE = """\
+Usage: scripts/bench-regression BASELINE CANDIDATE THRESHOLD_PERCENT
+
+Reads target/criterion by default (override with CRITERION_DIR), emits one TSV
+line per conservative regression, and exits 1 when any are found. Exit 0 means
+no regression; exit 2 means the baselines could not be compared.
+
+Columns: benchmark, baseline_upper_ns, candidate_lower_ns, minimum_regression_pct
+"""
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def fail(message: str) -> NoReturn:
+    print(f"bench-regression: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def median_bound(path: Path, bound: str) -> float:
+    try:
+        with path.open(encoding="utf-8") as stream:
+            document = json.load(stream)
+        value = float(document["median"]["confidence_interval"][bound])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+        fail(f"invalid median estimate {path}: {error}")
+    if not math.isfinite(value):
+        fail(f"non-finite median estimate {path}: {value}")
+    return value
+
+
+def main() -> int:
+    if len(sys.argv) != 4:
+        print(USAGE, file=sys.stderr, end="")
+        return 2
+
+    baseline, candidate, threshold_text = sys.argv[1:]
+    for name in (baseline, candidate):
+        if not SAFE_NAME.fullmatch(name):
+            fail(f"unsafe baseline name: {name}")
+    try:
+        threshold = float(threshold_text)
+    except ValueError:
+        fail("threshold must be a non-negative number")
+    if not math.isfinite(threshold) or threshold < 0:
+        fail("threshold must be a non-negative number")
+
+    criterion_dir = Path(os.environ.get("CRITERION_DIR", "target/criterion"))
+    if not criterion_dir.is_dir():
+        fail(f"Criterion directory not found: {criterion_dir}")
+
+    base_files = sorted(
+        path
+        for path in criterion_dir.rglob("estimates.json")
+        if path.parent.name == baseline
+    )
+    common = 0
+    regressions = 0
+    for base_file in base_files:
+        benchmark_dir = base_file.parent.parent
+        candidate_file = benchmark_dir / candidate / "estimates.json"
+        if not candidate_file.is_file():
+            continue
+        common += 1
+        base_upper = median_bound(base_file, "upper_bound")
+        candidate_lower = median_bound(candidate_file, "lower_bound")
+        if base_upper > 0 and candidate_lower > base_upper * (1 + threshold / 100):
+            benchmark = benchmark_dir.relative_to(criterion_dir).as_posix()
+            minimum_pct = (candidate_lower / base_upper - 1) * 100
+            print(
+                f"{benchmark}\t{base_upper}\t{candidate_lower}\t{minimum_pct:.2f}%"
+            )
+            regressions += 1
+
+    if common == 0:
+        fail(f"no benchmarks share baselines {baseline} and {candidate}")
+    print(
+        f"bench-regression: compared {common} benchmarks; "
+        f"regressions: {regressions}",
+        file=sys.stderr,
+    )
+    return 1 if regressions else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
