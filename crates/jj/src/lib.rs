@@ -2058,9 +2058,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()> {
         reject_flag_like_path("workspace path", &spec.path)?;
-        // Built directly on `command_in` (not `cmd_in`) because the trailing
-        // `--color never` must come after the chained value args, not between
-        // `--name` and its value.
+        // K-043: `cmd_in`/`cmd_in_wc` append global flags (`--color never`,
+        // `--ignore-working-copy`) *after* the caller's argv, even after a `--`
+        // if one is already present. Built directly on `command_in` (not
+        // `cmd_in`) so the trailing `--color never` lands after the chained
+        // value args, not between `--name` and its value.
         let mut command = self
             .core
             .command_in(dir, ["workspace", "add", "--name"])
