@@ -157,6 +157,16 @@ crates; tag releases as `vcs-jj-v<version>`.
   Unix a `\` is a legitimate filename byte and a `:` is legal anywhere in a
   name; both are now preserved verbatim instead of being rewritten or, for a
   leading `a:b.txt`-style name, rejected with `Error::parse`. (T-084.)
+- security: `JjApi::workspace_add` (and the synchronous
+  `blocking::workspace_forget` Drop-cleanup helper's `name` positional) now
+  refuse a positional that begins with `-` (after trimming), is empty/
+  whitespace-only, or contains a NUL byte, before spawning `jj` — the same
+  guard `JjApi::workspace_forget` already applied to `name`, now closing the
+  gap on `workspace_add`'s `path` and on `blocking::workspace_forget`, which
+  had no async runtime to reuse the async guard through. `workspace_add`'s
+  check is a lossy-UTF-8 rendering of the path used only to classify it; a
+  legitimate non-UTF-8 path (valid on Unix) with no leading `-` still reaches
+  `jj` byte-for-byte, unchanged. (T-147.)
 
 ## [0.11.0] - 2026-07-19
 

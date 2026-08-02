@@ -251,6 +251,21 @@ pub(super) fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
 }
 
+/// [`reject_flag_like`] for a bare positional **path** argv slot
+/// (`workspace add`'s destination path), whose value is typed `PathBuf`
+/// rather than `&str` and so may be non-UTF-8 on Unix. Checks a lossy-UTF-8
+/// rendering of `path` — `to_string_lossy` never panics, so this never
+/// aborts on invalid UTF-8 — for a leading `-` (after trim), emptiness, or an
+/// embedded NUL; a leading `-`/NUL/emptiness is always ASCII and so survives
+/// the lossy conversion unchanged regardless of any invalid bytes elsewhere
+/// in `path`. Only the *check* is lossy: the value actually handed to
+/// `Command::arg` stays the original `path`, byte-for-byte, so a legitimate
+/// non-UTF-8 path with no leading `-` still reaches the child process
+/// unaltered.
+pub(super) fn reject_flag_like_path(what: &str, path: &Path) -> Result<()> {
+    reject_flag_like(what, &path.to_string_lossy())
+}
+
 /// The working-copy revset `@` as a validated [`RevsetExpr`]. Infallible — `@`
 /// is always a valid revset — for the internal helpers that query `@` directly.
 pub(super) fn at_revset() -> RevsetExpr {

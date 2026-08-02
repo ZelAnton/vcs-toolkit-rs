@@ -2154,6 +2154,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
+        reject_flag_like_path("worktree path", &spec.path)?;
         let mut command = self.core.command_in(dir, ["worktree", "add"]);
         if let Some(name) = spec.new_branch.as_ref() {
             command = command.arg("-b").arg(name.as_str());
@@ -2169,6 +2170,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_remove(&self, dir: &Path, spec: WorktreeRemove) -> Result<()> {
+        reject_flag_like_path("worktree path", &spec.path)?;
         let mut command = self.core.command_in(dir, ["worktree", "remove"]);
         if spec.force {
             command = command.arg("--force");
@@ -2178,6 +2180,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()> {
+        reject_flag_like_path("worktree move source path", from)?;
+        reject_flag_like_path("worktree move destination path", to)?;
         let command = self
             .core
             .command_in(dir, ["worktree", "move"])
@@ -2712,6 +2716,20 @@ fn c_locale(cmd: processkit::Command) -> processkit::Command {
 /// ~45 call sites stay `reject_flag_like(what, value)`.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// [`reject_flag_like`] for a bare positional **path** argv slot (worktree
+/// add/remove/move), whose values are typed `PathBuf`/`&Path` rather than
+/// `&str` and so may be non-UTF-8 on Unix. Checks a lossy-UTF-8 rendering of
+/// `path` — `to_string_lossy` never panics, so this never aborts on invalid
+/// UTF-8 — for a leading `-` (after trim), emptiness, or an embedded NUL; a
+/// leading `-`/NUL/emptiness is always ASCII and so survives the lossy
+/// conversion unchanged regardless of any invalid bytes elsewhere in `path`.
+/// Only the *check* is lossy: the value actually handed to `Command::arg`
+/// stays the original `path`, byte-for-byte, so a legitimate non-UTF-8 path
+/// with no leading `-` still reaches the child process unaltered.
+fn reject_flag_like_path(what: &str, path: &Path) -> Result<()> {
+    reject_flag_like(what, &path.to_string_lossy())
 }
 
 // --- Large path-set transport (T-052) ----------------------------------------
@@ -3845,6 +3863,106 @@ mod tests {
             rec.only_call().args_str(),
             ["worktree", "add", "--no-checkout", "/wt", "main"]
         );
+    }
+
+    // A flag-shaped `path` is refused before spawning — `worktree add -b <name>
+    // -evil <base>` would otherwise let git reparse `-evil` as an unknown flag
+    // rather than the intended path.
+    #[tokio::test]
+    async fn worktree_add_rejects_flag_like_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_add(
+                Path::new("/repo"),
+                WorktreeAdd::checkout("-evil", rv("main")),
+            )
+            .await
+            .expect_err("a flag-like worktree path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // Empty/whitespace-only paths are refused the same way.
+    #[tokio::test]
+    async fn worktree_add_rejects_empty_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_add(Path::new("/repo"), WorktreeAdd::checkout("  ", rv("main")))
+            .await
+            .expect_err("an empty worktree path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_rejects_flag_like_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_remove(Path::new("/repo"), WorktreeRemove::new("--force"))
+            .await
+            .expect_err("a flag-like worktree path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn worktree_remove_rejects_empty_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_remove(Path::new("/repo"), WorktreeRemove::new(""))
+            .await
+            .expect_err("an empty worktree path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // The valid-path case still builds the expected argv (no regression from
+    // the new guard).
+    #[tokio::test]
+    async fn worktree_move_builds_from_then_to() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.worktree_move(
+            Path::new("/repo"),
+            Path::new("/wt-old"),
+            Path::new("/wt-new"),
+        )
+        .await
+        .expect("worktree move");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["worktree", "move", "/wt-old", "/wt-new"]
+        );
+    }
+
+    // Both positionals are guarded — a flag-like `from` is caught first.
+    #[tokio::test]
+    async fn worktree_move_rejects_flag_like_from() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_move(Path::new("/repo"), Path::new("-evil"), Path::new("/wt-new"))
+            .await
+            .expect_err("a flag-like `from` must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // A flag-like `to` is caught too, even when `from` is valid.
+    #[tokio::test]
+    async fn worktree_move_rejects_flag_like_to() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let err = git
+            .worktree_move(Path::new("/repo"), Path::new("/wt-old"), Path::new("-evil"))
+            .await
+            .expect_err("a flag-like `to` must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     #[tokio::test]
