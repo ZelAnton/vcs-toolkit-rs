@@ -40,6 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: fuzz -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - uses: taiki-e/install-action@cargo-fuzz
@@ -48,28 +49,28 @@ jobs:
       # after every weekly run.  The target-specific prefix means unrelated
       # grammar inputs never pollute another target's corpus.
       - name: Restore diff_parse corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/diff_parse
           key: fuzz-corpus-diff_parse-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-diff_parse-
       - name: Restore git_conflict corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/git_conflict
           key: fuzz-corpus-git_conflict-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-git_conflict-
       - name: Restore git_porcelain_v2 corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/git_porcelain_v2
           key: fuzz-corpus-git_porcelain_v2-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-git_porcelain_v2-
       - name: Restore jj_conflict corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/jj_conflict
           key: fuzz-corpus-jj_conflict-${{ github.run_id }}
