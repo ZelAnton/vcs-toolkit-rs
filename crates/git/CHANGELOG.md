@@ -91,6 +91,8 @@ crates; tag releases as `vcs-git-v<version>`.
   validated before spawning and pinned after `--`; list preserves git's
   directory/pattern order. This Git-only surface intentionally remains outside
   `vcs-core`, whose jj backend has its own workspace-centric `sparse_set`.
+- Document how `GitApi::diff_text` and friends interpret a `DiffSpec`.
+  Changing this behavior is considered a semver-breaking change.
 
 ### Changed
 - Split the growing crate root into focused internal modules: command specs,

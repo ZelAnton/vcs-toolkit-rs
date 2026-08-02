@@ -413,7 +413,8 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
 - **`diff_stat`** — aggregate `DiffStat` for a range (`diff --shortstat <range>`).
 
 [`DiffSpec`](#diffspec) selects what is compared: `WorkingTree` (vs HEAD) or
-`Rev(String)` (a revision or range).
+`Rev(String)` (a revision or range, passed straight through to `git diff`) — see
+[`DiffSpec`](#diffspec) below for what that passthrough implies.
 
 ```rust,ignore
 # use std::path::Path;
@@ -1037,6 +1038,23 @@ An enum selecting what `diff` / `diff_text` compares — a re-export of
   (`git diff HEAD`), staged or not, excluding untracked files.
 - `DiffSpec::Rev(String)` — a specific revision or range, e.g. `main..HEAD` or
   `HEAD~1` (`git diff <rev>`).
+
+**`Rev` is a direct passthrough.** The string becomes git's one positional diff
+argument verbatim — this crate doesn't parse, classify, or rewrite it beyond the
+`reject_flag_like` guard against a leading `-`. Whatever `git diff <rev>` would
+do at the shell for that exact string is what `Rev(rev)` does here.
+
+One consequence follows from plain `git diff`'s own rules: a *lone* revision (no
+`..`/`...`) diffs the *working tree* against that revision, not the revision
+against its parent — `Rev("HEAD".into())` behaves exactly like `WorkingTree`,
+and `Rev("abc".into())` includes any uncommitted changes on top of `abc`. To
+diff two commits with the working tree excluded, put a range in the string
+instead (`Rev("abc..def".into())` or `Rev("abc^..abc".into())`) — git's
+two-dot/three-dot forms compare commit-to-commit. None of this is `vcs-git`
+logic; it's inherited by passing the string straight to git.
+
+How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
+Changing it would be a semver-breaking change.
 
 ### `MergeCheck`
 

@@ -432,6 +432,27 @@ pub trait GitApi: Send + Sync {
     /// (`diff <spec> --no-color --no-ext-diff -M`) — stable machine output, returned
     /// **verbatim** (a trailing blank context line is preserved, so the last hunk
     /// stays in sync with its `@@` line count for a re-parse/re-apply).
+    ///
+    /// [`DiffSpec::Rev`] is a direct passthrough: the string becomes git's single
+    /// positional diff argument verbatim (`git diff <rev>`) — this crate doesn't
+    /// parse, classify, or rewrite it beyond the
+    /// [`reject_flag_like`](vcs_cli_support::reject_flag_like) guard against a
+    /// leading `-`. Whatever `git diff <rev>` would do at the shell for that exact
+    /// string is what `Rev(rev)` does here.
+    ///
+    /// One consequence follows from plain `git diff`'s own rules: a *single*
+    /// revision (no `..`/`...`) diffs the **working tree** against that revision,
+    /// not the revision against its parent — `Rev("HEAD".into())` behaves exactly
+    /// like [`DiffSpec::WorkingTree`] (which diffs tracked working-tree changes
+    /// against `HEAD`), and `Rev("abc".into())` includes any uncommitted changes
+    /// on top of `abc`. To compare two commits with the working tree excluded,
+    /// put a range in the `Rev` string instead (`"abc..def"` / `"abc^..abc"`) —
+    /// git's two-dot/three-dot forms diff
+    /// commit-to-commit. None of this is `vcs-git` logic; it's inherited by
+    /// passing the string straight to git.
+    ///
+    /// How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
+    /// Changing it would be a semver-breaking change.
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](GitApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
@@ -924,8 +945,14 @@ impl<R: ProcessRunner> Git<R> {
         budget: OutputBudget,
     ) -> Result<String> {
         // The target is a single positional arg: `HEAD` for the working tree, or
-        // the caller's revision/range. `-M` enables rename detection; `--no-color`
-        // / `--no-ext-diff` keep the output stable and machine-parseable.
+        // the caller's `Rev` string passed straight through, unparsed. `-M`
+        // enables rename detection; `--no-color` / `--no-ext-diff` keep the
+        // output stable and machine-parseable.
+        //
+        // That passthrough is why a lone `Rev` revision (no `..`/`...`) still
+        // includes working-copy changes: `git diff <rev>` always diffs the
+        // working tree against `<rev>`, same as `WorkingTree`'s `HEAD` target
+        // above — see `GitApi::diff_text`'s doc for the full explanation.
         let target = match spec {
             DiffSpec::WorkingTree => {
                 // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
