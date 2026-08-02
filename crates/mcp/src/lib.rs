@@ -18,7 +18,9 @@
 //!   repository and (optionally) its forge. Build it with
 //!   [`new`](VcsMcpServer::new), then `serve` it over an `rmcp` transport. Held
 //!   as object-safe trait handles, so it's runner-agnostic and `Clone` is cheap
-//!   (`Arc`).
+//!   (`Arc`). [`with_output_budget`](VcsMcpServer::with_output_budget) bounds the
+//!   two conflict tools' direct working-copy read, the one content path no client
+//!   [`OutputBudget`] can reach (it spawns no command).
 //! - **[`WriteGate`]** — the server's write policy: [`None`](WriteGate::None)
 //!   (read-only, the default), [`All`](WriteGate::All) (`--allow-write`), or
 //!   [`Set`](WriteGate::Set) (a per-tool allowlist). [`allows`](WriteGate::allows)
@@ -103,7 +105,7 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool_handler};
 use vcs_core::processkit::ProcessRunner;
-use vcs_core::{Repo, VcsRepo};
+use vcs_core::{OutputBudget, Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi};
 
 mod conflicts;
@@ -139,6 +141,25 @@ pub struct VcsMcpServer {
     /// `repo_*` tools do, so they take this same lock too, closing the local
     /// repo-state race that R1 targets.
     write_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The content ceiling for the tools that read a file **directly** from the
+    /// working copy — `repo_conflict_regions` and the read inside
+    /// `repo_resolve_conflict`.
+    ///
+    /// Every other content-returning tool (`repo_show_file`, `repo_diff`,
+    /// `forge_pr_diff`) reads through a backend subprocess and is bounded by the
+    /// [`OutputBudget`] the caller configured on the *client* the `Repo`/`Forge`
+    /// was built over. The conflict tools spawn nothing for their read — conflict
+    /// markers live only in the working copy — so no client budget can reach them,
+    /// and without this field an agent could point them at a multi-gigabyte file
+    /// and buffer it whole into the server. Same knob, same unit, same fail-loud
+    /// behaviour ("refuse", never "truncate"), applied at the filesystem instead
+    /// of at a pipe.
+    ///
+    /// Defaults to [`OutputBudget::unlimited`] — the type's own default and the
+    /// same "a cap is a caller choice" stance the CLI clients take. The binary
+    /// sets it from `--max-output-bytes` (10 MiB by default); a library embedder
+    /// sets it with [`with_output_budget`](Self::with_output_budget).
+    content_budget: OutputBudget,
 }
 
 impl VcsMcpServer {
@@ -181,7 +202,35 @@ impl VcsMcpServer {
             // tools, preserving the original registration order).
             tool_router: Self::repo_tool_router() + Self::forge_tool_router(),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            content_budget: OutputBudget::unlimited(),
         }
+    }
+
+    /// Bound how much a **direct working-copy read** may buffer: the ceiling the
+    /// conflict tools (`repo_conflict_regions`, and the read inside
+    /// `repo_resolve_conflict`) apply to the file they read.
+    ///
+    /// Those two are the only tools that touch the filesystem without a backend
+    /// subprocess, so the [`OutputBudget`] set on the git/jj client — the one that
+    /// bounds `repo_show_file`/`repo_diff` — cannot reach them; set it here as
+    /// well to bound them the same way. The binary passes its `--max-output-bytes`
+    /// value to both. Over-budget is refused (an error naming the ceiling), never
+    /// truncated, and the check is made from the file's size *before* its content
+    /// is buffered. [`OutputBudget::unlimited`] (the default) removes the ceiling.
+    ///
+    /// ```no_run
+    /// # use vcs_core::{OutputBudget, Repo};
+    /// # use vcs_mcp::{VcsMcpServer, WriteGate};
+    /// # fn build() -> Result<(), Box<dyn std::error::Error>> {
+    /// let repo = Repo::discover(".")?;
+    /// let server = VcsMcpServer::new(repo, None, WriteGate::None)
+    ///     .with_output_budget(OutputBudget::bytes(10 * 1024 * 1024));
+    /// # Ok(()) }
+    /// ```
+    #[must_use]
+    pub fn with_output_budget(mut self, budget: OutputBudget) -> Self {
+        self.content_budget = budget;
+        self
     }
 
     /// Reject the mutating tool `tool` when the write gate doesn't cover it.

@@ -29,9 +29,13 @@ The server drives git through a **hardened** client (`Git::hardened()` — repo
 hooks and config disabled, so serving a repository you didn't create can't run its
 hooks) and bounds every command with `--timeout` (default 120s; `0` disables) so a
 stalled fetch/forge call can't hang a request. Content tools (`repo_show_file`,
-`forge_pr_diff`) are further bounded by `--max-output-bytes` (default 10 MiB; `0`
-disables) so a giant blob or PR diff can't be buffered whole into memory —
-exceeding it returns an error rather than a silently truncated result.
+`forge_pr_diff`, and the working-copy read behind `repo_conflict_regions` /
+`repo_resolve_conflict`) are further bounded by `--max-output-bytes` (default
+10 MiB; `0` disables) so a giant blob, PR diff, or working-copy file can't be
+buffered whole into memory — exceeding it returns an error rather than a silently
+truncated result. The conflict tools read the filesystem directly (markers live
+only in the working copy), so they get that ceiling from the server itself rather
+than from the git/jj client the other content tools inherit it from.
 
 The server speaks MCP over **stdio**; point a client at it via an `mcpServers`
 config entry:

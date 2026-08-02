@@ -233,6 +233,19 @@ Content tools must propagate an
 `OutputTooLarge`, never a silently truncated or unbounded JSON response. The
 existing MCP tests cover both over-budget errors and complete under-budget data.
 
+A tool that returns content **without** running a backend command has no client
+to propagate that budget to — and therefore no budget at all unless it applies
+one itself. `repo_conflict_regions` and `repo_resolve_conflict` read the working
+copy directly (conflict markers exist nowhere else), so they take the ceiling
+from `VcsMcpServer::with_output_budget` — which the binary sets from the same
+`--max-output-bytes` — and enforce it against the file's size *before* reading,
+then against the read itself (`AsyncReadExt::take`) so a file growing mid-read
+can't overrun it. If you add another tool that reads or writes a path directly,
+give it the same treatment, and confine the path the way `conflicts::repo_path`
+does (no `..`, no absolute path, no Windows device name): the subprocess
+confinement and the `--timeout` deadline that every other tool inherits do not
+exist on this path.
+
 Test routing, tool-router registration, descriptions/annotations, disabled and
 selected `WriteGate` cases, backend `Unsupported`, and budget failure. Update
 the MCP tool catalogue and write-gate notes in

@@ -23,11 +23,25 @@
 //! jj operation and is honestly `readOnlyHint` (see `repo_info`'s precedent);
 //! `repo_resolve_conflict` still spawns (its conflicted-path check and, on git,
 //! the finalizing `git add`) and is write-gated and `destructiveHint`.
+//!
+//! # Why the budget is re-applied here
+//!
+//! Spawning nothing also means inheriting nothing: the [`OutputBudget`] a caller
+//! configures on the git/jj client bounds only what a *subprocess* writes to its
+//! pipe, so it cannot bound a read that never runs one. These tools therefore
+//! carry the server's own `content_budget` and enforce it at the filesystem —
+//! same knob (`--max-output-bytes`), same unit, same fail-loud contract as
+//! `repo_show_file` (refuse naming the ceiling; never hand back a truncated
+//! file). Without it `repo_conflict_regions` — ungated, callable in the server's
+//! most restricted mode — would buffer a file of any size into the server and
+//! then into a larger JSON rendering of it.
 
 use std::path::{Component, Path, PathBuf};
 
 use rmcp::ErrorData;
 use rmcp::model::CallToolResult;
+use tokio::io::AsyncReadExt;
+use vcs_core::OutputBudget;
 use vcs_core::processkit::{Error as VcsError, ErrorReason};
 use vcs_core::{BackendKind, vcs_git, vcs_jj};
 
@@ -49,7 +63,9 @@ pub(crate) struct RepoPath {
 /// path, a Windows drive prefix (`C:\…`), a bare root (`/…`), `.`, and — the one
 /// that matters — any `..` traversal. Both `/` and `\` are accepted as separators
 /// on Windows (`Path::components` splits on both there), while on Unix a
-/// backslash stays an ordinary filename character, as it must.
+/// backslash stays an ordinary filename character, as it must. On Windows a
+/// component naming a legacy DOS **device** is refused too — see
+/// [`is_reserved_device_name`].
 ///
 /// This is the guard the *facade* would otherwise provide: every other `repo_*`
 /// tool reaches the filesystem through a `git`/`jj` subprocess run inside the
@@ -70,7 +86,19 @@ pub(crate) fn repo_path(root: &Path, path: &str) -> Result<RepoPath, ErrorData> 
     let mut rel = PathBuf::new();
     for component in Path::new(path).components() {
         match component {
-            Component::Normal(part) => rel.push(part),
+            Component::Normal(part) => {
+                // `cfg!` rather than `#[cfg]`: the predicate compiles (and is
+                // unit-tested) on every platform, but only Windows resolves these
+                // names as devices, and only there would refusing them cost
+                // nothing — Win32 forbids creating such a file in the first place.
+                if cfg!(windows) && is_reserved_device_name(&part.to_string_lossy()) {
+                    return refuse(
+                        "names a reserved Windows device (CON, NUL, COM1, …), which cannot be \
+                         a repository file — opening it would read a device, not a file",
+                    );
+                }
+                rel.push(part);
+            }
             Component::ParentDir => return refuse("contains a `..` component"),
             Component::CurDir => return refuse("contains a `.` component"),
             Component::RootDir | Component::Prefix(_) => return refuse("is absolute"),
@@ -85,29 +113,153 @@ pub(crate) fn repo_path(root: &Path, path: &str) -> Result<RepoPath, ErrorData> 
     })
 }
 
-/// Read the working-copy file as text.
+/// Whether `component` is one of Win32's legacy DOS device names.
+///
+/// Windows resolves these in **every** directory — `<repo>\CON` is the console,
+/// `<repo>\COM1` a serial port — regardless of an extension (`CON.txt` is still
+/// `CON`) and ignoring trailing spaces/dots, which Win32 strips. Opening one
+/// yields a *device*, and a read from it can block indefinitely; since these two
+/// tools are the only ones that open a path themselves (everywhere else the
+/// backend subprocess does it), the component guard is where that has to be
+/// caught. Nothing is lost by refusing them: Win32 will not let such a file be
+/// created, so no repository can legitimately contain one on Windows.
+///
+/// Applied on Windows only — on Unix these are ordinary, perfectly valid
+/// filenames with no device meaning at all.
+pub(crate) fn is_reserved_device_name(component: &str) -> bool {
+    // Win32 strips trailing spaces and dots, then matches the stem before the
+    // first `.` case-insensitively.
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or(component)
+        .trim_end_matches([' ', '.']);
+    const RESERVED: [&str; 6] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+    let upper = stem.to_ascii_uppercase();
+    if RESERVED.contains(&upper.as_str()) {
+        return true;
+    }
+    // `COM1`–`COM9` / `LPT1`–`LPT9`, plus the superscript-digit spellings
+    // (`COM¹`) Win32 maps to the same devices — hence `is_numeric`, which covers
+    // them where `is_ascii_digit` would not.
+    let numbered = upper
+        .strip_prefix("COM")
+        .or_else(|| upper.strip_prefix("LPT"));
+    match numbered {
+        Some(digit) => {
+            let mut chars = digit.chars();
+            matches!((chars.next(), chars.next()), (Some(c), None) if c.is_numeric() && c != '0')
+        }
+        None => false,
+    }
+}
+
+/// Read the working-copy file as text, under the server's content `budget`.
 ///
 /// The conflict parsers work on `&str`, so a file whose bytes are not valid UTF-8
 /// is refused with a clear message rather than lossily decoded — the same
 /// fail-closed stance [`ok_json`] takes on the way out. A missing file is
 /// client-actionable too, so both land as `invalid_params`.
-pub(crate) async fn read_working_copy(p: &RepoPath) -> Result<String, ErrorData> {
-    tokio::fs::read_to_string(&p.abs).await.map_err(|e| {
+///
+/// **The ceiling is applied twice, and never after the fact.** First against the
+/// file's *size*, so an oversized file is refused before a byte of it is
+/// buffered; then against the read itself ([`AsyncReadExt::take`]), so a file
+/// that grows past the ceiling between the two — a race, or a deliberate one —
+/// still cannot buffer more than the cap plus the one byte that proves it was
+/// exceeded. Over-budget is an error, never a truncated file handed back as if
+/// complete; [`OutputBudget::unlimited`] (`--max-output-bytes 0`) removes the
+/// ceiling, exactly as it does for the subprocess-backed content tools.
+pub(crate) async fn read_working_copy(
+    p: &RepoPath,
+    budget: OutputBudget,
+) -> Result<String, ErrorData> {
+    let io_refusal = |e: std::io::Error| {
         let rel = p.rel.display();
         ErrorData::invalid_params(
             match e.kind() {
                 std::io::ErrorKind::NotFound => {
                     format!("no such file in the working copy: {rel}")
                 }
-                std::io::ErrorKind::InvalidData => format!(
-                    "{rel} is not valid UTF-8; the conflict model is text-only, so its \
-                     markers cannot be parsed (read the raw bytes another way)"
-                ),
+                std::io::ErrorKind::InvalidData => not_utf8(&p.rel),
                 _ => format!("cannot read {rel} from the working copy: {e}"),
             },
             None,
         )
-    })
+    };
+    let limit = budget.max_bytes();
+    let size = tokio::fs::metadata(&p.abs).await.map_err(io_refusal)?.len();
+    // `OutputBudget`'s ceilings fire strictly *past* the cap, so a file sitting
+    // exactly on it is still read — matching the subprocess path.
+    if let Some(limit) = limit
+        && size > limit as u64
+    {
+        return Err(over_budget(&p.rel, size, limit));
+    }
+    let file = tokio::fs::File::open(&p.abs).await.map_err(io_refusal)?;
+    // Right-size the buffer for an ordinary file (the size is already known and,
+    // under a ceiling, already known to be within it), but don't reserve
+    // gigabytes up front just because an unlimited budget said a file may be
+    // huge — past this the `Vec` grows as it reads.
+    const MAX_PREALLOC: usize = 8 * 1024 * 1024;
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(size)
+            .unwrap_or(usize::MAX)
+            .min(MAX_PREALLOC),
+    );
+    // One byte past the cap: enough to detect an overrun, bounded either way.
+    let ceiling = limit.map_or(u64::MAX, |l| l as u64 + 1);
+    file.take(ceiling)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(io_refusal)?;
+    if let Some(limit) = limit
+        && bytes.len() > limit
+    {
+        // The size check passed and the read still overran: the file grew
+        // between the two. Refuse the same way — the point of `take` is that
+        // this costs one byte over the cap, not the file's real size.
+        return Err(ErrorData::internal_error(
+            format!(
+                "{} grew past this server's content output ceiling of {limit} bytes \
+                 (--max-output-bytes) while it was being read; refusing the partial \
+                 content rather than parsing a truncated file.",
+                p.rel.display()
+            ),
+            None,
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| ErrorData::invalid_params(not_utf8(&p.rel), None))
+}
+
+/// The refusal for a file the conflict model can't parse because it isn't text.
+fn not_utf8(rel: &Path) -> String {
+    format!(
+        "{} is not valid UTF-8; the conflict model is text-only, so its markers cannot be \
+         parsed (read the raw bytes another way)",
+        rel.display()
+    )
+}
+
+/// The refusal for a working-copy file past the content ceiling.
+///
+/// Mapped to `internal_error` for the same reason `repo_show_file`'s
+/// `OutputTooLarge` is (`output::core_err` classifies only invalid-input and
+/// unsupported as client-facing): the request itself was well-formed — it is the
+/// operator's ceiling that stopped it — so the two content paths report an
+/// exceeded budget identically rather than one of them blaming the caller's
+/// params.
+fn over_budget(rel: &Path, size: u64, limit: usize) -> ErrorData {
+    debug_assert!(size > limit as u64, "only an over-budget size is refused");
+    ErrorData::internal_error(
+        format!(
+            "{} is {size} bytes, which exceeds this server's content output ceiling of \
+             {limit} bytes (--max-output-bytes): refusing to buffer it rather than returning \
+             a truncated file. Raise the ceiling (or --max-output-bytes 0 to remove it) if a \
+             file this large must be read.",
+            rel.display()
+        ),
+        None,
+    )
 }
 
 /// Map a `vcs-git`/`vcs-jj` conflict-model error into an MCP error. A malformed

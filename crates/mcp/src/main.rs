@@ -18,10 +18,14 @@
 //! spawn (program, redacted argv, working directory, exit code, duration) to
 //! **stderr** — the stdout JSON-RPC transport stays a clean transport, and argv
 //! values that could carry a secret are redacted.
-//! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`) are bounded by an
+//! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`, and the
+//! two conflict tools' working-copy read) are bounded by an
 //! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
 //! buffered whole into the server's (and then the JSON response's) memory;
-//! `--max-output-bytes` raises/lowers it, `0` removes the cap.
+//! `--max-output-bytes` raises/lowers it, `0` removes the cap. The same budget
+//! goes to the git/jj/forge clients (which enforce it on their subprocess output)
+//! and to the server itself, whose conflict tools read the working copy directly
+//! and so have no subprocess to inherit it from.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -58,8 +62,10 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// or PR diff, small enough that a pathological blob/diff can't buffer unbounded
 /// memory into the server. Override with `--max-output-bytes`; `0` disables it
 /// (the pre-T-049 behaviour). Applies to content tools (`repo_show_file`,
-/// `repo_diff`, `forge_pr_diff`); exceeding it returns `OutputTooLarge` rather
-/// than a silently truncated result.
+/// `repo_diff`, `forge_pr_diff`, and `repo_conflict_regions` /
+/// `repo_resolve_conflict`'s working-copy read); exceeding it returns
+/// `OutputTooLarge` — or, for the direct filesystem read, the same refusal naming
+/// this ceiling — rather than a silently truncated result.
 ///
 /// The unit is the bytes the wrapped CLI writes to its output pipe, verbatim —
 /// see [`OutputBudget::bytes`](vcs_core::OutputBudget::bytes), which is where the
@@ -101,9 +107,9 @@ OPTIONS:
                               ceiling so a stalled fetch/forge call can't hang
     --max-output-bytes <n>    Ceiling on content-tool output in bytes (default:
                               10485760 = 10 MiB; 0 disables) — repo_show_file,
-                              repo_diff, and forge_pr_diff refuse with an error
-                              rather than buffering an oversized blob/diff into
-                              memory
+                              repo_diff, forge_pr_diff, and the conflict tools'
+                              working-copy read refuse with an error rather than
+                              buffering an oversized blob/diff/file into memory
     --log-commands            Log every git/jj/forge command (program, redacted
                               argv, working dir, exit code, duration) to STDERR
                               for diagnostics. stdout stays a clean JSON-RPC
@@ -137,7 +143,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let budget = output_budget(args.max_output_bytes);
     let repo = open_repo(&args.repo, args.timeout, budget, args.log_commands)?;
     let forge = resolve_forge(&repo, args.forge, args.timeout, budget, args.log_commands).await;
-    let server = VcsMcpServer::new(repo, forge, args.writes);
+    // The same ceiling goes to the server itself: the conflict tools read the
+    // working copy directly (markers exist nowhere else), so they have no
+    // subprocess whose OutputBudget they could inherit — without this the
+    // operator's `--max-output-bytes` would not reach the one content path that
+    // is callable with no write gate at all.
+    let server = VcsMcpServer::new(repo, forge, args.writes).with_output_budget(budget);
 
     // Serve MCP over stdio until the client disconnects.
     server.serve(stdio()).await?.waiting().await?;

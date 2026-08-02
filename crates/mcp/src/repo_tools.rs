@@ -206,8 +206,13 @@ impl VcsMcpServer {
     // it reports exactly the bytes `repo_resolve_conflict` would overwrite. Like
     // `repo_info`, it records no jj operation and moves no ref, so the read-only
     // claim holds on both backends. See `crate::conflicts` for the full rationale.
+    //
+    // Spawning nothing also means it inherits no OutputBudget from the git/jj
+    // client (a client budget bounds a subprocess pipe), so it applies the
+    // server's own `content_budget` to the file it reads — this is a
+    // content-returning tool and must honour `--max-output-bytes` like the rest.
     #[tool(
-        description = "The parsed conflict regions of a conflicted file, as structured JSON instead of raw markers: on git each region carries the ours/base/theirs sides plus their labels and the marker length (merge, diff3 and zdiff3 styles); on jj each carries the diff/snapshot/base sections with their labels. Every region is numbered `N of M`. `path` is repo-relative, read from the working copy (where markers are materialized) — a file with no conflict markers returns an empty list, not an error. This is a true read: it spawns no git/jj command at all.",
+        description = "The parsed conflict regions of a conflicted file, as structured JSON instead of raw markers: on git each region carries the ours/base/theirs sides plus their labels and the marker length (merge, diff3 and zdiff3 styles); on jj each carries the diff/snapshot/base sections with their labels. Every region is numbered `N of M`. `path` is repo-relative, read from the working copy (where markers are materialized) — a file with no conflict markers returns an empty list, not an error. A file larger than the server's --max-output-bytes ceiling is refused, not truncated. This is a true read: it spawns no git/jj command at all.",
         annotations(read_only_hint = true)
     )]
     pub async fn repo_conflict_regions(
@@ -215,7 +220,7 @@ impl VcsMcpServer {
         Parameters(p): Parameters<ConflictRegionsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let path = conflicts::repo_path(self.repo.root(), &p.path)?;
-        let content = conflicts::read_working_copy(&path).await?;
+        let content = conflicts::read_working_copy(&path, self.content_budget).await?;
         conflicts::regions_json(self.repo.kind(), &p.path, &content)
     }
 
@@ -280,8 +285,12 @@ impl VcsMcpServer {
     //      workspace's own conflict-parser fixtures, a quoted diff in a doc) would
     //      be "resolved" — silently destroying content in a file that was never
     //      conflicted.
+    //   3. the server's `content_budget` bounds the read below, and so bounds this
+    //      tool's memory end to end: everything it writes is the parse of what it
+    //      read (a resolution only ever drops content), so no separate ceiling on
+    //      the write is needed.
     #[tool(
-        description = "Resolve a conflicted file by keeping one side of every conflict region in it, writing the result to the working copy. `side` is \"ours\", \"base\", \"theirs\", or (jj only, for conflicts with more than two sides) \"side\" plus a 0-based `index`. A side the backend or the file cannot honour — \"base\" where the conflict records none, an ambiguous \"theirs\" on an n-way jj conflict, a path that is not currently conflicted — is refused before anything is written. On git the resolved path is then staged (git add), which is what clears the unmerged index entry; jj needs no such step. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        description = "Resolve a conflicted file by keeping one side of every conflict region in it, writing the result to the working copy. `side` is \"ours\", \"base\", \"theirs\", or (jj only, for conflicts with more than two sides) \"side\" plus a 0-based `index`. A side the backend or the file cannot honour — \"base\" where the conflict records none, an ambiguous \"theirs\" on an n-way jj conflict, a path that is not currently conflicted, a file over the server's --max-output-bytes ceiling — is refused before anything is written. On git the resolved path is then staged (git add), which is what clears the unmerged index entry; jj needs no such step. Requires write access (--allow-write, or --allow-tools naming this tool).",
         annotations(destructive_hint = true)
     )]
     pub async fn repo_resolve_conflict(
@@ -305,7 +314,7 @@ impl VcsMcpServer {
             ));
         }
 
-        let content = conflicts::read_working_copy(&path).await?;
+        let content = conflicts::read_working_copy(&path, self.content_budget).await?;
         let resolved = conflicts::resolve_content(self.repo.kind(), &content, p.side, p.index)?;
         if resolved.conflicts_resolved == 0 {
             return Err(ErrorData::invalid_params(

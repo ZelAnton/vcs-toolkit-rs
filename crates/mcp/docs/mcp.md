@@ -66,7 +66,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--allow-write` | Enable **all** mutating tools. Off by default — read tools only. |
 | `--allow-tools <name,…>` | Enable **only the named** mutating tools (comma-separated; repeatable — occurrences accumulate). Tool names are the method names from the catalogue below (the canonical set is `vcs_mcp::WRITE_TOOLS`); an unknown/misspelled name is **rejected up front** with an error listing the valid write tools, rather than being silently inert. Read tools are unaffected. `--allow-write` wins when both are given. |
 | `--timeout <seconds>` | Per-command deadline so a stalled fetch/forge call can't hang a request (default: 120; `--timeout 0` disables it). |
-| `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `repo_diff`, `forge_pr_diff`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` rather than a truncated result. |
+| `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `repo_diff`, `forge_pr_diff`, and the working-copy read behind `repo_conflict_regions`/`repo_resolve_conflict`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` — or, for the direct filesystem read, the same refusal naming this ceiling — rather than a truncated result. |
 | `--log-commands` | Log every git/jj/forge command the server runs — program, argv, working directory, exit code, and duration — to **stderr**, for diagnosing why the server behaves unexpectedly. Off by default. The log goes to stderr only, so the stdout JSON-RPC transport stays clean; argv values that could carry a secret (a token flag, a credentialed URL) are **redacted**, and long free text (a PR/issue body) is truncated. See the safety model below. |
 | `-h`, `--help` | Print usage and exit. |
 
@@ -103,7 +103,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |
-| `repo_conflict_regions` | `{ path }` | One conflicted file's markers **parsed into structure**, so an agent never has to scrape them: `{ backend, path, conflict_count, regions: [{ number, total, region }] }`. The `region` shape is the backend's own and is deliberately *not* flattened into a lossy union — on git it carries `ours`/`base`/`theirs` (base only in `diff3`/`zdiff3` style), their labels, and `marker_len`; on jj it carries the ordered `sections` (`Diff` with `from_label`/`to_label`, `Snapshot`, `Base`) plus jj's own `conflict N of M` counters. `path` is repo-relative and read from the **working copy**, where markers are materialized; a file with no markers returns `conflict_count: 0`, not an error. A true read: it spawns no git/jj command. |
+| `repo_conflict_regions` | `{ path }` | One conflicted file's markers **parsed into structure**, so an agent never has to scrape them: `{ backend, path, conflict_count, regions: [{ number, total, region }] }`. The `region` shape is the backend's own and is deliberately *not* flattened into a lossy union — on git it carries `ours`/`base`/`theirs` (base only in `diff3`/`zdiff3` style), their labels, and `marker_len`; on jj it carries the ordered `sections` (`Diff` with `from_label`/`to_label`, `Snapshot`, `Base`) plus jj's own `conflict N of M` counters. `path` is repo-relative and read from the **working copy**, where markers are materialized; a file with no markers returns `conflict_count: 0`, not an error. A true read: it spawns no git/jj command — which is also why the `--max-output-bytes` ceiling is applied to the file directly (a file past it is refused, never truncated). |
 | `repo_worktrees` | — | Attached worktrees (git) / workspaces (jj). |
 | `forge_auth_status` | — | Whether the forge CLI reports an authenticated session. |
 | `forge_repo_view` | — | The repository/project on the forge (`Unsupported` on Gitea). |
@@ -123,7 +123,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | Tool | Params | Effect |
 |---|---|---|
 | `repo_try_merge` | `{ source }` | Probe whether merging `source` would conflict — a **probe** that's always rolled back, so it has no net effect. Gated because it spawns a *real* trial merge that materializes working-tree content, which on an untrusted repo can run repo-local `filter`/`textconv` drivers the hardened client doesn't sandbox. |
-| `repo_resolve_conflict` | `{ path, side, index? }` | Keep one side of **every** conflict region in `path` and write the result to the working copy. `side` is `ours`, `base`, `theirs`, or — jj only, for a conflict with more than two sides — `side` plus a 0-based `index` (list the sides with `repo_conflict_regions` first). On git the path is then staged (`git add`), which is what clears the unmerged index entry; jj needs no such step (the working-copy content *is* the resolution). Returns `{ resolved, side, index, conflicts_resolved }`. Refused **before anything is written** when the request can't be honoured exactly: a path outside the repo, a path the backend does not currently report as conflicted (so a file merely *containing* marker-like text is never rewritten), `base` where the conflict records none (git's 2-way `merge` style), `theirs` on an n-way jj conflict where it would be ambiguous, `side` on git, or an `index` alongside a named side. |
+| `repo_resolve_conflict` | `{ path, side, index? }` | Keep one side of **every** conflict region in `path` and write the result to the working copy. `side` is `ours`, `base`, `theirs`, or — jj only, for a conflict with more than two sides — `side` plus a 0-based `index` (list the sides with `repo_conflict_regions` first). On git the path is then staged (`git add`), which is what clears the unmerged index entry; jj needs no such step (the working-copy content *is* the resolution). Returns `{ resolved, side, index, conflicts_resolved }`. Refused **before anything is written** when the request can't be honoured exactly: a path outside the repo, a path the backend does not currently report as conflicted (so a file merely *containing* marker-like text is never rewritten), a file over the `--max-output-bytes` ceiling, `base` where the conflict records none (git's 2-way `merge` style), `theirs` on an n-way jj conflict where it would be ambiguous, `side` on git, or an `index` alongside a named side. |
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
 | `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `{ rebased_onto }`. Requires `--allow-write`. |
@@ -227,11 +227,23 @@ The `vcs-mcp` binary applies, in order:
    exceptions — `forge_pr_checkout`, `forge_pr_merge`, and `forge_pr_close` (the
    latter two can delete a branch and switch the checkout) — take the same repo lock
    and therefore cannot interleave with `repo_*` mutations.
-7. **A content-output budget.** `repo_show_file`, `repo_diff`, and `forge_pr_diff`
-   run under the `--max-output-bytes` ceiling (default 10 MiB), so a giant blob or
-   diff can't be buffered whole into the server's (and then the JSON response's)
-   memory — exceeding it returns `OutputTooLarge`, never a silently truncated
-   result.
+7. **A content-output budget.** `repo_show_file`, `repo_diff`, `forge_pr_diff`, and
+   the working-copy read behind `repo_conflict_regions` / `repo_resolve_conflict`
+   run under the `--max-output-bytes` ceiling (default 10 MiB), so a giant blob,
+   diff, or working-copy file can't be buffered whole into the server's (and then
+   the JSON response's) memory — exceeding it returns `OutputTooLarge` (or, for the
+   filesystem read, the same refusal naming the ceiling), never a silently
+   truncated result. The first three inherit the budget from the git/jj/forge
+   **client** they run through, which enforces it on the subprocess's output pipe.
+   The conflict tools spawn nothing for their read, so nothing pipe-side could
+   enforce it: the server carries the same budget itself and applies it at the
+   filesystem — first to the file's size, so an oversized file is refused before a
+   byte of it is buffered, then to the read itself, so a file that grows past the
+   ceiling mid-read still can't overrun it. `repo_resolve_conflict` is bounded end
+   to end by that same read: what it writes is a parse of what it read, and a
+   resolution only ever drops content. A library embedder sets the ceiling with
+   `VcsMcpServer::with_output_budget` (the default is unlimited, as it is for a
+   client with no configured budget).
 8. **Annotation honesty on jj (no `readOnlyHint` on the snapshotting reads).** On a
    jj-backed repo, every `repo_*` query except `repo_info`, `repo_conflict_regions`
    and `repo_op_log` (`repo_status`,
@@ -269,36 +281,49 @@ The `vcs-mcp` binary applies, in order:
    confinement from the subprocess running inside the repo, so these two make it
    explicit: an agent-supplied `path` must consist entirely of normal components,
    which rejects an absolute path, a Windows drive prefix, and any `..`
-   traversal before a single byte is read or written. `repo_resolve_conflict`
-   adds a second guard on top — the path must be one the backend *currently
-   reports as conflicted* — so a file that merely **contains** conflict-marker-like
-   text (a conflict-parser fixture, a quoted diff in documentation) can never be
-   "resolved" into losing content. Residual: a symlink *inside* the repo that
-   points outside it is not followed-and-rejected here, the same exposure git
-   itself has when it materializes a conflicted working tree.
-9. **Command logging is off by default, redacted, and stderr-only.** `--log-commands`
-   wraps the git/jj/forge clients in a command-logging `ProcessRunner` decorator
-   (`vcs_cli_support::logging::LoggingRunner`) so you can see exactly what the server
-   spawns — program, argv, working directory, exit code, duration. It is a diagnostic
-   surface over argv, so it is treated as security-sensitive: the log is written to
-   **stderr only** (the stdout JSON-RPC transport is never touched), the process
-   **environment is never logged** (that is the channel the forge token rides in —
-   `GH_TOKEN`/`GITLAB_TOKEN` — and git's secret goes through `credential.helper`, so
-   the token-carrying channel is out of scope by construction), and each argv value
-   is redacted before it is written: the value after a sensitive flag (`--token`,
-   `--password`, …) or the value of its `--flag=value` form is masked, a secret-shaped
-   token (`ghp_`/`github_pat_`/`glpat-`/… prefix, an `x-access-token:` embed) is
-   masked, a URL's embedded credentials are masked (host and path kept), and long free
-   text (a PR/issue body, a commit message) is truncated. This is defence in depth on
-   top of guard (4) above — the "token never rides in argv" contract — not a
-   replacement for it.
+   traversal before a single byte is read or written. On Windows it additionally
+   rejects a component naming a legacy DOS **device** (`CON`, `NUL`, `COM1`, …,
+   with or without an extension): Win32 resolves those in every directory, so
+   `<repo>\CON` opens the console rather than a file — and no repository can
+   legitimately contain such a file, since Win32 won't let one be created.
+   `repo_resolve_conflict` adds a further guard — the path must be one the backend
+   *currently reports as conflicted* — so a file that merely **contains**
+   conflict-marker-like text (a conflict-parser fixture, a quoted diff in
+   documentation) can never be "resolved" into losing content. The
+   `--max-output-bytes` ceiling applies to this direct filesystem path as well
+   (guard 7 above), so "not through a subprocess" does not mean "unbounded".
+   Residual: (a) a symlink *inside* the repo that points outside it is not
+   followed-and-rejected here, the same exposure git itself has when it
+   materializes a conflicted working tree; (b) `--timeout` bounds *commands*, and
+   this read/write runs no command — on a wedged network filesystem the call can
+   block for as long as the OS takes to fail it. The device-name guard removes the
+   one case where that block would have been indefinite by construction; a stalled
+   remote mount is left to the mount's own timeouts.
+10. **Command logging is off by default, redacted, and stderr-only.** `--log-commands`
+    wraps the git/jj/forge clients in a command-logging `ProcessRunner` decorator
+    (`vcs_cli_support::logging::LoggingRunner`) so you can see exactly what the server
+    spawns — program, argv, working directory, exit code, duration. It is a diagnostic
+    surface over argv, so it is treated as security-sensitive: the log is written to
+    **stderr only** (the stdout JSON-RPC transport is never touched), the process
+    **environment is never logged** (that is the channel the forge token rides in —
+    `GH_TOKEN`/`GITLAB_TOKEN` — and git's secret goes through `credential.helper`, so
+    the token-carrying channel is out of scope by construction), and each argv value
+    is redacted before it is written: the value after a sensitive flag (`--token`,
+    `--password`, …) or the value of its `--flag=value` form is masked, a secret-shaped
+    token (`ghp_`/`github_pat_`/`glpat-`/… prefix, an `x-access-token:` embed) is
+    masked, a URL's embedded credentials are masked (host and path kept), and long free
+    text (a PR/issue body, a commit message) is truncated. This is defence in depth on
+    top of guard (4) above — the "token never rides in argv" contract — not a
+    replacement for it.
 
 > Note the hardening, timeout, and output budget are how the **binary** constructs
 > the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from
 > `Repo::discover(".")` gets a plain, un-hardened client with no default timeout or
 > output budget — harden and bound the client yourself
 > (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d).default_output_budget(b))`)
-> if you serve untrusted repositories.
+> if you serve untrusted repositories. The conflict tools' direct working-copy read
+> takes its ceiling from the **server**, not the client, so bound it there too:
+> `VcsMcpServer::new(...).with_output_budget(b)`.
 
 ## Embedding the server
 

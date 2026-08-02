@@ -826,6 +826,7 @@ pub fn vcs_mcp::VcsMcpServer::forge_repo_view(&self) -> core::pin::Pin<alloc::bo
 pub fn vcs_mcp::VcsMcpServer::forge_repo_view_tool_attr() -> rmcp::model::tool::Tool
 impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::new<R: processkit::runner::ProcessRunner + 'static>(vcs_core::Repo<R>, core::option::Option<vcs_forge::Forge<R>>, vcs_mcp::WriteGate) -> Self
+pub fn vcs_mcp::VcsMcpServer::with_output_budget(self, vcs_cli_support::OutputBudget) -> Self
 impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress_tool_attr() -> rmcp::model::tool::Tool

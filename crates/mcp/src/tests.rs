@@ -2647,6 +2647,141 @@ mod conflict_tools {
         );
     }
 
+    // R-01: the two conflict tools read a file *directly*, so no client
+    // `OutputBudget` can reach them (a client budget bounds a subprocess pipe, and
+    // these spawn nothing for their read) — they carry the server's own ceiling
+    // instead, and it must behave exactly like the one `repo_show_file` inherits:
+    // refuse naming the ceiling, never truncate. Pinned at the exact boundary
+    // ([[K-073]]): a file *on* the cap is still read, one byte past it is not.
+    #[tokio::test]
+    async fn conflict_tools_refuse_a_file_over_the_content_ceiling() {
+        let dir = worktree(GIT_MERGE);
+        let size = GIT_MERGE.len();
+
+        // Exactly on the ceiling: read in full (the budget fires strictly past it,
+        // matching `OutputBudget::bytes`' documented boundary).
+        let json = payload(
+            &git_server_at(dir.path(), git_conflicted_runner(), WriteGate::All)
+                .with_output_budget(vcs_core::OutputBudget::bytes(size))
+                .repo_conflict_regions(regions_params("f.txt"))
+                .await
+                .expect("a file sitting exactly on the ceiling is still read"),
+        );
+        assert_eq!(json["conflict_count"], 1);
+
+        // One byte past it: refused. The ungated read tool is the one that must
+        // not be able to buffer an arbitrary working-copy file into the server.
+        let runner = git_conflicted_runner();
+        let tight = git_server_at(dir.path(), runner.clone(), WriteGate::All)
+            .with_output_budget(vcs_core::OutputBudget::bytes(size - 1));
+        let err = tight
+            .repo_conflict_regions(regions_params("f.txt"))
+            .await
+            .expect_err("over the ceiling → refused, not truncated");
+        assert_eq!(
+            err.code,
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "the same mapping repo_show_file's OutputTooLarge gets: {err:?}"
+        );
+        assert!(
+            err.message.contains("ceiling") && err.message.contains("--max-output-bytes"),
+            "the refusal must name the operator's knob: {}",
+            err.message
+        );
+
+        // The mutating tool reads through the same bounded path, so the ceiling
+        // stops it BEFORE it writes or stages anything.
+        let err = tight
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, None))
+            .await
+            .expect_err("over the ceiling → refused");
+        assert!(err.message.contains("ceiling"), "{}", err.message);
+        assert_eq!(read_back(&dir), GIT_MERGE, "nothing was written");
+        assert!(!staged(&runner), "nothing was staged");
+    }
+
+    // `--max-output-bytes 0` (and the library default) mean *unlimited*, exactly as
+    // for the subprocess-backed content tools — a big conflicted file still reads.
+    #[tokio::test]
+    async fn conflict_tools_are_unbounded_when_the_ceiling_is_disabled() {
+        let big = format!("{}{GIT_MERGE}", "filler line\n".repeat(20_000));
+        let dir = worktree(&big);
+        for server in [
+            git_server_at(dir.path(), git_conflicted_runner(), WriteGate::All)
+                .with_output_budget(vcs_core::OutputBudget::unlimited()),
+            // No `with_output_budget` at all — the default is unlimited too, so a
+            // library embedder's server behaves like `--max-output-bytes 0`.
+            git_server_at(dir.path(), git_conflicted_runner(), WriteGate::All),
+        ] {
+            let json = payload(
+                &server
+                    .repo_conflict_regions(regions_params("f.txt"))
+                    .await
+                    .expect("no ceiling → the whole file is read"),
+            );
+            assert_eq!(json["conflict_count"], 1);
+        }
+    }
+
+    // R-01, the second half: on Windows a handful of legacy names resolve to
+    // DEVICES in every directory (`<repo>\CON` is the console), and reading one can
+    // block forever — the direct filesystem I/O these two tools do is the only
+    // place in the server that isn't behind a subprocess `--timeout`, so the
+    // component guard has to reject them outright.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn conflict_tools_refuse_a_windows_device_name() {
+        let dir = worktree(GIT_MERGE);
+        let runner = git_conflicted_runner();
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+        for bad in ["CON", "nul", "COM1.txt", "sub/LPT1"] {
+            let err = server
+                .repo_conflict_regions(regions_params(bad))
+                .await
+                .expect_err("a device name is not a repository file");
+            assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+            assert!(err.message.contains("device"), "{}", err.message);
+            server
+                .repo_resolve_conflict(resolve_params(bad, ConflictSideArg::Ours, None))
+                .await
+                .expect_err("refused for the write too");
+        }
+        assert_eq!(read_back(&dir), GIT_MERGE, "nothing was written");
+        assert!(!staged(&runner), "nothing was staged");
+    }
+
+    // The device-name predicate itself, checked on every platform (only Windows
+    // *applies* it): Win32 matches the stem before the first `.`, ignores case and
+    // trailing spaces/dots, and reserves only `COM1`–`COM9` / `LPT1`–`LPT9`.
+    #[test]
+    fn reserved_device_names_are_recognised_by_win32_rules() {
+        for name in [
+            "CON", "con", "NUL", "nul.txt", "AUX", "PRN", "CONIN$", "COM1", "lpt9", "com1.log",
+            "CON. ", "CON ",
+        ] {
+            assert!(
+                crate::conflicts::is_reserved_device_name(name),
+                "{name} is a Windows device"
+            );
+        }
+        for name in [
+            "console",
+            "context.rs",
+            "conflict.rs",
+            "COM0",
+            "COM10",
+            "LPT",
+            "nulls",
+            "a.con",
+            "auxiliary",
+        ] {
+            assert!(
+                !crate::conflicts::is_reserved_device_name(name),
+                "{name} is an ordinary filename"
+            );
+        }
+    }
+
     // The read tool spawns NO backend command (it reads the working copy), so —
     // unlike the [K-017] family of jj-*snapshotting* reads — `readOnlyHint` is the
     // honest annotation here, exactly as for `repo_info`. The write tool is

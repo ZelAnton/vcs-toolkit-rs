@@ -26,13 +26,25 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `repo_conflicts` lists as conflicted. `repo_conflict_regions` spawns no backend
   command at all and so is honestly annotated `readOnlyHint`.
 - Both tools confine an agent-supplied `path` to the repository (no absolute
-  path, no `..` traversal) since, uniquely, they touch the filesystem directly
-  rather than through a git/jj subprocess. `repo_resolve_conflict` additionally
-  refuses any path the backend does not currently report as conflicted, so a file
-  that merely *contains* conflict-marker-like text can never be rewritten, and
-  refuses an unsatisfiable side (`base` where none is recorded, an ambiguous
-  `theirs` on an n-way jj conflict, `side`/`index` on git) **before** writing
-  anything.
+  path, no `..` traversal, and on Windows no legacy DOS device name such as `CON`
+  or `COM1`, which Win32 resolves in every directory) since, uniquely, they touch
+  the filesystem directly rather than through a git/jj subprocess.
+  `repo_resolve_conflict` additionally refuses any path the backend does not
+  currently report as conflicted, so a file that merely *contains*
+  conflict-marker-like text can never be rewritten, and refuses an unsatisfiable
+  side (`base` where none is recorded, an ambiguous `theirs` on an n-way jj
+  conflict, `side`/`index` on git) **before** writing anything.
+- Both tools also run under the `--max-output-bytes` content ceiling (default
+  10 MiB), like `repo_show_file`/`repo_diff`/`forge_pr_diff`: an oversized
+  working-copy file is refused with an error naming the ceiling, never truncated.
+  Because their read spawns no command, no client `OutputBudget` could reach it,
+  so the ceiling is enforced at the filesystem — against the file's size before
+  anything is buffered, and against the read itself, so a file growing mid-read
+  can't overrun it. `--max-output-bytes 0` disables it as everywhere else.
+- `VcsMcpServer::with_output_budget(OutputBudget)` — set that ceiling when
+  embedding the server as a library (the binary passes its `--max-output-bytes`
+  value). Defaults to `OutputBudget::unlimited()`, matching a CLI client with no
+  configured budget.
 - `repo_op_log` and `repo_undo` expose jj operation-log recovery through the
   `vcs-core` facade. `repo_op_log` is an ungated true read using
   `--at-op=@ --ignore-working-copy`; `repo_undo` is write-gated and runs
