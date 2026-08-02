@@ -1,5 +1,35 @@
 pub mod vcs_mcp
 pub mod vcs_mcp::guide
+pub enum vcs_mcp::ConflictSideArg
+pub vcs_mcp::ConflictSideArg::Base
+pub vcs_mcp::ConflictSideArg::Ours
+pub vcs_mcp::ConflictSideArg::Side
+pub vcs_mcp::ConflictSideArg::Theirs
+impl core::clone::Clone for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::clone(&self) -> vcs_mcp::ConflictSideArg
+impl core::cmp::Eq for vcs_mcp::ConflictSideArg
+impl core::cmp::PartialEq for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::eq(&self, &vcs_mcp::ConflictSideArg) -> bool
+impl core::fmt::Debug for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_mcp::ConflictSideArg
+impl core::marker::StructuralPartialEq for vcs_mcp::ConflictSideArg
+impl schemars::JsonSchema for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::inline_schema() -> bool
+pub fn vcs_mcp::ConflictSideArg::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::ConflictSideArg::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::ConflictSideArg::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::ConflictSideArg
+pub fn vcs_mcp::ConflictSideArg::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::ConflictSideArg
+impl core::marker::Send for vcs_mcp::ConflictSideArg
+impl core::marker::Sync for vcs_mcp::ConflictSideArg
+impl core::marker::Unpin for vcs_mcp::ConflictSideArg
+impl core::marker::UnsafeUnpin for vcs_mcp::ConflictSideArg
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::ConflictSideArg
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::ConflictSideArg
 pub enum vcs_mcp::IssueListStateArg
 pub vcs_mcp::IssueListStateArg::All
 pub vcs_mcp::IssueListStateArg::Closed
@@ -151,6 +181,24 @@ impl core::marker::Unpin for vcs_mcp::CommitParams
 impl core::marker::UnsafeUnpin for vcs_mcp::CommitParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::CommitParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::CommitParams
+pub struct vcs_mcp::ConflictRegionsParams
+pub vcs_mcp::ConflictRegionsParams::path: alloc::string::String
+impl core::fmt::Debug for vcs_mcp::ConflictRegionsParams
+pub fn vcs_mcp::ConflictRegionsParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::ConflictRegionsParams
+pub fn vcs_mcp::ConflictRegionsParams::inline_schema() -> bool
+pub fn vcs_mcp::ConflictRegionsParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::ConflictRegionsParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::ConflictRegionsParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::ConflictRegionsParams
+pub fn vcs_mcp::ConflictRegionsParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::ConflictRegionsParams
+impl core::marker::Send for vcs_mcp::ConflictRegionsParams
+impl core::marker::Sync for vcs_mcp::ConflictRegionsParams
+impl core::marker::Unpin for vcs_mcp::ConflictRegionsParams
+impl core::marker::UnsafeUnpin for vcs_mcp::ConflictRegionsParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::ConflictRegionsParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::ConflictRegionsParams
 pub struct vcs_mcp::CreateBranchParams
 pub vcs_mcp::CreateBranchParams::name: alloc::string::String
 impl core::fmt::Debug for vcs_mcp::CreateBranchParams
@@ -655,6 +703,26 @@ impl core::marker::Unpin for vcs_mcp::RenameBranchParams
 impl core::marker::UnsafeUnpin for vcs_mcp::RenameBranchParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::RenameBranchParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::RenameBranchParams
+pub struct vcs_mcp::ResolveConflictParams
+pub vcs_mcp::ResolveConflictParams::index: core::option::Option<usize>
+pub vcs_mcp::ResolveConflictParams::path: alloc::string::String
+pub vcs_mcp::ResolveConflictParams::side: vcs_mcp::ConflictSideArg
+impl core::fmt::Debug for vcs_mcp::ResolveConflictParams
+pub fn vcs_mcp::ResolveConflictParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::ResolveConflictParams
+pub fn vcs_mcp::ResolveConflictParams::inline_schema() -> bool
+pub fn vcs_mcp::ResolveConflictParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::ResolveConflictParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::ResolveConflictParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::ResolveConflictParams
+pub fn vcs_mcp::ResolveConflictParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::ResolveConflictParams
+impl core::marker::Send for vcs_mcp::ResolveConflictParams
+impl core::marker::Sync for vcs_mcp::ResolveConflictParams
+impl core::marker::Unpin for vcs_mcp::ResolveConflictParams
+impl core::marker::UnsafeUnpin for vcs_mcp::ResolveConflictParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::ResolveConflictParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::ResolveConflictParams
 pub struct vcs_mcp::ShowFileParams
 pub vcs_mcp::ShowFileParams::path: alloc::string::String
 pub vcs_mcp::ShowFileParams::rev: alloc::string::String
@@ -758,6 +826,7 @@ pub fn vcs_mcp::VcsMcpServer::forge_repo_view(&self) -> core::pin::Pin<alloc::bo
 pub fn vcs_mcp::VcsMcpServer::forge_repo_view_tool_attr() -> rmcp::model::tool::Tool
 impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::new<R: processkit::runner::ProcessRunner + 'static>(vcs_core::Repo<R>, core::option::Option<vcs_forge::Forge<R>>, vcs_mcp::WriteGate) -> Self
+pub fn vcs_mcp::VcsMcpServer::with_output_budget(self, vcs_cli_support::OutputBudget) -> Self
 impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress_tool_attr() -> rmcp::model::tool::Tool
@@ -769,6 +838,8 @@ pub fn vcs_mcp::VcsMcpServer::repo_checkout(&self, rmcp::handler::server::wrappe
 pub fn vcs_mcp::VcsMcpServer::repo_checkout_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_commit(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::CommitParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_commit_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::repo_conflict_regions(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::ConflictRegionsParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::repo_conflict_regions_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_conflicts(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_conflicts_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_continue_in_progress(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
@@ -805,6 +876,8 @@ pub fn vcs_mcp::VcsMcpServer::repo_remove_worktree(&self, rmcp::handler::server:
 pub fn vcs_mcp::VcsMcpServer::repo_remove_worktree_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_rename_branch(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::RenameBranchParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_rename_branch_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::repo_resolve_conflict(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::ResolveConflictParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::repo_resolve_conflict_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_show_file(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::ShowFileParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_show_file_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_snapshot(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>

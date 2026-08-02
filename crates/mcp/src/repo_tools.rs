@@ -12,6 +12,7 @@ use rmcp::{ErrorData, tool, tool_router};
 use vcs_core::BranchDelete;
 
 use crate::VcsMcpServer;
+use crate::conflicts;
 use crate::output::{RepoInfo, core_err, ok_json};
 use crate::params::*;
 
@@ -194,6 +195,35 @@ impl VcsMcpServer {
         ok_json(&self.repo.conflicted_files().await.map_err(core_err)?)
     }
 
+    // T-152: `read_only_hint = true` is correct here, and is NOT the [K-017] mistake.
+    // That rule covers reads that reach a *snapshotting jj command*; this tool spawns
+    // no backend command at all. It reads the conflicted file straight from the
+    // working copy — deliberately, not through `repo_show_file`: conflict markers are
+    // materialized only in the working copy, so on git `git show HEAD:<path>` returns
+    // the clean HEAD blob and `git show :<path>` fails outright ("in the index, but
+    // not at stage 0"), which would make this tool answer "no conflicts" for a file
+    // `repo_conflicts` lists as conflicted. Reading the working copy also guarantees
+    // it reports exactly the bytes `repo_resolve_conflict` would overwrite. Like
+    // `repo_info`, it records no jj operation and moves no ref, so the read-only
+    // claim holds on both backends. See `crate::conflicts` for the full rationale.
+    //
+    // Spawning nothing also means it inherits no OutputBudget from the git/jj
+    // client (a client budget bounds a subprocess pipe), so it applies the
+    // server's own `content_budget` to the file it reads — this is a
+    // content-returning tool and must honour `--max-output-bytes` like the rest.
+    #[tool(
+        description = "The parsed conflict regions of a conflicted file, as structured JSON instead of raw markers: on git each region carries the ours/base/theirs sides plus their labels and the marker length (merge, diff3 and zdiff3 styles); on jj each carries the diff/snapshot/base sections with their labels. Every region is numbered `N of M`. `path` is repo-relative, read from the working copy (where markers are materialized) — a file with no conflict markers returns an empty list, not an error. A file larger than the server's --max-output-bytes ceiling is refused, not truncated. This is a true read: it spawns no git/jj command at all.",
+        annotations(read_only_hint = true)
+    )]
+    pub async fn repo_conflict_regions(
+        &self,
+        Parameters(p): Parameters<ConflictRegionsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = conflicts::repo_path(self.repo.root(), &p.path)?;
+        let content = conflicts::read_working_copy(&path, self.content_budget).await?;
+        conflicts::regions_json(self.repo.kind(), &p.path, &content)
+    }
+
     // T-068: jj-snapshotting read tool — see `repo_snapshot`'s note (non-destructive,
     // NOT readOnlyHint; still callable without a write gate). `jj workspace list`
     // snapshots the working copy first (the per-workspace `workspace root` probes it
@@ -241,6 +271,82 @@ impl VcsMcpServer {
             .await
             .map_err(core_err)?;
         ok_json(&serde_json::json!({ "committed_paths": paths.len() }))
+    }
+
+    // T-152: this is the one tool that writes a working-copy **file** directly
+    // rather than driving a git/jj porcelain command — that is the nature of
+    // resolving markers in place. Two guards bound the blast radius, both applied
+    // before a single byte is written:
+    //   1. `conflicts::repo_path` refuses anything that could escape the repo
+    //      (absolute paths, `..`), which the facade's subprocess confinement would
+    //      otherwise have given us for free;
+    //   2. the path must be one the backend *currently reports as conflicted*.
+    //      Without this a file merely *containing* marker-like text (this
+    //      workspace's own conflict-parser fixtures, a quoted diff in a doc) would
+    //      be "resolved" — silently destroying content in a file that was never
+    //      conflicted.
+    //   3. the server's `content_budget` bounds the read below, and so bounds this
+    //      tool's memory end to end: everything it writes is the parse of what it
+    //      read (a resolution only ever drops content), so no separate ceiling on
+    //      the write is needed.
+    #[tool(
+        description = "Resolve a conflicted file by keeping one side of every conflict region in it, writing the result to the working copy. `side` is \"ours\", \"base\", \"theirs\", or (jj only, for conflicts with more than two sides) \"side\" plus a 0-based `index`. A side the backend or the file cannot honour — \"base\" where the conflict records none, an ambiguous \"theirs\" on an n-way jj conflict, a path that is not currently conflicted, a file over the server's --max-output-bytes ceiling — is refused before anything is written. On git the resolved path is then staged (git add), which is what clears the unmerged index entry; jj needs no such step. Requires write access (--allow-write, or --allow-tools naming this tool).",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn repo_resolve_conflict(
+        &self,
+        Parameters(p): Parameters<ResolveConflictParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let _write = self.begin_repo_write("repo_resolve_conflict").await?;
+        let path = conflicts::repo_path(self.repo.root(), &p.path)?;
+
+        // Guard 2: only a genuinely conflicted path may be rewritten.
+        let conflicted = self.repo.conflicted_files().await.map_err(core_err)?;
+        if !conflicted.iter().any(|c| c == &path.rel) {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "{} is not currently conflicted, so there is nothing to resolve \
+                     (repo_conflicts lists the conflicted paths); refusing to rewrite it, \
+                     since a file may legitimately contain conflict-marker-like text",
+                    path.rel.display()
+                ),
+                None,
+            ));
+        }
+
+        let content = conflicts::read_working_copy(&path, self.content_budget).await?;
+        let resolved = conflicts::resolve_content(self.repo.kind(), &content, p.side, p.index)?;
+        if resolved.conflicts_resolved == 0 {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "{} is reported as conflicted but its working-copy content has no \
+                     parsable conflict markers (a binary conflict, or markers already \
+                     edited out); nothing was written",
+                    path.rel.display()
+                ),
+                None,
+            ));
+        }
+        tokio::fs::write(&path.abs, resolved.content.as_bytes())
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!("failed to write the resolved {}: {e}", path.rel.display()),
+                    None,
+                )
+            })?;
+        // git: `git add` — the step that actually clears the unmerged index entry.
+        // jj: a documented no-op (no index; the next snapshot records the content).
+        self.repo
+            .mark_resolved(std::slice::from_ref(&path.rel))
+            .await
+            .map_err(core_err)?;
+        ok_json(&serde_json::json!({
+            "resolved": p.path,
+            "side": p.side,
+            "index": p.index,
+            "conflicts_resolved": resolved.conflicts_resolved,
+        }))
     }
 
     #[tool(

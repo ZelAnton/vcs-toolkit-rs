@@ -78,6 +78,22 @@ pub(crate) async fn conflicted_files<R: ProcessRunner>(
     Ok(git.conflicted_files(dir).await?)
 }
 
+/// Stage `paths` — what clears git's unmerged (`UU`) index entries once the
+/// working-tree markers are gone. `GitApi::add` uses `--literal-pathspecs`, so a
+/// conflicted path containing `*`/`?`/`[]` stages literally rather than as a glob.
+pub(crate) async fn mark_resolved<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    paths: &[PathBuf],
+) -> Result<()> {
+    if paths.is_empty() {
+        // `git add --` with no pathspec is a no-op spawn at best; skip it.
+        return Ok(());
+    }
+    git.add(dir, paths).await?;
+    Ok(())
+}
+
 pub(crate) async fn create_branch<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,

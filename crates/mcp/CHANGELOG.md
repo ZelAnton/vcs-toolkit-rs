@@ -10,6 +10,41 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- **Structured conflict tools.** `repo_conflict_regions(path)` returns one
+  conflicted file's markers parsed into structure — git's `ours`/`base`/`theirs`
+  sides with their labels and marker length, or jj's ordered `Diff`/`Snapshot`/
+  `Base` sections with jj's own `conflict N of M` counters — under a
+  `{ backend, path, conflict_count, regions }` envelope that numbers every region
+  identically on both backends. A file with no markers returns an empty region
+  list, not an error. `repo_resolve_conflict(path, side, index?)` is its
+  write-gated (`destructiveHint`) counterpart: it keeps one side of every region
+  and writes the result to the working copy, then stages the path on git
+  (`git add`, what actually clears the unmerged index entry; jj needs no such
+  step). Both read the **working copy**, not a revision — conflict markers are
+  materialized only there, and on git they exist nowhere else, so a
+  `repo_show_file`-based read would report no conflicts for a file
+  `repo_conflicts` lists as conflicted. `repo_conflict_regions` spawns no backend
+  command at all and so is honestly annotated `readOnlyHint`.
+- Both tools confine an agent-supplied `path` to the repository (no absolute
+  path, no `..` traversal, and on Windows no legacy DOS device name such as `CON`
+  or `COM1`, which Win32 resolves in every directory) since, uniquely, they touch
+  the filesystem directly rather than through a git/jj subprocess.
+  `repo_resolve_conflict` additionally refuses any path the backend does not
+  currently report as conflicted, so a file that merely *contains*
+  conflict-marker-like text can never be rewritten, and refuses an unsatisfiable
+  side (`base` where none is recorded, an ambiguous `theirs` on an n-way jj
+  conflict, `side`/`index` on git) **before** writing anything.
+- Both tools also run under the `--max-output-bytes` content ceiling (default
+  10 MiB), like `repo_show_file`/`repo_diff`/`forge_pr_diff`: an oversized
+  working-copy file is refused with an error naming the ceiling, never truncated.
+  Because their read spawns no command, no client `OutputBudget` could reach it,
+  so the ceiling is enforced at the filesystem — against the file's size before
+  anything is buffered, and against the read itself, so a file growing mid-read
+  can't overrun it. `--max-output-bytes 0` disables it as everywhere else.
+- `VcsMcpServer::with_output_budget(OutputBudget)` — set that ceiling when
+  embedding the server as a library (the binary passes its `--max-output-bytes`
+  value). Defaults to `OutputBudget::unlimited()`, matching a CLI client with no
+  configured budget.
 - `repo_op_log` and `repo_undo` expose jj operation-log recovery through the
   `vcs-core` facade. `repo_op_log` is an ungated true read using
   `--at-op=@ --ignore-working-copy`; `repo_undo` is write-gated and runs

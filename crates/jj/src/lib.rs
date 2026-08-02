@@ -134,6 +134,18 @@
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 //!
+//! # Features
+//!
+//! - **`mock`** — the `mockall`-generated `MockJjApi` (see *Testing* above).
+//! - **`tracing`** — a `tracing` event per command run.
+//! - **`serde`** — derives `serde::Serialize` on the public [`conflict`] model
+//!   ([`JjConflictSegment`](conflict::JjConflictSegment),
+//!   [`JjConflictRegion`](conflict::JjConflictRegion),
+//!   [`JjConflictSection`](conflict::JjConflictSection),
+//!   [`JjResolution`](conflict::JjResolution)) so a caller can emit a parsed
+//!   conflict as JSON. `Serialize` only — these types are a parser's *output*,
+//!   never a wire input.
+//!
 //! # Safety
 //!
 //! Every caller value placed in a bare positional argv slot (bookmark name,
@@ -204,6 +216,7 @@ pub use specs::{
 };
 use specs::{
     at_revset, c_locale, exact, first_bookmark, reject_bookmark_track_remote, reject_flag_like,
+    reject_flag_like_path,
 };
 
 /// The jj operations this crate exposes — the interface consumers code against
@@ -2056,9 +2069,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
     }
 
     async fn workspace_add(&self, dir: &Path, spec: WorkspaceAdd) -> Result<()> {
-        // Built directly on `command_in` (not `cmd_in`) because the trailing
-        // `--color never` must come after the chained value args, not between
-        // `--name` and its value.
+        reject_flag_like_path("workspace path", &spec.path)?;
+        // K-043: `cmd_in`/`cmd_in_wc` append global flags (`--color never`,
+        // `--ignore-working-copy`) *after* the caller's argv, even after a `--`
+        // if one is already present. Built directly on `command_in` (not
+        // `cmd_in`) so the trailing `--color never` lands after the chained
+        // value args, not between `--name` and its value.
         let mut command = self
             .core
             .command_in(dir, ["workspace", "add", "--name"])
@@ -2701,6 +2717,40 @@ mod tests {
                 "never"
             ]
         );
+    }
+
+    // A flag-shaped `path` is refused before spawning — `workspace add --name
+    // <n> -r <base> -evil` would otherwise let jj reparse `-evil` as an
+    // unexpected flag rather than the intended path.
+    #[tokio::test]
+    async fn workspace_add_rejects_flag_like_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .workspace_add(
+                Path::new("/repo"),
+                WorkspaceAdd::new("ws1", rv("main"), "-evil"),
+            )
+            .await
+            .expect_err("a flag-like workspace path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // Empty/whitespace-only paths are refused the same way.
+    #[tokio::test]
+    async fn workspace_add_rejects_empty_path() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let jj = Jj::with_runner(&rec);
+        let err = jj
+            .workspace_add(
+                Path::new("/repo"),
+                WorkspaceAdd::new("ws1", rv("main"), "  "),
+            )
+            .await
+            .expect_err("an empty workspace path must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&err));
+        assert!(rec.calls().is_empty(), "nothing may spawn");
     }
 
     #[test]

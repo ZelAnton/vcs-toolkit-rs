@@ -9,6 +9,19 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+### Added
+- **New optional `serde` feature** (off by default) deriving `serde::Serialize`
+  on the public conflict model — `conflict::ConflictSegment`,
+  `conflict::ConflictRegion`, and `conflict::ResolutionSide` — so a JSON consumer
+  (`vcs-mcp`, via `vcs-core/serde`) can hand an agent a parsed conflict. Additive:
+  the types keep their existing `#[non_exhaustive]`-ness and no default build
+  gains a dependency. `Serialize` only, no `Deserialize` — these are a parser's
+  output, never a wire input. `ConflictSegment` is adjacently tagged
+  (`{"kind":"Text","value":[…]}` / `{"kind":"Conflict","value":{…}}`) for a
+  type-stable object, matching `vcs_core::MergeProbe`; `ConflictRegion`
+  serializes its **public** fields only — the private verbatim marker lines that
+  exist solely for byte-exact `render` stay off the wire.
+
 - Add typed `fetch_with_progress`, `push_with_progress`, and
   `clone_repo_with_progress` methods. They stream process lifecycle/output
   events, force Git progress for piped output, and retain clone cleanup safety.
@@ -98,6 +111,15 @@ crates; tag releases as `vcs-git-v<version>`.
   being reparsed by git as an option that could redirect the write to an arbitrary
   config file. A legitimate `-`-leading value (e.g. `-1`) is still accepted — the flag
   *parse* is blocked, not the leading dash. (T-083.)
+- security: `GitApi::worktree_add`/`worktree_remove`/`worktree_move` (and the
+  synchronous `blocking::worktree_remove` Drop-cleanup helper) now refuse a
+  path positional that begins with `-` (after trimming), is empty/whitespace-only,
+  or contains a NUL byte, before spawning `git` — closing the same class of
+  argument-injection gap the ~45 existing `reject_flag_like` call sites already
+  guard against, for the one remaining unguarded set of bare positionals. The
+  check is a lossy-UTF-8 rendering of the path used only to classify it; a
+  legitimate non-UTF-8 path (valid on Unix) with no leading `-` still reaches
+  `git` byte-for-byte, unchanged. (T-147.)
 
 ## [0.11.0] - 2026-07-19
 

@@ -408,6 +408,31 @@ fn reject_invalid_labels(operation: &str, labels: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Reject workflow-dispatch input keys that would make gh parse a different
+/// `key=value` pair, or which cannot be passed to a process. Values intentionally
+/// remain unconstrained: `--raw-field` receives them as literal flag-value data.
+fn reject_invalid_workflow_dispatch_fields(fields: &[(String, String)]) -> Result<()> {
+    for (key, _) in fields {
+        let reason = if key.trim().is_empty() {
+            "must not be empty"
+        } else if key.contains('=') {
+            "must not contain `=`"
+        } else if key.contains('\0') {
+            "must not contain NUL"
+        } else {
+            continue;
+        };
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("workflow_dispatch input key {key:?} {reason}"),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn resolve_workflow(workflows: Vec<Workflow>, selector: &str) -> Result<Workflow> {
     if selector.is_empty() {
         return Err(Error::spawn(
@@ -1041,8 +1066,9 @@ pub struct WorkflowDispatch {
     pub git_ref: Option<String>,
     /// `workflow_dispatch` inputs, as ordered `(key, value)` pairs. Each is emitted as
     /// `--raw-field key=value` (see the type-level note on why `--raw-field`, not
-    /// `--field`). The value can be any string (a leading `-`/`@` is safe in this
-    /// flag-VALUE slot).
+    /// `--field`). Keys must be non-empty after trimming and cannot contain `=` or
+    /// NUL; values can be any string (a leading `-`/`@` is safe in this flag-VALUE
+    /// slot).
     pub fields: Vec<(String, String)>,
 }
 
@@ -2087,6 +2113,7 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // literal string. gh's dispatch API returns 204 No Content, so there is no
         // run id to return — hence `run_unit` (poll `run_list` to find the run).
         reject_flag_like("workflow", spec.workflow.as_str())?;
+        reject_invalid_workflow_dispatch_fields(&spec.fields)?;
         // Own the `key=value` tokens before `args` borrows them (declared first so it
         // outlives `args`, which holds `&str` into it).
         let fields: Vec<String> = spec
@@ -4186,6 +4213,27 @@ mod tests {
                 .is_err()
         );
         assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // Input keys name the left side of gh's `--raw-field key=value` boundary, so an
+    // empty key or `=` would silently target a different input. Validation must run
+    // before the runner; this ScriptedRunner has no matching command on purpose.
+    #[tokio::test]
+    async fn workflow_dispatch_rejects_invalid_input_keys_before_spawning() {
+        let gh = GitHub::with_runner(ScriptedRunner::new());
+        for key in ["", "a=b", "\0"] {
+            let err = gh
+                .workflow_dispatch(
+                    Path::new("."),
+                    WorkflowDispatch::new("ci.yml").field(key, "value"),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{key:?} should be rejected before spawning, got {err:?}"
+            );
+        }
     }
 
     // run_rerun pins `gh run rerun <id>` (All) and `gh run rerun <id> --failed`

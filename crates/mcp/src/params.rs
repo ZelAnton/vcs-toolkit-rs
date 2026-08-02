@@ -127,6 +127,66 @@ pub struct ShowFileParams {
     pub path: String,
 }
 
+/// Read a conflicted file's parsed conflict regions.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ConflictRegionsParams {
+    /// Repo-relative path of the conflicted file, `/`-separated. Read from the
+    /// **working copy** (that is where conflict markers are materialized on both
+    /// backends), so it must stay inside the repository: an absolute path, or one
+    /// containing a `..` component, is refused.
+    pub path: String,
+}
+
+/// Replace a conflicted file's regions with one chosen side.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ResolveConflictParams {
+    /// Repo-relative path of the conflicted file, `/`-separated. Same containment
+    /// rules as [`ConflictRegionsParams::path`]; additionally the path must be one
+    /// the backend currently reports as conflicted.
+    pub path: String,
+    /// Which side to keep in every conflict region of the file.
+    pub side: ConflictSideArg,
+    /// The 0-based side index, **required with (and only with)**
+    /// `side = "side"` — jj's n-way form. File order, so `0` is the first side.
+    #[serde(default)]
+    pub index: Option<usize>,
+}
+
+/// Which side [`repo_resolve_conflict`](crate::VcsMcpServer::repo_resolve_conflict)
+/// keeps. The two backends have genuinely different domains, so not every value is
+/// valid everywhere — a value the current backend (or the file's actual conflict
+/// shape) cannot honour is refused *before* anything is written, never silently
+/// approximated:
+///
+/// | value | git | jj |
+/// |---|---|---|
+/// | `ours` | the `<<<<<<<` side | the first side (`Side(0)`) |
+/// | `theirs` | the `>>>>>>>` side | the second side — **only** when every region is 2-sided |
+/// | `base` | the `\|\|\|\|\|\|\|` base (diff3/zdiff3 only) | the recorded base |
+/// | `side` | refused — git's sides are named | `Side(index)`, any arity |
+// `Serialize` too (unlike the other param enums): the resolve tool echoes the
+// chosen side back in its result, so the agent's own transcript records which
+// side it destroyed the other of — `rename_all` keeps that echo spelled exactly
+// as the input was.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ConflictSideArg {
+    /// Keep "our" side — git's `<<<<<<<` side, jj's first side.
+    Ours,
+    /// Keep the merge base. Refused when the region records none (git's 2-way
+    /// `merge` conflict style records no base).
+    Base,
+    /// Keep "their" side — git's `>>>>>>>` side, jj's second side. On jj this is
+    /// refused for a conflict with more than two sides, where "theirs" is
+    /// ambiguous; use `side` with an explicit `index` there.
+    Theirs,
+    /// Keep the `index`-th side (0-based, file order). **jj only** — git's three
+    /// sides are named, so `ours`/`base`/`theirs` address them exactly.
+    Side,
+}
+
 /// Attribute each line of a file.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AnnotateParams {
