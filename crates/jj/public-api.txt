@@ -2152,6 +2152,8 @@ pub fn vcs_jj::conflict::JjConflictSection::eq(&self, &vcs_jj::conflict::JjConfl
 impl core::fmt::Debug for vcs_jj::conflict::JjConflictSection
 pub fn vcs_jj::conflict::JjConflictSection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for vcs_jj::conflict::JjConflictSection
+impl serde_core::ser::Serialize for vcs_jj::conflict::JjConflictSection
+pub fn vcs_jj::conflict::JjConflictSection::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_jj::conflict::JjConflictSection
 impl core::marker::Send for vcs_jj::conflict::JjConflictSection
 impl core::marker::Sync for vcs_jj::conflict::JjConflictSection
@@ -2170,6 +2172,8 @@ pub fn vcs_jj::conflict::JjConflictSegment::eq(&self, &vcs_jj::conflict::JjConfl
 impl core::fmt::Debug for vcs_jj::conflict::JjConflictSegment
 pub fn vcs_jj::conflict::JjConflictSegment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for vcs_jj::conflict::JjConflictSegment
+impl serde_core::ser::Serialize for vcs_jj::conflict::JjConflictSegment
+pub fn vcs_jj::conflict::JjConflictSegment::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_jj::conflict::JjConflictSegment
 impl core::marker::Send for vcs_jj::conflict::JjConflictSegment
 impl core::marker::Sync for vcs_jj::conflict::JjConflictSegment
@@ -2189,6 +2193,8 @@ impl core::fmt::Debug for vcs_jj::conflict::JjResolution
 pub fn vcs_jj::conflict::JjResolution::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for vcs_jj::conflict::JjResolution
 impl core::marker::StructuralPartialEq for vcs_jj::conflict::JjResolution
+impl serde_core::ser::Serialize for vcs_jj::conflict::JjResolution
+pub fn vcs_jj::conflict::JjResolution::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_jj::conflict::JjResolution
 impl core::marker::Send for vcs_jj::conflict::JjResolution
 impl core::marker::Sync for vcs_jj::conflict::JjResolution
@@ -2211,6 +2217,8 @@ pub fn vcs_jj::conflict::JjConflictRegion::eq(&self, &vcs_jj::conflict::JjConfli
 impl core::fmt::Debug for vcs_jj::conflict::JjConflictRegion
 pub fn vcs_jj::conflict::JjConflictRegion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for vcs_jj::conflict::JjConflictRegion
+impl serde_core::ser::Serialize for vcs_jj::conflict::JjConflictRegion
+pub fn vcs_jj::conflict::JjConflictRegion::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_jj::conflict::JjConflictRegion
 impl core::marker::Send for vcs_jj::conflict::JjConflictRegion
 impl core::marker::Sync for vcs_jj::conflict::JjConflictRegion

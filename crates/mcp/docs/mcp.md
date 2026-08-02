@@ -79,8 +79,9 @@ Their MCP *annotation* splits by whether the query can perturb the backend it
 reads (see the Safety model's "annotation honesty on jj" note):
 
 - **`readOnlyHint`** — genuinely read-only wherever they are supported:
-  `repo_info` (it spawns no backend command at all), `repo_op_log` (jj runs it
-  with `--at-op=@ --ignore-working-copy`; Git reports `Unsupported`), and every
+  `repo_info` and `repo_conflict_regions` (neither spawns a backend command at
+  all — the latter parses the working-copy file directly), `repo_op_log` (jj runs
+  it with `--at-op=@ --ignore-working-copy`; Git reports `Unsupported`), and every
   `forge_*` read tool (they drive the forge CLI, not the repo working copy).
 - **`destructiveHint = false` + `idempotentHint = true`** (not `readOnlyHint`) —
   every `repo_*` query that, on **jj**, runs a default working-copy-**snapshotting**
@@ -102,6 +103,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | `repo_branches` | — | Local branch (git) / bookmark (jj) names. |
 | `repo_current_branch` | — | The current branch/bookmark (null when detached/unset). |
 | `repo_conflicts` | — | Paths with unresolved merge conflicts. |
+| `repo_conflict_regions` | `{ path }` | One conflicted file's markers **parsed into structure**, so an agent never has to scrape them: `{ backend, path, conflict_count, regions: [{ number, total, region }] }`. The `region` shape is the backend's own and is deliberately *not* flattened into a lossy union — on git it carries `ours`/`base`/`theirs` (base only in `diff3`/`zdiff3` style), their labels, and `marker_len`; on jj it carries the ordered `sections` (`Diff` with `from_label`/`to_label`, `Snapshot`, `Base`) plus jj's own `conflict N of M` counters. `path` is repo-relative and read from the **working copy**, where markers are materialized; a file with no markers returns `conflict_count: 0`, not an error. A true read: it spawns no git/jj command. |
 | `repo_worktrees` | — | Attached worktrees (git) / workspaces (jj). |
 | `forge_auth_status` | — | Whether the forge CLI reports an authenticated session. |
 | `forge_repo_view` | — | The repository/project on the forge (`Unsupported` on Gitea). |
@@ -121,6 +123,7 @@ reads (see the Safety model's "annotation honesty on jj" note):
 | Tool | Params | Effect |
 |---|---|---|
 | `repo_try_merge` | `{ source }` | Probe whether merging `source` would conflict — a **probe** that's always rolled back, so it has no net effect. Gated because it spawns a *real* trial merge that materializes working-tree content, which on an untrusted repo can run repo-local `filter`/`textconv` drivers the hardened client doesn't sandbox. |
+| `repo_resolve_conflict` | `{ path, side, index? }` | Keep one side of **every** conflict region in `path` and write the result to the working copy. `side` is `ours`, `base`, `theirs`, or — jj only, for a conflict with more than two sides — `side` plus a 0-based `index` (list the sides with `repo_conflict_regions` first). On git the path is then staged (`git add`), which is what clears the unmerged index entry; jj needs no such step (the working-copy content *is* the resolution). Returns `{ resolved, side, index, conflicts_resolved }`. Refused **before anything is written** when the request can't be honoured exactly: a path outside the repo, a path the backend does not currently report as conflicted (so a file merely *containing* marker-like text is never rewritten), `base` where the conflict records none (git's 2-way `merge` style), `theirs` on an n-way jj conflict where it would be ambiguous, `side` on git, or an `index` alongside a named side. |
 | `repo_commit` | `{ paths, message }` | Commit exactly those paths (`git commit --only` / `jj commit <filesets>`). |
 | `repo_checkout` | `{ reference }` | Switch the working copy to a branch/bookmark/revision (`git checkout` / `jj edit`). |
 | `repo_rebase` | `{ onto }` | Rebase the current line onto a branch, bookmark, or revision. Returns `{ rebased_onto }`. Requires `--allow-write`. |
@@ -183,7 +186,7 @@ The `vcs-mcp` binary applies, in order:
 2. **Tool annotations.** Mutating tools are annotated `destructiveHint` so an MCP
    client can surface a confirmation prompt. Only the tools that are read-only on
    every backend where they are supported carry `readOnlyHint` (`repo_info`,
-   `repo_op_log`, the
+   `repo_conflict_regions`, `repo_op_log`, the
    `forge_*` reads); the
    `repo_*` queries that snapshot the jj working copy carry
    `destructiveHint = false` + `idempotentHint = true` instead of `readOnlyHint`,
@@ -230,7 +233,8 @@ The `vcs-mcp` binary applies, in order:
    memory — exceeding it returns `OutputTooLarge`, never a silently truncated
    result.
 8. **Annotation honesty on jj (no `readOnlyHint` on the snapshotting reads).** On a
-   jj-backed repo, every `repo_*` query except `repo_info` and `repo_op_log` (`repo_status`,
+   jj-backed repo, every `repo_*` query except `repo_info`, `repo_conflict_regions`
+   and `repo_op_log` (`repo_status`,
    `repo_diff_stat`, `repo_diff`, `repo_snapshot`, `repo_log`, `repo_show_file`, `repo_annotate`,
    `repo_branches`, `repo_current_branch`, `repo_conflicts`, `repo_worktrees`) runs a
    plain jj command in jj's default working-copy-**snapshotting** mode: it imports any
@@ -256,6 +260,22 @@ The `vcs-mcp` binary applies, in order:
    what an agent calling `repo_status`/`repo_diff` right after editing a file needs.
    That is why `--ignore-working-copy` is not an acceptable way to reclaim
    `readOnlyHint` here: it would trade a false annotation for stale reads.
+9. **Repo containment for the two conflict tools.** `repo_conflict_regions` and
+   `repo_resolve_conflict` are the only tools that touch the filesystem
+   **directly** rather than through a git/jj subprocess — necessarily so, because
+   conflict markers are materialized in the working copy and, on git, exist
+   nowhere else (`git show HEAD:<path>` returns the clean blob; `git show :<path>`
+   fails outright on an unmerged path). Every other tool inherits its path
+   confinement from the subprocess running inside the repo, so these two make it
+   explicit: an agent-supplied `path` must consist entirely of normal components,
+   which rejects an absolute path, a Windows drive prefix, and any `..`
+   traversal before a single byte is read or written. `repo_resolve_conflict`
+   adds a second guard on top — the path must be one the backend *currently
+   reports as conflicted* — so a file that merely **contains** conflict-marker-like
+   text (a conflict-parser fixture, a quoted diff in documentation) can never be
+   "resolved" into losing content. Residual: a symlink *inside* the repo that
+   points outside it is not followed-and-rejected here, the same exposure git
+   itself has when it materializes a conflicted working tree.
 9. **Command logging is off by default, redacted, and stderr-only.** `--log-commands`
    wraps the git/jj/forge clients in a command-logging `ProcessRunner` decorator
    (`vcs_cli_support::logging::LoggingRunner`) so you can see exactly what the server

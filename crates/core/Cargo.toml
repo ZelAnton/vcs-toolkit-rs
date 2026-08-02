@@ -38,8 +38,12 @@ serde = { version = "1", features = ["derive"], optional = true }
 # on for both backends at once.
 tracing = ["vcs-git/tracing", "vcs-jj/tracing"]
 # Add `#[derive(Serialize)]` to the facade DTOs (`RepoSnapshot`, `FileChange`, …);
-# also enables it on the re-exported `vcs-diff` types (`ChangeKind`/`DiffStat`).
-serde = ["dep:serde", "vcs-diff/serde"]
+# also enables it on the re-exported `vcs-diff` types (`ChangeKind`/`DiffStat`)
+# and on the re-exported `vcs-git`/`vcs-jj` conflict models
+# (`vcs_git::conflict::*`, `vcs_jj::conflict::*`). Features aren't re-exported, so
+# — exactly like `tracing` above — this is how a `vcs-core`-only consumer (e.g.
+# `vcs-mcp`) turns Serialize on across the facade *and* both backends at once.
+serde = ["dep:serde", "vcs-diff/serde", "vcs-git/serde", "vcs-jj/serde"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async dispatch tests.

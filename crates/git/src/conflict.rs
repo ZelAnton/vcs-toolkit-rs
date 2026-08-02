@@ -29,6 +29,7 @@ use crate::BINARY;
 /// this (callers usually *construct* it to pass to [`resolve`]) and wrongly
 /// signalling a fourth side could appear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ResolutionSide {
     /// The `<<<<<<<` side (typically `HEAD`).
     Ours,
@@ -43,7 +44,15 @@ pub enum ResolutionSide {
 ///
 /// All line vectors store lines **with** their original endings; the last
 /// line of a file may have none.
+///
+/// **`serde` wire shape.** Under the optional `serde` feature this serializes to
+/// exactly its **public** fields — the labels, the three sides, and
+/// [`marker_len`](Self::marker_len). The private verbatim marker lines are
+/// `skip`ped: they exist only so [`render`] can reproduce the file byte-for-byte,
+/// they are not part of the modelled conflict, and emitting them would publish an
+/// implementation detail on the wire. Nothing the *public* model carries is lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ConflictRegion {
     /// Label after the `<<<<<<<` marker (e.g. `HEAD`); empty when absent.
@@ -60,10 +69,15 @@ pub struct ConflictRegion {
     pub theirs: Vec<String>,
     /// The marker run length (7 unless `merge.conflictMarkerSize` raised it).
     pub marker_len: usize,
-    // Verbatim marker lines, for byte-exact rendering.
+    // Verbatim marker lines, for byte-exact rendering. Private implementation
+    // detail — kept off the `serde` wire shape (see the type docs).
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_ours: String,
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_base: Option<String>,
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_sep: String,
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_end: String,
 }
 
@@ -75,6 +89,13 @@ pub struct ConflictRegion {
 /// closed enum stays ergonomic. Field-level evolution rides [`ConflictRegion`],
 /// which *is* `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+// Adjacently tagged so the JSON is a *type-stable object* for both variants —
+// `{"kind":"Text","value":[…]}` and `{"kind":"Conflict","value":{…}}` — rather
+// than serde's default externally-tagged shape. Same rationale (and spelling
+// style) as `vcs_core::MergeProbe`: an agent consumer can branch on one `kind`
+// field instead of sniffing which single key an object happens to carry.
+#[cfg_attr(feature = "serde", serde(tag = "kind", content = "value"))]
 pub enum ConflictSegment {
     /// Lines outside any conflict (verbatim, endings included).
     Text(Vec<String>),
@@ -430,6 +451,54 @@ mod tests {
             );
             assert_eq!(render(&segments), content, "round-trips byte-exact");
         }
+    }
+}
+
+// The optional `serde` feature derives `Serialize` on the public conflict model.
+// Pins the wire shape the MCP `repo_conflict_regions` tool publishes: the
+// adjacently-tagged segment envelope, every public region field, and the
+// deliberate *absence* of the private verbatim marker lines.
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use super::*;
+
+    #[test]
+    fn region_serializes_its_public_fields_only() {
+        let segments = parse_conflicts(
+            "<<<<<<< HEAD\nmain\n||||||| 0b025ce\nbase\n=======\nfeat\n>>>>>>> feature\n",
+        )
+        .expect("parse");
+        let value = serde_json::to_value(&segments).expect("segments serialise");
+        assert_eq!(
+            value,
+            serde_json::json!([{
+                "kind": "Conflict",
+                "value": {
+                    "ours_label": "HEAD",
+                    "base_label": "0b025ce",
+                    "theirs_label": "feature",
+                    "ours": ["main\n"],
+                    "base": ["base\n"],
+                    "theirs": ["feat\n"],
+                    "marker_len": 7,
+                }
+            }]),
+            "public fields only — the verbatim marker lines stay private"
+        );
+    }
+
+    #[test]
+    fn text_segments_and_sides_are_type_stable_objects() {
+        let segments = parse_conflicts("plain\n").expect("parse");
+        assert_eq!(
+            serde_json::to_value(&segments).unwrap(),
+            serde_json::json!([{"kind": "Text", "value": ["plain\n"]}]),
+            "a marker-free file is one adjacently-tagged Text segment"
+        );
+        assert_eq!(
+            serde_json::to_value(ResolutionSide::Theirs).unwrap(),
+            serde_json::json!("Theirs")
+        );
     }
 }
 

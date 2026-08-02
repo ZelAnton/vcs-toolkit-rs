@@ -2235,3 +2235,438 @@ fn create_labels_are_optional_in_mcp_json() {
         serde_json::from_str(r#"{"title":"T","body":"B"}"#).expect("labels omitted");
     assert!(issue.labels.is_empty());
 }
+
+// --- T-152: the conflict tools ------------------------------------------------
+//
+// These two are the only tools that touch the filesystem directly. That is not a
+// shortcut: conflict markers are materialized in the working copy and, on git,
+// exist *nowhere else* — `git show HEAD:<path>` returns the clean blob and
+// `git show :<path>` fails outright on an unmerged path (verified against git
+// 2.55), so routing them through `repo_show_file` would report "no conflicts" for
+// a file `repo_conflicts` lists as conflicted. Consequently these tests need a
+// real repo root on disk rather than the `"/repo"` placeholder the rest of the
+// suite uses.
+mod conflict_tools {
+    use super::*;
+    use processkit::testing::RecordingRunner;
+    use std::path::Path;
+    use vcs_testkit::TempDir;
+
+    /// A git conflict in the default 2-way `merge` style (records no base).
+    const GIT_MERGE: &str =
+        "line 1\n<<<<<<< HEAD\nmain line 2\n=======\nfeature line 2\n>>>>>>> feature\nline 3\n";
+    /// A git conflict in `diff3` style — the one that does record a base.
+    const GIT_DIFF3: &str = "line 1\n<<<<<<< HEAD\nmain line 2\n||||||| 0b025ce\nline 2\n=======\nfeature line 2\n>>>>>>> feature\nline 3\n";
+    /// A jj conflict in the default `diff` style, captured verbatim from jj 0.38.
+    const JJ_DIFF: &str = "line 1\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from: tzrkoxkm 049614bb \"base\"\n\\\\\\\\\\\\\\        to: rzzpwvsk c52135dc \"side-a\"\n-line 2\n+side-a line 2\n+++++++ ymnnrqkr 4471c4bd \"side-b\"\nside-b line 2\n>>>>>>> conflict 1 of 1 ends\nline 3\n";
+    /// A 3-sided jj conflict — the shape on which "theirs" is ambiguous.
+    const JJ_THREE_SIDED: &str = "<<<<<<< conflict 1 of 1\n+++++++ a \"side-a\"\nA\n------- b \"base\"\nB\n+++++++ c \"side-b\"\nC\n------- d \"base2\"\nD\n+++++++ e \"side-c\"\nE\n>>>>>>> conflict 1 of 1 ends\n";
+
+    /// The NUL-delimited output of both backends' conflicted-path queries
+    /// (`git diff --name-only --diff-filter=U -z`, `jj file list -T …`).
+    fn conflicted(path: &str) -> Reply {
+        Reply::ok(format!("{path}\0"))
+    }
+
+    /// A repo root that really exists on disk, with `f.txt` holding `content`.
+    fn worktree(content: &str) -> TempDir {
+        let dir = TempDir::new("mcp-conflict");
+        std::fs::write(dir.path().join("f.txt"), content).expect("seed the working copy");
+        dir
+    }
+
+    fn git_server_at(root: &Path, runner: Arc<RecordingRunner>, writes: WriteGate) -> VcsMcpServer {
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(root, root, Git::with_runner(runner)));
+        VcsMcpServer::from_handles(repo, None, writes)
+    }
+
+    fn jj_server_at(root: &Path, runner: Arc<RecordingRunner>, writes: WriteGate) -> VcsMcpServer {
+        let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_jj(root, root, Jj::with_runner(runner)));
+        VcsMcpServer::from_handles(repo, None, writes)
+    }
+
+    fn recorder(scripted: ScriptedRunner) -> Arc<RecordingRunner> {
+        Arc::new(RecordingRunner::new(scripted))
+    }
+
+    /// A git runner that answers the conflicted-path check with `f.txt` and
+    /// accepts the finalizing `git add`.
+    fn git_conflicted_runner() -> Arc<RecordingRunner> {
+        recorder(
+            ScriptedRunner::new()
+                .on(["git", "diff"], conflicted("f.txt"))
+                .on(["git", "--literal-pathspecs", "add"], Reply::ok("")),
+        )
+    }
+
+    /// A jj runner that answers the conflicted-path check with `f.txt`. There is
+    /// deliberately no staging command to script — jj has no index.
+    fn jj_conflicted_runner() -> Arc<RecordingRunner> {
+        recorder(ScriptedRunner::new().on(["jj", "file", "list"], conflicted("f.txt")))
+    }
+
+    fn regions_params(path: &str) -> Parameters<ConflictRegionsParams> {
+        Parameters(ConflictRegionsParams { path: path.into() })
+    }
+
+    fn resolve_params(
+        path: &str,
+        side: ConflictSideArg,
+        index: Option<usize>,
+    ) -> Parameters<ResolveConflictParams> {
+        Parameters(ResolveConflictParams {
+            path: path.into(),
+            side,
+            index,
+        })
+    }
+
+    /// The tool's JSON *payload*, re-parsed. A tool returns its document inside a
+    /// text content block, so asserting on the parsed document beats matching the
+    /// escaped string that embeds it.
+    fn payload(r: &CallToolResult) -> serde_json::Value {
+        let wire: serde_json::Value =
+            serde_json::from_str(&result_json(r)).expect("result serialises");
+        let text = wire["content"][0]["text"]
+            .as_str()
+            .expect("a text content block")
+            .to_owned();
+        serde_json::from_str(&text).expect("the block holds a JSON document")
+    }
+
+    fn read_back(dir: &TempDir) -> String {
+        std::fs::read_to_string(dir.path().join("f.txt")).expect("working copy readable")
+    }
+
+    /// Whether the recorder saw a `git add` — the step that clears git's unmerged
+    /// index entry.
+    fn staged(runner: &RecordingRunner) -> bool {
+        runner
+            .calls()
+            .iter()
+            .any(|call| call.args_str().iter().any(|arg| arg == "add"))
+    }
+
+    // The read tool surfaces every side and label the git parser carries, plus the
+    // `N of M` counter git's own grammar lacks (synthesized positionally).
+    #[tokio::test]
+    async fn conflict_regions_expose_the_git_model() {
+        let dir = worktree(GIT_DIFF3);
+        let server = git_server_at(dir.path(), recorder(ScriptedRunner::new()), WriteGate::None);
+        let json = payload(
+            &server
+                .repo_conflict_regions(regions_params("f.txt"))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(json["backend"], "git");
+        assert_eq!(json["path"], "f.txt");
+        assert_eq!(json["conflict_count"], 1);
+        let entry = &json["regions"][0];
+        assert_eq!(entry["number"], 1);
+        assert_eq!(entry["total"], 1);
+        let region = &entry["region"];
+        assert_eq!(region["ours_label"], "HEAD");
+        assert_eq!(region["base_label"], "0b025ce");
+        assert_eq!(region["theirs_label"], "feature");
+        assert_eq!(region["ours"], serde_json::json!(["main line 2\n"]));
+        assert_eq!(region["base"], serde_json::json!(["line 2\n"]));
+        assert_eq!(region["theirs"], serde_json::json!(["feature line 2\n"]));
+        assert_eq!(region["marker_len"], 7);
+        assert!(
+            region.get("marker_ours").is_none(),
+            "the private verbatim marker lines stay off the wire: {region}"
+        );
+    }
+
+    // The jj model is a genuinely different shape (n-way diff/snapshot sections
+    // with their own `conflict N of M` counters) and is published as such, not
+    // squeezed into git's ours/base/theirs.
+    #[tokio::test]
+    async fn conflict_regions_expose_the_jj_model() {
+        let dir = worktree(JJ_DIFF);
+        let server = jj_server_at(dir.path(), recorder(ScriptedRunner::new()), WriteGate::None);
+        let json = payload(
+            &server
+                .repo_conflict_regions(regions_params("f.txt"))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(json["backend"], "jj");
+        assert_eq!(json["conflict_count"], 1);
+        let entry = &json["regions"][0];
+        assert_eq!(entry["number"], 1);
+        let region = &entry["region"];
+        // jj's own counters survive alongside the envelope's positional ones.
+        assert_eq!(region["number"], 1);
+        assert_eq!(region["total"], 1);
+        let sections = &region["sections"];
+        assert_eq!(sections[0]["kind"], "Diff");
+        assert_eq!(sections[0]["from_label"], "tzrkoxkm 049614bb \"base\"");
+        assert_eq!(sections[0]["to_label"], "rzzpwvsk c52135dc \"side-a\"");
+        assert_eq!(
+            sections[0]["lines"],
+            serde_json::json!(["-line 2\n", "+side-a line 2\n"])
+        );
+        assert_eq!(sections[1]["kind"], "Snapshot");
+        assert_eq!(sections[1]["label"], "ymnnrqkr 4471c4bd \"side-b\"");
+    }
+
+    // A file with no markers is an empty region list, NOT an error — symmetric
+    // with `repo_conflicts`, which reports `[]` on a clean tree.
+    #[tokio::test]
+    async fn conflict_regions_on_a_clean_file_is_empty_not_an_error() {
+        let dir = worktree("just\nplain\ntext\n");
+        for server in [
+            git_server_at(dir.path(), recorder(ScriptedRunner::new()), WriteGate::None),
+            jj_server_at(dir.path(), recorder(ScriptedRunner::new()), WriteGate::None),
+        ] {
+            let json = payload(
+                &server
+                    .repo_conflict_regions(regions_params("f.txt"))
+                    .await
+                    .expect("a clean file is not an error"),
+            );
+            assert_eq!(json["conflict_count"], 0);
+            assert_eq!(json["regions"], serde_json::json!([]));
+        }
+    }
+
+    // The containment guard. These tools address the filesystem directly, so a
+    // path that could escape the repository is refused before any I/O — every
+    // other repo_* tool gets that confinement free from the backend subprocess.
+    #[tokio::test]
+    async fn conflict_paths_may_not_escape_the_repository() {
+        let dir = worktree(GIT_MERGE);
+        let runner = git_conflicted_runner();
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+        for bad in ["../outside.txt", "a/../../outside.txt", "/etc/passwd", ""] {
+            let err = server
+                .repo_conflict_regions(regions_params(bad))
+                .await
+                .expect_err("escaping path refused");
+            assert_eq!(
+                err.code,
+                rmcp::model::ErrorCode::INVALID_PARAMS,
+                "{bad:?} must be an invalid-params refusal, got {err:?}"
+            );
+            server
+                .repo_resolve_conflict(resolve_params(bad, ConflictSideArg::Ours, None))
+                .await
+                .expect_err("escaping path refused for the write too");
+        }
+        assert_eq!(read_back(&dir), GIT_MERGE, "nothing was written");
+        assert!(!staged(&runner), "nothing was staged");
+    }
+
+    // The write gate rejects before anything is read, spawned, or written.
+    #[tokio::test]
+    async fn resolve_conflict_is_write_gated() {
+        assert!(WRITE_TOOLS.contains(&"repo_resolve_conflict"));
+        let dir = worktree(GIT_MERGE);
+        let runner = recorder(ScriptedRunner::new().fallback(Reply::ok("")));
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::None);
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, None))
+            .await
+            .expect_err("gated off by default");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            runner.calls().is_empty(),
+            "the gate rejects before spawning"
+        );
+        assert_eq!(read_back(&dir), GIT_MERGE, "the working copy is untouched");
+
+        // A per-tool allowlist naming it is enough — no blanket --allow-write.
+        git_server_at(
+            dir.path(),
+            git_conflicted_runner(),
+            WriteGate::Set(["repo_resolve_conflict".to_string()].into_iter().collect()),
+        )
+        .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, None))
+        .await
+        .expect("allowlisted");
+        assert_eq!(read_back(&dir), "line 1\nmain line 2\nline 3\n");
+    }
+
+    // Happy path on git: the chosen side replaces every region and the rest of the
+    // file survives verbatim; the path is then STAGED — without that `git add` the
+    // index keeps its unmerged stages and `repo_conflicts` still reports the file.
+    #[tokio::test]
+    async fn resolve_conflict_writes_the_side_and_stages_it_on_git() {
+        let dir = worktree(GIT_MERGE);
+        let runner = git_conflicted_runner();
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+        let json = payload(
+            &server
+                .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Theirs, None))
+                .await
+                .expect("resolve ok"),
+        );
+        assert_eq!(read_back(&dir), "line 1\nfeature line 2\nline 3\n");
+        assert_eq!(json["side"], "theirs");
+        assert_eq!(json["resolved"], "f.txt");
+        assert_eq!(json["conflicts_resolved"], 1);
+        assert!(
+            staged(&runner),
+            "the resolved path must be staged (git add)"
+        );
+    }
+
+    // Happy path on jj: the same tool over the n-way model, and NO staging step —
+    // jj has no index, so `mark_resolved` spawns nothing there (verified against
+    // jj 0.38: overwriting the working-copy file *is* the resolution).
+    #[tokio::test]
+    async fn resolve_conflict_writes_the_side_without_staging_on_jj() {
+        let dir = worktree(JJ_DIFF);
+        let runner = jj_conflicted_runner();
+        let server = jj_server_at(dir.path(), runner.clone(), WriteGate::All);
+        server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Side, Some(1)))
+            .await
+            .expect("resolve ok");
+        assert_eq!(
+            read_back(&dir),
+            "line 1\nside-b line 2\nline 3\n",
+            "Side(1) is the second side in file order"
+        );
+        assert_eq!(
+            runner.calls().len(),
+            1,
+            "only the conflicted-path check spawns on jj; there is no staging step"
+        );
+    }
+
+    // `base` reaches through both models: git's diff3 `|||||||` section and jj's
+    // recorded base (here the old side of the `%%%%%%%` diff section).
+    #[tokio::test]
+    async fn resolve_conflict_can_keep_the_base() {
+        let git_dir = worktree(GIT_DIFF3);
+        git_server_at(git_dir.path(), git_conflicted_runner(), WriteGate::All)
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Base, None))
+            .await
+            .expect("git base");
+        assert_eq!(read_back(&git_dir), "line 1\nline 2\nline 3\n");
+
+        let jj_dir = worktree(JJ_DIFF);
+        jj_server_at(jj_dir.path(), jj_conflicted_runner(), WriteGate::All)
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Base, None))
+            .await
+            .expect("jj base");
+        assert_eq!(read_back(&jj_dir), "line 1\nline 2\nline 3\n");
+    }
+
+    // Every refusal below lands BEFORE the file is written — the property that
+    // keeps a wrong `side` from destroying the other side's content anyway.
+    #[tokio::test]
+    async fn resolve_conflict_refuses_impossible_sides_before_writing() {
+        let dir = worktree(GIT_MERGE);
+        let runner = git_conflicted_runner();
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+
+        // A 2-way `merge`-style git conflict records no base.
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Base, None))
+            .await
+            .expect_err("no base recorded");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+
+        // `side`+`index` is jj's n-way spelling; git's three sides are named.
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Side, Some(0)))
+            .await
+            .expect_err("side=\"side\" is jj-only");
+        assert!(err.message.contains("jj-only"), "{}", err.message);
+
+        // An `index` alongside a named side is a contradiction, not something to
+        // quietly ignore.
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, Some(2)))
+            .await
+            .expect_err("index without side=\"side\"");
+        assert!(err.message.contains("index"), "{}", err.message);
+
+        assert_eq!(read_back(&dir), GIT_MERGE, "nothing written");
+        assert!(!staged(&runner), "nothing staged");
+    }
+
+    // "Theirs" means "the other one", which only exists for a 2-sided conflict.
+    // On a 3-sided jj conflict `Side(1)` would be the MIDDLE side, so the tool
+    // refuses rather than silently picking it.
+    #[tokio::test]
+    async fn resolve_conflict_refuses_ambiguous_theirs_on_an_n_way_jj_conflict() {
+        let dir = worktree(JJ_THREE_SIDED);
+        let server = jj_server_at(dir.path(), jj_conflicted_runner(), WriteGate::All);
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Theirs, None))
+            .await
+            .expect_err("ambiguous across 3 sides");
+        assert!(err.message.contains("ambiguous"), "{}", err.message);
+        assert_eq!(read_back(&dir), JJ_THREE_SIDED, "nothing written");
+
+        // An explicit index resolves the ambiguity the tool complained about.
+        server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Side, Some(2)))
+            .await
+            .expect("explicit index accepted");
+        assert_eq!(read_back(&dir), "E\n");
+    }
+
+    // The second containment guard: only a path the backend REPORTS as conflicted
+    // may be rewritten. Without it any file merely *containing* marker-like text —
+    // this workspace's own conflict fixtures, a quoted diff in a doc — would be
+    // "resolved" and silently lose content.
+    #[tokio::test]
+    async fn resolve_conflict_refuses_a_path_that_is_not_conflicted() {
+        let dir = worktree(GIT_MERGE);
+        let runner = recorder(
+            ScriptedRunner::new()
+                // A clean tree: no conflicted paths at all.
+                .on(["git", "diff"], Reply::ok(""))
+                .on(["git", "--literal-pathspecs", "add"], Reply::ok("")),
+        );
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, None))
+            .await
+            .expect_err("not conflicted → refused");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("not currently conflicted"),
+            "{}",
+            err.message
+        );
+        assert_eq!(
+            read_back(&dir),
+            GIT_MERGE,
+            "a file that merely contains marker-like text is never rewritten"
+        );
+        assert!(
+            !staged(&runner),
+            "nothing staged when the write was refused"
+        );
+    }
+
+    // The read tool spawns NO backend command (it reads the working copy), so —
+    // unlike the [K-017] family of jj-*snapshotting* reads — `readOnlyHint` is the
+    // honest annotation here, exactly as for `repo_info`. The write tool is
+    // destructive and gated.
+    #[test]
+    fn conflict_tool_annotations_match_what_the_tools_actually_do() {
+        let read = VcsMcpServer::repo_conflict_regions_tool_attr();
+        let a = read.annotations.expect("annotations present");
+        assert_eq!(
+            a.read_only_hint,
+            Some(true),
+            "the read tool spawns no git/jj command at all — it cannot snapshot a jj \
+             working copy, so readOnlyHint holds on both backends"
+        );
+        assert!(!WRITE_TOOLS.contains(&"repo_conflict_regions"));
+
+        let write = VcsMcpServer::repo_resolve_conflict_tool_attr();
+        let a = write.annotations.expect("annotations present");
+        assert_eq!(a.destructive_hint, Some(true));
+        assert_eq!(a.read_only_hint, None);
+        assert!(WRITE_TOOLS.contains(&"repo_resolve_conflict"));
+    }
+}

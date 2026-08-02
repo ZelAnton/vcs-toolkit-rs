@@ -91,6 +91,17 @@
 //! cross-cutting testing patterns live in
 //! [vcs-testkit's guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/testing/).
 //!
+//! # Features
+//!
+//! - **`mock`** — the `mockall`-generated `MockGitApi` (see *Testing* above).
+//! - **`tracing`** — a `tracing` event per command run.
+//! - **`serde`** — derives `serde::Serialize` on the public [`conflict`] model
+//!   ([`ConflictSegment`](conflict::ConflictSegment),
+//!   [`ConflictRegion`](conflict::ConflictRegion),
+//!   [`ResolutionSide`](conflict::ResolutionSide)) so a caller can emit a parsed
+//!   conflict as JSON. `Serialize` only — these types are a parser's *output*,
+//!   never a wire input.
+//!
 //! # Safety
 //!
 //! Every operation that takes a caller-supplied **reference name** or **revision

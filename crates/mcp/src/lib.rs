@@ -106,6 +106,7 @@ use vcs_core::processkit::ProcessRunner;
 use vcs_core::{Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi};
 
+mod conflicts;
 mod forge_tools;
 mod output;
 mod params;

@@ -9,6 +9,19 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+### Added
+- **New optional `serde` feature** (off by default) deriving `serde::Serialize`
+  on the public conflict model — `conflict::ConflictSegment`,
+  `conflict::ConflictRegion`, and `conflict::ResolutionSide` — so a JSON consumer
+  (`vcs-mcp`, via `vcs-core/serde`) can hand an agent a parsed conflict. Additive:
+  the types keep their existing `#[non_exhaustive]`-ness and no default build
+  gains a dependency. `Serialize` only, no `Deserialize` — these are a parser's
+  output, never a wire input. `ConflictSegment` is adjacently tagged
+  (`{"kind":"Text","value":[…]}` / `{"kind":"Conflict","value":{…}}`) for a
+  type-stable object, matching `vcs_core::MergeProbe`; `ConflictRegion`
+  serializes its **public** fields only — the private verbatim marker lines that
+  exist solely for byte-exact `render` stay off the wire.
+
 - Add typed `fetch_with_progress`, `push_with_progress`, and
   `clone_repo_with_progress` methods. They stream process lifecycle/output
   events, force Git progress for piped output, and retain clone cleanup safety.

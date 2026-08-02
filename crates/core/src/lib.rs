@@ -927,6 +927,50 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Record `paths` as **resolved** after their conflict markers were replaced
+    /// in the working copy — the finishing half of a programmatic conflict
+    /// resolution (parse the markers, pick a side, write the file, then call
+    /// this), and the step that makes the resolution visible to
+    /// [`conflicted_files`](Repo::conflicted_files).
+    ///
+    /// The backends differ, which is exactly why this is a facade method:
+    ///
+    /// - **git** — stages them (`git add -- <paths>`). A merge conflict lives in
+    ///   the *index* as unmerged stages 1/2/3; rewriting the working-tree file
+    ///   alone leaves the entry `UU`, so `git status` and `conflicted_files` keep
+    ///   reporting the conflict until the path is staged. This is the same
+    ///   `git add` a human runs after editing the markers out.
+    /// - **jj** — a **no-op** that spawns nothing. jj has no index: the
+    ///   working-copy content *is* the resolution, and the next
+    ///   working-copy-snapshotting `jj` command records it automatically
+    ///   (verified against jj 0.38 — after overwriting a conflicted file,
+    ///   `jj resolve --list` reports "no conflicts" with no intervening command).
+    ///   `paths` is therefore ignored on jj rather than being passed to a
+    ///   `jj resolve` that would try to launch an interactive merge tool.
+    ///
+    /// Paths are **repository-root-relative**, matching exactly what
+    /// [`conflicted_files`](Repo::conflicted_files) returns on both backends
+    /// (git prints unmerged paths from the root regardless of the directory the
+    /// command runs in; jj's `path` template keyword is repo-relative too).
+    /// Marking a path that was never conflicted is not an error on either
+    /// backend (on git it simply stages the file, git's own `git add` semantics).
+    ///
+    /// Unlike the rest of this facade, the git spawn therefore runs at
+    /// [`root`](Repo::root), **not** [`cwd`](Repo::cwd): a git pathspec is
+    /// resolved relative to the process's directory, so handing a root-relative
+    /// path to a `git add` running in a subdirectory would look for
+    /// `<cwd>/<root-relative path>` and fail with "pathspec did not match any
+    /// files" (reproduced on git 2.55) — leaving a just-rewritten file unstaged
+    /// and the conflict still open. Reading the paths from the root and staging
+    /// them at the root keeps the one contract self-consistent.
+    pub async fn mark_resolved(&self, paths: &[PathBuf]) -> Result<()> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::mark_resolved(g, &self.root, paths).await,
+            // jj: nothing to do — see the doc comment above.
+            Backend::Jj(_) => Ok(()),
+        }
+    }
+
     /// Create a local branch (git) / bookmark (jj) at the current head, without
     /// switching the working copy (git `branch <name>`; jj `bookmark create <name>
     /// -r @`).
@@ -1626,6 +1670,7 @@ facade_trait! {
         fn has_uncommitted_changes() -> Result<bool>;
         fn has_tracked_changes() -> Result<bool>;
         fn conflicted_files() -> Result<Vec<PathBuf>>;
+        fn mark_resolved(paths: &[PathBuf]) -> Result<()>;
         fn create_branch(name: &str) -> Result<()>;
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
@@ -1699,6 +1744,55 @@ mod tests {
         );
         assert_eq!(calls[1].args_str()[0], "undo");
         assert_eq!(calls[1].cwd.as_deref(), Some(repo.cwd()));
+    }
+
+    // `mark_resolved` takes REPO-ROOT-relative paths (what `conflicted_files`
+    // hands back on both backends), so its git spawn must run at the root — a git
+    // pathspec resolves against the process directory, and staging from a
+    // subdirectory would look for `<cwd>/<root-relative path>` and fail with
+    // "pathspec did not match any files", leaving a just-resolved file unstaged
+    // and the conflict still open. This is the one facade method that
+    // deliberately does not run at `cwd`.
+    #[tokio::test]
+    async fn mark_resolved_stages_at_the_repo_root_not_the_cwd() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_git("/repo", "/repo/sub", Git::with_runner(&rec));
+        repo.mark_resolved(&[PathBuf::from("sub/f.txt")])
+            .await
+            .expect("stage");
+
+        let call = rec.only_call();
+        assert_eq!(
+            call.cwd.as_deref(),
+            Some(repo.root()),
+            "staging runs at the root, not the cwd ({:?})",
+            repo.cwd()
+        );
+        let args = call.args_str();
+        assert!(args.iter().any(|arg| arg == "add"), "{args:?}");
+        assert!(args.iter().any(|arg| arg == "sub/f.txt"), "{args:?}");
+    }
+
+    // On jj the same call is a pure no-op: there is no index to update, and the
+    // next snapshotting jj command records the resolved content by itself.
+    // Spawning anything here (e.g. a `jj resolve`, which would launch an
+    // interactive merge tool) would be actively wrong.
+    #[tokio::test]
+    async fn mark_resolved_spawns_nothing_on_jj() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
+        repo.mark_resolved(&[PathBuf::from("f.txt")])
+            .await
+            .expect("no-op");
+        assert!(rec.calls().is_empty(), "jj has no staging step");
+
+        // An empty path set is a no-op on git too — no pointless spawn.
+        let git = RecordingRunner::replying(Reply::ok(""));
+        Repo::from_git("/repo", "/repo", Git::with_runner(&git))
+            .mark_resolved(&[])
+            .await
+            .expect("no-op");
+        assert!(git.calls().is_empty(), "nothing to stage, nothing to spawn");
     }
 
     #[tokio::test]

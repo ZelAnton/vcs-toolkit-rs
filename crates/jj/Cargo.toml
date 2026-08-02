@@ -30,12 +30,22 @@ async-trait = "0.1"
 # Auto-generated `MockJjApi` for consumers' tests. Test-only — enabled only via
 # the `mock` feature, never compiled into production builds.
 mockall = { workspace = true, optional = true }
+# Optional: derive `Serialize` on the public conflict model behind the `serde`
+# feature (off by default). Turned on by JSON consumers such as `vcs-mcp`, which
+# reaches it through `vcs-core/serde`.
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 # Expose the `mockall`-generated `MockJjApi` (and pull in processkit's mocks).
 mock = ["dep:mockall", "processkit/mock"]
 # Emit a `tracing` event per command run (forwards to processkit's `tracing`).
 tracing = ["processkit/tracing"]
+# Add `#[derive(Serialize)]` to the public `conflict` model (`JjConflictSegment`,
+# `JjConflictRegion`, `JjConflictSection`, `JjResolution`) so a JSON consumer can
+# hand an agent the parsed conflict structure. Mirrors `vcs-diff`/`vcs-core`'s
+# feature of the same name: `Serialize` only, no `Deserialize` (these are outputs
+# of a parser, never a wire input).
+serde = ["dep:serde"]
 
 [dev-dependencies]
 # `#[tokio::test]` for the async unit/integration tests. The `time` driver lets a
@@ -47,6 +57,8 @@ vcs-testkit = { path = "../testkit" }
 # Property-based fuzzing of the pure parsers (panic-freedom on arbitrary input,
 # byte-exact conflict roundtrip). Stable Rust, dev-only.
 proptest = "1"
+# Exercise the `serde` feature's derives (used only by the feature-gated test).
+serde_json = "1"
 # Statistical benchmark harness for the generated native-jj conflict fixture.
 criterion.workspace = true
 

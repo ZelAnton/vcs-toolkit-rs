@@ -30,6 +30,11 @@ use crate::BINARY;
 
 /// One section inside a jj conflict region.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+// Internally tagged: every variant is a struct variant, so each already
+// serializes as a map and gains a `"kind"` discriminant in place — a type-stable
+// object an agent can branch on, matching `vcs_core::MergeProbe`'s rationale.
+#[cfg_attr(feature = "serde", serde(tag = "kind"))]
 #[non_exhaustive]
 pub enum JjConflictSection {
     /// A `%%%%%%%` section: one side expressed as a unified diff from the
@@ -61,7 +66,15 @@ pub enum JjConflictSection {
 
 /// One materialized jj conflict region (`<<<<<<< conflict N of M` …
 /// `>>>>>>> conflict N of M ends`).
+///
+/// **`serde` wire shape.** Under the optional `serde` feature this serializes to
+/// exactly its **public** fields — `number`, `total`, and `sections`. The private
+/// verbatim marker lines are `skip`ped: they exist only so [`render`] can
+/// reproduce the file byte-for-byte, they are not part of the modelled conflict,
+/// and emitting them would publish an implementation detail on the wire. Nothing
+/// the *public* model carries is lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct JjConflictRegion {
     /// This region's number within the file (the `N` of `conflict N of M`).
@@ -70,9 +83,13 @@ pub struct JjConflictRegion {
     pub total: u32,
     /// The region's sections, in file order.
     pub sections: Vec<JjConflictSection>,
-    // Verbatim marker lines for byte-exact rendering.
+    // Verbatim marker lines for byte-exact rendering. Private implementation
+    // detail — kept off the `serde` wire shape (see the type docs).
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_start: String,
+    #[cfg_attr(feature = "serde", serde(skip))]
     marker_end: String,
+    #[cfg_attr(feature = "serde", serde(skip))]
     section_markers: Vec<String>,
 }
 
@@ -192,6 +209,10 @@ fn join_sublines(sublines: &[String], no_eol: bool, mixed: bool) -> Vec<String> 
 /// file is text-or-conflict and consumers match every segment; field evolution
 /// rides [`JjConflictRegion`], which *is* `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+// Adjacently tagged for a type-stable object on both variants, matching
+// `vcs_git::conflict::ConflictSegment` and `vcs_core::MergeProbe`.
+#[cfg_attr(feature = "serde", serde(tag = "kind", content = "value"))]
 pub enum JjConflictSegment {
     /// Lines outside any conflict (verbatim).
     Text(Vec<String>),
@@ -207,6 +228,11 @@ pub enum JjConflictSegment {
 /// wildcard arm on any caller that matches this (callers usually *construct* it to
 /// pass to [`resolve`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+// Adjacently tagged: `{"kind":"Side","value":0}` / `{"kind":"Base"}` (serde omits
+// `content` for a unit variant) — a type-stable object rather than serde's default
+// mix of a bare string and a single-key object.
+#[cfg_attr(feature = "serde", serde(tag = "kind", content = "value"))]
 pub enum JjResolution {
     /// The N-th side (0-based, file order) — `Side(0)` is the first side.
     Side(usize),
@@ -879,6 +905,72 @@ mod tests {
         assert!(parse_conflicts("<<<<<<< conflict 1 of 1\nstray content\n").is_err());
         assert!(has_conflict_markers(DIFF_STYLE));
         assert!(!has_conflict_markers(git_style), "git markers aren't jj's");
+    }
+}
+
+// The optional `serde` feature derives `Serialize` on the public conflict model.
+// Pins the wire shape the MCP `repo_conflict_regions` tool publishes: the
+// adjacently-tagged segment envelope, the internally-tagged sections, the
+// `conflict N of M` counters, and the deliberate *absence* of the private
+// verbatim marker lines.
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use super::*;
+
+    // Same jj 0.38 captures as `mod tests`, repeated here because that module's
+    // consts are private to it (a sibling `#[cfg(test)]` module can't reach them).
+    const DIFF_STYLE: &str = "line 1\n<<<<<<< conflict 1 of 1\n%%%%%%% diff from: rnxsupvw 638ae425 \"base\"\n\\\\\\\\\\\\\\        to: ozvltnxm 92f2b14f \"side-a\"\n-line 2\n+main line 2\n+++++++ xyrusolp ad268d1f \"side-b\"\nfeature line 2\n>>>>>>> conflict 1 of 1 ends\nline 3\n";
+    const SNAPSHOT_STYLE: &str = "line 1\n<<<<<<< conflict 1 of 1\n+++++++ kttusupp 7eedad44 \"side-a\"\nmain line 2\n------- rzkutuko 4fe1246f \"base\"\nline 2\n+++++++ ukuqwwlw 38f5069b \"side-b\"\nfeature line 2\n>>>>>>> conflict 1 of 1 ends\nline 3\n";
+
+    #[test]
+    fn region_serializes_its_public_fields_only() {
+        let segments = parse_conflicts(DIFF_STYLE).expect("parse");
+        let value = serde_json::to_value(&segments).expect("segments serialise");
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {"kind": "Text", "value": ["line 1\n"]},
+                {"kind": "Conflict", "value": {
+                    "number": 1,
+                    "total": 1,
+                    "sections": [
+                        {
+                            "kind": "Diff",
+                            "from_label": "rnxsupvw 638ae425 \"base\"",
+                            "to_label": "ozvltnxm 92f2b14f \"side-a\"",
+                            "lines": ["-line 2\n", "+main line 2\n"],
+                        },
+                        {
+                            "kind": "Snapshot",
+                            "label": "xyrusolp ad268d1f \"side-b\"",
+                            "lines": ["feature line 2\n"],
+                        },
+                    ],
+                }},
+                {"kind": "Text", "value": ["line 3\n"]},
+            ]),
+            "public fields only — the verbatim marker lines stay private"
+        );
+    }
+
+    #[test]
+    fn snapshot_sections_and_resolutions_are_type_stable_objects() {
+        let segments = parse_conflicts(SNAPSHOT_STYLE).expect("parse");
+        let value = serde_json::to_value(&segments).expect("serialise");
+        let sections = &value[1]["value"]["sections"];
+        assert_eq!(sections[0]["kind"], "Snapshot");
+        assert_eq!(sections[1]["kind"], "Base");
+        assert_eq!(sections[2]["kind"], "Snapshot");
+
+        assert_eq!(
+            serde_json::to_value(JjResolution::Side(1)).unwrap(),
+            serde_json::json!({"kind": "Side", "value": 1})
+        );
+        // serde omits the `content` key entirely for a unit variant.
+        assert_eq!(
+            serde_json::to_value(JjResolution::Base).unwrap(),
+            serde_json::json!({"kind": "Base"})
+        );
     }
 }
 

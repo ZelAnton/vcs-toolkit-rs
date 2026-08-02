@@ -14,6 +14,22 @@ crates; tag releases as `vcs-core-v<version>`.
   without hiding backend retries behind a terminal `Exited` event.
 
 ### Added
+- `Repo::mark_resolved(paths)` / `VcsRepo::mark_resolved` records paths as
+  resolved after their conflict markers have been rewritten in the working copy —
+  the finishing half of a programmatic conflict resolution, and what makes it
+  visible to `conflicted_files`. On **git** it stages the paths (`git add`),
+  since a merge conflict lives in the index as unmerged stages and rewriting the
+  file alone leaves the entry `UU`; on **jj** it is a deliberate no-op that spawns
+  nothing, because jj has no index and the next snapshotting `jj` command records
+  the working-copy content by itself. Paths are repository-**root**-relative, the
+  same contract `conflicted_files` returns, so — uniquely among the facade
+  operations — the git spawn runs at `root` rather than `cwd`: a git pathspec
+  resolves against the process directory, so staging a root-relative path from a
+  subdirectory would fail to match it.
+- The `serde` feature now also forwards to `vcs-git/serde` and `vcs-jj/serde`, so
+  it derives `Serialize` on the re-exported `vcs_git::conflict` /
+  `vcs_jj::conflict` models too — the same "features aren't re-exported, turn it
+  on for both backends at once" forwarding the `tracing` feature already does.
 - `Repo::op_log(max)` / `VcsRepo::op_log` and `Repo::undo` /
   `VcsRepo::undo` expose typed repository-operation recovery. The jj backend
   returns `OperationLogEntry` values without snapshotting the working copy

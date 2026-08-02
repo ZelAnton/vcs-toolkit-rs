@@ -11,6 +11,7 @@
 /// debug-asserts every gated tool is listed here, so the two can't drift.
 pub const WRITE_TOOLS: &[&str] = &[
     "repo_try_merge",
+    "repo_resolve_conflict",
     "repo_commit",
     "repo_checkout",
     "repo_rebase",

@@ -502,7 +502,13 @@ dependency:
   associated constructor, since there is no handle yet — wraps either
   `GitApi::clone_repo` or `JjApi::git_clone` under a unified `CloneSpec` (git's
   `branch`/`depth`/`bare`, jj's `colocate`), structurally rejecting a
-  cross-backend option with `Error::Unsupported`. See [Escape hatches to the underlying
+  cross-backend option with `Error::Unsupported`. Its portable
+  `Repo::mark_resolved(paths)` — the finishing half of a programmatic conflict
+  resolution, after the markers have been rewritten in the working copy — wraps
+  `GitApi::add` on git (staging is what clears an unmerged `UU` index entry) and
+  is a deliberate **no-op** on jj, which has no index: the working-copy content
+  *is* the resolution, recorded by the next snapshotting `jj` command. See [Escape
+  hatches to the underlying
   client](../crates/core/docs/core.md#escape-hatches-to-the-underlying-client).
 - **`vcs-forge`** — the wrapper client directly (`GitHub::new().run_list(dir)…`),
   or the wrapper's `api`/`run` for anything beyond that. See [When to drop to

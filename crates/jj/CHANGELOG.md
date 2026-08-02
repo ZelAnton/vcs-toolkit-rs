@@ -9,6 +9,21 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ## [Unreleased]
 
+### Added
+- **New optional `serde` feature** (off by default) deriving `serde::Serialize`
+  on the public conflict model — `conflict::JjConflictSegment`,
+  `conflict::JjConflictRegion`, `conflict::JjConflictSection`, and
+  `conflict::JjResolution` — so a JSON consumer (`vcs-mcp`, via `vcs-core/serde`)
+  can hand an agent a parsed conflict. Additive: the types keep their existing
+  `#[non_exhaustive]`-ness and no default build gains a dependency. `Serialize`
+  only, no `Deserialize` — these are a parser's output, never a wire input.
+  `JjConflictSegment`/`JjResolution` are adjacently tagged and `JjConflictSection`
+  internally tagged (every variant already serializes as a map), so each is a
+  type-stable object carrying a `kind` discriminant; `JjConflictRegion`
+  serializes its **public** fields only (`number`/`total`/`sections`) — the
+  private verbatim marker lines that exist solely for byte-exact `render` stay
+  off the wire.
+
 - Add typed `git_fetch_with_progress`, `git_push_with_progress`, and
   `git_clone_with_progress` methods with ScriptedRunner-replayable process
   lifecycle/output events and the existing failed-clone cleanup contract.

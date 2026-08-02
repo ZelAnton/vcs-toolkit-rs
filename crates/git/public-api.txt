@@ -2725,6 +2725,8 @@ pub fn vcs_git::conflict::ConflictSegment::eq(&self, &vcs_git::conflict::Conflic
 impl core::fmt::Debug for vcs_git::conflict::ConflictSegment
 pub fn vcs_git::conflict::ConflictSegment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for vcs_git::conflict::ConflictSegment
+impl serde_core::ser::Serialize for vcs_git::conflict::ConflictSegment
+pub fn vcs_git::conflict::ConflictSegment::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_git::conflict::ConflictSegment
 impl core::marker::Send for vcs_git::conflict::ConflictSegment
 impl core::marker::Sync for vcs_git::conflict::ConflictSegment
@@ -2745,6 +2747,8 @@ impl core::fmt::Debug for vcs_git::conflict::ResolutionSide
 pub fn vcs_git::conflict::ResolutionSide::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for vcs_git::conflict::ResolutionSide
 impl core::marker::StructuralPartialEq for vcs_git::conflict::ResolutionSide
+impl serde_core::ser::Serialize for vcs_git::conflict::ResolutionSide
+pub fn vcs_git::conflict::ResolutionSide::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_git::conflict::ResolutionSide
 impl core::marker::Send for vcs_git::conflict::ResolutionSide
 impl core::marker::Sync for vcs_git::conflict::ResolutionSide
@@ -2768,6 +2772,8 @@ pub fn vcs_git::conflict::ConflictRegion::eq(&self, &vcs_git::conflict::Conflict
 impl core::fmt::Debug for vcs_git::conflict::ConflictRegion
 pub fn vcs_git::conflict::ConflictRegion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for vcs_git::conflict::ConflictRegion
+impl serde_core::ser::Serialize for vcs_git::conflict::ConflictRegion
+pub fn vcs_git::conflict::ConflictRegion::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl core::marker::Freeze for vcs_git::conflict::ConflictRegion
 impl core::marker::Send for vcs_git::conflict::ConflictRegion
 impl core::marker::Sync for vcs_git::conflict::ConflictRegion
