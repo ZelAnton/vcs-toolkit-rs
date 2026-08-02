@@ -127,9 +127,7 @@ mod tests {
         let dir = temp.path();
         let path = "missing-worktree";
         let mut command = Command::new(super::super::BINARY);
-        command
-            .current_dir(dir)
-            .args(["worktree", "remove", path]);
+        command.current_dir(dir).args(["worktree", "remove", path]);
         scrub_repo_redirectors(&mut command);
         let expected = command.output().expect("run git directly");
         assert!(
