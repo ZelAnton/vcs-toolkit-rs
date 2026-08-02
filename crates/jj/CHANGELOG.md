@@ -111,6 +111,10 @@ crates; tag releases as `vcs-jj-v<version>`.
   per-stream unit; nothing here was re-tuned. (T-130.)
 
 ### Fixed
+- `blocking::workspace_forget` now captures its child process's stdout and
+  stderr instead of inheriting the parent's streams, keeping Drop cleanup from
+  corrupting a stdio protocol transport; a failed command now includes its
+  trimmed stderr diagnostic in the returned error.
 - The blocking workspace resolver used by Drop cleanup now decodes `jj workspace
   root` through the same raw-byte parser as the async API, preserving non-UTF-8
   Unix roots and trailing spaces/tabs. Its workspace-name probe now uses JSON

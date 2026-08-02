@@ -96,6 +96,10 @@ crates; tag releases as `vcs-git-v<version>`.
   re-tuned. (T-130.)
 
 ### Fixed
+- `blocking::worktree_remove` now captures its child process's stdout and stderr
+  instead of inheriting the parent's streams, keeping Drop cleanup from corrupting
+  a stdio protocol transport; a failed command now includes its trimmed stderr
+  diagnostic in the returned error.
 - `blocking::worktree_remove`, the synchronous Drop-cleanup path, now clears the
   same Git repository redirectors as the normal client before running its
   destructive command, preventing an inherited `GIT_DIR` from retargeting it.

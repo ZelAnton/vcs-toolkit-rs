@@ -13,15 +13,18 @@ use std::process::Command;
 pub fn workspace_forget(dir: &Path, name: &str) -> std::io::Result<()> {
     super::reject_flag_like("workspace name", name)
         .map_err(|err| io::Error::other(err.to_string()))?;
-    let status = Command::new(super::BINARY)
+    let output = Command::new(super::BINARY)
         .current_dir(dir)
         .args(["workspace", "forget", name])
-        .status()?;
-    if status.success() {
+        .output()?;
+    if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         Err(std::io::Error::other(format!(
-            "`jj workspace forget` exited with {status}"
+            "`jj workspace forget` exited with {}: {}",
+            output.status,
+            stderr.trim(),
         )))
     }
 }
@@ -117,7 +120,7 @@ pub fn workspace_name_for_path(dir: &Path, path: &Path) -> io::Result<Option<Str
 mod tests {
     use super::*;
 
-    // A flag-shaped `name` is refused before `Command::status()` spawns
+    // A flag-shaped `name` is refused before `Command::output()` spawns
     // anything — the guard's own message (not a `jj`-produced "exited
     // with"/spawn-failure message) proves rejection happened up front, not
     // via a real `jj` run.
@@ -140,6 +143,37 @@ mod tests {
         assert!(
             message.contains("would be parsed as a flag"),
             "expected the guard's message, got: {message}"
+        );
+    }
+
+    // This raw `Command` helper has no ProcessRunner seam. Keep the end-to-end
+    // assertion ignored, like the crate's other real-jj tests, while comparing
+    // against the exact stderr emitted by the installed binary.
+    #[test]
+    #[ignore = "requires the jj binary"]
+    fn workspace_forget_failure_includes_captured_stderr() {
+        let temp = vcs_testkit::TempDir::new("blocking-workspace-forget-failure");
+        let dir = temp.path();
+        let name = "missing-workspace";
+        let expected = Command::new(super::super::BINARY)
+            .current_dir(dir)
+            .args(["workspace", "forget", name])
+            .output()
+            .expect("run jj directly");
+        assert!(
+            !expected.status.success(),
+            "the direct jj command must fail for this diagnostic test"
+        );
+        let expected_stderr = String::from_utf8_lossy(&expected.stderr).trim().to_owned();
+        assert!(
+            !expected_stderr.is_empty(),
+            "the failing jj command must emit stderr"
+        );
+
+        let err = workspace_forget(dir, name).expect_err("forget must fail");
+        assert!(
+            err.to_string().contains(&expected_stderr),
+            "error must retain jj stderr; expected {expected_stderr:?}, got: {err}"
         );
     }
 }
