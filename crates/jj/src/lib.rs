@@ -499,6 +499,18 @@ pub trait JjApi: Send + Sync {
     /// Raw git-format unified diff text for `spec` (`diff -r <spec> --git`) —
     /// stable machine output, returned **verbatim** (a trailing blank context line
     /// is preserved, so the last hunk stays in sync with its `@@` line count).
+    ///
+    /// [`DiffSpec::Rev`] is passed straight through as the `-r` flag to `jj diff`.
+    /// Unlike vcs_git's interpretation of `Rev`,
+    /// this does *not* implicitly pull in working-copy changes,
+    /// unless the revset itself resolves to `@`.
+    ///
+    /// [`DiffSpec::WorkingTree`] is equivalent to `Rev("@")`,
+    /// showing working copy changes explicitly.
+    ///
+    /// How a [`DiffSpec`] is interpreted here is stable behavior,
+    /// not an implementation detail.
+    /// Changing it would be a semver-breaking change.
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](JjApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
