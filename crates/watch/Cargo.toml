@@ -66,6 +66,10 @@ async-trait = "0.1"
 # Real throwaway git/jj repositories for the `#[ignore]` integration tests.
 vcs-testkit = { path = "../testkit" }
 
+[[example]]
+name = "watch_stream"
+required-features = ["stream"]
+
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
 # serde / stream) are documented (defaults alone hide them), and pass

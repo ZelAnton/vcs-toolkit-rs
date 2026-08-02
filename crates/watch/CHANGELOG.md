@@ -10,6 +10,7 @@ crates; tag releases as `vcs-watch-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Add runnable `watch_events` and feature-gated `watch_stream` examples for typed repository-change events.
 -
 
 ### Changed
