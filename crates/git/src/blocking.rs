@@ -41,12 +41,15 @@ pub fn worktree_remove(dir: &Path, spec: super::WorktreeRemove) -> std::io::Resu
         cmd.arg("--force");
     }
     cmd.arg(&spec.path);
-    let status = cmd.status()?;
-    if status.success() {
+    let output = cmd.output()?;
+    if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         Err(std::io::Error::other(format!(
-            "`git worktree remove` exited with {status}"
+            "`git worktree remove` exited with {}: {}",
+            output.status,
+            stderr.trim(),
         )))
     }
 }
@@ -70,7 +73,7 @@ mod tests {
         );
     }
 
-    // A flag-shaped path is refused before `cmd.status()` spawns anything — the
+    // A flag-shaped path is refused before `cmd.output()` spawns anything — the
     // guard's own message (not a `git`-produced "exited with"/spawn-failure
     // message) proves rejection happened up front, not via a real `git` run.
     #[test]
@@ -99,7 +102,7 @@ mod tests {
     }
 
     // A non-UTF-8 path (valid on Unix) must not panic anywhere in the guard —
-    // it may pass through to `cmd.status()` (which then fails to find a `git`
+    // it may pass through to `cmd.output()` (which then fails to find a `git`
     // worktree at a nonsense path) or be refused, but never abort the check.
     #[cfg(unix)]
     #[test]
@@ -112,5 +115,36 @@ mod tests {
         // Must return, not panic — the outcome itself (Ok/Err from a missing
         // `git`/repo) is not the point of this test.
         let _ = worktree_remove(Path::new("/repo"), super::super::WorktreeRemove::new(path));
+    }
+
+    // This raw `Command` helper has no ProcessRunner seam. Keep the end-to-end
+    // assertion ignored, like the crate's other real-git tests, while comparing
+    // against the exact stderr emitted by the installed binary.
+    #[test]
+    #[ignore = "requires the git binary"]
+    fn worktree_remove_failure_includes_captured_stderr() {
+        let temp = vcs_testkit::TempDir::new("blocking-worktree-remove-failure");
+        let dir = temp.path();
+        let path = "missing-worktree";
+        let mut command = Command::new(super::super::BINARY);
+        command.current_dir(dir).args(["worktree", "remove", path]);
+        scrub_repo_redirectors(&mut command);
+        let expected = command.output().expect("run git directly");
+        assert!(
+            !expected.status.success(),
+            "the direct git command must fail for this diagnostic test"
+        );
+        let expected_stderr = String::from_utf8_lossy(&expected.stderr).trim().to_owned();
+        assert!(
+            !expected_stderr.is_empty(),
+            "the failing git command must emit stderr"
+        );
+
+        let err = worktree_remove(dir, super::super::WorktreeRemove::new(path))
+            .expect_err("remove must fail");
+        assert!(
+            err.to_string().contains(&expected_stderr),
+            "error must retain git stderr; expected {expected_stderr:?}, got: {err}"
+        );
     }
 }
