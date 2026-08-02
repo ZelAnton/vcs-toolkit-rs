@@ -123,7 +123,9 @@ crates; tag releases as `vcs-github-v<version>`.
   re-tuned. (T-130.)
 
 ### Fixed
--
+- **Workflow-dispatch input keys now fail closed before spawning `gh`.** Empty
+  (including whitespace-only), `=`-containing, and NUL-containing keys are rejected
+  instead of being silently split into a different `--raw-field key=value` input.
 
 ## [0.11.0] - 2026-07-19
 
