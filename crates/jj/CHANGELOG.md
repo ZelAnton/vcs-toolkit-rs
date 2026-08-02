@@ -82,6 +82,8 @@ crates; tag releases as `vcs-jj-v<version>`.
   commit as a new head off `@` without moving `@` onto it or rebasing `@`'s
   other descendants, unlike git's `revert --no-edit`, which advances the
   branch tip.
+- Document how `JjApi::diff_text` and friends interpret a `DiffSpec`.
+  Changing this behavior is considered a semver-breaking change.
 
 ### Changed
 - Split the growing crate root into focused internal modules: command specs and
