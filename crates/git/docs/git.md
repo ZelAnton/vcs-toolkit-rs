@@ -677,7 +677,11 @@ async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
 - **`tag_delete`** — `tag -d <name>`.
 - **`show_file`** — a file's content at a revision (`show <rev>:<path>`). `path` is
   repo-relative; backslashes are normalised to `/`. Decoded **lossily** — binary
-  files come back mangled rather than erroring.
+  files come back mangled rather than erroring. An **empty or whitespace-only**
+  `path` is refused before `git` spawns: a bare `show <rev>:` is not an error but
+  the root *tree listing*, so an unguarded empty path would return a directory
+  index as if it were a file's content. (A leading `-` is still fine — it is inert
+  inside the `<rev>:<path>` spec, so `-dash.txt` reads normally.)
 - **`config_get`** — a config key's value, or `None` when unset (`config --get <key>`).
   A multi-valued key errors; read those via `run`.
 - **`config_set`** — set a key in the repo's local config (`config <key> <value>`).

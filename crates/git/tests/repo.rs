@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
-    AnnotatedTag, CheckoutTarget, Clean, CommitPaths, Git, GitApi, MergeCheck, MergeCommit,
-    RefName, RevSpec, StashPush, SubmoduleState, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, CheckoutTarget, Clean, CommitPaths, ErrorReason, Git, GitApi, MergeCheck,
+    MergeCommit, RefName, RevSpec, StashPush, SubmoduleState, SubmoduleUpdate, WorktreeAdd,
+    WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
 
@@ -868,6 +869,104 @@ async fn blame_cherry_pick_and_revert_cycle() {
     assert_eq!(
         std::fs::read_to_string(dir.join("f.txt")).expect("read"),
         "one\n"
+    );
+}
+
+// T-149: the two symmetric path reads, against the real binary.
+//
+// `show_file` — GUARDED. `git show <rev>:` is not an error: git prints the root
+// TREE LISTING and exits 0, so an empty path used to return a directory index as
+// if it were a file's content. The wrapper now refuses it *before* spawning, so
+// the failure is a `Spawn`/`InvalidInput` one, and this test also asserts the
+// underlying git behaviour it exists to prevent (via `run`, the unguarded escape
+// hatch) — if git ever started rejecting `<rev>:` itself, that assertion is what
+// tells us the guard's premise changed.
+//
+// `blame` — DELIBERATELY UNGUARDED. `path` sits in a pathspec slot of its own
+// behind `--`, where git fails loudly on an empty/whitespace-only value, so the
+// wrapper leaves it to git. The `Exit` (not `Spawn`) classification is the point:
+// it records *whose* rejection this is, and would flip if a future git ever
+// accepted the input.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn blame_and_show_file_reject_empty_path() {
+    let tmp = TempDir::new("empty-path");
+    let dir = tmp.path();
+    let git = Git::new();
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::create_dir_all(dir.join("sub")).expect("mkdir");
+    std::fs::write(dir.join("f.txt"), "one\n").expect("write");
+    std::fs::write(dir.join("sub").join("g.txt"), "two\n").expect("write");
+    git.add(dir, &[PathBuf::from("f.txt"), PathBuf::from("sub/g.txt")])
+        .await
+        .expect("add");
+    git.commit(dir, "base").await.expect("commit");
+
+    // The premise: a bare `<rev>:` spec is a *successful* tree listing on the
+    // real binary — exactly the silent wrong answer `show_file` must not return.
+    let listing = git
+        .run(&[
+            "-C".into(),
+            dir.display().to_string(),
+            "show".into(),
+            "HEAD:".into(),
+        ])
+        .await
+        .expect("`git show HEAD:` succeeds — the behaviour the guard exists for");
+    assert!(
+        listing.contains("tree HEAD:") && listing.contains("f.txt"),
+        "git answers a bare `<rev>:` with the root tree listing: {listing:?}"
+    );
+
+    for path in ["", " ", "   "] {
+        // show_file: refused by the wrapper, before any process starts.
+        let err = git
+            .show_file(dir, &rv("HEAD"), path)
+            .await
+            .expect_err(&format!("show_file must refuse {path:?}"));
+        match err.reason() {
+            ErrorReason::Spawn { source, .. } => assert_eq!(
+                source.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "pre-spawn refusal is invalid-input: {err:?}"
+            ),
+            other => panic!("expected a pre-spawn Spawn refusal, got {other:?}"),
+        }
+
+        // blame: refused by git itself, as a non-zero exit — never a silent
+        // answer about some other path.
+        let err = git
+            .blame(dir, path, None)
+            .await
+            .expect_err(&format!("git must reject blame on {path:?}"));
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { .. }),
+            "git itself rejects the empty pathspec (non-zero exit): {err:?}"
+        );
+        let err = git
+            .blame(dir, path, Some(rv("HEAD")))
+            .await
+            .expect_err(&format!("git must reject blame on {path:?} at a rev"));
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { .. }),
+            "same with an explicit revision: {err:?}"
+        );
+    }
+
+    // Control: a real path still reads and blames.
+    assert_eq!(
+        git.show_file(dir, &rv("HEAD"), "f.txt")
+            .await
+            .expect("a real path still reads"),
+        "one\n"
+    );
+    assert_eq!(
+        git.blame(dir, "f.txt", None)
+            .await
+            .expect("a real path still blames")
+            .len(),
+        1
     );
 }
 

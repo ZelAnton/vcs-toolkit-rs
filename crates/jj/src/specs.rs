@@ -266,6 +266,52 @@ pub(super) fn reject_flag_like_path(what: &str, path: &Path) -> Result<()> {
     reject_flag_like(what, &path.to_string_lossy())
 }
 
+/// Emptiness guard for a caller-supplied file path that is **wrapped into a
+/// larger expression** ([`file_show`](JjApi::file_show)'s
+/// [`JjFileset::path`] → `root-file:"<path>"`) instead of occupying a bare argv
+/// slot of its own.
+///
+/// [`reject_flag_like`] is the wrong check for such a slot in both directions: a
+/// leading `-` is inert inside the quoted fileset literal (rejecting it would
+/// refuse a perfectly legitimate `-dash.txt`), while emptiness — which
+/// `reject_flag_like` happens to cover for *bare* positionals — is exactly what
+/// silently changes the command's meaning here. `root-file:""` anchors on the
+/// **workspace root**: a path that genuinely exists, so jj raises no "No such
+/// path" error, yet `file:` is an *exact-file* pattern, so it matches no file at
+/// all and `jj file show` exits **0 with empty output** (verified on jj 0.38.0)
+/// — the read reports a file that "exists and is empty".
+///
+/// `vcs_git`'s `show_file` carries the mirror guard with a byte-identical
+/// message (only the program name differs), so a cross-backend caller sees ONE
+/// error form. Its empty-path degradation differs in shape but not in kind:
+/// `git show <rev>:` exits 0 printing the root **tree listing** (verified on git
+/// 2.55.0).
+///
+/// Whitespace-only is refused with the empty string. A name made only of spaces
+/// is legal on Unix, but at this boundary it is indistinguishable from the far
+/// likelier caller bug (a blank/unset path variable), and refusing it keeps one
+/// rule — and one error — across both backends.
+///
+/// An interior NUL needs no check here: it can only reach `Command::arg`, which
+/// already fails the spawn with the same `io::ErrorKind::InvalidInput` this guard
+/// raises, so the classification a caller sees is unchanged.
+pub(super) fn reject_empty_path(what: &str, path: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {path:?} is empty or whitespace-only — an empty path silently \
+                     re-targets the read at the repository root instead of a single file; \
+                     refusing before spawning"
+                ),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// The working-copy revset `@` as a validated [`RevsetExpr`]. Infallible — `@`
 /// is always a valid revset — for the internal helpers that query `@` directly.
 pub(super) fn at_revset() -> RevsetExpr {

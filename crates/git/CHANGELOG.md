@@ -120,6 +120,21 @@ crates; tag releases as `vcs-git-v<version>`.
   check is a lossy-UTF-8 rendering of the path used only to classify it; a
   legitimate non-UTF-8 path (valid on Unix) with no leading `-` still reaches
   `git` byte-for-byte, unchanged. (T-147.)
+- **`GitApi::show_file` / `Git::show_file_within` now refuse an empty or
+  whitespace-only `path` before spawning, closing a silent wrong-answer gap.**
+  The path is interpolated into the `<rev>:<path>` spec, so an empty one made the
+  spec a bare `<rev>:` — which git does **not** reject: it prints the repository
+  root's **tree listing** and exits 0 (verified on git 2.55.0), so the read
+  returned a directory index as if it were the file's content. It is now refused
+  up front with a classifiable (`vcs_cli_support::is_invalid_input`) error, in the
+  same form `vcs-jj`'s `file_show` uses for the same input, so a cross-backend
+  caller sees one error modulo the program name. Only *emptiness* is checked: a
+  leading `-` is inert inside the spec, so a legitimate `-dash.txt` (and any name
+  merely containing or padded by spaces) still reads normally. **Breaking for a
+  caller that passed an empty/blank `path` and consumed the tree listing:** it now
+  gets an `Err`. `GitApi::blame` was audited alongside it and deliberately left
+  unguarded — its `path` is a pathspec of its own behind `--`, which git rejects
+  loudly (`fatal: no such path '' in HEAD`); a live test pins that. (T-149.)
 
 ## [0.11.0] - 2026-07-19
 

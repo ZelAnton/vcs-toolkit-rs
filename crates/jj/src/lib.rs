@@ -215,8 +215,8 @@ pub use specs::{
     SquashInto, SquashPaths, WorkspaceAdd,
 };
 use specs::{
-    at_revset, c_locale, exact, first_bookmark, reject_bookmark_track_remote, reject_flag_like,
-    reject_flag_like_path,
+    at_revset, c_locale, exact, first_bookmark, reject_bookmark_track_remote, reject_empty_path,
+    reject_flag_like, reject_flag_like_path,
 };
 
 /// The jj operations this crate exposes — the interface consumers code against
@@ -562,6 +562,15 @@ pub trait JjApi: Send + Sync {
     async fn evolog(&self, dir: &Path, revset: &RevsetExpr, max: usize) -> Result<Vec<Change>>;
     /// Per-line authorship of `path` (`jj file annotate <path> [-r <revset>]`;
     /// `None` = `@`): which change introduced each line.
+    ///
+    /// Unlike [`file_show`](JjApi::file_show), `path` deliberately carries **no**
+    /// pre-spawn emptiness guard: it is a plain PATH of its own behind `--`, not
+    /// text wrapped into a `root-file:"…"` fileset, and jj resolves an empty or
+    /// whitespace-only value as an ordinary path and **fails loudly** (`Path
+    /// exists but is not a regular file: .` / `No such path`, exit 1) instead of
+    /// quietly answering about something else. The T-149 investigation verified
+    /// this on jj 0.38.0; the live `file_annotate_and_file_show_reject_empty_path`
+    /// test pins it, so a future jj that started accepting it would be caught.
     async fn file_annotate(
         &self,
         dir: &Path,
@@ -574,6 +583,13 @@ pub trait JjApi: Send + Sync {
     /// lossily — a binary file comes back mangled rather than erroring — and
     /// returned **verbatim**: the file's trailing newline(s) are preserved (not
     /// trimmed), so a read-modify-write round-trip is byte-exact.
+    ///
+    /// An **empty or whitespace-only** `path` is refused **before** `jj` spawns,
+    /// with an [`is_invalid_input`](vcs_cli_support::is_invalid_input) error:
+    /// `root-file:""` anchors on the workspace root, which exists but is no file,
+    /// so jj would exit 0 with empty output — reporting the file as
+    /// existing-and-empty. `vcs_git::GitApi::show_file` refuses the same input in
+    /// the same form (T-149).
     async fn file_show(&self, dir: &Path, revset: &RevsetExpr, path: &str) -> Result<String>;
 
     // --- Mutations -----------------------------------------------------------
@@ -1048,10 +1064,20 @@ impl<R: ProcessRunner> Jj<R> {
         path: &str,
         budget: OutputBudget,
     ) -> Result<String> {
+        // An empty (or whitespace-only) `path` would become the fileset
+        // `root-file:""` below — the workspace ROOT. jj raises no error for it
+        // (the root exists), but `file:` matches an exact *file*, so nothing
+        // matches and `jj file show` exits 0 with EMPTY output: the read would
+        // report the file as existing-and-empty. Refuse before spawning — see
+        // `reject_empty_path` for why this slot takes an emptiness guard rather
+        // than `reject_flag_like`, and for the git half of the same bug.
+        reject_empty_path("file path", path)?;
         // `file show` takes FILESETS, so a bare path with a fileset metacharacter
         // (`(`, `*`, `~`, …) would be parsed as an expression — wrap it in the exact-
         // path form. (`file annotate` is the opposite: it takes a plain PATH and
-        // rejects the `file:"…"` form.)
+        // rejects the `file:"…"` form.) The quoted `root-file:"…"` literal is also
+        // why no `--`-pin is needed here (and so no direct `command_in` build, cf.
+        // [[K-043]]): the argument can never be flag-shaped.
         let fileset = JjFileset::path(path);
         // `run_untrimmed_within`: a file's trailing newline(s) are part of its
         // content; trimming corrupts a read-modify-write round-trip (H7). The budget
@@ -1722,7 +1748,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // form is rejected), so a leading-`-` path would be parsed as a flag.
         // The `--` separator before it keeps even a `-dash.txt` literal safe —
         // but global flags (`--color never`) MUST precede `--`, so this builds
-        // the command directly instead of via `cmd_in` (which trails them).
+        // the command directly instead of via `cmd_in` (which trails them,
+        // [[K-043]]).
+        //
+        // No `reject_empty_path` here on purpose (T-149, the symmetric read this
+        // task audited alongside `file_show`): the path is its own positional,
+        // not text wrapped into a `root-file:"…"` fileset, and jj answers an
+        // empty/whitespace-only path with a hard error (exit 1) rather than a
+        // silently different result — the trait docs record the finding, the
+        // live test pins it.
         let mut args = vec!["file", "annotate"];
         if let Some(revset) = revset.as_ref() {
             args.push("-r");
@@ -4616,6 +4650,77 @@ mod tests {
                 "never"
             ]
         );
+    }
+
+    // T-149: an empty / whitespace-only `path` is refused BEFORE `jj file show`
+    // spawns. `root-file:""` is not an error — it anchors on the workspace root,
+    // which exists but is no file, so jj exits 0 with EMPTY output (verified on
+    // jj 0.38.0) and the read reports the file as existing-and-empty. The runner
+    // is scripted to reply with exactly that (an empty success), so a regression
+    // fails on the returned value, not merely on the missing error.
+    #[tokio::test]
+    async fn file_show_rejects_empty_path_before_spawn() {
+        for path in ["", " ", "   ", "\t", "\n", " \t \n "] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Jj::with_runner(&rec);
+
+            let err = jj
+                .file_show(Path::new("."), &rv("@-"), path)
+                .await
+                .expect_err(&format!("file_show must refuse {path:?}"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{path:?} must classify as invalid input: {err:?}"
+            );
+            assert!(
+                err.to_string().contains("empty or whitespace-only"),
+                "the refusal names the cause: {err}"
+            );
+
+            // The budgeted entry point is the one carrying the guard; the
+            // per-call override must not be a way around it.
+            let err = jj
+                .file_show_within(Path::new("."), &rv("@-"), path, OutputBudget::unlimited())
+                .await
+                .expect_err(&format!("file_show_within must refuse {path:?}"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{path:?} must classify as invalid input: {err:?}"
+            );
+
+            assert!(
+                rec.calls().is_empty(),
+                "nothing may spawn for {path:?}: {:?}",
+                rec.calls()
+            );
+        }
+    }
+
+    // The guard rejects *emptiness*, not a leading dash or interior whitespace:
+    // a `-dash.txt` is inert inside the quoted `root-file:"…"` literal, and a
+    // name that merely contains (or is padded by) spaces is a legitimate file.
+    #[tokio::test]
+    async fn file_show_accepts_dash_leading_and_space_bearing_paths() {
+        for path in ["-dash.txt", "--force", "a b.txt", " padded.txt "] {
+            let rec = RecordingRunner::replying(Reply::ok("content\n"));
+            let jj = Jj::with_runner(&rec);
+            jj.file_show(Path::new("."), &rv("@-"), path)
+                .await
+                .unwrap_or_else(|e| panic!("{path:?} must be accepted: {e:?}"));
+            let fileset = format!("root-file:\"{path}\"");
+            assert_eq!(
+                rec.only_call().args_str(),
+                [
+                    "file",
+                    "show",
+                    "-r",
+                    "@-",
+                    fileset.as_str(),
+                    "--color",
+                    "never"
+                ]
+            );
+        }
     }
 
     // `description` is a fixed template query: first match only, raw description.

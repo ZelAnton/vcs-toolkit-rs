@@ -656,6 +656,13 @@ pub trait GitApi: Send + Sync {
     /// Content is decoded **lossily** — binary files come back mangled rather
     /// than erroring — and returned **verbatim**: the blob's trailing newline(s)
     /// are preserved (not trimmed), so a read-modify-write round-trip is byte-exact.
+    ///
+    /// An **empty or whitespace-only** `path` is refused **before** `git` spawns,
+    /// with an [`is_invalid_input`](vcs_cli_support::is_invalid_input) error: a
+    /// bare `git show <rev>:` is not an error but the root **tree listing**, so
+    /// an unguarded empty path would return a directory index as if it were a
+    /// file's content. `vcs_jj::JjApi::file_show` refuses the same input in the
+    /// same form (T-149).
     async fn show_file(&self, dir: &Path, rev: &RevSpec, path: &str) -> Result<String>;
     /// The value of a config key, or `None` when unset (`config --get <key>`,
     /// whose exit 1 covers both "unset" and "no such section" — git doesn't
@@ -684,6 +691,14 @@ pub trait GitApi: Send + Sync {
     async fn remote_set_url(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
     /// Per-line authorship of `path` (`blame --line-porcelain [<rev>] -- <path>`;
     /// `None` = the working tree's HEAD).
+    ///
+    /// Unlike [`show_file`](GitApi::show_file), `path` deliberately carries **no**
+    /// pre-spawn emptiness guard: it occupies a pathspec slot of its own behind
+    /// `--`, where git resolves an empty or whitespace-only value as an ordinary
+    /// path and **fails loudly** (`fatal: no such path '' in HEAD`, exit 128)
+    /// instead of quietly answering about something else. The T-149 investigation
+    /// verified this on git 2.55.0; the live `blame_and_show_file_reject_empty_path`
+    /// test pins it, so a future git that started accepting it would be caught.
     async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>>;
 
     // --- Sequencer -------------------------------------------------------------
@@ -920,6 +935,9 @@ impl<R: ProcessRunner> Git<R> {
     /// under `budget`: past the ceiling the read errors with
     /// [`ErrorReason::OutputTooLarge`] rather than
     /// buffering an unbounded file.
+    ///
+    /// Rejects an empty/whitespace-only `path` before spawning, exactly as
+    /// [`show_file`](GitApi::show_file) documents (it delegates here).
     pub async fn show_file_within(
         &self,
         dir: &Path,
@@ -927,6 +945,13 @@ impl<R: ProcessRunner> Git<R> {
         path: &str,
         budget: OutputBudget,
     ) -> Result<String> {
+        // An empty (or whitespace-only) `path` would reduce `spec` below to a bare
+        // `<rev>:`, which git does NOT reject: it prints the root TREE LISTING and
+        // exits 0, so the read would hand back a directory index dressed up as a
+        // file's content. Refuse before spawning — see `reject_empty_path` for why
+        // this slot takes an emptiness guard rather than `reject_flag_like`, and
+        // for the (differently shaped, equally silent) jj half of the same bug.
+        reject_empty_path("file path", path)?;
         let rev = rev.as_str();
         // git rejects backslash separators in the `<rev>:<path>` spec ("exists on
         // disk, but not in <rev>") — normalise for Windows callers. Only on Windows:
@@ -2453,6 +2478,12 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn blame(&self, dir: &Path, path: &str, rev: Option<RevSpec>) -> Result<Vec<BlameLine>> {
+        // No `reject_empty_path` here on purpose (T-149, the symmetric read this
+        // task audited alongside `show_file`): `path` is its own pathspec behind
+        // `--`, not text spliced into a `<rev>:<path>` spec, and git answers an
+        // empty/whitespace-only pathspec with a hard `fatal: no such path …`
+        // (exit 128) rather than a silently different result — the trait docs
+        // record the finding, the live test pins it.
         let mut args = vec!["blame", "--line-porcelain"];
         if let Some(rev) = rev.as_ref() {
             args.push(rev.as_str());
@@ -2730,6 +2761,50 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
 /// with no leading `-` still reaches the child process unaltered.
 fn reject_flag_like_path(what: &str, path: &Path) -> Result<()> {
     reject_flag_like(what, &path.to_string_lossy())
+}
+
+/// Emptiness guard for a caller-supplied file path that is **interpolated into a
+/// larger argument** (`show_file`'s `<rev>:<path>` spec) instead of occupying an
+/// argv slot of its own.
+///
+/// [`reject_flag_like`] is the wrong check for such a slot in both directions: a
+/// leading `-` is inert inside `<rev>:<path>` (rejecting it would refuse a
+/// perfectly legitimate `-dash.txt`), while emptiness — which `reject_flag_like`
+/// happens to cover for *bare* positionals — is exactly what silently changes the
+/// command's meaning here. `git show <rev>:` is not an error: git prints the
+/// **root tree listing** and exits 0 (verified on git 2.55.0), so an unguarded
+/// empty path returns a directory index as if it were the file's content.
+///
+/// `vcs_jj`'s `file_show` carries the mirror guard with a byte-identical message
+/// (only the program name differs), so a cross-backend caller sees ONE error
+/// form. Its empty-path degradation differs in shape but not in kind: an empty
+/// path becomes the fileset `root-file:""`, which is a valid *existing* path
+/// (the workspace root) matching no file, so `jj file show` exits 0 with **empty
+/// output** — a file that "exists and is empty" (verified on jj 0.38.0).
+///
+/// Whitespace-only is refused with the empty string. A name made only of spaces
+/// is legal on Unix, but at this boundary it is indistinguishable from the far
+/// likelier caller bug (a blank/unset path variable), and refusing it keeps one
+/// rule — and one error — across both backends.
+///
+/// An interior NUL needs no check here: it can only reach `Command::arg`, which
+/// already fails the spawn with the same `io::ErrorKind::InvalidInput` this guard
+/// raises, so the classification a caller sees is unchanged.
+fn reject_empty_path(what: &str, path: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{what} {path:?} is empty or whitespace-only — an empty path silently \
+                     re-targets the read at the repository root instead of a single file; \
+                     refusing before spawning"
+                ),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 // --- Large path-set transport (T-052) ----------------------------------------
@@ -6364,6 +6439,71 @@ mod tests {
             matches!(err_reason(&bare), Some(ErrorReason::Cancelled { .. })),
             "a bare is_merge_in_progress must inherit the fired token: {bare:?}"
         );
+    }
+
+    // T-149: an empty / whitespace-only `path` is refused BEFORE `git show`
+    // spawns. `git show <rev>:` is not an error — git prints the root TREE
+    // LISTING and exits 0 (verified on git 2.55.0), so without this guard the
+    // read hands back a directory index as if it were a file's content. The
+    // runner is scripted to reply with exactly that listing, so a regression
+    // fails on the returned value, not merely on the missing error.
+    #[tokio::test]
+    async fn show_file_rejects_empty_path_before_spawn() {
+        for path in ["", " ", "   ", "\t", "\n", " \t \n "] {
+            let rec = RecordingRunner::replying(Reply::ok("tree HEAD:\n\nf.txt\nsub/\n"));
+            let git = Git::with_runner(&rec);
+
+            let err = git
+                .show_file(Path::new("/r"), &rv("HEAD"), path)
+                .await
+                .expect_err(&format!("show_file must refuse {path:?}"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{path:?} must classify as invalid input: {err:?}"
+            );
+            assert!(
+                err.to_string().contains("empty or whitespace-only"),
+                "the refusal names the cause: {err}"
+            );
+
+            // The budgeted entry point is the one carrying the guard; the
+            // per-call override must not be a way around it.
+            let err = git
+                .show_file_within(
+                    Path::new("/r"),
+                    &rv("HEAD"),
+                    path,
+                    OutputBudget::unlimited(),
+                )
+                .await
+                .expect_err(&format!("show_file_within must refuse {path:?}"));
+            assert!(
+                vcs_cli_support::is_invalid_input(&err),
+                "{path:?} must classify as invalid input: {err:?}"
+            );
+
+            assert!(
+                rec.calls().is_empty(),
+                "nothing may spawn for {path:?}: {:?}",
+                rec.calls()
+            );
+        }
+    }
+
+    // The guard rejects *emptiness*, not a leading dash or interior whitespace:
+    // a `-dash.txt` is inert inside the `<rev>:<path>` spec, and a name that
+    // merely contains (or is padded by) spaces is a legitimate file.
+    #[tokio::test]
+    async fn show_file_accepts_dash_leading_and_space_bearing_paths() {
+        for path in ["-dash.txt", "--force", "a b.txt", " padded.txt "] {
+            let rec = RecordingRunner::replying(Reply::ok("content\n"));
+            let git = Git::with_runner(&rec);
+            git.show_file(Path::new("/r"), &rv("HEAD"), path)
+                .await
+                .unwrap_or_else(|e| panic!("{path:?} must be accepted: {e:?}"));
+            let spec = format!("HEAD:{path}");
+            assert_eq!(rec.only_call().args_str(), ["show", spec.as_str()]);
+        }
     }
 
     // The `<rev>:<path>` spec requires forward slashes — Windows callers may

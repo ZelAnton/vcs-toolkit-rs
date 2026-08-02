@@ -167,6 +167,23 @@ crates; tag releases as `vcs-jj-v<version>`.
   check is a lossy-UTF-8 rendering of the path used only to classify it; a
   legitimate non-UTF-8 path (valid on Unix) with no leading `-` still reaches
   `jj` byte-for-byte, unchanged. (T-147.)
+- **`JjApi::file_show` / `Jj::file_show_within` now refuse an empty or
+  whitespace-only `path` before spawning, closing a silent wrong-answer gap.**
+  The path is wrapped as the exact-path fileset `root-file:"<path>"`, so an empty
+  one became `root-file:""` — an anchor on the workspace **root**, a path that
+  exists (hence no "No such path" error) but is no file, so `jj file show` exits 0
+  with **empty output** and the read reported the file as existing-and-empty
+  (verified on jj 0.38.0). It is now refused up front with a classifiable
+  (`vcs_cli_support::is_invalid_input`) error, in the same form `vcs-git`'s
+  `show_file` uses for the same input, so a cross-backend caller sees one error
+  modulo the program name. Only *emptiness* is checked: a leading `-` is inert
+  inside the quoted fileset literal, so a legitimate `-dash.txt` (and any name
+  merely containing or padded by spaces) still reads normally. **Breaking for a
+  caller that passed an empty/blank `path` and relied on the empty `Ok`:** it now
+  gets an `Err`. `JjApi::file_annotate` was audited alongside it and deliberately
+  left unguarded — its `path` is a plain positional behind `--`, which jj rejects
+  loudly (`Path exists but is not a regular file: .`); a live test pins that.
+  (T-149.)
 
 ## [0.11.0] - 2026-07-19
 

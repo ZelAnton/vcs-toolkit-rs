@@ -4,7 +4,7 @@
 
 // Scaffolding from vcs-testkit: `JjSandbox` owns the throwaway workspace and
 // raw scenario steps; the typed client under test does the rest.
-use vcs_jj::{BookmarkName, GitClone, Jj, JjApi, RevsetExpr, WorkspaceAdd};
+use vcs_jj::{BookmarkName, ErrorReason, GitClone, Jj, JjApi, RevsetExpr, WorkspaceAdd};
 use vcs_testkit::{BareRemote, JjSandbox, TempDir, jj as jj_raw};
 
 // Terse constructors for the validated newtypes in test call sites; the literals
@@ -509,6 +509,105 @@ async fn op_log_evolog_and_annotate_cycle() {
         "lines came from different changes"
     );
     assert_eq!(lines[1].content, "two");
+}
+
+// T-149: the two symmetric path reads, against the real binary.
+//
+// `file_show` — GUARDED. An empty path becomes the fileset `root-file:""`, which
+// anchors on the workspace ROOT: a path that exists, so jj raises no error, but
+// `file:` matches an exact *file*, so nothing matches and `jj file show` exits 0
+// with EMPTY output — the read used to report the file as existing-and-empty.
+// The wrapper now refuses it *before* spawning, and this test also asserts the
+// underlying jj behaviour it exists to prevent (via `run`, the unguarded escape
+// hatch) — if jj ever started rejecting `root-file:""` itself, that assertion is
+// what tells us the guard's premise changed.
+//
+// `file_annotate` — DELIBERATELY UNGUARDED. `path` is a plain positional behind
+// `--`, where jj fails loudly on an empty/whitespace-only value ("Path exists but
+// is not a regular file" / "No such path"). The `Exit` (not `Spawn`)
+// classification is the point: it records *whose* rejection this is, and would
+// flip if a future jj ever accepted the input.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn file_annotate_and_file_show_reject_empty_path() {
+    let sandbox = JjSandbox::init("empty-path");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    std::fs::create_dir_all(dir.join("sub")).expect("mkdir");
+    std::fs::write(dir.join("f.txt"), "one\n").expect("write");
+    std::fs::write(dir.join("sub").join("g.txt"), "two\n").expect("write");
+    jj.describe(dir, "base").await.expect("describe");
+    jj.new_change(dir, "wip").await.expect("new");
+
+    // The premise: the root fileset is a *successful*, empty read on the real
+    // binary — exactly the silent wrong answer `file_show` must not return.
+    let root_read = jj
+        .run(&[
+            "--repository".into(),
+            dir.display().to_string(),
+            "file".into(),
+            "show".into(),
+            "-r".into(),
+            "@-".into(),
+            "root-file:\"\"".into(),
+        ])
+        .await
+        .expect("`jj file show root-file:\"\"` succeeds — the behaviour the guard exists for");
+    assert!(
+        root_read.is_empty(),
+        "jj answers the root fileset with empty content, not an error: {root_read:?}"
+    );
+
+    for path in ["", " ", "   "] {
+        // file_show: refused by the wrapper, before any process starts.
+        let err = jj
+            .file_show(dir, &rv("@-"), path)
+            .await
+            .expect_err(&format!("file_show must refuse {path:?}"));
+        match err.reason() {
+            ErrorReason::Spawn { source, .. } => assert_eq!(
+                source.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "pre-spawn refusal is invalid-input: {err:?}"
+            ),
+            other => panic!("expected a pre-spawn Spawn refusal, got {other:?}"),
+        }
+
+        // file_annotate: refused by jj itself, as a non-zero exit — never a
+        // silent answer about some other path.
+        let err = jj
+            .file_annotate(dir, path, None)
+            .await
+            .expect_err(&format!("jj must reject annotate on {path:?}"));
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { .. }),
+            "jj itself rejects the empty path (non-zero exit): {err:?}"
+        );
+        let err = jj
+            .file_annotate(dir, path, Some(rv("@-")))
+            .await
+            .expect_err(&format!("jj must reject annotate on {path:?} at a revset"));
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { .. }),
+            "same with an explicit revset: {err:?}"
+        );
+    }
+
+    // Control: a real path still reads and annotates.
+    assert_eq!(
+        jj.file_show(dir, &rv("@-"), "f.txt")
+            .await
+            .expect("a real path still reads"),
+        "one\n"
+    );
+    assert_eq!(
+        jj.file_annotate(dir, "f.txt", Some(rv("@-")))
+            .await
+            .expect("a real path still annotates")
+            .len(),
+        1
+    );
 }
 
 // capabilities round-trips against the real binary on PATH.

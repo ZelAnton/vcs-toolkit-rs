@@ -134,6 +134,21 @@ crates; tag releases as `vcs-core-v<version>`.
     — an empty path (`""`), which has no absolute form and names no repository — the
     constructor falls back to the path as given, exactly preserving the prior behaviour
     for that degenerate case. Every non-empty path (relative or absolute) is absolutised.
+- **`Repo::show_file` / `Repo::show_file_within` now refuse an empty or
+  whitespace-only `path` on both backends, before anything spawns.** Neither
+  CLI rejects such a path by itself, and each answered a *different* silent lie:
+  `git show <rev>:` exits 0 printing the repository root's **tree listing**, while
+  jj's `root-file:""` fileset anchors on the workspace root and matches no file, so
+  `jj file show` exits 0 with **empty output** (verified on git 2.55.0 / jj 0.38.0).
+  A caller asking for one file's content — notably an agent driving `vcs-mcp`'s
+  `repo_show_file` — therefore got a directory index or a bogus empty file
+  depending on the backend. The refusal comes from the `vcs-git`/`vcs-jj` guards
+  this facade forwards, so it is a single classifiable
+  (`Error::is_invalid_input`) failure with the same message on both backends
+  (only the program name differs). **Breaking for a caller that passed an
+  empty/blank `path` and consumed either result:** it now gets an `Err`.
+  `Repo::annotate` was audited alongside it and needs no such guard — git `blame`
+  and jj `file annotate` both reject an empty path loudly on their own. (T-149.)
 
 ## [0.9.0] - 2026-07-19
 

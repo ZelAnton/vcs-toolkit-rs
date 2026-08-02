@@ -1109,6 +1109,15 @@ impl<R: ProcessRunner> Repo<R> {
     /// `HEAD:src/lib.rs` on git or `@-` + a fileset on jj — both normalise
     /// backslash path separators and return the file's bytes verbatim (including
     /// any trailing newline).
+    ///
+    /// An **empty or whitespace-only** `path` is refused **identically on both
+    /// backends**, before anything spawns, with an
+    /// [`is_invalid_input`](Error::is_invalid_input) error. Neither CLI errors on
+    /// it by itself: `git show <rev>:` exits 0 printing the root *tree listing*,
+    /// and jj's `root-file:""` fileset matches no file so `jj file show` exits 0
+    /// with *empty* output — two different silent lies where a caller (an agent
+    /// driving `repo_show_file`, say) asked for one file's content. The guards
+    /// live in `vcs-git`/`vcs-jj`; this facade only forwards them (T-149).
     pub async fn show_file(&self, rev: &str, path: &str) -> Result<String> {
         match &self.backend {
             Backend::Git(g) => git_backend::show_file(g, &self.cwd, rev, path).await,
@@ -1126,6 +1135,9 @@ impl<R: ProcessRunner> Repo<R> {
     /// file — use it to read a legitimately large file
     /// ([`OutputBudget::unlimited`], or a higher cap) or to tighten the cap for one
     /// call. A truncated blob is never returned as if complete.
+    ///
+    /// Rejects an empty/whitespace-only `path` before spawning, on both backends,
+    /// exactly as [`show_file`](Repo::show_file) documents.
     pub async fn show_file_within(
         &self,
         rev: &str,
@@ -3536,6 +3548,71 @@ mod tests {
             .unwrap_err();
         assert!(err.is_invalid_input(), "jj: got {err:?}");
         assert_eq!(jrec.calls().len(), 0, "jj: no process must have spawned");
+    }
+
+    // T-149: an empty / whitespace-only `path` is refused identically on BOTH
+    // backends, before anything spawns — the facade just forwards the backend
+    // guard, so `repo_show_file`-style callers (vcs-mcp) get one classifiable
+    // error instead of two different silent lies: `git show <rev>:` exits 0 with
+    // the root TREE LISTING, `jj file show root-file:""` exits 0 with EMPTY
+    // output. Both runners are scripted to reply with exactly those, so a
+    // regression surfaces as a bogus `Ok`, not just a missing `Err`.
+    #[tokio::test]
+    async fn show_file_empty_path_rejected_before_spawn_on_both_backends() {
+        use processkit::testing::RecordingRunner;
+        for path in ["", " ", "   ", "\t", "\n", " \t \n "] {
+            let grec = RecordingRunner::replying(Reply::ok("tree HEAD:\n\nf.txt\nsub/\n"));
+            let git = Repo::from_git("/repo", "/repo", Git::with_runner(&grec));
+            let jrec = RecordingRunner::replying(Reply::ok(""));
+            let jj = Repo::from_jj("/repo", "/repo", Jj::with_runner(&jrec));
+
+            let gerr = git
+                .show_file("HEAD", path)
+                .await
+                .expect_err("git must refuse an empty path");
+            let jerr = jj
+                .show_file("@-", path)
+                .await
+                .expect_err("jj must refuse an empty path");
+            assert!(gerr.is_invalid_input(), "git {path:?}: got {gerr:?}");
+            assert!(jerr.is_invalid_input(), "jj {path:?}: got {jerr:?}");
+
+            // The budgeted facade entry point forwards the same refusal.
+            assert!(
+                git.show_file_within("HEAD", path, OutputBudget::unlimited())
+                    .await
+                    .expect_err("git show_file_within must refuse an empty path")
+                    .is_invalid_input()
+            );
+            assert!(
+                jj.show_file_within("@-", path, OutputBudget::unlimited())
+                    .await
+                    .expect_err("jj show_file_within must refuse an empty path")
+                    .is_invalid_input()
+            );
+
+            // One error FORM across backends: the two crates carry the guard's
+            // wording separately, so pin the shared sentence here — a caller must
+            // not have to tell the backends apart by the message, only by the
+            // program name each names.
+            let (gtext, jtext) = (gerr.to_string(), jerr.to_string());
+            assert!(gtext.contains("empty or whitespace-only"), "git: {gtext}");
+            assert!(jtext.contains("empty or whitespace-only"), "jj: {jtext}");
+            assert_eq!(
+                gtext.replace("git", "<vcs>"),
+                jtext.replace("jj", "<vcs>"),
+                "the refusal must differ only in the program name"
+            );
+
+            assert!(
+                grec.calls().is_empty(),
+                "git: nothing may spawn for {path:?}"
+            );
+            assert!(
+                jrec.calls().is_empty(),
+                "jj: nothing may spawn for {path:?}"
+            );
+        }
     }
 
     #[tokio::test]

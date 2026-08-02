@@ -305,12 +305,17 @@ async fn file_annotate(&self, dir: &Path, path: &str, revset: Option<String>) ->
 workspace-root-relative exact-path fileset (`root-file:"<path>"`) so fileset
 metacharacters in the name stay literal and the path resolves from the workspace root
 regardless of `dir`; content is decoded **lossily** — a binary file comes back mangled
-rather than erroring.
+rather than erroring. An **empty or whitespace-only** `path` is refused before `jj`
+spawns: `root-file:""` anchors on the workspace root, which exists but is no file, so
+jj would exit 0 with *empty* output — reporting the file as existing-and-empty. (A
+leading `-` is still fine — it is inert inside the quoted fileset literal.)
 
 `file_annotate` returns per-line authorship (`file annotate`; `revset: None` =
 `@`): which change introduced each line. Here `path` is a plain PATH (jj's
 `file annotate` rejects the `file:"…"` form), passed after a `--` separator so a
-`-dash.txt` stays literal.
+`-dash.txt` stays literal. It needs no emptiness guard of its own: as a plain
+positional, an empty path is one jj itself rejects outright ("Path exists but is
+not a regular file").
 
 ```rust,ignore
 # use std::path::Path;
