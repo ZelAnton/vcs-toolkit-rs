@@ -44,6 +44,8 @@ crates; tag releases as `vcs-git-v<version>`.
   and its interaction with the hardened profile (untrusted nested config, the
   `protocol.*` transport allowlist, per-nested-repo filter/smudge vectors) is
   documented in the security guide. (T-096.)
+- Document how `GitApi::diff_text` and friends interpret a `DiffSpec`.
+  Changing this behavior is considered a semver-breaking change.
 
 ### Changed
 - Split the growing crate root into focused internal modules: command specs,
