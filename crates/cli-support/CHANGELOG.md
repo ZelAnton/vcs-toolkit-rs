@@ -31,6 +31,28 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   workspace's "token never in argv" contract as defence in depth (the environment,
   which carries the token, is never logged). Also exports `CommandObserver`,
   `CommandRecord`, `CommandStatus`, and `StderrObserver`. (T-117.)
+- `run_with_progress_within` / `ManagedClient::run_with_progress_within` — an
+  `OutputBudget` ceiling on the stdout/stderr a **streamed** run retains, closing
+  the memory-bound gap between a streaming `clone`/`fetch --progress` and its
+  captured twin. A command's `OutputBufferPolicy` does not bound an *event*
+  stream, so `budget_diagnostics` never reached the copy `run_with_progress` keeps
+  in order to promote a rejected exit into a structured error: on a large
+  repository that copy grew with the transfer. The ceiling is **drop-oldest, never
+  fail-loud** (the `diagnostic_policy` half of the contract): it truncates what is
+  retained without turning a run into `OutputTooLarge`, keeps the **tail** — where
+  a CLI's fatal line sits, so `is_transient_fetch_error`/`is_lock_contention` still
+  classify it — and leaves delivery untouched (the progress callback still sees
+  every line). Each stream carries the budget independently, as on a captured verb.
+  A line longer than the cap keeps its own tail (cut on a char boundary) rather
+  than being dropped whole, since carriage-return `--progress` output is one
+  ever-growing line under processkit's default `\n` framing.
+  `ManagedClient::run_with_progress` now applies the client's
+  `default_output_budget` this way — **unlimited by default**, so a client that
+  never sets one streams exactly as before, and the free `run_with_progress` is
+  unchanged. The byte ceiling counts the bytes actually retained (decoded line
+  content plus the one `\n` joining each retained pair) — neither processkit's
+  raw-pipe-byte fail-loud unit nor its content-only drop-mode unit; the boundary is
+  pinned by an exact test. (T-148.)
 
 ### Changed
 - **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).

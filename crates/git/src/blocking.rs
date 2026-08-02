@@ -1,5 +1,6 @@
 //! Synchronous, best-effort helpers for Drop and other non-async contexts.
 
+use std::io;
 use std::path::Path;
 use std::process::Command;
 
@@ -26,6 +27,13 @@ fn scrub_repo_redirectors(command: &mut Command) {
 /// Remove a worktree synchronously (`git worktree remove [--force] <path>`);
 /// see [`WorktreeRemove`](super::WorktreeRemove).
 pub fn worktree_remove(dir: &Path, spec: super::WorktreeRemove) -> std::io::Result<()> {
+    // Guard before spawning, matching the async twin's `reject_flag_like_path`
+    // — a leading-`-` path would otherwise be misparsed as a flag by `git
+    // worktree remove`. This helper has no async runtime to reuse the async
+    // client's guard through, so it re-derives an equivalent `io::Error`
+    // locally, keeping this function's `std::io::Result<()>` signature.
+    super::reject_flag_like_path("worktree path", &spec.path)
+        .map_err(|err| io::Error::other(err.to_string()))?;
     let mut cmd = Command::new(super::BINARY);
     cmd.current_dir(dir).args(["worktree", "remove"]);
     scrub_repo_redirectors(&mut cmd);
@@ -60,5 +68,49 @@ mod tests {
             REPO_REDIRECTORS.iter().copied().collect(),
             "every redirector must be removed regardless of Command's ordering"
         );
+    }
+
+    // A flag-shaped path is refused before `cmd.status()` spawns anything — the
+    // guard's own message (not a `git`-produced "exited with"/spawn-failure
+    // message) proves rejection happened up front, not via a real `git` run.
+    #[test]
+    fn worktree_remove_rejects_flag_like_path_before_spawn() {
+        let err = worktree_remove(
+            Path::new("/repo"),
+            super::super::WorktreeRemove::new("--force"),
+        )
+        .expect_err("a flag-like worktree path must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("would be parsed as a flag"),
+            "expected the guard's message, got: {message}"
+        );
+    }
+
+    #[test]
+    fn worktree_remove_rejects_empty_path_before_spawn() {
+        let err = worktree_remove(Path::new("/repo"), super::super::WorktreeRemove::new("  "))
+            .expect_err("an empty worktree path must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("would be parsed as a flag"),
+            "expected the guard's message, got: {message}"
+        );
+    }
+
+    // A non-UTF-8 path (valid on Unix) must not panic anywhere in the guard —
+    // it may pass through to `cmd.status()` (which then fails to find a `git`
+    // worktree at a nonsense path) or be refused, but never abort the check.
+    #[cfg(unix)]
+    #[test]
+    fn worktree_remove_does_not_panic_on_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let bytes = vec![0xFFu8, 0xFEu8, b'x'];
+        let path = std::path::PathBuf::from(OsString::from_vec(bytes));
+        // Must return, not panic — the outcome itself (Ok/Err from a missing
+        // `git`/repo) is not the point of this test.
+        let _ = worktree_remove(Path::new("/repo"), super::super::WorktreeRemove::new(path));
     }
 }

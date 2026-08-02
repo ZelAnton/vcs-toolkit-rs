@@ -4,8 +4,15 @@ use std::io;
 use std::path::Path;
 use std::process::Command;
 
-/// Forget a workspace synchronously (`jj workspace forget <name>`).
+/// Forget a workspace synchronously (`jj workspace forget <name>`). Guards
+/// `name` before spawning, matching the async twin's
+/// `JjApi::workspace_forget` (`reject_flag_like("workspace name", name)`) —
+/// this helper has no async runtime to reuse that guard through, so it
+/// re-derives an equivalent `io::Error` locally, keeping this function's
+/// `std::io::Result<()>` signature.
 pub fn workspace_forget(dir: &Path, name: &str) -> std::io::Result<()> {
+    super::reject_flag_like("workspace name", name)
+        .map_err(|err| io::Error::other(err.to_string()))?;
     let status = Command::new(super::BINARY)
         .current_dir(dir)
         .args(["workspace", "forget", name])
@@ -103,5 +110,36 @@ pub fn workspace_name_for_path(dir: &Path, path: &Path) -> io::Result<Option<Str
             unresolved.len(),
             unresolved.join(", "),
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A flag-shaped `name` is refused before `Command::status()` spawns
+    // anything — the guard's own message (not a `jj`-produced "exited
+    // with"/spawn-failure message) proves rejection happened up front, not
+    // via a real `jj` run.
+    #[test]
+    fn workspace_forget_rejects_flag_like_name_before_spawn() {
+        let err = workspace_forget(Path::new("/repo"), "--force")
+            .expect_err("a flag-like workspace name must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("would be parsed as a flag"),
+            "expected the guard's message, got: {message}"
+        );
+    }
+
+    #[test]
+    fn workspace_forget_rejects_empty_name_before_spawn() {
+        let err = workspace_forget(Path::new("/repo"), "  ")
+            .expect_err("an empty workspace name must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("would be parsed as a flag"),
+            "expected the guard's message, got: {message}"
+        );
     }
 }
