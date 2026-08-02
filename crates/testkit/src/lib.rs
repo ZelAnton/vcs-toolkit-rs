@@ -6,8 +6,11 @@
 //! Hands a `#[test]` a real repository to drive: a unique self-cleaning
 //! [`TempDir`], a configured [`GitSandbox`] / [`JjSandbox`] to build scenarios
 //! in, and a seeded [`BareRemote`] to clone/fetch/push against. It is
-//! **dependency-free** (not even the wrapper crates, so it can be a
-//! dev-dependency of any of them without a cycle), **synchronous** (test setup
+//! **dependency-free** (what it publishes pulls in nothing at all — not even the
+//! wrapper crates, which appear only as `[dev-dependencies]` pinning
+//! [`forge_fixtures`] against their real parsers, an edge Cargo does not
+//! propagate, so any of them can keep dev-depending on this crate without a
+//! cycle), **synchronous** (test setup
 //! needs no runtime — it shells out with `std::process::Command`, not the async
 //! client under test), and **panics on failure** (a broken fixture should fail
 //! loudly at the call site, not thread `Result`s through scenario code).
@@ -45,6 +48,10 @@
 //! - **Raw steps [`git`] / [`jj`]** — run one command in any `dir`, panicking
 //!   on failure: for scenario steps in directories no sandbox owns (linked
 //!   worktrees, fresh clones, repos the code under test initialised).
+//! - **[`forge_fixtures`]** — canonical `gh` / `glab` / `tea` **output**
+//!   fixtures for the other half of a VCS test: driving forge code through a
+//!   scripted runner with no live forge and no copy-pasted JSON. Unlike the
+//!   sandboxes above, these spawn nothing at all.
 //!
 //! # Recipes
 //!
@@ -90,6 +97,8 @@
 //! from `docs/`. See the [`guide`] module (and its cross-cutting
 //! [`testing`](crate::guide::testing) sub-guide on the trait / mock / runner
 //! seams that let most tests skip real binaries entirely).
+
+pub mod forge_fixtures;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

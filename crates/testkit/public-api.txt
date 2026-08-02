@@ -1,4 +1,228 @@
 pub mod vcs_testkit
+pub mod vcs_testkit::forge_fixtures
+#[non_exhaustive] pub enum vcs_testkit::forge_fixtures::TeaDsv
+pub vcs_testkit::forge_fixtures::TeaDsv::Naive
+pub vcs_testkit::forge_fixtures::TeaDsv::Rfc4180
+impl vcs_testkit::forge_fixtures::TeaDsv
+pub const vcs_testkit::forge_fixtures::TeaDsv::ALL: &'static [vcs_testkit::forge_fixtures::TeaDsv]
+impl core::clone::Clone for vcs_testkit::forge_fixtures::TeaDsv
+pub fn vcs_testkit::forge_fixtures::TeaDsv::clone(&self) -> vcs_testkit::forge_fixtures::TeaDsv
+impl core::cmp::Eq for vcs_testkit::forge_fixtures::TeaDsv
+impl core::cmp::PartialEq for vcs_testkit::forge_fixtures::TeaDsv
+pub fn vcs_testkit::forge_fixtures::TeaDsv::eq(&self, &vcs_testkit::forge_fixtures::TeaDsv) -> bool
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::TeaDsv
+pub fn vcs_testkit::forge_fixtures::TeaDsv::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::StructuralPartialEq for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::Send for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::Sync for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::TeaDsv
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::TeaDsv
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::TeaDsv
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::TeaDsv
+pub struct vcs_testkit::forge_fixtures::GhIssue
+impl vcs_testkit::forge_fixtures::GhIssue
+pub fn vcs_testkit::forge_fixtures::GhIssue::assignees(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::body(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::labels(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::list(&[vcs_testkit::forge_fixtures::GhIssue]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GhIssue::milestone(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::timestamps(self, &str, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::url(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhIssue::view(&self) -> alloc::string::String
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GhIssue
+pub fn vcs_testkit::forge_fixtures::GhIssue::clone(&self) -> vcs_testkit::forge_fixtures::GhIssue
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GhIssue
+pub fn vcs_testkit::forge_fixtures::GhIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GhIssue
+impl core::marker::Send for vcs_testkit::forge_fixtures::GhIssue
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GhIssue
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GhIssue
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GhIssue
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GhIssue
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GhIssue
+pub struct vcs_testkit::forge_fixtures::GhPr
+impl vcs_testkit::forge_fixtures::GhPr
+pub fn vcs_testkit::forge_fixtures::GhPr::assignees(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::base(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::draft(self, bool) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::head(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::labels(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::list(&[vcs_testkit::forge_fixtures::GhPr]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GhPr::milestone(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::timestamps(self, &str, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::url(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhPr::view(&self) -> alloc::string::String
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GhPr
+pub fn vcs_testkit::forge_fixtures::GhPr::clone(&self) -> vcs_testkit::forge_fixtures::GhPr
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GhPr
+pub fn vcs_testkit::forge_fixtures::GhPr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GhPr
+impl core::marker::Send for vcs_testkit::forge_fixtures::GhPr
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GhPr
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GhPr
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GhPr
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GhPr
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GhPr
+pub struct vcs_testkit::forge_fixtures::GhRelease
+impl vcs_testkit::forge_fixtures::GhRelease
+pub fn vcs_testkit::forge_fixtures::GhRelease::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::body(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::draft(self, bool) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::latest(self, bool) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::list(&[vcs_testkit::forge_fixtures::GhRelease]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GhRelease::name(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::new(&str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::prerelease(self, bool) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::published_at(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::url(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GhRelease::view(&self) -> alloc::string::String
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GhRelease
+pub fn vcs_testkit::forge_fixtures::GhRelease::clone(&self) -> vcs_testkit::forge_fixtures::GhRelease
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GhRelease
+pub fn vcs_testkit::forge_fixtures::GhRelease::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GhRelease
+impl core::marker::Send for vcs_testkit::forge_fixtures::GhRelease
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GhRelease
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GhRelease
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GhRelease
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GhRelease
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GhRelease
+pub struct vcs_testkit::forge_fixtures::GlabIssue
+impl vcs_testkit::forge_fixtures::GlabIssue
+pub fn vcs_testkit::forge_fixtures::GlabIssue::assignees(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::body(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::labels(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::list(&[vcs_testkit::forge_fixtures::GlabIssue]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GlabIssue::milestone(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::timestamps(self, &str, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabIssue::view(&self) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GlabIssue::web_url(self, &str) -> Self
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GlabIssue
+pub fn vcs_testkit::forge_fixtures::GlabIssue::clone(&self) -> vcs_testkit::forge_fixtures::GlabIssue
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GlabIssue
+pub fn vcs_testkit::forge_fixtures::GlabIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GlabIssue
+impl core::marker::Send for vcs_testkit::forge_fixtures::GlabIssue
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GlabIssue
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GlabIssue
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GlabIssue
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GlabIssue
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GlabIssue
+pub struct vcs_testkit::forge_fixtures::GlabMr
+impl vcs_testkit::forge_fixtures::GlabMr
+pub fn vcs_testkit::forge_fixtures::GlabMr::assignees(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::draft(self, bool) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::labels(self, &[&str]) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::list(&[vcs_testkit::forge_fixtures::GlabMr]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GlabMr::milestone(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::source_branch(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::target_branch(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::timestamps(self, &str, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabMr::view(&self) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GlabMr::web_url(self, &str) -> Self
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GlabMr
+pub fn vcs_testkit::forge_fixtures::GlabMr::clone(&self) -> vcs_testkit::forge_fixtures::GlabMr
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GlabMr
+pub fn vcs_testkit::forge_fixtures::GlabMr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GlabMr
+impl core::marker::Send for vcs_testkit::forge_fixtures::GlabMr
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GlabMr
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GlabMr
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GlabMr
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GlabMr
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GlabMr
+pub struct vcs_testkit::forge_fixtures::GlabRelease
+impl vcs_testkit::forge_fixtures::GlabRelease
+pub fn vcs_testkit::forge_fixtures::GlabRelease::author(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::description(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::list(&[vcs_testkit::forge_fixtures::GlabRelease]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::GlabRelease::name(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::new(&str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::released_at(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::url(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::GlabRelease::view(&self) -> alloc::string::String
+impl core::clone::Clone for vcs_testkit::forge_fixtures::GlabRelease
+pub fn vcs_testkit::forge_fixtures::GlabRelease::clone(&self) -> vcs_testkit::forge_fixtures::GlabRelease
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::GlabRelease
+pub fn vcs_testkit::forge_fixtures::GlabRelease::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::GlabRelease
+impl core::marker::Send for vcs_testkit::forge_fixtures::GlabRelease
+impl core::marker::Sync for vcs_testkit::forge_fixtures::GlabRelease
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::GlabRelease
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::GlabRelease
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::GlabRelease
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::GlabRelease
+pub struct vcs_testkit::forge_fixtures::TeaIssue
+impl vcs_testkit::forge_fixtures::TeaIssue
+pub fn vcs_testkit::forge_fixtures::TeaIssue::body(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaIssue::list(vcs_testkit::forge_fixtures::TeaDsv, &[vcs_testkit::forge_fixtures::TeaIssue]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::TeaIssue::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaIssue::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaIssue::url(self, &str) -> Self
+impl core::clone::Clone for vcs_testkit::forge_fixtures::TeaIssue
+pub fn vcs_testkit::forge_fixtures::TeaIssue::clone(&self) -> vcs_testkit::forge_fixtures::TeaIssue
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::TeaIssue
+pub fn vcs_testkit::forge_fixtures::TeaIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::TeaIssue
+impl core::marker::Send for vcs_testkit::forge_fixtures::TeaIssue
+impl core::marker::Sync for vcs_testkit::forge_fixtures::TeaIssue
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::TeaIssue
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::TeaIssue
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::TeaIssue
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::TeaIssue
+pub struct vcs_testkit::forge_fixtures::TeaPr
+impl vcs_testkit::forge_fixtures::TeaPr
+pub fn vcs_testkit::forge_fixtures::TeaPr::base(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaPr::head(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaPr::list(vcs_testkit::forge_fixtures::TeaDsv, &[vcs_testkit::forge_fixtures::TeaPr]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::TeaPr::new(u64, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaPr::state(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaPr::url(self, &str) -> Self
+impl core::clone::Clone for vcs_testkit::forge_fixtures::TeaPr
+pub fn vcs_testkit::forge_fixtures::TeaPr::clone(&self) -> vcs_testkit::forge_fixtures::TeaPr
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::TeaPr
+pub fn vcs_testkit::forge_fixtures::TeaPr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::TeaPr
+impl core::marker::Send for vcs_testkit::forge_fixtures::TeaPr
+impl core::marker::Sync for vcs_testkit::forge_fixtures::TeaPr
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::TeaPr
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::TeaPr
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::TeaPr
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::TeaPr
+pub struct vcs_testkit::forge_fixtures::TeaRelease
+impl vcs_testkit::forge_fixtures::TeaRelease
+pub fn vcs_testkit::forge_fixtures::TeaRelease::draft(self) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaRelease::list(vcs_testkit::forge_fixtures::TeaDsv, &[vcs_testkit::forge_fixtures::TeaRelease]) -> alloc::string::String
+pub fn vcs_testkit::forge_fixtures::TeaRelease::new(&str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaRelease::prerelease(self) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaRelease::published_at(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaRelease::tar_url(self, &str) -> Self
+pub fn vcs_testkit::forge_fixtures::TeaRelease::title(self, &str) -> Self
+impl core::clone::Clone for vcs_testkit::forge_fixtures::TeaRelease
+pub fn vcs_testkit::forge_fixtures::TeaRelease::clone(&self) -> vcs_testkit::forge_fixtures::TeaRelease
+impl core::fmt::Debug for vcs_testkit::forge_fixtures::TeaRelease
+pub fn vcs_testkit::forge_fixtures::TeaRelease::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for vcs_testkit::forge_fixtures::TeaRelease
+impl core::marker::Send for vcs_testkit::forge_fixtures::TeaRelease
+impl core::marker::Sync for vcs_testkit::forge_fixtures::TeaRelease
+impl core::marker::Unpin for vcs_testkit::forge_fixtures::TeaRelease
+impl core::marker::UnsafeUnpin for vcs_testkit::forge_fixtures::TeaRelease
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_testkit::forge_fixtures::TeaRelease
+impl core::panic::unwind_safe::UnwindSafe for vcs_testkit::forge_fixtures::TeaRelease
 pub mod vcs_testkit::guide
 pub mod vcs_testkit::guide::testing
 pub struct vcs_testkit::BareRemote

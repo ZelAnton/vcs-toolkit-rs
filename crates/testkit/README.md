@@ -21,6 +21,11 @@ tests.
   `describe`, `new_change`, `bookmark`, raw `jj(&[…])`.
 - **`configure_identity`** — just the deterministic config, for tests whose
   *subject* is repository initialisation itself.
+- **`forge_fixtures`** — canonical `gh` / `glab` / `tea` **output** builders
+  (`GhPr`, `GlabMr`, `TeaPr`, issues, releases, both `tea` DSV dialects) for
+  driving forge code through a scripted runner: no live forge, no copy-pasted
+  JSON, and every shape pinned by a test that parses it with the wrapper
+  crate's real parser. Spawns nothing.
 
 Everything is synchronous (`std::process`) and **panics on failure** — these
 are fixtures; a broken fixture should fail the test loudly at the call site.

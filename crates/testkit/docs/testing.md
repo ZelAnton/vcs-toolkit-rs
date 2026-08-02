@@ -177,6 +177,33 @@ use vcs_github::{GitHub, GitHubApi};
 # }
 ```
 
+### Forge payloads without hand-written JSON
+
+Hand-writing that `gh` payload is fine for one field; it stops being fine as soon
+as the test needs labels, an author, a `tea` table, or a shape the CLI actually
+prints. `vcs_testkit::forge_fixtures` carries canonical builders for all three
+forge CLIs — see the [fixtures guide](https://docs.rs/vcs-testkit/latest/vcs_testkit/guide/#forge_fixtures) —
+each pinned by a test that parses it with the wrapper crate's *real* parser, so a
+fixture cannot drift from what the code under test expects:
+
+```rust,ignore
+use processkit::testing::{Reply, ScriptedRunner};
+use std::path::Path;
+use vcs_gitea::{Gitea, GiteaApi};
+use vcs_testkit::forge_fixtures::{TeaDsv, TeaPr};
+
+# async fn demo() {
+    // tea's DSV table, in both wire dialects the supported versions emit.
+    for dialect in TeaDsv::ALL {
+        let tea = Gitea::with_runner(ScriptedRunner::new().on(
+            ["tea", "pr", "list"],
+            Reply::ok(TeaPr::list(*dialect, &[TeaPr::new(7, "Add X").state("merged")])),
+        ));
+        assert!(tea.pr_list(Path::new(".")).await.unwrap()[0].merged);
+    }
+# }
+```
+
 ### Asserting the exact command with `RecordingRunner`
 
 Wrap the runner in a `RecordingRunner` to capture every invocation, then assert

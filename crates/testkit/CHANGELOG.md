@@ -10,7 +10,20 @@ crates; tag releases as `vcs-testkit-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- New `forge_fixtures` module: canonical **forge-CLI output** builders for
+  hermetic consumer tests — `GhPr`/`GhIssue`/`GhRelease` (`gh … --json`, in
+  gh's alphabetical key order, with `release view` and `release list` kept on
+  their genuinely different field sets), `GlabMr`/`GlabIssue`/`GlabRelease`
+  (`glab … --output json`, GitLab REST verbatim, including a release URL only
+  under `_links.self`), and `TeaPr`/`TeaIssue`/`TeaRelease` (`tea … --output
+  csv`, rendered in either `TeaDsv` dialect — naive for tea 0.9.x–0.13.x,
+  RFC 4180 for 0.14+). A consumer scripting `vcs-github`/`vcs-gitlab`/
+  `vcs-gitea`/`vcs-forge` through a `ScriptedRunner` no longer has to
+  reverse-engineer or copy-paste those payloads. Every fixture is pinned by
+  `tests/forge_fixtures.rs`, which feeds it to the **real** parser of the crate
+  it models through that crate's own client method, so a fixture cannot
+  silently drift from the parser it claims to model. The three wrapper crates
+  are `[dev-dependencies]` only: the published crate still pulls in nothing.
 
 ### Changed
 -

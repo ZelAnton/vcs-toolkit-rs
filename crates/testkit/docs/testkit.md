@@ -4,7 +4,9 @@ Throwaway repositories for integration tests. `vcs-testkit` gives you a
 self-cleaning [`TempDir`](#tempdir), a configured [`GitSandbox`](#gitsandbox) /
 [`JjSandbox`](#jjsandbox) to build scenarios in, and a seeded
 [`BareRemote`](#bareremote) to clone/fetch/push against — the same fixtures this
-workspace's own ignored tests run on.
+workspace's own ignored tests run on. For the forge half of a test there is
+[`forge_fixtures`](#forge_fixtures): canonical `gh` / `glab` / `tea` **output**
+to script a runner with, spawning nothing at all.
 
 Three properties shape every helper, and they are deliberate:
 
@@ -20,9 +22,12 @@ Three properties shape every helper, and they are deliberate:
   `cargo test -- --ignored`.
 
 `vcs-testkit` depends on nothing — not even the wrapper crates — so it can be a
-dev-dependency of any of them without a coupling cycle. Scenario-building goes
-through each sandbox's raw escape hatch (`git`/`jj`) plus a few convenience
-methods.
+dev-dependency of any of them without a coupling cycle. (The wrapper crates *do*
+appear in its own `[dev-dependencies]`, where they pin the
+[forge fixtures](#forge_fixtures) against the real parsers; a dev-dependency edge
+is not propagated to consumers, so nothing about the published crate changes.)
+Scenario-building goes through each sandbox's raw escape hatch (`git`/`jj`) plus
+a few convenience methods.
 
 ```toml
 # Cargo.toml — a path dev-dependency, stripped on publish.
@@ -194,6 +199,51 @@ git(tmp.path(), &["init", "-q", "-b", "trunk"]);
 configure_identity(tmp.path());
 git(tmp.path(), &["commit", "--allow-empty", "-qm", "root"]);
 ```
+
+---
+
+## `forge_fixtures`
+
+The other half of a VCS test: canonical **forge-CLI output**. A consumer driving
+`vcs-github` / `vcs-gitlab` / `vcs-gitea` (or `vcs-forge`) through a
+`ScriptedRunner` has to supply the stdout the real `gh` / `glab` / `tea` would
+have printed — and the three agree on nothing. `gh` prints a compact JSON object
+with **alphabetically ordered** keys and nested `author`/`labels` objects; `glab`
+forwards GitLab's **REST** JSON verbatim (flat `labels` strings, `iid`, a release
+URL only under `_links.self`); `tea` prints a **quoted DSV table**, in one of two
+wire dialects, whose columns are positional. These builders emit each shape, so a
+test never reverse-engineers it (or copy-pastes it, stale, from another crate).
+
+- `GhPr` / `GhIssue` / `GhRelease` — `gh <thing> view|list --json …`. Note
+  `GhRelease` keeps `view` and `list` apart: the two subcommands genuinely
+  request different field sets.
+- `GlabMr` / `GlabIssue` / `GlabRelease` — `glab <thing> view|list --output json`.
+- `TeaPr` / `TeaIssue` / `TeaRelease` — `tea <thing> list --output csv`, rendered
+  in a `TeaDsv` dialect (`Naive` for tea 0.9.x–0.13.x, `Rfc4180` for 0.14+). Loop
+  `TeaDsv::ALL` to cover both wire shapes. `tea` has no single-item view at all,
+  so a one-row list is also what a `pr_view`/`issue_view` test scripts.
+
+Every builder starts from a complete, plausible row and exposes setters, so a
+test states only what it is testing:
+
+```rust,ignore
+use processkit::testing::{Reply, ScriptedRunner};
+use std::path::Path;
+use vcs_github::{GitHub, GitHubApi};
+use vcs_testkit::forge_fixtures::GhPr;
+
+# async fn demo() {
+    let gh = GitHub::with_runner(ScriptedRunner::new().on(
+        ["gh", "pr", "list"],
+        Reply::ok(GhPr::list(&[GhPr::new(7, "Add X").head("feat/x")])),
+    ));
+    assert_eq!(gh.pr_list(Path::new(".")).await.unwrap()[0].head_ref_name, "feat/x");
+# }
+```
+
+These shapes cannot silently rot: `crates/testkit/tests/forge_fixtures.rs` feeds
+every fixture to the **real** parser of the crate it models, through that crate's
+actual client method.
 
 ---
 

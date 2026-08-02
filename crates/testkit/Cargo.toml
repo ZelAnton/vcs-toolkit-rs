@@ -15,8 +15,32 @@ categories = ["development-tools::testing","development-tools"]
 # Deliberately dependency-free: the sandboxes shell out to the real `git`/`jj`
 # binaries through std::process (synchronous — test setup needs no runtime) and
 # never depend on the typed wrapper crates, so any of them can use this as a
-# dev-dependency without a cycle.
+# dev-dependency without a cycle. The `forge_fixtures` builders keep that
+# property — they emit plain `String`s (hand-rolled JSON/DSV writers, no serde),
+# so nothing below leaks into a consumer's build.
 [dependencies]
+
+[dev-dependencies]
+# The three CLI-wrapper crates whose *real* parsers pin `forge_fixtures`: every
+# fixture is fed to the actual `GitHubApi`/`GitLabApi`/`GiteaApi` method through a
+# scripted runner in `tests/forge_fixtures.rs`, so a fixture can never silently
+# drift from the parser it claims to model (that drift is exactly what the module
+# exists to prevent). Strictly `[dev-dependencies]`: the published library still
+# has no dependencies at all, so any of these three — and every other workspace
+# crate — can keep dev-depending on `vcs-testkit` (Cargo resolves a cycle that
+# runs through a dev-dependency edge; dev-deps are not transitive).
+# Path-only, deliberately: a version-less dev-dependency is stripped on publish,
+# so this adds no release coupling and `vcs-testkit` keeps publishing in any
+# order (the property CONTRIBUTING.md's publish-order section and the `package`
+# CI job both rely on).
+vcs-github = { path = "../github" }
+vcs-gitlab = { path = "../gitlab" }
+vcs-gitea = { path = "../gitea" }
+# `processkit::testing::{ScriptedRunner, Reply}` — the seam that hands a fixture
+# to a wrapper client without spawning a real `gh`/`glab`/`tea`.
+processkit.workspace = true
+# `#[tokio::test]` for those async wrapper calls.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /
