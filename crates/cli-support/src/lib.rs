@@ -67,6 +67,7 @@
 //! # Ok(()) }
 //! ```
 
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::fmt;
 use std::future::Future;
@@ -110,10 +111,78 @@ pub type ProgressCallback<'a> = dyn FnMut(ProcessEvent) + Send + 'a;
 /// not apply a command/client retry policy: `Exited` is always the final event.
 /// A caller that wants to replay a failed streamed operation can decide that
 /// explicitly after receiving the terminal event and returned error.
+///
+/// **Retention is unbounded**, the pre-budget behaviour: every streamed line is
+/// kept until the process exits. Bound it with
+/// [`run_with_progress_within`] — the streaming counterpart of
+/// [`ManagedClient::budget_diagnostics`] — when the command can produce a lot of
+/// output (`clone`/`fetch --progress` on a large repository).
 pub async fn run_with_progress<R: ProcessRunner + ?Sized>(
     runner: &R,
     command: &Command,
     progress: &mut ProgressCallback<'_>,
+) -> Result<()> {
+    run_with_progress_within(runner, command, progress, OutputBudget::unlimited()).await
+}
+
+/// [`run_with_progress`] with an explicit [`OutputBudget`] bounding the output
+/// it retains locally — the memory ceiling a long streamed run needs.
+///
+/// This is the streaming half of the contract
+/// [`budget_diagnostics`](ManagedClient::budget_diagnostics) applies to the
+/// *captured* twin of the same verbs. That one bounds the buffer **processkit**
+/// retains for a non-streamed `clone`/`fetch`; this one bounds the copy **this
+/// function** keeps in order to promote a rejected exit into a structured error.
+/// A streamed run needs both: the event stream delivers every line regardless of
+/// the command's own [`OutputBufferPolicy`], so without a ceiling here a
+/// `git clone --progress` of a large repository re-introduces exactly the
+/// unbounded retention the budget exists to prevent.
+///
+/// The ceiling is **drop-oldest and never fail-loud**, like
+/// [`OutputBudget::diagnostic_policy`]: passing it truncates what is retained,
+/// it never turns a successful (or plainly failed) run into
+/// [`ErrorReason::OutputTooLarge`]. Each stream carries the ceiling
+/// **independently** — `stdout` and `stderr` get their own budget, so the
+/// worst-case retained memory is about twice the cap, matching how
+/// [`OutputBudget`] rides a captured verb's two streams. The retained **tail**
+/// is what a CLI's fatal line sits in, so a bounded run stays classifiable by
+/// [`is_transient_fetch_error`] / [`is_lock_contention`], and a non-zero exit is
+/// still promoted to a structured [`ErrorReason::Exit`] carrying that (truncated,
+/// non-empty) text.
+///
+/// Only what *this function* retains is bounded: `progress` is still invoked for
+/// every event, so a caller that wants more of the stream can keep it — bounded
+/// however it chooses — from its own callback.
+///
+/// # What the byte ceiling counts here
+///
+/// [`OutputBudget::bytes`] is charged against **the retained text itself**: the
+/// decoded content of the retained lines plus the single `\n` this function
+/// inserts between each retained pair. The invariant is therefore as direct as
+/// it looks — the `stdout`/`stderr` handed to the error is never longer than
+/// `max_bytes` bytes.
+///
+/// That is deliberately a *third* unit, and the two processkit ones are neither
+/// of them (see [`OutputBudget::bytes`] for those): the fail-loud content
+/// ceiling counts raw pipe bytes with every terminator charged, processkit's own
+/// drop-oldest retention counts decoded line content with none charged, and this
+/// one charges exactly the separators it actually holds — one per retained pair.
+/// For `n` retained LF-terminated lines that is one byte *less* than the raw
+/// pipe bytes they arrived as, and `n - 1` bytes *more* than processkit's
+/// drop-mode accounting of the same lines. [`OutputBudget::with_max_lines`]
+/// caps the retained **line count** on top of that, dropping oldest-first too.
+///
+/// A single line longer than the byte cap is kept as its **own tail** (cut on a
+/// UTF-8 char boundary), not dropped whole as processkit's drop-mode buffer
+/// would drop it: under the default `\n` line framing, carriage-return progress
+/// output — precisely what `--progress` emits — arrives as one ever-growing
+/// line, and dropping it whole would retain nothing at all of the stream this
+/// ceiling exists to bound.
+pub async fn run_with_progress_within<R: ProcessRunner + ?Sized>(
+    runner: &R,
+    command: &Command,
+    progress: &mut ProgressCallback<'_>,
+    budget: OutputBudget,
 ) -> Result<()> {
     let program = command.program().to_string_lossy().into_owned();
     let ok_codes = command
@@ -125,8 +194,10 @@ pub async fn run_with_progress<R: ProcessRunner + ?Sized>(
 
     let mut run = runner.start(command).await?;
     let mut events = run.events()?;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+    // Each stream gets the whole budget, independently — the same shape a
+    // captured verb's two streams carry (see `OutputBudget`).
+    let mut stdout = RetainedStream::new(budget);
+    let mut stderr = RetainedStream::new(budget);
     let forward = async {
         let mut callback_active = true;
         while let Some(event) = events.next().await {
@@ -136,10 +207,7 @@ pub async fn run_with_progress<R: ProcessRunner + ?Sized>(
                 _ => None,
             };
             if let (Some(target), Some(line)) = (target, event.text()) {
-                if !target.is_empty() {
-                    target.push('\n');
-                }
-                target.push_str(line);
+                target.push(line);
             }
             if callback_active
                 && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| progress(event)))
@@ -158,20 +226,148 @@ pub async fn run_with_progress<R: ProcessRunner + ?Sized>(
     } else {
         absolute_timeout
     };
+    // Report our own drop-oldest truncation alongside processkit's: `truncated`
+    // is a signal, not a verdict — `ensure_success` never reads it, so a bounded
+    // stream still surfaces as `Exit`, never as `OutputTooLarge`.
+    let truncated = finished.stderr_truncated || stdout.truncated() || stderr.truncated();
     ProcessResult::from_parts(
         program,
-        stdout,
-        stderr,
+        stdout.into_string(),
+        stderr.into_string(),
         finished.outcome,
         timeout,
         started.elapsed(),
-        finished.stderr_truncated,
+        truncated,
         0,
         0,
         ok_codes,
     )
     .ensure_success()
     .map(drop)
+}
+
+/// What [`run_with_progress_within`] retains locally from one streamed channel
+/// (`stdout` or `stderr`).
+///
+/// Two shapes, so the default costs nothing: with no ceiling the lines land in
+/// one growing `String` exactly as they did before the budget existed, and only
+/// a budgeted run pays for the drop-oldest bookkeeping.
+enum RetainedStream {
+    /// No ceiling — every line, appended verbatim.
+    All(String),
+    /// A drop-oldest tail bounded by the budget.
+    Tail(RetainedTail),
+}
+
+/// The bounded half of [`RetainedStream`]: the retained lines, oldest dropped
+/// first once a ceiling is passed.
+struct RetainedTail {
+    /// The retained lines, oldest at the front.
+    lines: VecDeque<String>,
+    /// The rendered length of `lines` — the sum of their byte lengths plus the
+    /// one `\n` joining each retained pair. This is the quantity `max_bytes`
+    /// caps (an upper bound on the rendered string: a *leading* empty line's
+    /// separator is elided on render, so the estimate can only over-count).
+    bytes: usize,
+    max_bytes: Option<usize>,
+    max_lines: Option<usize>,
+    /// Whether anything was dropped (a whole line, or the head of an over-cap
+    /// one) — reported through `ProcessResult::truncated`.
+    truncated: bool,
+}
+
+impl RetainedStream {
+    fn new(budget: OutputBudget) -> Self {
+        if budget.is_unlimited() {
+            Self::All(String::new())
+        } else {
+            Self::Tail(RetainedTail {
+                lines: VecDeque::new(),
+                bytes: 0,
+                max_bytes: budget.max_bytes(),
+                max_lines: budget.max_lines(),
+                truncated: false,
+            })
+        }
+    }
+
+    /// Append one streamed line.
+    fn push(&mut self, line: &str) {
+        match self {
+            Self::All(text) => {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(line);
+            }
+            Self::Tail(tail) => tail.push(line),
+        }
+    }
+
+    /// Whether the ceiling dropped anything.
+    fn truncated(&self) -> bool {
+        match self {
+            Self::All(_) => false,
+            Self::Tail(tail) => tail.truncated,
+        }
+    }
+
+    /// The retained text: the retained lines joined by `\n`.
+    fn into_string(self) -> String {
+        match self {
+            Self::All(text) => text,
+            Self::Tail(tail) => {
+                let mut text = String::with_capacity(tail.bytes);
+                for line in &tail.lines {
+                    // The same rule the unbounded path applies, so a budgeted
+                    // run renders its tail exactly as an unbudgeted one renders
+                    // the whole stream.
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(line);
+                }
+                text
+            }
+        }
+    }
+}
+
+impl RetainedTail {
+    fn push(&mut self, line: &str) {
+        // An over-cap line is kept as its own tail rather than dropped whole:
+        // `--progress` output is one ever-growing `\r`-updated line under the
+        // default `\n` framing, and the tail is where the fatal message sits.
+        let line = match self.max_bytes {
+            Some(max) if line.len() > max => {
+                self.truncated = true;
+                let mut start = line.len() - max;
+                while !line.is_char_boundary(start) {
+                    start += 1;
+                }
+                &line[start..]
+            }
+            _ => line,
+        };
+        self.bytes += line.len() + usize::from(!self.lines.is_empty());
+        self.lines.push_back(line.to_string());
+
+        while self.max_lines.is_some_and(|max| self.lines.len() > max) {
+            self.drop_oldest();
+        }
+        // Never drop the last line to satisfy the byte cap: it was cut to fit
+        // above, so the buffer is already within budget once it stands alone.
+        while self.max_bytes.is_some_and(|max| self.bytes > max) && self.lines.len() > 1 {
+            self.drop_oldest();
+        }
+    }
+
+    fn drop_oldest(&mut self) {
+        if let Some(dropped) = self.lines.pop_front() {
+            self.bytes -= dropped.len() + usize::from(!self.lines.is_empty());
+            self.truncated = true;
+        }
+    }
 }
 
 pub mod credentials;
@@ -254,6 +450,13 @@ pub mod json {
 /// ([`with_max_lines`](OutputBudget::with_max_lines)) is an optional extra that
 /// also bounds line-pumped output (a diagnostic stream, a verb's stderr).
 ///
+/// A **streamed** run ([`run_with_progress_within`]) is bounded by the same
+/// budget without going through an `OutputBufferPolicy` at all: its events carry
+/// every line whatever the command's buffer does, so the drop-oldest tail is
+/// applied to the copy that function retains, in its own documented unit. That
+/// is what makes a streaming `clone`/`fetch` memory-bounded by the very knob
+/// that bounds its captured twin.
+///
 /// Each captured stream carries the ceiling **independently**: a content verb's
 /// raw stdout and its line-pumped stderr each get their own `max_bytes` budget
 /// (so one call's worst-case retained memory is about twice the cap, not the
@@ -309,7 +512,10 @@ impl OutputBudget {
     ///
     /// The drop-oldest [`diagnostic_policy`](Self::diagnostic_policy) is a third
     /// case, unaffected by that change: what it *retains* is bounded by the
-    /// decoded line-content bytes it holds, not by the raw bytes it saw.
+    /// decoded line-content bytes it holds, not by the raw bytes it saw. A
+    /// **streamed** run's local tail ([`run_with_progress_within`]) is a fourth:
+    /// it charges the decoded line content *plus* the one `\n` joining each
+    /// retained pair — the bytes of the string it actually hands back.
     pub const fn bytes(max_bytes: usize) -> Self {
         Self {
             max_bytes: Some(max_bytes),
@@ -1223,12 +1429,15 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// instead of sleeping out the full delay before the next attempt.
     cancel: Option<CancellationToken>,
     /// The default output budget applied to the potentially large **content**
-    /// verbs this client builds (via [`run_untrimmed`](Self::run_untrimmed)) and,
-    /// on request, to a discard verb's diagnostic capture
+    /// verbs this client builds (via [`run_untrimmed`](Self::run_untrimmed)), to
+    /// the output a **streamed** run retains
+    /// ([`run_with_progress`](Self::run_with_progress)) and, on request, to a
+    /// discard verb's diagnostic capture
     /// ([`budget_diagnostics`](Self::budget_diagnostics)). Defaults to
     /// [`OutputBudget::unlimited`] — no ceiling — so a client that never sets one
     /// behaves exactly as before. A single call overrides it via
-    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within) /
+    /// [`run_with_progress_within`](Self::run_with_progress_within).
     output_budget: OutputBudget,
 }
 
@@ -1439,9 +1648,13 @@ impl<R: ProcessRunner> ManagedClient<R> {
     }
 
     /// Set the default [`OutputBudget`] applied to the content verbs this client
-    /// builds through [`run_untrimmed`](Self::run_untrimmed) — off by default
+    /// builds through [`run_untrimmed`](Self::run_untrimmed), to a discard verb's
+    /// diagnostics via [`budget_diagnostics`](Self::budget_diagnostics), and to
+    /// the output a streamed run retains
+    /// ([`run_with_progress`](Self::run_with_progress)) — off by default
     /// ([`OutputBudget::unlimited`]). A single call can override it via
-    /// [`run_untrimmed_within`](Self::run_untrimmed_within).
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within) /
+    /// [`run_with_progress_within`](Self::run_with_progress_within).
     pub fn default_output_budget(mut self, budget: OutputBudget) -> Self {
         self.output_budget = budget;
         self
@@ -1459,6 +1672,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// line sits) is preserved, so [`is_transient_fetch_error`] /
     /// [`is_lock_contention`] still classify it. A no-op when the budget is
     /// [`unlimited`](OutputBudget::unlimited).
+    ///
+    /// This bounds what **processkit** retains for a captured run. The streamed
+    /// twin of the same verbs bounds what the *event* consumer retains instead,
+    /// under the same budget — see
+    /// [`run_with_progress`](Self::run_with_progress); a streaming `clone`/`fetch`
+    /// wants both, since a command buffer policy does not bound an event stream.
     pub fn budget_diagnostics(&self, cmd: Command) -> Command {
         match self.output_budget.diagnostic_policy() {
             Some(policy) => cmd.output_buffer(policy),
@@ -1522,13 +1741,44 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// `Started … Exited` sequence and `Exited` remains terminal. The returned
     /// error still carries the streamed stdout/stderr for normal processkit
     /// classification.
+    ///
+    /// **Output budget:** this client's default [`OutputBudget`]
+    /// ([`default_output_budget`](Self::default_output_budget)) bounds the
+    /// stdout/stderr this call retains, as a **drop-oldest tail** — the
+    /// streaming counterpart of what
+    /// [`budget_diagnostics`](Self::budget_diagnostics) applies to a captured
+    /// `clone`/`fetch`, and the reason a streamed one is memory-bounded by the
+    /// same knob rather than growing with the repository. Never fail-loud: a
+    /// bounded run still surfaces its real outcome, with the classifiable tail
+    /// of its output. Unlimited by default (unchanged behaviour); override for
+    /// one call with
+    /// [`run_with_progress_within`](Self::run_with_progress_within), whose docs
+    /// (and [`crate::run_with_progress_within`]'s) define what the ceiling counts.
     pub async fn run_with_progress(
         &self,
         call: impl IntoCommand<R>,
         progress: &mut ProgressCallback<'_>,
     ) -> Result<()> {
+        self.run_with_progress_within(call, progress, self.output_budget)
+            .await
+    }
+
+    /// Like [`run_with_progress`](Self::run_with_progress), but with an explicit
+    /// per-call [`OutputBudget`] instead of this client's default — the
+    /// streaming sibling of
+    /// [`run_untrimmed_within`](Self::run_untrimmed_within), for a call that
+    /// wants a tighter tail than the client's default, or
+    /// [`OutputBudget::unlimited`] to keep the whole stream for one operation.
+    /// See [`crate::run_with_progress_within`] for the drop-oldest semantics and
+    /// the unit the byte ceiling counts.
+    pub async fn run_with_progress_within(
+        &self,
+        call: impl IntoCommand<R>,
+        progress: &mut ProgressCallback<'_>,
+        budget: OutputBudget,
+    ) -> Result<()> {
         let cmd = self.prepare(call).await?;
-        crate::run_with_progress(self.inner.runner(), &cmd, progress).await
+        crate::run_with_progress_within(self.inner.runner(), &cmd, progress, budget).await
     }
 
     /// Like [`CliClient::output_string`], with credential injection. **No lock-retry:**
@@ -1700,6 +1950,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
 mod tests {
     use super::*;
     use processkit::testing::{Reply, ScriptedRunner};
+    use proptest::prelude::*;
     use std::sync::Mutex;
 
     #[tokio::test]
@@ -2625,5 +2876,348 @@ mod tests {
             .await
             .expect("stderr exactly on the cap is within budget");
         assert_eq!(got, "ok\n");
+    }
+
+    // --- T-148: the streamed run's own retention ceiling ------------------
+    //
+    // `run_with_progress` keeps its own copy of every streamed line so a rejected
+    // exit can be promoted to a structured error. A command's `OutputBufferPolicy`
+    // does not bound an event stream, so that copy is where a streaming
+    // `clone`/`fetch --progress` used to grow without limit. These tests pin the
+    // ceiling that now bounds it: what it counts, that it drops oldest-first
+    // rather than failing loud, and that the default stays unbounded.
+
+    // Drive one scripted streamed run under `budget`; hand back the error the
+    // non-zero exit is promoted to — the only place the locally retained
+    // stdout/stderr is observable.
+    async fn streamed_failure(reply: Reply, budget: OutputBudget) -> Error {
+        let runner = ScriptedRunner::new().on(["tool", "network-op"], reply);
+        let mut progress = |_event: ProcessEvent| {};
+        run_with_progress_within(
+            &runner,
+            &Command::new("tool").arg("network-op"),
+            &mut progress,
+            budget,
+        )
+        .await
+        .expect_err("the scripted non-zero exit stays an error")
+    }
+
+    // The retained streams `ensure_success` carried into the structured error.
+    fn exit_streams(err: &Error) -> (&str, &str) {
+        match err.reason() {
+            ErrorReason::Exit { stdout, stderr, .. } => (stdout, stderr),
+            other => panic!("expected a structured Exit, got {other:?}"),
+        }
+    }
+
+    // The unit question, pinned exactly (the [[K-073]] `ScriptedRunner` pattern:
+    // the canned output flows through the REAL pump, so a one-byte accounting
+    // shift is observable). Three lines admit three different answers to "how big
+    // is this?", and the two caps below straddle ours:
+    //
+    //   12 — the raw pipe bytes, every terminator charged. What processkit 3.0's
+    //        fail-loud CONTENT ceiling counts on a line-pumped stream ([[K-070]]).
+    //    9 — the decoded line content alone, no terminator charged. What
+    //        processkit's own drop-oldest retention counts.
+    //   11 — the string this function retains: the content plus the one `\n` it
+    //        puts between each retained PAIR. **This** is the unit here.
+    //
+    // A cap of 11 would already be over budget under the raw-byte unit, and a cap
+    // of 10 would still be within budget under the content-only one — so the pair
+    // of assertions admits no other reading.
+    #[tokio::test]
+    async fn streamed_tail_counts_the_bytes_it_retains() {
+        let stream = "aaa\nbbb\nccc\n";
+        assert_eq!(stream.len(), 12, "raw pipe bytes");
+
+        let err = streamed_failure(Reply::fail(1, stream), OutputBudget::bytes(11)).await;
+        assert_eq!(
+            exit_streams(&err).1,
+            "aaa\nbbb\nccc",
+            "11 bytes is the whole retained tail — on the cap, not past it"
+        );
+
+        let err = streamed_failure(Reply::fail(1, stream), OutputBudget::bytes(10)).await;
+        assert_eq!(
+            exit_streams(&err).1,
+            "bbb\nccc",
+            "one byte less drops exactly the oldest line"
+        );
+    }
+
+    // The point of the ceiling: a flood far past the cap is bounded on BOTH
+    // streams — each carrying the budget independently, as a captured verb's two
+    // streams do ([[K-072]]) — while the tail, where a CLI's fatal line sits,
+    // survives intact. The non-zero exit is still promoted to a structured error
+    // over that truncated text, and it still classifies.
+    #[tokio::test]
+    async fn streamed_budget_bounds_both_streams_and_keeps_the_tail_classifiable() {
+        const CAP: usize = 128;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        for i in 0..500 {
+            stdout.push_str(&format!("Receiving objects:  {i}% (0/0)\n"));
+            stderr.push_str(&format!("remote: Counting objects: {i}\n"));
+        }
+        stdout.push_str("fatal: the remote end hung up unexpectedly\n");
+        stderr.push_str("fatal: early EOF\n");
+        assert!(stdout.len() > 20 * CAP && stderr.len() > 20 * CAP);
+
+        let err = streamed_failure(
+            Reply::fail(128, stderr).with_stdout(stdout),
+            OutputBudget::bytes(CAP),
+        )
+        .await;
+        let (out, err_text) = exit_streams(&err);
+        assert!(out.len() <= CAP, "stdout bounded: {} bytes", out.len());
+        assert!(
+            err_text.len() <= CAP,
+            "stderr bounded independently: {} bytes",
+            err_text.len()
+        );
+        assert!(!out.contains("Receiving objects:  0%"), "oldest dropped");
+        assert!(
+            !err_text.contains("Counting objects: 0\n"),
+            "oldest dropped"
+        );
+        assert!(out.ends_with("fatal: the remote end hung up unexpectedly"));
+        assert!(err_text.ends_with("fatal: early EOF"));
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { code: 128, .. }),
+            "a truncated capture is still promoted to a structured exit error"
+        );
+        assert!(
+            is_transient_fetch_error(&err),
+            "the retained tail still carries the transient marker"
+        );
+    }
+
+    // The same for the other stderr-text classifier, and with a filler that a
+    // real repository could produce: `is_lock_contention` reads the tail it is
+    // left with, not the flood that preceded it.
+    #[tokio::test]
+    async fn streamed_budget_keeps_lock_contention_classifiable() {
+        let mut stderr = String::new();
+        for i in 0..200 {
+            stderr.push_str(&format!("warning: unable to rmdir stale-{i}\n"));
+        }
+        stderr.push_str("fatal: Unable to create '/w/.git/index.lock': File exists.\n");
+
+        let err = streamed_failure(Reply::fail(128, stderr), OutputBudget::bytes(96)).await;
+        let retained = exit_streams(&err).1;
+        assert!(retained.len() <= 96, "bounded: {} bytes", retained.len());
+        assert!(is_lock_contention(&err), "retained tail: {retained:?}");
+    }
+
+    // Drop-oldest, never fail-loud (the `diagnostic_policy` half of the contract,
+    // not the `content_policy` one): passing the ceiling truncates what is kept
+    // and leaves the run's real outcome alone — a successful stream stays `Ok`
+    // instead of becoming `OutputTooLarge`. Delivery is untouched too: the
+    // callback still observes every line, only *retention* is bounded.
+    #[tokio::test]
+    async fn streamed_budget_truncates_without_failing_the_run() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut stream = String::new();
+        for i in 0..400 {
+            stream.push_str(&format!("Receiving objects:  {i}% (0/0)\n"));
+        }
+        let runner = ScriptedRunner::new().on(
+            ["tool", "network-op"],
+            Reply::ok(stream.clone()).with_stderr(stream),
+        );
+        let delivered = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&delivered);
+        let mut progress = move |event: ProcessEvent| {
+            if matches!(event, ProcessEvent::Stdout(_)) {
+                seen.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+
+        run_with_progress_within(
+            &runner,
+            &Command::new("tool").arg("network-op"),
+            &mut progress,
+            OutputBudget::bytes(64),
+        )
+        .await
+        .expect("a bounded stream is truncated, not failed");
+        drop(progress);
+        assert_eq!(
+            delivered.load(Ordering::SeqCst),
+            400,
+            "the ceiling bounds retention, not what the callback is shown"
+        );
+    }
+
+    // An over-cap single line keeps its own tail (cut on a UTF-8 char boundary)
+    // rather than being dropped whole the way processkit's drop-mode buffer drops
+    // it: under the default `\n` framing, `--progress`'s carriage-return output is
+    // ONE ever-growing line, so dropping it whole would retain nothing at all of
+    // the stream this ceiling exists to bound. The cut here lands mid-`☃` (a
+    // 3-byte char straddling the boundary), so the walk to the next boundary is
+    // what keeps the slice valid — and shorter than the cap, never longer.
+    #[tokio::test]
+    async fn streamed_tail_cuts_an_over_cap_line_on_a_char_boundary() {
+        let line = format!("{}☃fatal: early EOF", "a".repeat(10));
+        assert_eq!(line.len(), 29);
+        // 29 - 18 = 11 is a continuation byte of the snowman (bytes 10..13).
+        assert!(!line.is_char_boundary(11));
+
+        let err = streamed_failure(Reply::fail(128, line), OutputBudget::bytes(18)).await;
+        let retained = exit_streams(&err).1;
+        assert_eq!(
+            retained, "fatal: early EOF",
+            "the tail survives; the straddling char is dropped whole"
+        );
+        assert!(retained.len() <= 18);
+        assert!(is_transient_fetch_error(&err));
+    }
+
+    // The line ceiling composes, dropping oldest-first like the byte one.
+    #[tokio::test]
+    async fn streamed_tail_honours_a_line_ceiling() {
+        let err = streamed_failure(
+            Reply::fail(1, "one\ntwo\nthree\nfour\nfive\n"),
+            OutputBudget::bytes(1024).with_max_lines(2),
+        )
+        .await;
+        assert_eq!(exit_streams(&err).1, "four\nfive");
+    }
+
+    // The regression anchor for the default path: with no budget — the free
+    // function, or a client that never set one — retention is unbounded, exactly
+    // as it was before the ceiling existed. Every line of both streams is kept,
+    // joined by `\n` with no trailing terminator.
+    #[tokio::test]
+    async fn streamed_run_without_a_budget_retains_everything() {
+        let lines: Vec<String> = (0..300)
+            .map(|i| format!("remote: Counting objects: {i}"))
+            .collect();
+        let expected = lines.join("\n");
+        let stream = format!("{expected}\n");
+        assert!(stream.len() > 8000);
+
+        let runner = ScriptedRunner::new().on(
+            ["tool", "network-op"],
+            Reply::fail(1, stream.clone()).with_stdout(stream),
+        );
+        let mut progress = |_event: ProcessEvent| {};
+        let err = run_with_progress(
+            &runner,
+            &Command::new("tool").arg("network-op"),
+            &mut progress,
+        )
+        .await
+        .expect_err("the scripted non-zero exit stays an error");
+        assert_eq!(exit_streams(&err), (expected.as_str(), expected.as_str()));
+
+        // The client path defaults to the same unlimited budget.
+        let client = ManagedClient::with_runner("tool", runner);
+        assert!(client.output_budget().is_unlimited());
+        let err = client
+            .run_with_progress(client.command(["network-op"]), &mut progress)
+            .await
+            .expect_err("the scripted non-zero exit stays an error");
+        assert_eq!(exit_streams(&err), (expected.as_str(), expected.as_str()));
+    }
+
+    // The client plumbs its own default budget into the streamed path — the same
+    // knob that bounds a captured `clone`/`fetch`'s diagnostics — and a single
+    // call can override it in either direction, like `run_untrimmed_within`.
+    #[tokio::test]
+    async fn managed_client_streams_within_its_budget() {
+        let runner =
+            ScriptedRunner::new().on(["tool", "network-op"], Reply::fail(1, "aaa\nbbb\nccc\n"));
+        let client = ManagedClient::with_runner("tool", runner)
+            .default_output_budget(OutputBudget::bytes(7));
+        let mut progress = |_event: ProcessEvent| {};
+
+        let err = client
+            .run_with_progress(client.command(["network-op"]), &mut progress)
+            .await
+            .expect_err("the scripted non-zero exit stays an error");
+        assert_eq!(
+            exit_streams(&err).1,
+            "bbb\nccc",
+            "the client default applies"
+        );
+
+        let err = client
+            .run_with_progress_within(
+                client.command(["network-op"]),
+                &mut progress,
+                OutputBudget::bytes(3),
+            )
+            .await
+            .expect_err("the scripted non-zero exit stays an error");
+        assert_eq!(exit_streams(&err).1, "ccc", "a tighter per-call cap wins");
+
+        let err = client
+            .run_with_progress_within(
+                client.command(["network-op"]),
+                &mut progress,
+                OutputBudget::unlimited(),
+            )
+            .await
+            .expect_err("the scripted non-zero exit stays an error");
+        assert_eq!(
+            exit_streams(&err).1,
+            "aaa\nbbb\nccc",
+            "and so does lifting the cap for one call"
+        );
+    }
+
+    // The separator bookkeeping behind that ceiling is the one place a
+    // drop-oldest tail goes subtly wrong: an off-by-one surfaces only on a
+    // particular sequence of drops, and the exact-boundary test above pins one
+    // such sequence. This pins the **invariant** over arbitrary ones, including
+    // the shapes a fixture rarely reaches — empty lines (whose separator the
+    // renderer elides, so the running estimate over-counts and must stay an
+    // upper bound), lines far past the cap (kept as their own tail), and
+    // multi-byte text (a cut that has to walk to a char boundary). Driven
+    // against the retention buffer directly: no runtime, no scripted process,
+    // just the arithmetic.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn a_streamed_tail_stays_within_its_budget_whatever_the_stream(
+            lines in prop::collection::vec("[a-z ☃]{0,16}", 1..40),
+            max_bytes in 1usize..48,
+            line_cap in prop::option::of(1usize..12),
+        ) {
+            let budget = match line_cap {
+                Some(max_lines) => OutputBudget::bytes(max_bytes).with_max_lines(max_lines),
+                None => OutputBudget::bytes(max_bytes),
+            };
+            let mut retained = RetainedStream::new(budget);
+            for line in &lines {
+                retained.push(line);
+            }
+            let text = retained.into_string();
+
+            // The whole point: what is handed to the error is bounded, always.
+            prop_assert!(
+                text.len() <= max_bytes,
+                "retained {} bytes over a {max_bytes}-byte cap: {text:?}",
+                text.len()
+            );
+            if let Some(max_lines) = line_cap {
+                // Rendered separators are at most one per retained pair, so the
+                // split count can only under-report the retained lines.
+                prop_assert!(text.split('\n').count() <= max_lines);
+            }
+            // The tail is the part worth keeping (a CLI's fatal line lands
+            // last), so the newest line survives whenever it fits at all.
+            let last = lines.last().expect("the strategy generates at least one line");
+            if last.len() <= max_bytes {
+                prop_assert!(
+                    text.ends_with(last.as_str()),
+                    "the newest line {last:?} fits the cap but is not the tail of {text:?}"
+                );
+            }
+        }
     }
 }
