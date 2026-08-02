@@ -1,0 +1,141 @@
+# Scheduled fuzzing is deliberately report-only: parser crashes are important
+# signals, but the time-consuming, coverage-guided search belongs outside the
+# PR gate.  ci.yml does not call this workflow.
+name: Scheduled Fuzzing
+
+on:
+  schedule:
+    # Every Thursday at 02:53 UTC.  The off-the-hour minute and separate slot
+    # keep this away from the Monday 04:17 CLI-drift and Wednesday 03:41
+    # mutation-testing scheduled lanes.
+    - cron: "53 2 * * 4"
+  workflow_dispatch: {}
+
+# Scheduled runs share one queue, while each manual investigation receives a
+# unique group.  GitHub retains only one pending run per group, so this prevents
+# a manual repro run being silently replaced while a scheduled run is pending.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('scheduled-fuzz-manual-{0}', github.run_id) || 'scheduled-fuzz-schedule' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # A crash refreshes one tracking issue rather than failing a PR check.
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  fuzz:
+    name: libFuzzer parsers (report-only)
+    runs-on: ubuntu-latest
+    # Four five-minute fuzz runs plus the nightly build/install leave room for
+    # setup while preventing an unexpectedly slow run from consuming a runner.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: taiki-e/install-action@cargo-fuzz
+
+      # A run-specific primary key permits the restored corpus to be saved back
+      # after every weekly run.  The target-specific prefix means unrelated
+      # grammar inputs never pollute another target's corpus.
+      - name: Restore diff_parse corpus
+        uses: actions/cache@v6
+        with:
+          path: fuzz/corpus/diff_parse
+          key: fuzz-corpus-diff_parse-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-diff_parse-
+      - name: Restore git_conflict corpus
+        uses: actions/cache@v6
+        with:
+          path: fuzz/corpus/git_conflict
+          key: fuzz-corpus-git_conflict-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-git_conflict-
+      - name: Restore git_porcelain_v2 corpus
+        uses: actions/cache@v6
+        with:
+          path: fuzz/corpus/git_porcelain_v2
+          key: fuzz-corpus-git_porcelain_v2-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-git_porcelain_v2-
+      - name: Restore jj_conflict corpus
+        uses: actions/cache@v6
+        with:
+          path: fuzz/corpus/jj_conflict
+          key: fuzz-corpus-jj_conflict-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-jj_conflict-
+
+      - name: Fuzz parser targets (five minutes each)
+        id: fuzz
+        # Do not use `continue-on-error`: handling each exit status here lets
+        # every target run after a crash and keeps the job green/report-only.
+        working-directory: fuzz
+        run: |
+          set -uo pipefail
+          failed_targets=""
+          for target in diff_parse git_conflict git_porcelain_v2 jj_conflict; do
+            echo "::group::Fuzzing ${target}"
+            if cargo +nightly fuzz run "$target" -- -max_total_time=300; then
+              echo "${target}: completed without a crash" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::${target} exited non-zero; preserving its crash artifacts"
+              echo "${target}: **non-zero exit; repro artifact uploaded**" >> "$GITHUB_STEP_SUMMARY"
+              failed_targets="${failed_targets}${failed_targets:+, }${target}"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed_targets" ]; then
+            echo "crashed=true" >> "$GITHUB_OUTPUT"
+            echo "targets=$failed_targets" >> "$GITHUB_OUTPUT"
+          else
+            echo "crashed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload crash reproducers
+        if: steps.fuzz.outputs.crashed == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-reproducers-${{ github.run_id }}
+          path: fuzz/artifacts
+          if-no-files-found: warn
+
+      - name: Report fuzz crash as a GitHub issue
+        if: steps.fuzz.outputs.crashed == 'true'
+        continue-on-error: true
+        # Maintain one open, stable issue instead of opening a new issue every
+        # week.  The workflow itself stays green and is never referenced by
+        # ci.yml, so this cannot become a required PR check.
+        run: |
+          set -euo pipefail
+          title="Scheduled fuzzing found crashes"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="The weekly scheduled fuzzing lane observed a non-zero exit for: ${{ steps.fuzz.outputs.targets }}.
+
+          Run: ${run_url}
+          Artifact: fuzz-crash-reproducers-${{ github.run_id }}
+
+          This workflow is report-only and does not block regular CI or PRs. Download the reproducer artifact, run the matching target locally with cargo-fuzz, then add a regression test or otherwise resolve the parser failure. Close this issue when fixed; a future failing run will reopen it."
+          existing="$(gh issue list --state all --search "in:title \"Scheduled fuzzing found crashes\"" \
+            --json number,title --jq '.[] | select(.title == "Scheduled fuzzing found crashes") | .number' \
+            | head -1 || true)"
+          if [ -n "${existing:-}" ]; then
+            # Reopen a previously resolved tracking issue so all recurring
+            # crashes remain attached to the same durable investigation.
+            gh issue reopen "$existing" || true
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
