@@ -869,6 +869,12 @@ What `diff` / `diff_text` compares — a re-export of `vcs_diff::DiffSpec`,
 deliberately exhaustive (not `#[non_exhaustive]`).
 - `WorkingTree` — the working-copy change's diff (`jj diff -r @`).
 - `Rev(String)` — a specific revset, e.g. `@-` or `main..@` (`jj diff -r <revset>`).
+  This is passed straight through to the `-r` flag of `jj diff`.
+  Unlike `vcs_git`'s interpretation of `DiffSpec::Rev`,
+  it does *not* implicitly include working-copy changes unless the revset resolves to `@` itself.
+
+How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
+Changing it would be a semver-breaking change.
 
 ### `SparseMode` (enum, `Copy`, `#[non_exhaustive]`)
 How a new workspace inherits sparse patterns (`--sparse-patterns <mode>`).
