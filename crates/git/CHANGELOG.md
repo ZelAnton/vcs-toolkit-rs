@@ -98,6 +98,15 @@ crates; tag releases as `vcs-git-v<version>`.
   being reparsed by git as an option that could redirect the write to an arbitrary
   config file. A legitimate `-`-leading value (e.g. `-1`) is still accepted — the flag
   *parse* is blocked, not the leading dash. (T-083.)
+- security: `GitApi::worktree_add`/`worktree_remove`/`worktree_move` (and the
+  synchronous `blocking::worktree_remove` Drop-cleanup helper) now refuse a
+  path positional that begins with `-` (after trimming), is empty/whitespace-only,
+  or contains a NUL byte, before spawning `git` — closing the same class of
+  argument-injection gap the ~45 existing `reject_flag_like` call sites already
+  guard against, for the one remaining unguarded set of bare positionals. The
+  check is a lossy-UTF-8 rendering of the path used only to classify it; a
+  legitimate non-UTF-8 path (valid on Unix) with no leading `-` still reaches
+  `git` byte-for-byte, unchanged. (T-147.)
 
 ## [0.11.0] - 2026-07-19
 
