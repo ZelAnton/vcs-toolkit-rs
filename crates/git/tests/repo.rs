@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
     AnnotatedTag, CheckoutTarget, Clean, CommitPaths, ErrorReason, Git, GitApi, MergeCheck,
-    MergeCommit, RefName, RevSpec, StashPush, SubmoduleState, SubmoduleUpdate, WorktreeAdd,
-    WorktreeRemove,
+    MergeCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleState, SubmoduleUpdate,
+    WorktreeAdd, WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
 
@@ -295,6 +295,61 @@ async fn worktree_add_list_remove_cycle() {
             .any(|w| w.branch.as_deref() == Some("feature")),
         "worktree should be gone after remove"
     );
+}
+
+// Sparse checkout is a local worktree operation: exercise both matching modes,
+// list parsing, and disable without a remote or any network configuration.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn sparse_checkout_set_list_disable_cycle() {
+    let tmp = TempDir::new("sparse-checkout");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    std::fs::create_dir_all(dir.join("src")).expect("create src");
+    std::fs::create_dir_all(dir.join("docs")).expect("create docs");
+    std::fs::write(dir.join("root.txt"), "root\n").expect("write root");
+    std::fs::write(dir.join("src/included.txt"), "src\n").expect("write src");
+    std::fs::write(dir.join("docs/excluded.txt"), "docs\n").expect("write docs");
+    git.add(
+        dir,
+        &[
+            PathBuf::from("root.txt"),
+            PathBuf::from("src/included.txt"),
+            PathBuf::from("docs/excluded.txt"),
+        ],
+    )
+    .await
+    .expect("add");
+    git.commit(dir, "seed sparse checkout")
+        .await
+        .expect("commit");
+
+    git.sparse_checkout_set(dir, SparseCheckoutSet::new(["src"]))
+        .await
+        .expect("cone set");
+    assert_eq!(
+        git.sparse_checkout_list(dir).await.expect("cone list"),
+        vec!["src".to_string()]
+    );
+    assert!(dir.join("src/included.txt").exists());
+    assert!(!dir.join("docs/excluded.txt").exists());
+
+    git.sparse_checkout_set(dir, SparseCheckoutSet::new(["/*", "!/docs/"]).non_cone())
+        .await
+        .expect("non-cone set");
+    assert_eq!(
+        git.sparse_checkout_list(dir).await.expect("non-cone list"),
+        vec!["/*".to_string(), "!/docs/".to_string()]
+    );
+    assert!(!dir.join("docs/excluded.txt").exists());
+
+    git.sparse_checkout_disable(dir).await.expect("disable");
+    assert!(dir.join("root.txt").exists());
+    assert!(dir.join("src/included.txt").exists());
+    assert!(dir.join("docs/excluded.txt").exists());
 }
 
 // New surface against a real git: the bound view (`git.at(dir)`) resolves the

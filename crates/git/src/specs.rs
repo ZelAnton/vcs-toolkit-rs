@@ -2,6 +2,38 @@
 
 use super::*;
 
+/// Options for [`GitApi::sparse_checkout_set`] (`git sparse-checkout set`).
+///
+/// `#[non_exhaustive]`, so build it through [`SparseCheckoutSet::new`] and the
+/// [`non_cone`](SparseCheckoutSet::non_cone) setter rather than a bare boolean
+/// that would make the selected matching mode ambiguous at the call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SparseCheckoutSet {
+    /// Directories in cone mode, or gitignore-style patterns in non-cone mode.
+    /// The list must contain at least one non-empty, non-flag-like value.
+    pub patterns: Vec<String>,
+    /// Whether git should interpret `patterns` as cone directories (`--cone`).
+    pub cone: bool,
+}
+
+impl SparseCheckoutSet {
+    /// Set sparse checkout to `patterns` in cone mode (`--cone`).
+    pub fn new(patterns: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            patterns: patterns.into_iter().map(Into::into).collect(),
+            cone: true,
+        }
+    }
+
+    /// Interpret the supplied values as gitignore-style patterns
+    /// (`--no-cone`) instead of cone directories.
+    pub fn non_cone(mut self) -> Self {
+        self.cone = false;
+        self
+    }
+}
+
 /// Options for [`GitApi::worktree_add`] (`git worktree add`).
 ///
 /// `#[non_exhaustive]`, so build it through [`WorktreeAdd::checkout`] /

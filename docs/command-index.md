@@ -99,6 +99,9 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 | `worktree_remove` | `worktree remove [--force] <path>` | via `WorktreeRemove` |
 | `worktree_move` | `worktree move <from> <to>` | |
 | `worktree_prune` | `worktree prune` | |
+| `sparse_checkout_set` | `sparse-checkout set --cone\|--no-cone -- <values>` | via `SparseCheckoutSet`; cone by default, non-cone explicit |
+| `sparse_checkout_list` | `sparse-checkout list` | parsed directories/patterns in git order |
+| `sparse_checkout_disable` | `sparse-checkout disable` | repopulates the worktree |
 | `clone_repo` | `clone <url> <dest>` + flags | via `CloneSpec`; dirless, absolute `dest` |
 | `tag_create` | `tag <name> [<rev>]` | lightweight |
 | `tag_create_annotated` | `tag -a <name> -m <message> [<rev>]` | via `AnnotatedTag` |
@@ -178,8 +181,12 @@ in-progress-am probes above), `archive`, `bundle`, `describe`,
 `difftool`/`mergetool`, `fsck`, `gc`, `grep`, `ls-files`/`ls-tree`,
 `merge-base`, `mv`/`rm` (path staging goes through `add`), `notes`, `reflog`,
 `replace`, `reset` (soft/mixed — only `--hard`/`--merge` are typed),
-`send-email`, `shortlog`, `sparse-checkout`, `submodule`, `subtree`,
+`send-email`, `shortlog`, `submodule`, `subtree`,
 `verify-commit`/`verify-tag`. Reach any of these through `run`/`run_raw`.
+
+The sparse-checkout rows above are deliberately Git-only: `vcs-jj` keeps its
+workspace-centric `sparse_set` surface, and `vcs-core` does not flatten either
+backend's sparse model into a facade operation.
 
 ## jj (`vcs-jj` — the `jj` binary)
 

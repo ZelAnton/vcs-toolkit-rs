@@ -57,6 +57,12 @@ crates; tag releases as `vcs-git-v<version>`.
   and its interaction with the hardened profile (untrusted nested config, the
   `protocol.*` transport allowlist, per-nested-repo filter/smudge vectors) is
   documented in the security guide. (T-096.)
+- Add typed Git sparse-checkout operations: `sparse_checkout_set` with a
+  `SparseCheckoutSet` builder (`--cone` by default or explicit `--no-cone`),
+  `sparse_checkout_list`, and `sparse_checkout_disable`. Set values are
+  validated before spawning and pinned after `--`; list preserves git's
+  directory/pattern order. This Git-only surface intentionally remains outside
+  `vcs-core`, whose jj backend has its own workspace-centric `sparse_set`.
 
 ### Changed
 - Split the growing crate root into focused internal modules: command specs,

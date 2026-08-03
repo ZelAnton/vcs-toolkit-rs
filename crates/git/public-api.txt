@@ -2113,6 +2113,84 @@ impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__show_file::Exp
 impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__show_file::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__show_file::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__show_file::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable
+pub struct vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<()> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<()> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list
+pub struct vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set
+pub struct vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<()>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_git::SparseCheckoutSet) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_git::SparseCheckoutSet) -> processkit::error::Result<()> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_git::SparseCheckoutSet) -> processkit::error::Result<()> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_git::SparseCheckoutSet) -> processkit::error::Result<()> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_git::SparseCheckoutSet> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::SparseCheckoutSet) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::SparseCheckoutSet) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
 pub mod vcs_git::__mock_MockGitApi_GitApi::__staged_is_empty
 pub struct vcs_git::__mock_MockGitApi_GitApi::__staged_is_empty::Expectation
 impl vcs_git::__mock_MockGitApi_GitApi::__staged_is_empty::Expectation
@@ -3192,6 +3270,9 @@ pub fn vcs_git::Git<R>::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 
 pub fn vcs_git::Git<R>::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::set_upstream<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::show_file<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_disable<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_set<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::SparseCheckoutSet) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::staged_is_empty<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::stash_apply<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::stash_drop<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -3303,6 +3384,9 @@ pub async fn vcs_git::GitAt<'a, R>::run_raw(&self, &[alloc::string::String]) -> 
 pub async fn vcs_git::GitAt<'a, R>::run_raw_args(&self, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
 pub async fn vcs_git::GitAt<'a, R>::set_upstream(&self, &vcs_git::RefName, &vcs_git::RefName) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::show_file(&self, &vcs_git::RevSpec, &str) -> processkit::error::Result<alloc::string::String>
+pub async fn vcs_git::GitAt<'a, R>::sparse_checkout_disable(&self) -> processkit::error::Result<()>
+pub async fn vcs_git::GitAt<'a, R>::sparse_checkout_list(&self) -> processkit::error::Result<alloc::vec::Vec<alloc::string::String>>
+pub async fn vcs_git::GitAt<'a, R>::sparse_checkout_set(&self, vcs_git::SparseCheckoutSet) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::staged_is_empty(&self) -> processkit::error::Result<bool>
 pub async fn vcs_git::GitAt<'a, R>::stash_apply(&self, usize) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::stash_drop(&self, usize) -> processkit::error::Result<()>
@@ -3535,6 +3619,9 @@ pub fn vcs_git::MockGitApi::expect_run(&mut self) -> &mut vcs_git::__mock_MockGi
 pub fn vcs_git::MockGitApi::expect_run_raw(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__run_raw::Expectation
 pub fn vcs_git::MockGitApi::expect_set_upstream(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__set_upstream::Expectation
 pub fn vcs_git::MockGitApi::expect_show_file(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__show_file::Expectation
+pub fn vcs_git::MockGitApi::expect_sparse_checkout_disable(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_disable::Expectation
+pub fn vcs_git::MockGitApi::expect_sparse_checkout_list(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_list::Expectation
+pub fn vcs_git::MockGitApi::expect_sparse_checkout_set(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__sparse_checkout_set::Expectation
 pub fn vcs_git::MockGitApi::expect_staged_is_empty(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__staged_is_empty::Expectation
 pub fn vcs_git::MockGitApi::expect_stash_apply(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__stash_apply::Expectation
 pub fn vcs_git::MockGitApi::expect_stash_drop(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__stash_drop::Expectation
@@ -3643,6 +3730,9 @@ pub fn vcs_git::MockGitApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'li
 pub fn vcs_git::MockGitApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::set_upstream<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::MockGitApi::show_file<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_disable<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_set<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::SparseCheckoutSet) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::staged_is_empty<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::stash_apply<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::stash_drop<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -3745,6 +3835,27 @@ impl core::marker::Unpin for vcs_git::RevSpec
 impl core::marker::UnsafeUnpin for vcs_git::RevSpec
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::RevSpec
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::RevSpec
+#[non_exhaustive] pub struct vcs_git::SparseCheckoutSet
+pub vcs_git::SparseCheckoutSet::cone: bool
+pub vcs_git::SparseCheckoutSet::patterns: alloc::vec::Vec<alloc::string::String>
+impl vcs_git::SparseCheckoutSet
+pub fn vcs_git::SparseCheckoutSet::new(impl core::iter::traits::collect::IntoIterator<Item = impl core::convert::Into<alloc::string::String>>) -> Self
+pub fn vcs_git::SparseCheckoutSet::non_cone(self) -> Self
+impl core::clone::Clone for vcs_git::SparseCheckoutSet
+pub fn vcs_git::SparseCheckoutSet::clone(&self) -> vcs_git::SparseCheckoutSet
+impl core::cmp::Eq for vcs_git::SparseCheckoutSet
+impl core::cmp::PartialEq for vcs_git::SparseCheckoutSet
+pub fn vcs_git::SparseCheckoutSet::eq(&self, &vcs_git::SparseCheckoutSet) -> bool
+impl core::fmt::Debug for vcs_git::SparseCheckoutSet
+pub fn vcs_git::SparseCheckoutSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_git::SparseCheckoutSet
+impl core::marker::Freeze for vcs_git::SparseCheckoutSet
+impl core::marker::Send for vcs_git::SparseCheckoutSet
+impl core::marker::Sync for vcs_git::SparseCheckoutSet
+impl core::marker::Unpin for vcs_git::SparseCheckoutSet
+impl core::marker::UnsafeUnpin for vcs_git::SparseCheckoutSet
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::SparseCheckoutSet
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::SparseCheckoutSet
 #[non_exhaustive] pub struct vcs_git::StashEntry
 pub vcs_git::StashEntry::branch: core::option::Option<alloc::string::String>
 pub vcs_git::StashEntry::hash: alloc::string::String
@@ -4021,6 +4132,9 @@ pub fn vcs_git::GitApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 
 pub fn vcs_git::GitApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::set_upstream<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::GitApi::show_file<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::GitApi::sparse_checkout_disable<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::sparse_checkout_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::sparse_checkout_set<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::SparseCheckoutSet) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::staged_is_empty<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::stash_apply<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::stash_drop<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -4125,6 +4239,9 @@ pub fn vcs_git::MockGitApi::run<'life0, 'life1, 'async_trait>(&'life0 self, &'li
 pub fn vcs_git::MockGitApi::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::set_upstream<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::MockGitApi::show_file<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_disable<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::sparse_checkout_set<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::SparseCheckoutSet) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::staged_is_empty<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::stash_apply<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::stash_drop<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -4229,6 +4346,9 @@ pub fn vcs_git::Git<R>::run<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 
 pub fn vcs_git::Git<R>::run_raw<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 [alloc::string::String]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::set_upstream<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName, &'life3 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::show_file<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::string::String>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_disable<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_list<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::sparse_checkout_set<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::SparseCheckoutSet) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::staged_is_empty<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::stash_apply<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::stash_drop<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, usize) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

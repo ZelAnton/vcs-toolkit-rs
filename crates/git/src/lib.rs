@@ -189,7 +189,7 @@ mod specs;
 pub use specs::{
     AnnotatedTag, BranchDelete, CheckoutTarget, Clean, CleanIgnored, CloneSpec, CommitPaths,
     GitCapabilities, GitPush, MergeCheck, MergeCheckPartial, MergeCommit, MergeNoCommit, RefName,
-    RevSpec, StashPush, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
+    RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
 
 /// The Git operations this crate exposes — the interface consumers code against
@@ -577,6 +577,22 @@ pub trait GitApi: Send + Sync {
     async fn worktree_move(&self, dir: &Path, from: &Path, to: &Path) -> Result<()>;
     /// Prune stale worktree admin entries (`worktree prune`).
     async fn worktree_prune(&self, dir: &Path) -> Result<()>;
+
+    // --- Sparse checkout -----------------------------------------------------
+
+    /// Set the sparse-checkout directories or patterns
+    /// (`sparse-checkout set --cone|--no-cone -- <values>`); see
+    /// [`SparseCheckoutSet`]. Cone mode is the default and is recommended for
+    /// directory-oriented worktrees. Values are validated before spawning and
+    /// pinned after `--`, so a caller cannot turn one into a git option.
+    async fn sparse_checkout_set(&self, dir: &Path, spec: SparseCheckoutSet) -> Result<()>;
+    /// List the currently configured sparse-checkout directories or patterns
+    /// (`sparse-checkout list`) in git's emitted order. Pattern text is kept
+    /// verbatim apart from the line terminator, including meaningful spaces.
+    async fn sparse_checkout_list(&self, dir: &Path) -> Result<Vec<String>>;
+    /// Disable sparse checkout and repopulate the working tree
+    /// (`sparse-checkout disable`).
+    async fn sparse_checkout_disable(&self, dir: &Path) -> Result<()>;
 
     // --- Submodules ----------------------------------------------------------
 
@@ -2221,6 +2237,49 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
     }
 
+    async fn sparse_checkout_set(&self, dir: &Path, spec: SparseCheckoutSet) -> Result<()> {
+        if spec.patterns.is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "sparse_checkout_set requires at least one directory or pattern",
+                ),
+            ));
+        }
+        // `--` pins every caller-provided value as a positional. Keep the
+        // content guard as well: a leading dash is almost always an accidental
+        // option-shaped path/pattern, and rejecting it gives the same clear
+        // pre-spawn error as the other bare positional surfaces.
+        for pattern in &spec.patterns {
+            reject_flag_like("sparse-checkout pattern", pattern)?;
+        }
+
+        let mode = if spec.cone { "--cone" } else { "--no-cone" };
+        let mut command = self
+            .core
+            .command_in(dir, ["sparse-checkout", "set", mode, "--"]);
+        for pattern in &spec.patterns {
+            command = command.arg(pattern);
+        }
+        self.core.run_unit(command).await
+    }
+
+    async fn sparse_checkout_list(&self, dir: &Path) -> Result<Vec<String>> {
+        self.core
+            .parse(
+                self.core.command_in(dir, ["sparse-checkout", "list"]),
+                parse_sparse_checkout_list,
+            )
+            .await
+    }
+
+    async fn sparse_checkout_disable(&self, dir: &Path) -> Result<()> {
+        self.core
+            .run_unit(self.core.command_in(dir, ["sparse-checkout", "disable"]))
+            .await
+    }
+
     async fn submodule_list(&self, dir: &Path) -> Result<Vec<Submodule>> {
         // `.gitmodules` at the repo top is the registry of declared submodules; a
         // repo with none simply has no such file. Probe for it (relative to `dir`,
@@ -2761,6 +2820,16 @@ fn reject_flag_like(what: &str, value: &str) -> Result<()> {
 /// with no leading `-` still reaches the child process unaltered.
 fn reject_flag_like_path(what: &str, path: &Path) -> Result<()> {
     reject_flag_like(what, &path.to_string_lossy())
+}
+
+/// Parse `git sparse-checkout list` without trimming pattern content. Git emits
+/// one directory/pattern per line; `split_terminator` drops only the final
+/// framing newline, while the explicit CR removal keeps Windows output stable.
+fn parse_sparse_checkout_list(output: &str) -> Vec<String> {
+    output
+        .split_terminator('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .collect()
 }
 
 /// Emptiness guard for a caller-supplied file path that is **interpolated into a
@@ -3310,6 +3379,9 @@ vcs_cli_support::at_forwarders! {
         fn worktree_remove(spec: WorktreeRemove) -> Result<()>;
         fn worktree_move(from: &Path, to: &Path) -> Result<()>;
         fn worktree_prune() -> Result<()>;
+        fn sparse_checkout_set(spec: SparseCheckoutSet) -> Result<()>;
+        fn sparse_checkout_list() -> Result<Vec<String>>;
+        fn sparse_checkout_disable() -> Result<()>;
         fn submodule_list() -> Result<Vec<Submodule>>;
         fn submodule_status() -> Result<Vec<SubmoduleStatus>>;
         fn submodule_update(spec: SubmoduleUpdate) -> Result<()>;
@@ -4038,6 +4110,94 @@ mod tests {
             .expect_err("a flag-like `to` must be refused");
         assert!(vcs_cli_support::is_invalid_input(&err));
         assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    #[tokio::test]
+    async fn sparse_checkout_set_defaults_to_cone_and_pins_patterns() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.sparse_checkout_set(
+            Path::new("/repo"),
+            SparseCheckoutSet::new(["src", "Cargo.toml"]),
+        )
+        .await
+        .expect("sparse checkout set");
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "sparse-checkout",
+                "set",
+                "--cone",
+                "--",
+                "src",
+                "Cargo.toml"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sparse_checkout_set_non_cone_uses_only_no_cone_mode_flag() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.sparse_checkout_set(
+            Path::new("/repo"),
+            SparseCheckoutSet::new(["/*", "!/docs/"]).non_cone(),
+        )
+        .await
+        .expect("sparse checkout set");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["sparse-checkout", "set", "--no-cone", "--", "/*", "!/docs/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn sparse_checkout_set_rejects_empty_and_flag_like_patterns_before_spawn() {
+        let empty_rec = RecordingRunner::replying(Reply::ok("unused"));
+        let empty_git = Git::with_runner(&empty_rec);
+        let empty_err = empty_git
+            .sparse_checkout_set(
+                Path::new("/repo"),
+                SparseCheckoutSet::new(std::iter::empty::<String>()),
+            )
+            .await
+            .expect_err("an empty sparse set must be refused");
+        assert!(vcs_cli_support::is_invalid_input(&empty_err));
+        assert!(empty_rec.calls().is_empty(), "nothing may spawn");
+
+        for pattern in ["--evil", " "] {
+            let rec = RecordingRunner::replying(Reply::ok("unused"));
+            let git = Git::with_runner(&rec);
+            let err = git
+                .sparse_checkout_set(Path::new("/repo"), SparseCheckoutSet::new([pattern]))
+                .await
+                .expect_err("an invalid sparse path/pattern must be refused");
+            assert!(vcs_cli_support::is_invalid_input(&err));
+            assert!(rec.calls().is_empty(), "nothing may spawn for {pattern:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn sparse_checkout_list_preserves_pattern_text_and_line_order() {
+        let rec = RecordingRunner::replying(Reply::ok("src\r\n  !/docs \n"));
+        let git = Git::with_runner(&rec);
+        assert_eq!(
+            git.sparse_checkout_list(Path::new("/repo"))
+                .await
+                .expect("sparse checkout list"),
+            ["src".to_string(), "  !/docs ".to_string()]
+        );
+        assert_eq!(rec.only_call().args_str(), ["sparse-checkout", "list"]);
+    }
+
+    #[tokio::test]
+    async fn sparse_checkout_disable_builds_the_typed_command() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        git.sparse_checkout_disable(Path::new("/repo"))
+            .await
+            .expect("sparse checkout disable");
+        assert_eq!(rec.only_call().args_str(), ["sparse-checkout", "disable"]);
     }
 
     #[tokio::test]
