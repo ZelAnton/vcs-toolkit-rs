@@ -10,6 +10,12 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Add Git-only typed bisect sessions: `bisect_start` with validated `RevSpec`
+  bounds and `bisect_good`/`bisect_bad`/`bisect_skip`, each returning a parsed
+  `BisectStep` for the next checked-out candidate or the first bad commit.
+  Ambiguous or malformed bisect output is reported as `ErrorReason::Parse`, and
+  `bisect_reset` remains the explicit cleanup operation. The consumer retains
+  responsibility for running and classifying its own regression test.
 - **New optional `serde` feature** (off by default) deriving `serde::Serialize`
   on the public conflict model — `conflict::ConflictSegment`,
   `conflict::ConflictRegion`, and `conflict::ResolutionSide` — so a JSON consumer

@@ -111,6 +111,58 @@ impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__am_continue::E
 impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__am_continue::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__am_continue::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__am_continue::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__bisect_bad
+pub struct vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__bisect_good
+pub struct vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
 pub mod vcs_git::__mock_MockGitApi_GitApi::__bisect_reset
 pub struct vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
 impl vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
@@ -137,6 +189,58 @@ impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::
 impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__bisect_skip
+pub struct vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static>(&mut self, MockallMatcher0) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__bisect_start
+pub struct vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::BisectStep>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::BisectStep> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::BisectStep> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_git::RevSpec> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<vcs_git::RevSpec> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
 pub mod vcs_git::__mock_MockGitApi_GitApi::__blame
 pub struct vcs_git::__mock_MockGitApi_GitApi::__blame::Expectation
 impl vcs_git::__mock_MockGitApi_GitApi::__blame::Expectation
@@ -2866,6 +2970,29 @@ pub fn vcs_git::conflict::resolve(&[vcs_git::conflict::ConflictSegment], vcs_git
 pub mod vcs_git::guide
 pub mod vcs_git::guide::conflicts
 pub mod vcs_git::guide::security
+#[non_exhaustive] pub enum vcs_git::BisectStep
+pub vcs_git::BisectStep::FirstBad
+pub vcs_git::BisectStep::FirstBad::revision: vcs_git::RevSpec
+pub vcs_git::BisectStep::NextCandidate
+pub vcs_git::BisectStep::NextCandidate::revision: vcs_git::RevSpec
+impl vcs_git::BisectStep
+pub fn vcs_git::BisectStep::is_first_bad(&self) -> bool
+pub fn vcs_git::BisectStep::revision(&self) -> &vcs_git::RevSpec
+impl core::clone::Clone for vcs_git::BisectStep
+pub fn vcs_git::BisectStep::clone(&self) -> vcs_git::BisectStep
+impl core::cmp::Eq for vcs_git::BisectStep
+impl core::cmp::PartialEq for vcs_git::BisectStep
+pub fn vcs_git::BisectStep::eq(&self, &vcs_git::BisectStep) -> bool
+impl core::fmt::Debug for vcs_git::BisectStep
+pub fn vcs_git::BisectStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_git::BisectStep
+impl core::marker::Freeze for vcs_git::BisectStep
+impl core::marker::Send for vcs_git::BisectStep
+impl core::marker::Sync for vcs_git::BisectStep
+impl core::marker::Unpin for vcs_git::BisectStep
+impl core::marker::UnsafeUnpin for vcs_git::BisectStep
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::BisectStep
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::BisectStep
 pub enum vcs_git::CheckoutTarget
 pub vcs_git::CheckoutTarget::Previous
 pub vcs_git::CheckoutTarget::Ref(vcs_git::RevSpec)
@@ -3218,7 +3345,15 @@ impl<R: processkit::runner::ProcessRunner> vcs_git::GitApi for vcs_git::Git<R>
 pub fn vcs_git::Git<R>::add<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 [std::path::PathBuf]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::am_abort<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::am_continue<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_bad<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_good<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_bad<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_good<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::bisect_reset<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_skip<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_start<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::Git<R>::bisect_skip<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::bisect_start<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::blame<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, core::option::Option<vcs_git::RevSpec>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::BlameLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::branch_status<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BranchStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -3321,6 +3456,7 @@ pub fn vcs_git::Git<R>::worktree_list<'life0, 'life1, 'async_trait>(&'life0 self
 pub fn vcs_git::Git<R>::worktree_move<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 std::path::Path, &'life3 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::worktree_prune<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::worktree_remove<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub type vcs_git::BisectResult = vcs_git::BisectStep
 impl<R> core::marker::Freeze for vcs_git::Git<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for vcs_git::Git<R>
 impl<R> core::marker::Sync for vcs_git::Git<R>
@@ -3333,7 +3469,11 @@ impl<'a, R: processkit::runner::ProcessRunner> vcs_git::GitAt<'a, R>
 pub async fn vcs_git::GitAt<'a, R>::add(&self, &[std::path::PathBuf]) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::am_abort(&self) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::am_continue(&self) -> processkit::error::Result<()>
+pub async fn vcs_git::GitAt<'a, R>::bisect_bad(&self) -> processkit::error::Result<vcs_git::BisectStep>
+pub async fn vcs_git::GitAt<'a, R>::bisect_good(&self) -> processkit::error::Result<vcs_git::BisectStep>
 pub async fn vcs_git::GitAt<'a, R>::bisect_reset(&self) -> processkit::error::Result<()>
+pub async fn vcs_git::GitAt<'a, R>::bisect_skip(&self) -> processkit::error::Result<vcs_git::BisectStep>
+pub async fn vcs_git::GitAt<'a, R>::bisect_start(&self, &vcs_git::RevSpec, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::BisectStep>
 pub async fn vcs_git::GitAt<'a, R>::blame(&self, &str, core::option::Option<vcs_git::RevSpec>) -> processkit::error::Result<alloc::vec::Vec<vcs_git::BlameLine>>
 pub async fn vcs_git::GitAt<'a, R>::branch_exists(&self, &vcs_git::RefName) -> processkit::error::Result<bool>
 pub async fn vcs_git::GitAt<'a, R>::branch_status(&self) -> processkit::error::Result<vcs_git::BranchStatus>
@@ -3567,7 +3707,11 @@ impl vcs_git::MockGitApi
 pub fn vcs_git::MockGitApi::expect_add(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__add::Expectation
 pub fn vcs_git::MockGitApi::expect_am_abort(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__am_abort::Expectation
 pub fn vcs_git::MockGitApi::expect_am_continue(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__am_continue::Expectation
+pub fn vcs_git::MockGitApi::expect_bisect_bad(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__bisect_bad::Expectation
+pub fn vcs_git::MockGitApi::expect_bisect_good(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__bisect_good::Expectation
 pub fn vcs_git::MockGitApi::expect_bisect_reset(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__bisect_reset::Expectation
+pub fn vcs_git::MockGitApi::expect_bisect_skip(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__bisect_skip::Expectation
+pub fn vcs_git::MockGitApi::expect_bisect_start(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__bisect_start::Expectation
 pub fn vcs_git::MockGitApi::expect_blame(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__blame::Expectation
 pub fn vcs_git::MockGitApi::expect_branch_exists(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__branch_exists::Expectation
 pub fn vcs_git::MockGitApi::expect_branch_status(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__branch_status::Expectation
@@ -3678,7 +3822,15 @@ impl vcs_git::GitApi for vcs_git::MockGitApi
 pub fn vcs_git::MockGitApi::add<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 [std::path::PathBuf]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::am_abort<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::am_continue<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_bad<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_good<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_bad<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_good<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::bisect_reset<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_skip<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_start<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_skip<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::bisect_start<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::MockGitApi::blame<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, core::option::Option<vcs_git::RevSpec>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::BlameLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::branch_status<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BranchStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
@@ -4080,7 +4232,11 @@ pub trait vcs_git::GitApi: core::marker::Send + core::marker::Sync
 pub fn vcs_git::GitApi::add<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 [std::path::PathBuf]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::am_abort<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::am_continue<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::bisect_bad<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::bisect_good<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::bisect_reset<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::bisect_skip<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::bisect_start<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RevSpec, &'life3 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BisectStep>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::GitApi::blame<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, core::option::Option<vcs_git::RevSpec>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<alloc::vec::Vec<vcs_git::BlameLine>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::branch_exists<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 vcs_git::RefName) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::branch_status<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::BranchStatus>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait

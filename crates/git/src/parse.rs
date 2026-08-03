@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use vcs_diff::DiffStat;
 
+use crate::{BINARY, BisectStep, Error, Result, RevSpec};
+
 /// One entry from `git status --porcelain=v1 -z` (`XY <path>`, NUL-delimited).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -229,6 +231,74 @@ pub fn parse_porcelain_v2(output: &str) -> BranchStatus {
 /// trailers (`.windows.1`, `-rc1`) are ignored; a missing patch reads as `0`.
 pub(crate) fn parse_git_version(raw: &str) -> Option<vcs_diff::Version> {
     vcs_diff::parse_dotted_version(raw)
+}
+
+/// Parse one successful `git bisect` classification output.
+///
+/// Git prints the next checkout as `[<oid>] <subject>`, and prints the terminal
+/// result as `<oid> is the first 'bad' commit` (older versions omit the quotes
+/// around `bad`). The object id may be a SHA-1/SHA-256 id or Git's abbreviated
+/// hexadecimal spelling, but it must be at least four and at most 64 hex bytes.
+/// Other output — including Git's list of several possible commits after an
+/// unhelpful skip — is intentionally not accepted as a result. This avoids
+/// turning an ambiguous search into a false first-bad success.
+pub(crate) fn parse_bisect_step(output: &str) -> Result<BisectStep> {
+    let mut result = None;
+
+    for raw_line in output.lines() {
+        let line = raw_line.trim();
+        let candidate = line
+            .strip_suffix(" is the first 'bad' commit")
+            .or_else(|| line.strip_suffix(" is the first bad commit"));
+
+        if let Some(oid) = candidate {
+            let revision = parse_bisect_oid(oid)?;
+            set_bisect_result(&mut result, BisectStep::FirstBad { revision })?;
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix('[') {
+            let Some((oid, subject)) = rest.split_once("] ") else {
+                return Err(bisect_parse_error(format!(
+                    "malformed next-candidate line: {line:?}"
+                )));
+            };
+            if subject.trim().is_empty() {
+                return Err(bisect_parse_error(format!(
+                    "next-candidate line has no subject: {line:?}"
+                )));
+            }
+            let revision = parse_bisect_oid(oid)?;
+            set_bisect_result(&mut result, BisectStep::NextCandidate { revision })?;
+        }
+    }
+
+    result.ok_or_else(|| bisect_parse_error(format!("unrecognised bisect output: {output:?}")))
+}
+
+fn parse_bisect_oid(raw: &str) -> Result<RevSpec> {
+    let oid = raw.trim();
+    let valid = (4..=64).contains(&oid.len()) && oid.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid {
+        return Err(bisect_parse_error(format!(
+            "invalid bisect object id: {raw:?}"
+        )));
+    }
+    RevSpec::new(oid)
+}
+
+fn set_bisect_result(result: &mut Option<BisectStep>, next: BisectStep) -> Result<()> {
+    if result.is_some() {
+        return Err(bisect_parse_error(
+            "bisect output contains more than one possible result".to_string(),
+        ));
+    }
+    *result = Some(next);
+    Ok(())
+}
+
+fn bisect_parse_error(message: String) -> Error {
+    Error::parse(BINARY, message)
 }
 
 /// Parse a NUL-delimited path list (e.g. `git diff --name-only -z`): one

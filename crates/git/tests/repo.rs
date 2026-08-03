@@ -31,6 +31,15 @@ fn ct(s: &str) -> CheckoutTarget {
     }
 }
 
+async fn write_and_commit(git: &Git, dir: &Path, value: usize, message: &str) -> String {
+    std::fs::write(dir.join("regression.txt"), format!("{value}\n")).expect("write");
+    git.add(dir, &[PathBuf::from("regression.txt")])
+        .await
+        .expect("add");
+    git.commit(dir, message).await.expect("commit");
+    git.rev_parse(dir, &rv("HEAD")).await.expect("rev-parse")
+}
+
 #[tokio::test]
 #[ignore = "requires the git binary"]
 async fn init_status_add_commit_log_cycle() {
@@ -90,6 +99,120 @@ async fn init_status_add_commit_log_cycle() {
     assert_eq!(
         git.rev_parse(dir, &rv("HEAD")).await.expect("rev-parse"),
         log[0].hash
+    );
+}
+
+// Exercise the whole consumer-driven bisect lifecycle against a real Git
+// repository. The test deliberately classifies good and bad candidates, skips
+// one candidate while retaining enough unclassified history for Git to select
+// a unique next checkout, and verifies the quoted first-bad output. The
+// consumer (this test) owns the test/classification loop; the API only drives
+// Git.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn bisect_finds_regression_with_good_bad_and_skip() {
+    let tmp = TempDir::new("bisect-regression");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    let good = write_and_commit(&git, dir, 0, "c0").await;
+    let mut commits = Vec::new();
+    for value in 1..=16 {
+        let message = if value == 12 {
+            "c12-regression".to_string()
+        } else {
+            format!("c{value}")
+        };
+        commits.push(write_and_commit(&git, dir, value, &message).await);
+    }
+    let expected_first_bad = commits[11].clone();
+    let bad = commits[15].clone();
+
+    let mut step = git
+        .bisect_start(dir, &rv(&bad), &rv(&good))
+        .await
+        .expect("start");
+    assert!(!step.is_first_bad());
+    assert_eq!(
+        git.rev_parse(dir, &rv("HEAD"))
+            .await
+            .expect("candidate HEAD"),
+        step.revision().as_str()
+    );
+
+    let _candidate_content =
+        std::fs::read_to_string(dir.join("regression.txt")).expect("read candidate");
+    step = git.bisect_good(dir).await.expect("good");
+    assert!(!step.is_first_bad());
+    assert_eq!(
+        git.rev_parse(dir, &rv("HEAD"))
+            .await
+            .expect("candidate HEAD"),
+        step.revision().as_str()
+    );
+
+    step = git.bisect_bad(dir).await.expect("bad");
+    assert!(!step.is_first_bad());
+    assert_eq!(
+        git.rev_parse(dir, &rv("HEAD"))
+            .await
+            .expect("candidate HEAD"),
+        step.revision().as_str()
+    );
+
+    step = git.bisect_skip(dir).await.expect("skip");
+    assert!(!step.is_first_bad());
+    assert_eq!(
+        git.rev_parse(dir, &rv("HEAD"))
+            .await
+            .expect("candidate HEAD"),
+        step.revision().as_str()
+    );
+
+    // Drive the remainder from the actual checked-out content, as a consumer
+    // would after running its own regression test. The first four calls above
+    // intentionally cover good, bad, and skip; this loop reaches the terminal
+    // result without assuming Git's private midpoint choice.
+    for _ in 0..20 {
+        if step.is_first_bad() {
+            break;
+        }
+        let value: usize = std::fs::read_to_string(dir.join("regression.txt"))
+            .expect("read candidate")
+            .trim()
+            .parse()
+            .expect("candidate value");
+        step = if value >= 12 {
+            git.bisect_bad(dir).await.expect("bad candidate")
+        } else {
+            git.bisect_good(dir).await.expect("good candidate")
+        };
+        if !step.is_first_bad() {
+            assert_eq!(
+                git.rev_parse(dir, &rv("HEAD"))
+                    .await
+                    .expect("candidate HEAD"),
+                step.revision().as_str()
+            );
+        }
+    }
+    assert!(step.is_first_bad(), "bisect must converge");
+    assert_eq!(step.revision().as_str(), expected_first_bad.as_str());
+    assert!(git.is_bisect_in_progress(dir).await.expect("bisect marker"));
+
+    git.bisect_reset(dir).await.expect("reset");
+    assert!(!git.is_bisect_in_progress(dir).await.expect("bisect marker"));
+    assert_eq!(
+        git.rev_parse(dir, &rv("HEAD"))
+            .await
+            .expect("restored HEAD"),
+        bad
+    );
+    assert!(
+        git.current_branch(dir).await.expect("branch").is_some(),
+        "bisect reset must return to the original branch"
     );
 }
 

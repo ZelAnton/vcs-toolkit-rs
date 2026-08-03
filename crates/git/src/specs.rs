@@ -752,6 +752,52 @@ impl std::str::FromStr for RevSpec {
     }
 }
 
+/// The typed result of one `git bisect` classification step.
+///
+/// The `bisect_start`, `bisect_good`, `bisect_bad`, and `bisect_skip` methods
+/// all return this value after Git has classified the current checkout. A
+/// [`NextCandidate`](Self::NextCandidate) means that Git moved the worktree to
+/// the returned revision and the consumer should run its test there. A
+/// [`FirstBad`](Self::FirstBad) means that Git finished the search; the
+/// returned revision is the first bad commit and no further classification is
+/// needed. The consumer owns the test loop and should call
+/// [`GitApi::bisect_reset`] when it is done, including on an error or
+/// cancellation.
+///
+/// This type is Git-only. It is deliberately not part of `vcs-core` because
+/// Jujutsu has no corresponding bisect command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BisectStep {
+    /// Git checked out another revision for the consumer to test.
+    NextCandidate {
+        /// The revision Git selected and checked out.
+        revision: RevSpec,
+    },
+    /// Git completed the search and identified the first bad revision.
+    FirstBad {
+        /// The first bad revision reported by Git.
+        revision: RevSpec,
+    },
+}
+
+impl BisectStep {
+    /// The revision Git selected for this step.
+    pub fn revision(&self) -> &RevSpec {
+        match self {
+            Self::NextCandidate { revision } | Self::FirstBad { revision } => revision,
+        }
+    }
+
+    /// Whether this step completed the bisect search with a first bad commit.
+    pub fn is_first_bad(&self) -> bool {
+        matches!(self, Self::FirstBad { .. })
+    }
+}
+
+/// Backward-readable alias for [`BisectStep`]. Prefer `BisectStep` in new code.
+pub type BisectResult = BisectStep;
+
 /// What [`GitApi::checkout`] switches to: a validated ref/revision, or git's `-`
 /// "previous branch" shortcut.
 ///

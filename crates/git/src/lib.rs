@@ -187,10 +187,10 @@ pub const BINARY: &str = "git";
 
 mod specs;
 pub use specs::{
-    AnnotatedTag, BranchDelete, CheckoutTarget, Clean, CleanIgnored, CloneFilter, CloneSpec,
-    CommitPaths, GitCapabilities, GitPush, MergeCheck, MergeCheckPartial, MergeCommit,
-    MergeNoCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate, WorktreeAdd,
-    WorktreeRemove,
+    AnnotatedTag, BisectResult, BisectStep, BranchDelete, CheckoutTarget, Clean, CleanIgnored,
+    CloneFilter, CloneSpec, CommitPaths, GitCapabilities, GitPush, MergeCheck, MergeCheckPartial,
+    MergeCommit, MergeNoCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate,
+    WorktreeAdd, WorktreeRemove,
 };
 
 /// The Git operations this crate exposes — the interface consumers code against
@@ -748,6 +748,29 @@ pub trait GitApi: Send + Sync {
     /// that was checked out before it started. This is the "abort" for a bisect;
     /// bisect has no `--continue`.
     async fn bisect_reset(&self, dir: &Path) -> Result<()>;
+    /// Start a bisect session with `bad` and `good` bounds
+    /// (`bisect start <bad> <good>`), returning the next checkout or the first
+    /// bad commit when Git can finish immediately. The consumer remains
+    /// responsible for running its test at each checkout and classifying it
+    /// with [`bisect_good`](Self::bisect_good), [`bisect_bad`](Self::bisect_bad),
+    /// or [`bisect_skip`](Self::bisect_skip). Call [`bisect_reset`](Self::bisect_reset)
+    /// when the session is complete or abandoned.
+    async fn bisect_start(&self, dir: &Path, bad: &RevSpec, good: &RevSpec) -> Result<BisectStep>;
+    /// Mark the currently checked-out bisect revision good (`bisect good`),
+    /// returning the next checkout or the first bad commit. Git advances the
+    /// session; this method does not run a consumer-supplied test.
+    async fn bisect_good(&self, dir: &Path) -> Result<BisectStep>;
+    /// Mark the currently checked-out bisect revision bad (`bisect bad`),
+    /// returning the next checkout or the first bad commit. Git advances the
+    /// session; this method does not run a consumer-supplied test.
+    async fn bisect_bad(&self, dir: &Path) -> Result<BisectStep>;
+    /// Skip the currently checked-out bisect revision (`bisect skip`),
+    /// returning the next checkout or the first bad commit. If Git reports an
+    /// ambiguous set of possible first bad commits, this returns
+    /// [`ErrorReason::Parse`] rather than choosing one silently; the session is
+    /// still owned by Git and may be reset or driven through the raw escape
+    /// hatch by the consumer.
+    async fn bisect_skip(&self, dir: &Path) -> Result<BisectStep>;
 }
 
 vcs_cli_support::managed_client! {
@@ -2609,6 +2632,45 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .run_unit(c_locale(self.core.command_in(dir, ["bisect", "reset"])))
             .await
     }
+
+    async fn bisect_start(&self, dir: &Path, bad: &RevSpec, good: &RevSpec) -> Result<BisectStep> {
+        self.core
+            .try_parse(
+                c_locale(
+                    self.core
+                        .command_in(dir, ["bisect", "start", bad.as_str(), good.as_str()]),
+                ),
+                parse::parse_bisect_step,
+            )
+            .await
+    }
+
+    async fn bisect_good(&self, dir: &Path) -> Result<BisectStep> {
+        self.core
+            .try_parse(
+                c_locale(self.core.command_in(dir, ["bisect", "good"])),
+                parse::parse_bisect_step,
+            )
+            .await
+    }
+
+    async fn bisect_bad(&self, dir: &Path) -> Result<BisectStep> {
+        self.core
+            .try_parse(
+                c_locale(self.core.command_in(dir, ["bisect", "bad"])),
+                parse::parse_bisect_step,
+            )
+            .await
+    }
+
+    async fn bisect_skip(&self, dir: &Path) -> Result<BisectStep> {
+        self.core
+            .try_parse(
+                c_locale(self.core.command_in(dir, ["bisect", "skip"])),
+                parse::parse_bisect_step,
+            )
+            .await
+    }
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -3432,6 +3494,10 @@ vcs_cli_support::at_forwarders! {
         fn revert_abort() -> Result<()>;
         fn revert_continue() -> Result<()>;
         fn bisect_reset() -> Result<()>;
+        fn bisect_start(bad: &RevSpec, good: &RevSpec) -> Result<BisectStep>;
+        fn bisect_good() -> Result<BisectStep>;
+        fn bisect_bad() -> Result<BisectStep>;
+        fn bisect_skip() -> Result<BisectStep>;
     }
     // Raw escape hatches: bound to `self.dir` (forward to the client's `*_in`
     // twins) so `git.at(dir).run(…)` runs in the bound repo, not the process cwd.
@@ -3759,6 +3825,129 @@ mod tests {
         assert!(!git.is_cherry_pick_in_progress(d).await.unwrap());
         assert!(!git.is_revert_in_progress(d).await.unwrap());
         assert!(!git.is_bisect_in_progress(d).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn bisect_operations_parse_steps_and_build_safe_argv() {
+        const GOOD: &str = "1111111111111111111111111111111111111111";
+        const BAD: &str = "2222222222222222222222222222222222222222";
+        const CANDIDATE_ONE: &str = "3333333333333333333333333333333333333333";
+        const CANDIDATE_TWO: &str = "4444444444444444444444444444444444444444";
+        const CANDIDATE_THREE: &str = "5555555555555555555555555555555555555555";
+        const FIRST_BAD: &str = "6666666666666666666666666666666666666666";
+        let dir = Path::new("/r");
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "bisect", "start", BAD, GOOD],
+                    Reply::ok(format!(
+                        "Bisecting: 1 revision left\n[{CANDIDATE_ONE}] c1\n"
+                    )),
+                )
+                .on(
+                    ["git", "bisect", "good"],
+                    Reply::ok(format!(
+                        "Bisecting: 0 revisions left\n[{CANDIDATE_TWO}] c2\n"
+                    )),
+                )
+                .on(
+                    ["git", "bisect", "skip"],
+                    Reply::ok(format!(
+                        "Bisecting: 0 revisions left\n[{CANDIDATE_THREE}] c3\n"
+                    )),
+                )
+                .on(
+                    ["git", "bisect", "bad"],
+                    Reply::ok(format!(
+                        "{FIRST_BAD} is the first 'bad' commit\ncommit {FIRST_BAD}\n"
+                    )),
+                ),
+        );
+        let git = Git::with_runner(&rec);
+
+        let start = git.bisect_start(dir, &rv(BAD), &rv(GOOD)).await.unwrap();
+        assert_eq!(
+            start,
+            BisectStep::NextCandidate {
+                revision: rv(CANDIDATE_ONE)
+            }
+        );
+
+        let good = git.at(dir).bisect_good().await.unwrap();
+        assert_eq!(good.revision().as_str(), CANDIDATE_TWO);
+        assert!(!good.is_first_bad());
+
+        let skip = git.bisect_skip(dir).await.unwrap();
+        assert_eq!(skip.revision().as_str(), CANDIDATE_THREE);
+        assert!(!skip.is_first_bad());
+
+        let bad = git.bisect_bad(dir).await.unwrap();
+        assert_eq!(bad.revision().as_str(), FIRST_BAD);
+        assert!(bad.is_first_bad());
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0].args_str(), ["bisect", "start", BAD, GOOD]);
+        assert_eq!(calls[1].args_str(), ["bisect", "good"]);
+        assert_eq!(calls[2].args_str(), ["bisect", "skip"]);
+        assert_eq!(calls[3].args_str(), ["bisect", "bad"]);
+        assert_eq!(calls[1].cwd.as_deref(), Some(dir));
+        assert!(calls.iter().all(|call| {
+            call.envs.iter().any(|(name, value)| {
+                name.to_str() == Some("LC_ALL")
+                    && value.as_deref().and_then(|value| value.to_str()) == Some("C")
+            })
+        }));
+    }
+
+    #[tokio::test]
+    async fn bisect_malformed_or_ambiguous_output_is_parse_error() {
+        let malformed = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "bisect", "good"],
+            Reply::ok("[not-an-object-id] candidate\n"),
+        ));
+        let err = malformed
+            .bisect_good(Path::new("/r"))
+            .await
+            .expect_err("malformed object id must not be accepted");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+
+        let ambiguous = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "bisect", "skip"],
+            Reply::ok(
+                "There are only 'skip'ped commits left to test.\n\
+                 [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] one\n\
+                 [bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb] two\n",
+            ),
+        ));
+        let err = ambiguous
+            .bisect_skip(Path::new("/r"))
+            .await
+            .expect_err("multiple possible candidates must not choose one");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+    }
+
+    #[tokio::test]
+    async fn bisect_nonzero_exit_preserves_structured_error() {
+        let git =
+            Git::with_runner(ScriptedRunner::new().on(
+                ["git", "bisect", "bad"],
+                Reply::fail(128, "fatal: no bisect session").with_stdout(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa is the first bad commit\n",
+                ),
+            ));
+        let err = git
+            .bisect_bad(Path::new("/r"))
+            .await
+            .expect_err("git's non-zero result must not be parsed as success");
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Exit {
+                code: 128,
+                stderr,
+                ..
+            } if stderr.contains("no bisect session")
+        ));
     }
 
     // A non-zero exit surfaces as a structured `ErrorReason::Exit`.

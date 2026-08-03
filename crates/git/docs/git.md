@@ -645,6 +645,50 @@ async fn is_merge_in_progress(&self, dir: &Path) -> Result<bool>;
   under the git dir.
 - **`is_merge_in_progress`** — `true` when `MERGE_HEAD` exists under the git dir.
 
+## Bisect sessions
+
+```rust,ignore
+async fn bisect_start(
+    &self,
+    dir: &Path,
+    bad: &RevSpec,
+    good: &RevSpec,
+) -> Result<BisectStep>;
+async fn bisect_good(&self, dir: &Path) -> Result<BisectStep>;
+async fn bisect_bad(&self, dir: &Path) -> Result<BisectStep>;
+async fn bisect_skip(&self, dir: &Path) -> Result<BisectStep>;
+async fn bisect_reset(&self, dir: &Path) -> Result<()>;
+```
+
+`bisect_start` emits exactly `bisect start <bad> <good>`; the other methods emit
+`bisect good`, `bisect bad`, or `bisect skip`. `bad` and `good` are validated
+[`RevSpec`] values, so they cannot smuggle a leading flag into Git's argv.
+Each classification returns a [`BisectStep`]: `NextCandidate` means Git has
+checked out the returned revision for the caller's test, while `FirstBad` means
+the search is complete. The caller owns the test/classification loop — these
+methods never run a test command or closure. Git's ambiguous skip output is a
+parse error rather than a guessed commit. Call `bisect_reset` when the session
+finishes or is abandoned so the original branch/checkout is restored.
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_git::{BisectStep, Git, GitApi, RevSpec};
+# async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
+let good = RevSpec::new("main")?;
+let bad = RevSpec::new("HEAD")?;
+let mut step = git.bisect_start(repo, &bad, &good).await?;
+loop {
+    if step.is_first_bad() {
+        println!("first bad: {}", step.revision());
+        break;
+    }
+    // Run the consumer's regression test at step.revision(), then classify it.
+    step = git.bisect_good(repo).await?;
+}
+git.bisect_reset(repo).await?;
+# Ok(()) }
+```
+
 ```rust,ignore
 # use std::path::Path;
 # use vcs_git::{Git, GitApi};
