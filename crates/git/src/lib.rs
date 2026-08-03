@@ -187,9 +187,10 @@ pub const BINARY: &str = "git";
 
 mod specs;
 pub use specs::{
-    AnnotatedTag, BranchDelete, CheckoutTarget, Clean, CleanIgnored, CloneSpec, CommitPaths,
-    GitCapabilities, GitPush, MergeCheck, MergeCheckPartial, MergeCommit, MergeNoCommit, RefName,
-    RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, BranchDelete, CheckoutTarget, Clean, CleanIgnored, CloneFilter, CloneSpec,
+    CommitPaths, GitCapabilities, GitPush, MergeCheck, MergeCheckPartial, MergeCommit,
+    MergeNoCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate, WorktreeAdd,
+    WorktreeRemove,
 };
 
 /// The Git operations this crate exposes — the interface consumers code against
@@ -2355,6 +2356,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // would run an arbitrary local program. A real URL never leads with `-`,
         // so this guard has no false positives.
         reject_flag_like("url", url)?;
+        validate_clone_spec(&spec)?;
         // No working directory: clone creates `dest` itself, so `dest` should
         // be absolute (a relative path would resolve against this process' cwd).
         // Leading `-c` credential.helper (+ secret env) when a provider is set,
@@ -2364,17 +2366,8 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .remote_credentials(vcs_cli_support::https_host(url).as_deref())
             .await?;
         let mut initial: Vec<String> = pre;
-        initial.push("clone".to_string());
-        let mut command = self.core.command(&initial);
-        if let Some(branch) = spec.branch.as_deref() {
-            command = command.arg("--branch").arg(branch);
-        }
-        if let Some(depth) = spec.depth {
-            command = command.arg("--depth").arg(depth.to_string());
-        }
-        if spec.bare {
-            command = command.arg("--bare");
-        }
+        initial.extend(clone_args(&spec, false));
+        let command = self.core.command(&initial);
         // `budget_diagnostics`: bound the retained clone progress/failure output
         // (a drop-oldest tail — never `OutputTooLarge`, so a real failure stays a
         // classifiable `ErrorReason::Exit`). Unbounded by default.
@@ -2413,21 +2406,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         progress: &'a mut ProgressCallback<'a>,
     ) -> Result<()> {
         reject_flag_like("url", url)?;
+        validate_clone_spec(&spec)?;
         let (pre, envs) = self
             .remote_credentials(vcs_cli_support::https_host(url).as_deref())
             .await?;
         let mut initial: Vec<String> = pre;
-        initial.extend(["clone", "--progress"].map(String::from));
-        let mut command = self.core.command(&initial);
-        if let Some(branch) = spec.branch.as_deref() {
-            command = command.arg("--branch").arg(branch);
-        }
-        if let Some(depth) = spec.depth {
-            command = command.arg("--depth").arg(depth.to_string());
-        }
-        if spec.bare {
-            command = command.arg("--bare");
-        }
+        initial.extend(clone_args(&spec, true));
+        let command = self.core.command(&initial);
         let command = self.core.budget_diagnostics(apply_secret_env(
             command
                 .arg(url)
@@ -2806,6 +2791,50 @@ fn c_locale(cmd: processkit::Command) -> processkit::Command {
 /// ~45 call sites stay `reject_flag_like(what, value)`.
 fn reject_flag_like(what: &str, value: &str) -> Result<()> {
     vcs_cli_support::reject_flag_like(BINARY, what, value)
+}
+
+/// Validate the caller-controlled values that `clone` puts in option slots
+/// before credential resolution or any runner call. `--origin` is a flag-value
+/// position, but git treats another leading dash as a new option when the value
+/// is missing or malformed, so keep it behind the same project guard as bare
+/// positional names.
+fn validate_clone_spec(spec: &CloneSpec) -> Result<()> {
+    if let Some(origin) = spec.origin.as_deref() {
+        reject_flag_like("origin name", origin)?;
+    }
+    Ok(())
+}
+
+/// Build the clone-specific argv suffix once for both clone surfaces. Keeping
+/// this in one place prevents progress reporting from drifting away from the
+/// ordinary clone's option order or omission rules.
+fn clone_args(spec: &CloneSpec, progress: bool) -> Vec<String> {
+    let mut args = vec!["clone".to_string()];
+    if progress {
+        args.push("--progress".to_string());
+    }
+    if let Some(branch) = spec.branch.as_deref() {
+        args.push("--branch".to_string());
+        args.push(branch.to_string());
+    }
+    if let Some(depth) = spec.depth {
+        args.push("--depth".to_string());
+        args.push(depth.to_string());
+    }
+    if let Some(filter) = spec.filter {
+        args.push(format!("--filter={}", filter.cli_value()));
+    }
+    if spec.single_branch {
+        args.push("--single-branch".to_string());
+    }
+    if let Some(origin) = spec.origin.as_deref() {
+        args.push("--origin".to_string());
+        args.push(origin.to_string());
+    }
+    if spec.bare {
+        args.push("--bare".to_string());
+    }
+    args
 }
 
 /// [`reject_flag_like`] for a bare positional **path** argv slot (worktree
@@ -6361,6 +6390,117 @@ mod tests {
             .await
             .expect("clone");
         assert_eq!(bare.only_call().args_str(), ["clone", "u", "/d"]);
+    }
+
+    #[tokio::test]
+    async fn clone_surfaces_share_typed_large_repo_flags_and_order() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec);
+        let spec = CloneSpec::new()
+            .branch("main")
+            .depth(2)
+            .filter(CloneFilter::BlobNone)
+            .single_branch()
+            .origin("upstream")
+            .bare();
+        git.clone_repo("https://example.com/r.git", Path::new("/dest"), spec)
+            .await
+            .expect("clone");
+
+        let mut progress = |_event: ProcessEvent| {};
+        git.clone_repo_with_progress(
+            "https://example.com/r.git",
+            Path::new("/dest-progress"),
+            CloneSpec::new()
+                .branch("main")
+                .depth(2)
+                .filter(CloneFilter::TreeZero)
+                .single_branch()
+                .origin("upstream")
+                .bare(),
+            &mut progress,
+        )
+        .await
+        .expect("progress clone");
+
+        let calls = rec.calls();
+        assert_eq!(
+            calls[0].args_str(),
+            [
+                "clone",
+                "--branch",
+                "main",
+                "--depth",
+                "2",
+                "--filter=blob:none",
+                "--single-branch",
+                "--origin",
+                "upstream",
+                "--bare",
+                "https://example.com/r.git",
+                "/dest"
+            ]
+        );
+        assert_eq!(
+            calls[1].args_str(),
+            [
+                "clone",
+                "--progress",
+                "--branch",
+                "main",
+                "--depth",
+                "2",
+                "--filter=tree:0",
+                "--single-branch",
+                "--origin",
+                "upstream",
+                "--bare",
+                "https://example.com/r.git",
+                "/dest-progress"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn clone_rejects_invalid_origin_before_runner_for_both_surfaces() {
+        for origin in ["", " ", "--upload-pack=evil", "bad\0name"] {
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let git = Git::with_runner(&rec);
+            let result = git
+                .clone_repo(
+                    "https://example.com/r.git",
+                    Path::new("/dest"),
+                    CloneSpec::new().origin(origin),
+                )
+                .await;
+            assert!(matches!(
+                err_reason(&result),
+                Some(ErrorReason::Spawn { source, .. })
+                    if source.kind() == std::io::ErrorKind::InvalidInput
+            ));
+            assert!(rec.calls().is_empty(), "invalid origin must not spawn");
+
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let git = Git::with_runner(&rec);
+            let mut progress = |_event: ProcessEvent| {};
+            let result = git
+                .clone_repo_with_progress(
+                    "https://example.com/r.git",
+                    Path::new("/dest"),
+                    CloneSpec::new().origin(origin),
+                    &mut progress,
+                )
+                .await;
+            assert!(matches!(
+                err_reason(&result),
+                Some(ErrorReason::Spawn { source, .. })
+                    if source.kind() == std::io::ErrorKind::InvalidInput
+            ));
+            assert!(
+                rec.calls().is_empty(),
+                "invalid origin must not spawn through progress"
+            );
+        }
     }
 
     // R7: a failed clone cleans a `dest` it could have *created* (absent or empty) so

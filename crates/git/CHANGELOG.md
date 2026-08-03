@@ -25,6 +25,10 @@ crates; tag releases as `vcs-git-v<version>`.
 - Add typed `fetch_with_progress`, `push_with_progress`, and
   `clone_repo_with_progress` methods. They stream process lifecycle/output
   events, force Git progress for piped output, and retain clone cleanup safety.
+- Extend `CloneSpec` with typed partial-clone filters (`blob:none` and `tree:0`),
+  `single_branch()`, and validated custom remote names via `origin(name)`. Both
+  clone methods emit the same option argv, with hermetic pre-spawn validation
+  and local bare-remote coverage for the Git-only flags.
 
 ### Added
 - `GitApi::remote_list` (also on `GitAt`): typed `git remote -v` listing. Its

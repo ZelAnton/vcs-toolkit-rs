@@ -134,6 +134,26 @@ impl GitPush {
     }
 }
 
+/// The partial-clone object filter for [`GitApi::clone_repo`] (`git clone
+/// --filter=<value>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CloneFilter {
+    /// Omit blobs until they are needed (`--filter=blob:none`).
+    BlobNone,
+    /// Omit trees until they are needed (`--filter=tree:0`).
+    TreeZero,
+}
+
+impl CloneFilter {
+    pub(crate) fn cli_value(self) -> &'static str {
+        match self {
+            Self::BlobNone => "blob:none",
+            Self::TreeZero => "tree:0",
+        }
+    }
+}
+
 /// Options for [`GitApi::clone_repo`] (`git clone`).
 ///
 /// `#[non_exhaustive]`, so build it through [`CloneSpec::new`] and the chained
@@ -147,6 +167,14 @@ pub struct CloneSpec {
     /// the flag for a plain local-path source (warns, still clones fully);
     /// use a `file://` URL to shallow-clone locally.
     pub depth: Option<u32>,
+    /// Use a partial-clone object filter (`--filter=blob:none` or
+    /// `--filter=tree:0`).
+    pub filter: Option<CloneFilter>,
+    /// Limit the clone to the selected branch (`--single-branch`).
+    pub single_branch: bool,
+    /// Name the remote created by the clone instead of `origin` (`--origin`).
+    /// The value is checked before spawning git.
+    pub origin: Option<String>,
     /// Create a bare repository (`--bare`).
     pub bare: bool,
 }
@@ -167,6 +195,26 @@ impl CloneSpec {
     /// local-path caveat.
     pub fn depth(mut self, depth: u32) -> Self {
         self.depth = Some(depth);
+        self
+    }
+
+    /// Use a partial clone filter (`--filter=<value>`).
+    pub fn filter(mut self, filter: CloneFilter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
+
+    /// Restrict the clone to the selected branch (`--single-branch`).
+    pub fn single_branch(mut self) -> Self {
+        self.single_branch = true;
+        self
+    }
+
+    /// Name the clone's remote `name` instead of `origin` (`--origin <name>`).
+    /// The value is rejected before spawning if it is empty, flag-like, or
+    /// contains an embedded NUL.
+    pub fn origin(mut self, name: impl Into<String>) -> Self {
+        self.origin = Some(name.into());
         self
     }
 

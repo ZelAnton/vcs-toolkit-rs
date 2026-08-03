@@ -670,6 +670,12 @@ async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
 
 - **`clone_repo`** — `git clone <url> <dest>` plus [`CloneSpec`](#clonespec) flags.
   Runs without a working directory — pass an **absolute** `dest`. Prompt-off.
+  `clone_repo_with_progress` emits the same clone options and adds Git's
+  `--progress` flag while streaming process events.
+- The partial-clone, `--single-branch`, and custom `--origin` options described
+  below are **Git-only**. The separate `vcs-jj` backend's `jj git clone` exposes
+  only its explicit `--colocate`/`--no-colocate` choice; it does not provide
+  these Git clone flags.
 - **`tag_create`** — a lightweight tag at `rev` (`tag <name> [<rev>]`; `None` = HEAD).
 - **`tag_create_annotated`** — `tag -a <name> -m <message> [<rev>]`; built through
   [`AnnotatedTag`](#annotatedtag).
@@ -688,13 +694,18 @@ async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, AnnotatedTag, CloneSpec};
+# use vcs_git::{Git, GitApi, AnnotatedTag, CloneFilter, CloneSpec};
 # async fn demo(git: &Git) -> Result<(), processkit::Error> {
 git.clone_repo(
     "https://example.com/repo.git",
     Path::new("/abs/dest"),
-    CloneSpec::new().branch("main").depth(1),
-).await?;                                                    // shallow, single branch
+    CloneSpec::new()
+        .branch("main")
+        .depth(1)
+        .filter(CloneFilter::BlobNone)
+        .single_branch()
+        .origin("upstream"),
+).await?;                                                    // shallow partial clone
 
 let repo = Path::new("/abs/dest");
 git.tag_create_annotated(repo, AnnotatedTag::new("v1.0.0", "first release")).await?;
@@ -1091,17 +1102,33 @@ the chained setters.
 pub fn new() -> Self;                          // a plain full clone of the default branch
 pub fn branch(self, branch: impl Into<String>) -> Self; // --branch
 pub fn depth(self, depth: u32) -> Self;        // --depth (see local-path caveat below)
+pub fn filter(self, filter: CloneFilter) -> Self; // --filter=blob:none or --filter=tree:0
+pub fn single_branch(self) -> Self;             // --single-branch
+pub fn origin(self, name: impl Into<String>) -> Self; // --origin <name>
 pub fn bare(self) -> Self;                     // --bare
 ```
 
-Fields: `branch: Option<String>`, `depth: Option<u32>`, `bare: bool`.
+Fields: `branch: Option<String>`, `depth: Option<u32>`,
+`filter: Option<CloneFilter>`, `single_branch: bool`, `origin: Option<String>`,
+`bare: bool`.
 
 `depth` is silently ignored by git for a plain local-path source (it warns and
-clones fully); use a `file://` URL to shallow-clone locally.
+clones fully); use a `file://` URL to shallow-clone locally. `CloneFilter::BlobNone`
+requests `--filter=blob:none` (blobless) and `CloneFilter::TreeZero` requests
+`--filter=tree:0` (treeless). `origin` is checked before git is spawned and
+rejects empty, whitespace-only, flag-like, or NUL-containing names.
+
+`CloneFilter` is a Git-specific enum; `jj git clone` has no corresponding
+partial-clone or single-branch/origin flags.
 
 ```rust,ignore
-# use vcs_git::CloneSpec;
-let spec = CloneSpec::new().branch("main").depth(1);
+# use vcs_git::{CloneFilter, CloneSpec};
+let spec = CloneSpec::new()
+    .branch("main")
+    .depth(1)
+    .filter(CloneFilter::TreeZero)
+    .single_branch()
+    .origin("upstream");
 let bare = CloneSpec::new().bare();
 # let _ = (spec, bare);
 ```

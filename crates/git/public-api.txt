@@ -2911,6 +2911,25 @@ impl core::marker::Unpin for vcs_git::CleanIgnored
 impl core::marker::UnsafeUnpin for vcs_git::CleanIgnored
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::CleanIgnored
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::CleanIgnored
+#[non_exhaustive] pub enum vcs_git::CloneFilter
+pub vcs_git::CloneFilter::BlobNone
+pub vcs_git::CloneFilter::TreeZero
+impl core::clone::Clone for vcs_git::CloneFilter
+pub fn vcs_git::CloneFilter::clone(&self) -> vcs_git::CloneFilter
+impl core::cmp::Eq for vcs_git::CloneFilter
+impl core::cmp::PartialEq for vcs_git::CloneFilter
+pub fn vcs_git::CloneFilter::eq(&self, &vcs_git::CloneFilter) -> bool
+impl core::fmt::Debug for vcs_git::CloneFilter
+pub fn vcs_git::CloneFilter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_git::CloneFilter
+impl core::marker::StructuralPartialEq for vcs_git::CloneFilter
+impl core::marker::Freeze for vcs_git::CloneFilter
+impl core::marker::Send for vcs_git::CloneFilter
+impl core::marker::Sync for vcs_git::CloneFilter
+impl core::marker::Unpin for vcs_git::CloneFilter
+impl core::marker::UnsafeUnpin for vcs_git::CloneFilter
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::CloneFilter
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::CloneFilter
 #[non_exhaustive] pub enum vcs_git::SubmoduleState
 pub vcs_git::SubmoduleState::Conflict
 pub vcs_git::SubmoduleState::Current
@@ -3092,11 +3111,17 @@ impl core::panic::unwind_safe::UnwindSafe for vcs_git::CleanEntry
 pub vcs_git::CloneSpec::bare: bool
 pub vcs_git::CloneSpec::branch: core::option::Option<alloc::string::String>
 pub vcs_git::CloneSpec::depth: core::option::Option<u32>
+pub vcs_git::CloneSpec::filter: core::option::Option<vcs_git::CloneFilter>
+pub vcs_git::CloneSpec::origin: core::option::Option<alloc::string::String>
+pub vcs_git::CloneSpec::single_branch: bool
 impl vcs_git::CloneSpec
 pub fn vcs_git::CloneSpec::bare(self) -> Self
 pub fn vcs_git::CloneSpec::branch(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_git::CloneSpec::depth(self, u32) -> Self
+pub fn vcs_git::CloneSpec::filter(self, vcs_git::CloneFilter) -> Self
 pub fn vcs_git::CloneSpec::new() -> Self
+pub fn vcs_git::CloneSpec::origin(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_git::CloneSpec::single_branch(self) -> Self
 impl core::clone::Clone for vcs_git::CloneSpec
 pub fn vcs_git::CloneSpec::clone(&self) -> vcs_git::CloneSpec
 impl core::default::Default for vcs_git::CloneSpec

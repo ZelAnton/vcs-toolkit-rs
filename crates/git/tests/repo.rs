@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 // rather than `GitSandbox::init`. Note `configure_identity` also pins
 // `core.autocrlf=false`, keeping byte-exact content assertions valid on Windows.
 use vcs_git::{
-    AnnotatedTag, CheckoutTarget, Clean, CommitPaths, ErrorReason, Git, GitApi, MergeCheck,
-    MergeCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleState, SubmoduleUpdate,
-    WorktreeAdd, WorktreeRemove,
+    AnnotatedTag, CheckoutTarget, Clean, CloneFilter, CommitPaths, ErrorReason, Git, GitApi,
+    MergeCheck, MergeCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleState,
+    SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
 use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
 
@@ -700,7 +700,11 @@ async fn clone_repo_from_local_bare_remote() {
     git.clone_repo(
         remote.url().as_str(),
         &dest,
-        vcs_git::CloneSpec::new().branch("main"),
+        vcs_git::CloneSpec::new()
+            .branch("main")
+            .filter(CloneFilter::BlobNone)
+            .single_branch()
+            .origin("upstream"),
     )
     .await
     .expect("clone");
@@ -711,6 +715,12 @@ async fn clone_repo_from_local_bare_remote() {
     assert_eq!(
         git.current_branch(&dest).await.expect("branch").as_deref(),
         Some("main")
+    );
+    assert_eq!(
+        git.config_get(&dest, "remote.upstream.url")
+            .await
+            .expect("origin url"),
+        Some(remote.url())
     );
 }
 
