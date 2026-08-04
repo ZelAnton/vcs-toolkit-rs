@@ -900,9 +900,9 @@ dependencies = [
 
 [[package]]
 name = "processkit"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1728d92a6cfe686aacdaef7a81c3f2364dbf005fa86cf4c3b5b005039cf6e157"
+checksum = "13f3741b7f1bfc541ed7870138be30e44e60dca5dfbe9592697eef6a8f1da3b2"
 dependencies = [
  "async-trait",
  "encoding_rs",
@@ -1380,6 +1380,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

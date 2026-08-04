@@ -73,8 +73,11 @@ authors = ["Anton Zhelezniakou"]
 #   * The output-event stream was renamed with no deprecated aliases
 #     (`output_events()`→`events()`, `OutputEvent`→`ProcessEvent`,
 #     `OutputEvents`→`ProcessEvents`) and now has to be joined via its `finish()`
-#     finisher; verified by rg that this workspace drives no such stream and names none
-#     of those items.
+#     finisher. This workspace drove no such stream when 3.0 landed, and does now:
+#     `vcs_cli_support::run_with_progress_within` polls `events()` concurrently with
+#     `finish()` and re-exports `ProcessEvent`. It was written against the post-3.0
+#     names and the finisher join from the start, so nothing here carries a 2.x
+#     spelling.
 #   * Output-limit accounting switched from decoded line-content bytes to raw bytes read
 #     from the pipe. This workspace does set byte caps — `vcs_cli_support::OutputBudget`
 #     projects onto `OutputBufferPolicy::max_bytes`. Audited site by site (T-130), the
@@ -106,6 +109,64 @@ authors = ["Anton Zhelezniakou"]
 #     multi-hour CI. The other new 3.1 controls (CPU affinity and named-pipe readiness)
 #     are intentionally left opt-in for callers: VCS wrappers must not impose scheduler
 #     policy or assume that a command is a local Windows service.
+# What 3.2 adds, and what this workspace takes from it: nothing this build compiles
+# behaves differently, so the bump is a lockfile refresh rather than an adoption. Audited
+# against the published 3.2.0 crate source, not the release notes: `buffer.rs`, `pump.rs`,
+# `stdin.rs`, `lookup.rs`, `retry.rs`, `doubles.rs` and `cassette.rs` are byte-identical to
+# 3.1.0 — so no output-byte accounting unit, `PATH`-search algorithm, retry, mock or
+# cassette behaviour moved — and the crate's own `public-api.txt` grows by 193 lines with
+# none removed or changed. Per audited area:
+#   * Executable resolution and environment. The spawn-free preflight and the post-spawn
+#     `NotFound` enrichment now resolve a bare name against the command's *effective
+#     child* `PATH` (one shared `resolution_path_source()`) instead of skipping the search
+#     whenever a command relocates `PATH`. Not applicable: nothing here relocates a child
+#     `PATH` — every `env`/`env_remove` sets a `GIT_*`/`JJ_CONFIG`/`LC_ALL`/token variable,
+#     and there is no `env_clear`/`inherit_env` anywhere — so `customizes_path()` is false
+#     for every command this workspace builds and both versions take the same
+#     `PathSource::ProcessPath` branch.
+#   * Supervision, readiness and pipelines. The typed `SupervisionEvent` lifecycle stream,
+#     the `Supervisor` session, opt-in per-stage stderr merging (`merge_stderr_in_pipe`)
+#     and the pipeline teardown-drain fix all sit on surfaces this workspace never names:
+#     it runs one child at a time through `ProcessRunner`/`CliClient` and builds no
+#     `Pipeline`, and `vcs-watch` owns no `ProcessGroup` of its own — its bounded re-query
+#     relies on `JobRunner`'s kill-on-drop group, reached through `vcs-core`.
+#     `run_with_progress_within`'s `events()`/`finish()` path is untouched: everything
+#     added to processkit's stream module is behind the `json` feature.
+#   * Graceful cancellation ladder. `Command::cancel_grace`/`cancel_signal` route a fired
+#     `cancel_on` token through the same soft-signal → grace → hard-kill ladder as
+#     `timeout_grace`/`timeout_signal`. Deliberately not adopted: left unset (the default)
+#     a cancellation is still an immediate whole-tree kill, and the runner's teardown bound
+#     is `grace.max(cancel_grace.unwrap_or(ZERO))` — unchanged without the knob. The
+#     clients here expose `default_cancel_on` so a *caller* supplies the token, and the
+#     `fetch`/`clone` verbs keep their own `timeout_grace`; how long a cancellation should
+#     wait before killing is consumer policy, the same reason 3.1's controls stayed opt-in.
+#   * Windows. The ConPTY fixes and the PTY terminal-EOF fix stay behind the non-default
+#     `pty` feature (they live in the PTY launch path), which no crate here enables — the
+#     same answer the 3.0 ConPTY note records. Two Windows changes do land on the ordinary
+#     piped backend and are taken as they are: a freshly contained child's threads are now
+#     resumed by a per-process `NtGetNextThread` walk, with the system-wide Toolhelp
+#     snapshot kept as the fallback, cutting fixed start cost with containment unchanged;
+#     and every ProcessKit child creation now serializes on one process-global spawn mutex
+#     so an ordinary spawn cannot observe ConPTY's standard-handle swap. That mutex is held
+#     across `CreateProcess` only — never across an await, never for a child's lifetime —
+#     so concurrently running children still overlap.
+#   * The one upstream change that is not compiler-caught: POSIX
+#     `ProcessGroup::suspend`/`resume` now report a genuine `SIGSTOP`/`SIGCONT` delivery
+#     failure as `ErrorReason::Io`. Not applicable — nothing here constructs or drives a
+#     `ProcessGroup` directly.
+#   * The new opt-in surfaces are all declined, and no new cargo feature is enabled:
+#     `report-serde` and `json` (report serialization, `output_json`, NDJSON `JsonLines`)
+#     — these crates own their parse contracts and already hand back typed values, and the
+#     forge wrappers decode CLI output through their own `parse` modules; `wait_for_path`
+#     and the HTTP status probe — service-readiness probes, while a VCS command is run to
+#     completion rather than waited on for a pidfile or a port; `arg0` and the typed Unix
+#     `rlimit` builders — multicall and resource policy belong to the host application, not
+#     to a wrapper; `limit_evidence`/`LimitVerdict` (behind `limits`) and the FreeBSD
+#     process-reaper containment — this workspace sets no resource caps and ships no
+#     FreeBSD-specific path.
+# The requirement deliberately stays `"3.1"`: nothing here uses a 3.2-only API, so raising
+# the floor would constrain downstream resolution for no gain. The caret already spans
+# 3.2.x and the committed lock pins 3.2.0.
 processkit = "3.1"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
