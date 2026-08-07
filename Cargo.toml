@@ -184,11 +184,11 @@ authors = ["Anton Zhelezniakou"]
 #     FreeBSD-specific path.
 # At BASE the requirement deliberately stayed `"3.1"`: nothing here used a 3.2-only API,
 # so raising the floor would constrain downstream resolution for no gain. The caret spans
-# the 3.x line and the BASE lock pinned 3.2.0.
-# What 3.3 adds, and what this workspace takes from it: the lock now resolves 3.3.0, but
-# the floor remains `"3.1"` and no 3.3-only feature is enabled. The published 3.2.0 and
-# 3.3.0 source trees were compared from Cargo's registry cache; each changed runtime area
-# was then checked against the BASE call sites below:
+# the 3.x line and the BASE lock pinned 3.3.0.
+# The 3.3 audit below compares the published 3.2.0 and 3.3.0 source trees; both the BASE
+# and current locks resolve 3.3.0, while the BASE manifest floor remains `"3.1"` and no
+# 3.3-only feature is enabled. Each changed runtime area was then checked against the
+# BASE call sites below:
 #   * `pump`: 3.3's live partial-tail salvage/sealing changes are internal to the line
 #     sinks. The only production stream consumer here is
 #     `crates/cli-support/src/lib.rs:196-222` (`events()` joined with `finish()`), while
