@@ -1479,6 +1479,10 @@ pub struct ManagedClient<R: ProcessRunner = JobRunner> {
     /// [`run_untrimmed_within`](Self::run_untrimmed_within) /
     /// [`run_with_progress_within`](Self::run_with_progress_within).
     output_budget: OutputBudget,
+    /// Optional resettable output-inactivity window applied to streamed runs.
+    /// `None` preserves the pre-watchdog behaviour: a streamed command is bounded
+    /// only by its absolute deadline or cancellation policy.
+    inactivity_timeout: Option<Duration>,
 }
 
 impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
@@ -1498,6 +1502,7 @@ impl<R: ProcessRunner> fmt::Debug for ManagedClient<R> {
             .field("has_cancel", &self.cancel.is_some())
             // A small plain cap (no secret) — safe to render.
             .field("output_budget", &self.output_budget)
+            .field("inactivity_timeout", &self.inactivity_timeout)
             .finish()
     }
 }
@@ -1514,6 +1519,7 @@ impl ManagedClient<JobRunner> {
             expected_host: None,
             cancel: None,
             output_budget: OutputBudget::unlimited(),
+            inactivity_timeout: None,
         }
     }
 }
@@ -1529,6 +1535,7 @@ impl<R: ProcessRunner> ManagedClient<R> {
             expected_host: None,
             cancel: None,
             output_budget: OutputBudget::unlimited(),
+            inactivity_timeout: None,
         }
     }
 
@@ -1661,6 +1668,21 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Apply a default timeout to every command this client builds.
     pub fn default_timeout(mut self, timeout: Duration) -> Self {
         self.inner = self.inner.default_timeout(timeout);
+        self
+    }
+
+    /// Set the resettable output-inactivity window for streamed runs.
+    ///
+    /// The default is disabled (`None`), preserving the pre-watchdog behaviour.
+    /// The window is applied only by [`run_with_progress`](Self::run_with_progress)
+    /// and its per-call budgeted sibling; captured commands keep their existing
+    /// absolute-timeout, retry, credential, and cleanup semantics. A successful
+    /// read from either output stream resets the window. For `jj` callers this is
+    /// an explicit opt-in: unlike Git's `--progress`, jj does not force progress
+    /// when stderr is piped, so a configured window is safe only when the selected
+    /// jj version/environment emits progress under that transport.
+    pub fn default_inactivity_timeout(mut self, timeout: Duration) -> Self {
+        self.inactivity_timeout = Some(timeout);
         self
     }
 
@@ -1821,7 +1843,10 @@ impl<R: ProcessRunner> ManagedClient<R> {
         progress: &mut ProgressCallback<'_>,
         budget: OutputBudget,
     ) -> Result<()> {
-        let cmd = self.prepare(call).await?;
+        let mut cmd = self.prepare(call).await?;
+        if let Some(timeout) = self.inactivity_timeout {
+            cmd = cmd.inactivity_timeout(timeout);
+        }
         crate::run_with_progress_within(self.inner.runner(), &cmd, progress, budget).await
     }
 
@@ -2056,6 +2081,90 @@ mod tests {
             debug.contains("windows_graceful_ctrl_break: false"),
             "the Windows-only trigger must remain a Unix no-op: {debug}"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn managed_client_stream_watchdog_is_disabled_by_default() {
+        let client = ManagedClient::with_runner(
+            "tool",
+            ScriptedRunner::new().on(
+                ["tool", "network-op"],
+                Reply::lines(["late"]).with_line_delay(Duration::from_secs(10)),
+            ),
+        );
+        assert!(
+            client
+                .command(["network-op"])
+                .configured_inactivity_timeout()
+                .is_none(),
+            "the new watchdog must not alter an unconfigured command"
+        );
+
+        let mut progress = |_event: ProcessEvent| {};
+        client
+            .run_with_progress(client.command(["network-op"]), &mut progress)
+            .await
+            .expect("the default-disabled stream remains compatible with slow output");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn managed_client_stream_watchdog_distinguishes_inactivity_from_deadline() {
+        let delayed = || {
+            ScriptedRunner::new().on(
+                ["tool", "network-op"],
+                Reply::lines(["late"]).with_line_delay(Duration::from_secs(10)),
+            )
+        };
+
+        let watchdog = ManagedClient::with_runner("tool", delayed())
+            .default_inactivity_timeout(Duration::from_secs(3));
+        let mut progress = |_event: ProcessEvent| {};
+        let err = watchdog
+            .run_with_progress(watchdog.command(["network-op"]), &mut progress)
+            .await
+            .expect_err("the inactivity watchdog must fire before the delayed line");
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Timeout {
+                timeout,
+                inactivity: true,
+                ..
+            } if *timeout == Duration::from_secs(3)
+        ));
+
+        let deadline = ManagedClient::with_runner("tool", delayed())
+            .default_timeout(Duration::from_secs(3))
+            .default_inactivity_timeout(Duration::from_secs(30));
+        let err = deadline
+            .run_with_progress(deadline.command(["network-op"]), &mut progress)
+            .await
+            .expect_err("the absolute deadline must remain a distinct outcome");
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Timeout {
+                timeout,
+                inactivity: false,
+                ..
+            } if *timeout == Duration::from_secs(3)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn managed_client_stream_watchdog_resets_for_legitimately_slow_output() {
+        let client = ManagedClient::with_runner(
+            "tool",
+            ScriptedRunner::new().on(
+                ["tool", "network-op"],
+                Reply::lines(["one", "two", "three"]).with_line_delay(Duration::from_secs(2)),
+            ),
+        )
+        .default_inactivity_timeout(Duration::from_secs(3));
+        let mut progress = |_event: ProcessEvent| {};
+
+        client
+            .run_with_progress(client.command(["network-op"]), &mut progress)
+            .await
+            .expect("each output line resets the watchdog");
     }
 
     // Processkit 3.3 makes the late-cancellation boundary explicit: a token is

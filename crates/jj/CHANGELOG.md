@@ -10,6 +10,10 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Changed
+- Add the default-disabled `Jj::default_inactivity_timeout` watchdog for
+  progress-streaming git fetch, push, and clone. Because jj has no general
+  progress flag and piped stderr may provide only sparse status, callers should
+  enable it only for a verified jj environment.
 - `git fetch`, `git push`, and `git clone` cancellation now uses the same two-second
   grace and platform soft-trigger policy as timeout, including progress variants;
   cancellation remains `ErrorReason::Cancelled`. Transaction rollback keeps its

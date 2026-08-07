@@ -792,6 +792,7 @@ fn normalize_workspace_path(path: &Path) -> Result<PathBuf> {
             _ => parts.push(part),
         }
     }
+
     if parts.is_empty() {
         return Err(Error::parse(
             BINARY,
@@ -809,6 +810,15 @@ fn normalize_workspace_path(path: &Path) -> Result<PathBuf> {
 }
 
 impl<R: ProcessRunner> Jj<R> {
+    /// Set the resettable output-inactivity window for jj's progress-streaming
+    /// git fetch/push/clone methods. Disabled by default. Because jj does not
+    /// force progress when stderr is piped, enable this only when the selected
+    /// jj version/environment emits meaningful progress under that transport.
+    pub fn default_inactivity_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.core = self.core.default_inactivity_timeout(timeout);
+        self
+    }
+
     /// Retry **lock-contention** failures (another process holds jj's working-copy
     /// lock) per `policy` — opt-in, off by default. Safe even for mutating commands:
     /// a lock-acquisition failure is pre-execution (jj never ran). See [`RetryPolicy`]
@@ -3484,6 +3494,29 @@ mod tests {
             assert!(names.contains(&"stderr"));
             assert_eq!(names.last(), Some(&"exited"));
         }
+    }
+
+    #[tokio::test]
+    async fn git_fetch_progress_watchdog_is_explicit_for_piped_jj_output() {
+        let jj = Jj::with_runner(ScriptedRunner::new().on(
+            ["jj", "git", "fetch"],
+            Reply::lines(["late"]).with_line_delay(std::time::Duration::from_millis(50)),
+        ))
+        .default_inactivity_timeout(std::time::Duration::from_millis(5));
+        let mut progress = |_event: ProcessEvent| {};
+
+        let err = jj
+            .git_fetch_with_progress(Path::new("/repo"), &mut progress)
+            .await
+            .expect_err("the explicitly enabled jj watchdog should be observable");
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Timeout {
+                timeout,
+                inactivity: true,
+                ..
+            } if *timeout == std::time::Duration::from_millis(5)
+        ));
     }
 
     #[tokio::test]

@@ -798,6 +798,14 @@ vcs_cli_support::managed_client! {
 }
 
 impl<R: ProcessRunner> Git<R> {
+    /// Set the resettable output-inactivity window for Git's progress-streaming
+    /// fetch/push/clone methods. Disabled by default, preserving all existing
+    /// command timing when it is not configured.
+    pub fn default_inactivity_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.core = self.core.default_inactivity_timeout(timeout);
+        self
+    }
+
     /// Retry **whole-repo lock-contention** failures (another process holds the
     /// repo's `index.lock`) per `policy` — opt-in, off by default. Safe even for
     /// mutating commands: that lock is acquired before any write, so a failure is
@@ -6133,6 +6141,29 @@ mod tests {
             assert!(names.contains(&"stderr"));
             assert_eq!(names.last(), Some(&"exited"));
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_progress_watchdog_is_opt_in_and_reports_inactivity() {
+        let git = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "fetch", "--progress"],
+            Reply::lines(["late"]).with_line_delay(std::time::Duration::from_secs(10)),
+        ))
+        .default_inactivity_timeout(std::time::Duration::from_secs(3));
+        let mut progress = |_event: ProcessEvent| {};
+
+        let err = git
+            .fetch_with_progress(Path::new("/repo"), &mut progress)
+            .await
+            .expect_err("a silent git progress stream should trip the opt-in watchdog");
+        assert!(matches!(
+            err.reason(),
+            ErrorReason::Timeout {
+                timeout,
+                inactivity: true,
+                ..
+            } if *timeout == std::time::Duration::from_secs(3)
+        ));
     }
 
     #[tokio::test]

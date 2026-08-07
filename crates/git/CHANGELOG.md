@@ -10,6 +10,10 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Changed
+- Add the default-disabled `Git::default_inactivity_timeout` watchdog for
+  progress-streaming fetch, push, and clone. Git's existing `--progress` output
+  resets the watchdog, and inactivity remains distinguishable from an absolute
+  deadline without changing credential or failed-clone cleanup behavior.
 - Network `fetch`, `push`, and `clone` cancellation now uses the same two-second
   grace and platform soft-trigger policy as timeout, including progress variants;
   cancellation still maps to `ErrorReason::Cancelled` and cleanup/retry behavior

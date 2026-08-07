@@ -9,6 +9,9 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+- Document the optional, default-disabled streaming output-inactivity watchdog,
+  its separate `ErrorReason::Timeout { inactivity }` classification, and the
+  Git/Jujutsu piped-stderr progress asymmetry.
 - Document that network cancellation uses the shared grace/soft-trigger ladder
   while retaining `ErrorReason::Cancelled`, and clarify that facade/jj rollback
   cleanup uses a fresh cancellation context rather than inheriting the caller's

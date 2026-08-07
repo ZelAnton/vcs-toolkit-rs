@@ -9,6 +9,9 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ## [Unreleased]
 
+- Add `ManagedClient::default_inactivity_timeout` for streamed runs. It is
+  disabled by default and preserves captured-command timeout, retry, credential,
+  and cleanup behavior while retaining the separate inactivity-timeout result.
 - Apply the shared `FETCH_TIMEOUT_GRACE` to both timeout and cancellation for
   network fetch/push/clone commands. Unix keeps the graceful signal ladder;
   Windows opts console children into `CTRL_BREAK` where delivery is possible,

@@ -67,6 +67,18 @@ a per-command timeout) is set, while its cancellation tier has no effect unless
 hardened, deadlined, cancellable client can be composed from
 `Git::hardened().default_timeout(…).default_cancel_on(token)`.
 
+Streaming clients can also opt into a resettable output-inactivity watchdog with
+`default_inactivity_timeout(Duration)`. The watchdog starts when the child is
+spawned and is reset by each stdout/stderr line; it is disabled by default and
+only applies to the `*_with_progress` methods. Captured commands therefore keep
+their existing deadline, retry, credential, and cleanup behavior. A watchdog
+failure is still `ErrorReason::Timeout`, with `inactivity: true` distinguishing
+it from an absolute deadline (`inactivity: false`). Git's streaming methods pass
+`--progress`, so Git supplies transfer updates on piped stderr. Jujutsu's
+`jj git fetch` has no corresponding progress option, and a live jj 0.38.0 probe
+showed only command-level status on piped stderr; enable the jj watchdog only
+when the selected jj version and transport are known to emit regular output.
+
 The hermetic wrapper tests assert the built timeout/cancellation grace and
 soft-trigger shape and drive the full streamed `events()` → `finish()` lifecycle,
 including cancellation observed after the child exits but before the finisher's
@@ -74,6 +86,11 @@ first exit observation. They do not claim to prove Windows console delivery: a
 normal `cargo test` process does not guarantee a shared console or a child-side
 `CTRL_BREAK` handler, so this workspace does not include an ignored probe that
 would only simulate that boundary.
+
+The watchdog tests use `ScriptedRunner` line delays to cover the disabled default,
+an inactivity timeout, and legitimately slow output. They verify the lifecycle
+and error classification hermetically; they do not claim to prove delivery of
+Windows console control events from a real child process.
 
 ## The error model
 
@@ -110,9 +127,11 @@ needs a direct `processkit` dependency.
   (`CONFLICT (content): …`, `nothing to commit, working tree clean`). Raised by
   the `ensure_success` path; a bare non-zero exit is otherwise *not* treated as
   an error (see `run_raw` below).
-- **`Timeout { program, timeout, stdout, stderr }`** — exceeded its deadline and
-  was killed; carries whatever partial output was captured before the deadline
-  (processkit 0.10), so the reason a hung step stalled is available here.
+- **`Timeout { program, timeout, inactivity, stdout, stderr }`** — exceeded its
+  absolute deadline or its configured output-inactivity window and was killed;
+  `inactivity` is `true` only for the latter. The variant carries whatever
+  partial output was captured before the deadline (processkit 0.10), so the
+  reason a hung step stalled is available here.
 - **`Signalled { program, signal, stdout, stderr }`** — killed by a signal
   (external SIGTERM/SIGKILL), carrying the signal number and partial output
   (processkit 0.9.2/0.10). Terminal — the toolkit never auto-retries it.
