@@ -9,6 +9,12 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ## [Unreleased]
 
+### Changed
+- Route all typed git-sync `fetch`, `push`, and `clone` captured/streaming
+  commands through the shared completion policy. Unix keeps its existing
+  signal/grace behavior; Windows console children now opt into `CTRL_BREAK` with
+  the existing hard-kill fallback when no console delivery is possible.
+
 ### Added
 - **New optional `serde` feature** (off by default) deriving `serde::Serialize`
   on the public conflict model — `conflict::JjConflictSegment`,

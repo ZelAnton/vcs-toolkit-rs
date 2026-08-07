@@ -9,6 +9,10 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ## [Unreleased]
 
+- Centralize the network-command completion policy in
+  `apply_fetch_completion_policy`: it keeps `FETCH_TIMEOUT_GRACE` on Unix and
+  opts Windows console children into processkit's graceful `CTRL_BREAK` tier,
+  with the documented console/detached-child limitations and hard-kill fallback.
 - Add `ProcessEvent`/`ProgressCallback` and the shared
   `run_with_progress`/`ManagedClient::run_with_progress` lifecycle driver. It
   polls processkit 3.1 events beside the finisher, preserves streamed diagnostics

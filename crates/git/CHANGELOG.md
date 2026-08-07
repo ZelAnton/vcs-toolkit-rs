@@ -9,6 +9,12 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+### Changed
+- Route all typed network `fetch`, `push`, and `clone` captured/streaming
+  commands through the shared completion policy. Unix keeps its existing
+  signal/grace behavior; Windows console children now opt into `CTRL_BREAK` with
+  the existing hard-kill fallback when no console delivery is possible.
+
 ### Added
 - Add Git-only typed bisect sessions: `bisect_start` with validated `RevSpec`
   bounds and `bisect_good`/`bisect_bad`/`bisect_skip`, each returning a parsed

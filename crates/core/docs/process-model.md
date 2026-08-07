@@ -40,9 +40,35 @@ let git = Git::new().default_timeout(Duration::from_secs(10));
 ```
 
 A command that outruns its deadline fails with **`processkit::ErrorReason::Timeout {
-program, timeout }`**, and the job — the whole process tree — is killed, not just
-the top process. `default_timeout` chains with the other builders, so a hardened,
-deadlined client is `Git::hardened().default_timeout(…)`.
+program, timeout }`**, and the job — the whole process tree — is eventually killed,
+not just the top process. Network commands additionally use the shared
+`vcs_cli_support::apply_fetch_completion_policy` policy: a two-second grace window
+(`FETCH_TIMEOUT_GRACE`) is retained on every platform, and the processkit hard-kill
+fallback remains the final containment boundary.
+
+The soft tier is platform-specific:
+
+- On Unix, processkit sends its graceful terminate signal, waits through the grace
+  window, and then sends the hard kill if the tree has not exited.
+- On Windows, processkit has no POSIX signal tier. It first tries `WM_CLOSE` for
+  top-level windows and sends console `CTRL_BREAK` to direct children opted in by
+  `windows_graceful_ctrl_break`; a child that handles the event can flush buffers,
+  close its connection, and release locks before the grace expires. A console is
+  required for delivery, so a GUI/service caller without one and a child created
+  with `create_no_window` or `DETACHED_PROCESS` receive no `CTRL_BREAK`; survivors
+  are still terminated by the Job Object.
+
+The helper only configures the completion policy; it does not set a deadline. It
+therefore has no effect unless `default_timeout` (or a per-command timeout) is set.
+`default_timeout` chains with the other builders, so a hardened, deadlined client
+is `Git::hardened().default_timeout(…)`.
+
+The hermetic wrapper tests assert the built grace/soft-trigger shape and drive the
+full streamed `events()` → `finish()` lifecycle, including cancellation observed
+after the child exits but before the finisher's first exit observation. They do not
+claim to prove Windows console delivery: a normal `cargo test` process does not
+guarantee a shared console or a child-side `CTRL_BREAK` handler, so this workspace
+does not include an ignored probe that would only simulate that boundary.
 
 ## The error model
 

@@ -1043,12 +1043,40 @@ pub fn cleanup_failed_clone_dest(dest: &Path, cleanable: bool) {
 pub const FETCH_ATTEMPTS: u32 = 3;
 /// Fixed backoff between fetch retries.
 pub const FETCH_BACKOFF: Duration = Duration::from_millis(500);
-/// Grace period for a timed-out fetch: on the deadline processkit signals the
-/// process tree (terminate), waits this long for it to exit cleanly — flush, close
-/// the connection, drop any lock — then hard-kills. Only takes effect when a
-/// per-client timeout is set (`Git::default_timeout` / `Jj::default_timeout`); a
-/// fetch with no deadline is unaffected.
+/// Grace period for a timed-out network operation: on Unix processkit sends its
+/// graceful terminate signal and waits this long before hard-killing. On Windows
+/// the grace window is useful only when a child has a soft trigger: the shared
+/// [`apply_fetch_completion_policy`] opts console children into `CTRL_BREAK`, and
+/// processkit also tries `WM_CLOSE` for windowed children. A child without a
+/// shared console, including one started with `create_no_window` or
+/// `DETACHED_PROCESS`, skips the soft trigger and falls back to the atomic job
+/// kill. Only takes effect when a per-client timeout is set (`Git::default_timeout`
+/// / `Jj::default_timeout`); a network operation with no deadline is unaffected.
 pub const FETCH_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
+
+/// Apply the shared completion policy to a timed network command.
+///
+/// The policy keeps the existing [`FETCH_TIMEOUT_GRACE`] on every platform. On
+/// Windows it additionally opts the direct console child into `CTRL_BREAK`, so a
+/// child that handles the event can flush buffers, close connections, and release
+/// locks during the grace window. Delivery requires a console shared with the
+/// child; GUI/service callers without one and children created with
+/// [`Command::create_no_window`](processkit::Command::create_no_window) or
+/// `DETACHED_PROCESS` receive no console event. Windowed children may still
+/// receive processkit's best-effort `WM_CLOSE`, and any survivor is hard-killed
+/// after the grace window. On Unix the Windows builder is a no-op, so the
+/// existing signal → grace → hard-kill semantics are unchanged.
+pub fn apply_fetch_completion_policy(command: Command) -> Command {
+    let command = command.timeout_grace(FETCH_TIMEOUT_GRACE);
+    #[cfg(windows)]
+    {
+        command.windows_graceful_ctrl_break()
+    }
+    #[cfg(not(windows))]
+    {
+        command
+    }
+}
 
 /// Lower-case substrings marking a merge that stopped on conflicts.
 const CONFLICT_MARKERS: &[&str] = &["conflict (", "automatic merge failed"];
@@ -1993,6 +2021,24 @@ mod tests {
             events.last(),
             Some(ProcessEvent::Exited(outcome)) if outcome.code() == Some(23)
         ));
+    }
+
+    #[test]
+    fn fetch_completion_policy_records_grace_and_platform_soft_trigger() {
+        let command = apply_fetch_completion_policy(Command::new("git").arg("fetch"));
+        let debug = format!("{command:?}");
+
+        assert!(debug.contains("timeout_grace: Some(2s)"), "{debug}");
+        #[cfg(windows)]
+        assert!(
+            debug.contains("windows_graceful_ctrl_break: true"),
+            "Windows network commands must opt into CTRL_BREAK: {debug}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            debug.contains("windows_graceful_ctrl_break: false"),
+            "the Windows-only trigger must remain a Unix no-op: {debug}"
+        );
     }
 
     // Processkit 3.3 makes the late-cancellation boundary explicit: a token is

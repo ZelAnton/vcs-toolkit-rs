@@ -1842,12 +1842,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
         // still classifies the tail-preserved message). Unbounded by default.
         let cmd = self.core.budget_diagnostics(apply_secret_env(
-            c_locale(self.core.command_in(dir, &args))
-                .env("GIT_TERMINAL_PROMPT", "0")
-                // On a per-client timeout, terminate gracefully (then hard-kill
-                // after a grace window) so a timed-out fetch closes cleanly.
-                .timeout_grace(FETCH_TIMEOUT_GRACE)
-                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.core.command_in(dir, &args))
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    // Unix uses its graceful signal; Windows opts console git into
+                    // CTRL_BREAK when delivery is available, with the existing
+                    // hard-kill fallback for every other child.
+                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            ),
             &envs,
         ));
         self.core.run_unit(cmd).await
@@ -1864,9 +1866,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // processkit pipes stderr rather than attaching a terminal.
         args.extend(["fetch", "--progress"].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
-            c_locale(self.core.command_in(dir, &args))
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.core.command_in(dir, &args)).env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         ));
         self.core.run_with_progress(cmd, progress).await
@@ -1883,10 +1885,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", remote].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
-            c_locale(self.core.command_in(dir, &args))
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout_grace(FETCH_TIMEOUT_GRACE)
-                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.core.command_in(dir, &args))
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            ),
             &envs,
         ));
         self.core.run_unit(cmd).await
@@ -1901,10 +1904,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", "origin", refspec.as_str()].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
-            c_locale(self.core.command_in(dir, &args))
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout_grace(FETCH_TIMEOUT_GRACE)
-                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.core.command_in(dir, &args))
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            ),
             &envs,
         ));
         self.core.run_unit(cmd).await
@@ -1945,14 +1949,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         args.push(spec.remote.clone());
         args.push(spec.refspec.clone());
         let cmd = apply_secret_env(
-            self.core
-                .command_in(dir, &args)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                // On a per-client timeout, terminate gracefully (then hard-kill
-                // after a grace window) so a timed-out push releases its lock and
-                // doesn't leave the remote ref half-updated. No-op without a
-                // deadline (matches `fetch`).
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            vcs_cli_support::apply_fetch_completion_policy(
+                self.core
+                    .command_in(dir, &args)
+                    .env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         );
         self.core.run_unit(cmd).await
@@ -1990,10 +1991,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         args.push(spec.remote);
         args.push(spec.refspec);
         let cmd = apply_secret_env(
-            self.core
-                .command_in(dir, &args)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            vcs_cli_support::apply_fetch_completion_policy(
+                self.core
+                    .command_in(dir, &args)
+                    .env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         );
         self.core.run_with_progress(cmd, progress).await
@@ -2395,21 +2397,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (a drop-oldest tail — never `OutputTooLarge`, so a real failure stays a
         // classifiable `ErrorReason::Exit`). Unbounded by default.
         let command = self.core.budget_diagnostics(apply_secret_env(
-            command
-                .arg(url)
-                .arg(dest)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                // On a per-client timeout, terminate gracefully (then hard-kill after
-                // a grace window). No-op without a deadline (matches `fetch`).
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            vcs_cli_support::apply_fetch_completion_policy(
+                command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         ));
 
         // R7: git populates `dest` incrementally, so a failed clone (timeout, network,
         // auth) can leave a **partial, non-empty** `dest` that blocks a retry with
-        // "destination path already exists and is not empty". `timeout_grace` alone
-        // can't prevent it — Windows' job-kill is atomic (no graceful tier) and the
-        // Unix grace is too short to delete a multi-GB partial. So clean it ourselves,
+        // "destination path already exists and is not empty". The completion
+        // policy's soft trigger is best-effort on Windows (the child must share the
+        // console and handle CTRL_BREAK), and the Unix grace is too short to delete
+        // a multi-GB partial. So clean it ourselves,
         // via the shared `vcs_cli_support` helper (also used by `vcs_jj::git_clone`) —
         // see its docs for the "never touch a non-empty pre-existing dest" contract and
         // why `cleanable` must be computed before the clone runs.
@@ -2437,11 +2436,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         initial.extend(clone_args(&spec, true));
         let command = self.core.command(&initial);
         let command = self.core.budget_diagnostics(apply_secret_env(
-            command
-                .arg(url)
-                .arg(dest)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
+            vcs_cli_support::apply_fetch_completion_policy(
+                command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         ));
         let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
@@ -2822,7 +2819,6 @@ pub const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
-const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 
 /// Bounded deadline for the detached rollback abort
 /// ([`Git::merge_abort_detached`]) — the git analogue of jj's `ROLLBACK_TIMEOUT`.

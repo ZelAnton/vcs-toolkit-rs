@@ -1286,13 +1286,15 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // `budget_diagnostics`: bound the retained failure/progress output (a
         // drop-oldest tail — never `OutputTooLarge`, so `is_transient_fetch_error`
         // still classifies the tail-preserved message). Unbounded by default.
-        let cmd = self.core.budget_diagnostics(
-            c_locale(self.cmd_in(dir, ["git", "fetch"]))
-                // Graceful terminate-then-kill on a per-client timeout, so a timed-out
-                // fetch can close its connection cleanly.
-                .timeout_grace(FETCH_TIMEOUT_GRACE)
-                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
-        );
+        let cmd = self
+            .core
+            .budget_diagnostics(vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.cmd_in(dir, ["git", "fetch"]))
+                    // Unix uses its graceful signal; Windows opts console jj into
+                    // CTRL_BREAK when delivery is available, with the existing hard-kill
+                    // fallback for every other child.
+                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            ));
         self.core.run_unit(cmd).await
     }
 
@@ -1301,9 +1303,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         dir: &Path,
         progress: &'a mut ProgressCallback<'a>,
     ) -> Result<()> {
-        let cmd = self.core.budget_diagnostics(
-            c_locale(self.cmd_in(dir, ["git", "fetch"])).timeout_grace(FETCH_TIMEOUT_GRACE),
-        );
+        let cmd = self
+            .core
+            .budget_diagnostics(vcs_cli_support::apply_fetch_completion_policy(c_locale(
+                self.cmd_in(dir, ["git", "fetch"]),
+            )));
         self.core.run_with_progress(cmd, progress).await
     }
 
@@ -1313,11 +1317,12 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // on a transient (network) failure.
         let remote_pat = exact(remote);
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = self.core.budget_diagnostics(
-            c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
-                .timeout_grace(FETCH_TIMEOUT_GRACE)
-                .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
-        );
+        let cmd = self
+            .core
+            .budget_diagnostics(vcs_cli_support::apply_fetch_completion_policy(
+                c_locale(self.cmd_in(dir, ["git", "fetch", "--remote", remote_pat.as_str()]))
+                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+            ));
         self.core.run_unit(cmd).await
     }
 
@@ -1330,10 +1335,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("-b");
             args.push(name);
         }
-        // Graceful terminate-then-kill on a per-client timeout, so a timed-out
-        // push doesn't leave the remote ref half-updated. No-op without a
-        // deadline (matches `git_fetch`).
-        let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
+        let cmd = vcs_cli_support::apply_fetch_completion_policy(self.cmd_in(dir, args));
         self.core.run_unit(cmd).await
     }
 
@@ -1349,7 +1351,7 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             args.push("-b");
             args.push(name);
         }
-        let cmd = self.cmd_in(dir, args).timeout_grace(FETCH_TIMEOUT_GRACE);
+        let cmd = vcs_cli_support::apply_fetch_completion_policy(self.cmd_in(dir, args));
         self.core.run_with_progress(cmd, progress).await
     }
 
@@ -1876,19 +1878,20 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
         // every branch instead of erroring on a bogus name.
         let branch_pat = exact(branch.as_str());
         // `c_locale`: the retry decision classifies the failure's message (M28).
-        let cmd = c_locale(self.cmd_in(
-            dir,
-            [
-                "git",
-                "fetch",
-                "--remote",
-                "origin",
-                "-b",
-                branch_pat.as_str(),
-            ],
-        ))
-        .timeout_grace(FETCH_TIMEOUT_GRACE)
-        .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error);
+        let cmd = vcs_cli_support::apply_fetch_completion_policy(
+            c_locale(self.cmd_in(
+                dir,
+                [
+                    "git",
+                    "fetch",
+                    "--remote",
+                    "origin",
+                    "-b",
+                    branch_pat.as_str(),
+                ],
+            ))
+            .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+        );
         self.core.run_unit(cmd).await
     }
 
@@ -1917,20 +1920,22 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             } else {
                 "--no-colocate"
             });
-        // Graceful terminate-then-kill on a per-client timeout. No-op without a deadline.
+        // The shared completion policy uses the Unix graceful signal or, on Windows,
+        // CTRL_BREAK when a shared console makes delivery possible; a hard-kill
+        // fallback always remains. No-op without a deadline.
         // `budget_diagnostics`: bound the retained clone progress/failure output (a
         // drop-oldest tail — never `OutputTooLarge`). Unbounded by default.
-        let command = self.core.budget_diagnostics(
-            command
-                .arg("--color")
-                .arg("never")
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
-        );
+        let command = self
+            .core
+            .budget_diagnostics(vcs_cli_support::apply_fetch_completion_policy(
+                command.arg("--color").arg("never"),
+            ));
 
         // R7: like `vcs_git::clone_repo`, a failed clone can leave a partial `dest`
-        // that blocks a retry ("destination already exists"); `timeout_grace` can't
-        // prevent it (Windows' job-kill is atomic; the Unix grace is too short for a
-        // multi-GB partial). Clean it via the shared `vcs_cli_support` helper — see its
+        // that blocks a retry ("destination already exists"); the Windows soft trigger
+        // is best-effort (the child must share the console and handle CTRL_BREAK), and
+        // the Unix grace is too short for a multi-GB partial. Clean it via the shared
+        // helper — see its
         // docs for the "never touch a non-empty pre-existing dest" contract and why
         // `cleanable` must be computed before the clone runs.
         let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
@@ -1958,12 +1963,11 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
             } else {
                 "--no-colocate"
             });
-        let command = self.core.budget_diagnostics(
-            command
-                .arg("--color")
-                .arg("never")
-                .timeout_grace(FETCH_TIMEOUT_GRACE),
-        );
+        let command = self
+            .core
+            .budget_diagnostics(vcs_cli_support::apply_fetch_completion_policy(
+                command.arg("--color").arg("never"),
+            ));
         let cleanable = vcs_cli_support::clone_dest_cleanable(dest);
         let result = self.core.run_with_progress(command, progress).await;
         if result.is_err() {
@@ -2134,7 +2138,6 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 /// policy from `vcs-cli-support`, aliased so the retry call sites read locally.
 const FETCH_ATTEMPTS: u32 = vcs_cli_support::FETCH_ATTEMPTS;
 const FETCH_BACKOFF: Duration = vcs_cli_support::FETCH_BACKOFF;
-const FETCH_TIMEOUT_GRACE: Duration = vcs_cli_support::FETCH_TIMEOUT_GRACE;
 
 /// How many `jj workspace root` lookups [`Jj::workspace_roots`] keeps in flight at
 /// once — a cap so a repo with many workspaces doesn't spawn an unbounded burst of

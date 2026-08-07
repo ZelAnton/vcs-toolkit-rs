@@ -9,6 +9,9 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+- Document the cross-platform timeout-completion ladder used by Git and Jujutsu:
+  Unix graceful signals, Windows `WM_CLOSE`/opt-in `CTRL_BREAK`, console and
+  detached-child delivery limits, and the Job Object hard-kill fallback.
 - Add backend-agnostic `Repo::fetch_with_progress`, `push_with_progress`, and
   `clone_with_progress`, forwarding the Git/Jujutsu lifecycle event callbacks
   without hiding backend retries behind a terminal `Exited` event.
