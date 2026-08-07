@@ -164,9 +164,59 @@ authors = ["Anton Zhelezniakou"]
 #     to a wrapper; `limit_evidence`/`LimitVerdict` (behind `limits`) and the FreeBSD
 #     process-reaper containment — this workspace sets no resource caps and ships no
 #     FreeBSD-specific path.
-# The requirement deliberately stays `"3.1"`: nothing here uses a 3.2-only API, so raising
-# the floor would constrain downstream resolution for no gain. The caret already spans
-# 3.2.x and the committed lock pins 3.2.0.
+# At BASE the requirement deliberately stayed `"3.1"`: nothing here used a 3.2-only API,
+# so raising the floor would constrain downstream resolution for no gain. The caret spans
+# the 3.x line and the BASE lock pinned 3.2.0.
+# What 3.3 adds, and what this workspace takes from it: the lock now resolves 3.3.0, but
+# the floor remains `"3.1"` and no 3.3-only feature is enabled. The published 3.2.0 and
+# 3.3.0 source trees were compared from Cargo's registry cache; each changed runtime area
+# was then checked against the BASE call sites below:
+#   * `pump`: 3.3's live partial-tail salvage/sealing changes are internal to the line
+#     sinks. The only production stream consumer here is
+#     `crates/cli-support/src/lib.rs:196-222` (`events()` joined with `finish()`), while
+#     raw stdout uses `:1849-1861` (`output_bytes`). No local code uses Pipeline's
+#     `LineCapture`/`RawCapture` snapshot path. The existing `content_budget_*` tests
+#     (`crates/cli-support/src/lib.rs:2800-2945`) still pin raw stdout and line-pumped
+#     stderr at exact byte boundaries; verdict: **does not affect us**.
+#   * `doubles`: `ScriptedRunner`/`ScriptedProc` now frame output with each command's
+#     terminator instead of `str::lines()`. BASE uses the doubles at
+#     `crates/cli-support/src/lib.rs:1952`, `crates/github/src/lib.rs:2465`, and
+#     `crates/watch/src/lib.rs:1167`, but no workspace command calls `line_terminator`;
+#     all hermetic consumers stay on the default newline framing. Verdict: **does not
+#     affect us**; the full workspace hermetic suite is the check for this boundary.
+#   * `cassette`: replay now accepts versions `1..=4` and recording has a dedicated
+#     non-piped-stdout path. Both committed fixtures are already version 4; replay is
+#     exercised by `crates/github/src/lib.rs:4304-4344`, and the only record writers are
+#     `crates/github/tests/cli.rs:159`/`:177`, each using the default piped
+#     `JobRunner`. Verdict: **does not affect us**; no cassette or test change is needed.
+#   * `command`: the changed PTY/merge/cancellation controls are opt-in. BASE has no
+#     `use_pty`, `pty_size`, `resize_pty`, `merge_stderr_in_pipe`, or command-level
+#     `line_terminator` call site; the wrapper calls above use ordinary piped commands.
+#     Verdict: **does not affect us**.
+#   * `runner`: 3.3's new shared-pipe reader is only selected by
+#     `merge_stderr_in_pipe`; BASE has no such call and constructs no Pipeline. Verdict:
+#     **does not affect us**.
+#   * `running`: `LineCapture::snapshot`/`RawCapture` changes serve Pipeline timeout
+#     salvage; the only local lifecycle capture is the single-run
+#     `run_with_progress_within` path at `crates/cli-support/src/lib.rs:196-222`.
+#     Verdict: **does not affect us**.
+#   * `error`: the 3.3 error-path changes are for the new process-group/control paths;
+#     local matches at `crates/cli-support/src/lib.rs:1077-1193` and `:1977-2165`
+#     classify ordinary wrapper command results and do not construct those groups.
+#     Verdict: **does not affect us**.
+#   * `group` and `stats`: `ProcessGroup::adopt_external` and
+#     `ProcessGroupStats::{io_read_bytes,io_write_bytes,peak_process_count}` are new
+#     process-group surfaces. BASE contains no ProcessGroup construction or stats
+#     access; `vcs-watch` watches repository files and delegates process execution to
+#     `JobRunner`. Verdict for both: **does not affect us**; no new feature is enabled.
+# The 3.3 byte-identity claims recorded for 3.1→3.2 therefore do **not** carry forward:
+# `pump`, `doubles`, and `cassette` changed upstream and were audited separately here.
+# No wrapper output, cassette schema, byte limit, or public call site changed, so no
+# user-facing `[Unreleased]` entry or regression code change is warranted.
+# The requirement deliberately stays `"3.1"`: no 3.3-only API is used, and raising the
+# floor would constrain downstream resolution for no gain. `Cargo.lock` is the only
+# dependency-state change; unrelated `windows-sys` consolidation was reverted after the
+# scoped update because processkit 3.3 does not require it.
 processkit = "3.1"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
