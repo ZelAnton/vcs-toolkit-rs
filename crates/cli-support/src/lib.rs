@@ -1844,8 +1844,10 @@ impl<R: ProcessRunner> ManagedClient<R> {
         budget: OutputBudget,
     ) -> Result<()> {
         let mut cmd = self.prepare(call).await?;
-        if let Some(timeout) = self.inactivity_timeout {
-            cmd = cmd.inactivity_timeout(timeout);
+        if cmd.configured_inactivity_timeout().is_none() {
+            if let Some(timeout) = self.inactivity_timeout {
+                cmd = cmd.inactivity_timeout(timeout);
+            }
         }
         crate::run_with_progress_within(self.inner.runner(), &cmd, progress, budget).await
     }
@@ -2165,6 +2167,31 @@ mod tests {
             .run_with_progress(client.command(["network-op"]), &mut progress)
             .await
             .expect("each output line resets the watchdog");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn managed_client_stream_watchdog_preserves_explicit_command_timeout() {
+        let client = ManagedClient::with_runner(
+            "tool",
+            ScriptedRunner::new().on(
+                ["tool", "network-op"],
+                Reply::lines(["late"]).with_line_delay(Duration::from_secs(10)),
+            ),
+        )
+        .default_inactivity_timeout(Duration::from_secs(3));
+        let command = client
+            .command(["network-op"])
+            .inactivity_timeout(Duration::from_secs(30));
+        assert_eq!(
+            command.configured_inactivity_timeout(),
+            Some(Duration::from_secs(30))
+        );
+
+        let mut progress = |_event: ProcessEvent| {};
+        client
+            .run_with_progress(command, &mut progress)
+            .await
+            .expect("the client default must not override a per-command watchdog");
     }
 
     // Processkit 3.3 makes the late-cancellation boundary explicit: a token is

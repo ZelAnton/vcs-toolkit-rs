@@ -417,6 +417,7 @@ pub fn vcs_cli_support::ManagedClient<R>::command_in<I, S>(&self, &std::path::Pa
 pub fn vcs_cli_support::ManagedClient<R>::default_cancel_on(self, tokio_util::sync::cancellation_token::CancellationToken) -> Self
 pub fn vcs_cli_support::ManagedClient<R>::default_env(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
 pub fn vcs_cli_support::ManagedClient<R>::default_env_remove(self, impl core::convert::AsRef<std::ffi::os_str::OsStr>) -> Self
+pub fn vcs_cli_support::ManagedClient<R>::default_inactivity_timeout(self, core::time::Duration) -> Self
 pub fn vcs_cli_support::ManagedClient<R>::default_output_budget(self, vcs_cli_support::OutputBudget) -> Self
 pub fn vcs_cli_support::ManagedClient<R>::default_timeout(self, core::time::Duration) -> Self
 pub async fn vcs_cli_support::ManagedClient<R>::exit_code(&self, impl processkit::client::IntoCommand<R>) -> processkit::error::Result<i32>

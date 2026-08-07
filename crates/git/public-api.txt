@@ -3319,6 +3319,12 @@ pub fn vcs_git::Git<R>::default_output_budget(self, vcs_cli_support::OutputBudge
 pub fn vcs_git::Git<R>::default_timeout(self, core::time::Duration) -> Self
 pub fn vcs_git::Git<R>::with_runner(R) -> Self
 impl<R: processkit::runner::ProcessRunner> vcs_git::Git<R>
+pub fn vcs_git::Git<R>::default_inactivity_timeout(self, core::time::Duration) -> Self
+pub fn vcs_git::Git<R>::with_credentials(self, alloc::sync::Arc<dyn vcs_cli_support::credentials::CredentialProvider>) -> Self
+pub fn vcs_git::Git<R>::with_env_token(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_git::Git<R>::with_retry(self, vcs_cli_support::RetryPolicy) -> Self
+pub fn vcs_git::Git<R>::with_token(self, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
+impl<R: processkit::runner::ProcessRunner> vcs_git::Git<R>
 pub async fn vcs_git::Git<R>::diff_text_within(&self, &std::path::Path, vcs_diff::diff::DiffSpec, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::string::String>
 pub async fn vcs_git::Git<R>::diff_within(&self, &std::path::Path, vcs_diff::diff::DiffSpec, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>
 pub async fn vcs_git::Git<R>::show_file_within(&self, &std::path::Path, &vcs_git::RevSpec, &str, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::string::String>
@@ -3332,11 +3338,6 @@ pub async fn vcs_git::Git<R>::run_in(&self, &std::path::Path, &[alloc::string::S
 pub async fn vcs_git::Git<R>::run_raw_args(&self, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
 pub async fn vcs_git::Git<R>::run_raw_args_in(&self, &std::path::Path, &[&str]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
 pub async fn vcs_git::Git<R>::run_raw_in(&self, &std::path::Path, &[alloc::string::String]) -> processkit::error::Result<processkit::result::ProcessResult<alloc::string::String>>
-impl<R: processkit::runner::ProcessRunner> vcs_git::Git<R>
-pub fn vcs_git::Git<R>::with_credentials(self, alloc::sync::Arc<dyn vcs_cli_support::credentials::CredentialProvider>) -> Self
-pub fn vcs_git::Git<R>::with_env_token(self, impl core::convert::Into<alloc::string::String>) -> Self
-pub fn vcs_git::Git<R>::with_retry(self, vcs_cli_support::RetryPolicy) -> Self
-pub fn vcs_git::Git<R>::with_token(self, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
 impl core::default::Default for vcs_git::Git<processkit::runner::JobRunner>
 pub fn vcs_git::Git<processkit::runner::JobRunner>::default() -> Self
 impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_git::Git<R>
