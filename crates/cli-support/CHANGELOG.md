@@ -9,6 +9,10 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ## [Unreleased]
 
+- Apply the shared `FETCH_TIMEOUT_GRACE` to both timeout and cancellation for
+  network fetch/push/clone commands. Unix keeps the graceful signal ladder;
+  Windows opts console children into `CTRL_BREAK` where delivery is possible,
+  with the existing hard-kill fallback and unchanged `ErrorReason::Cancelled`.
 - Centralize the network-command completion policy in
   `apply_fetch_completion_policy`: it keeps `FETCH_TIMEOUT_GRACE` on Unix and
   opts Windows console children into processkit's graceful `CTRL_BREAK` tier,

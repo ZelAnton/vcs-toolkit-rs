@@ -9,6 +9,10 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+- Document that network cancellation uses the shared grace/soft-trigger ladder
+  while retaining `ErrorReason::Cancelled`, and clarify that facade/jj rollback
+  cleanup uses a fresh cancellation context rather than inheriting the caller's
+  fired token.
 - Document the cross-platform timeout-completion ladder used by Git and Jujutsu:
   Unix graceful signals, Windows `WM_CLOSE`/opt-in `CTRL_BREAK`, console and
   detached-child delivery limits, and the Job Object hard-kill fallback.

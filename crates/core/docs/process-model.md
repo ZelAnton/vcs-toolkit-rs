@@ -43,13 +43,15 @@ A command that outruns its deadline fails with **`processkit::ErrorReason::Timeo
 program, timeout }`**, and the job — the whole process tree — is eventually killed,
 not just the top process. Network commands additionally use the shared
 `vcs_cli_support::apply_fetch_completion_policy` policy: a two-second grace window
-(`FETCH_TIMEOUT_GRACE`) is retained on every platform, and the processkit hard-kill
-fallback remains the final containment boundary.
+(`FETCH_TIMEOUT_GRACE`) is applied to both timeout and caller cancellation on every
+platform, and the processkit hard-kill fallback remains the final containment
+boundary. The cancellation result is still `ErrorReason::Cancelled`.
 
 The soft tier is platform-specific:
 
-- On Unix, processkit sends its graceful terminate signal, waits through the grace
-  window, and then sends the hard kill if the tree has not exited.
+- On Unix, processkit sends its graceful terminate signal for either a timeout or
+  cancellation, waits through the grace window, and then sends the hard kill if the
+  tree has not exited.
 - On Windows, processkit has no POSIX signal tier. It first tries `WM_CLOSE` for
   top-level windows and sends console `CTRL_BREAK` to direct children opted in by
   `windows_graceful_ctrl_break`; a child that handles the event can flush buffers,
@@ -58,17 +60,20 @@ The soft tier is platform-specific:
   with `create_no_window` or `DETACHED_PROCESS` receive no `CTRL_BREAK`; survivors
   are still terminated by the Job Object.
 
-The helper only configures the completion policy; it does not set a deadline. It
-therefore has no effect unless `default_timeout` (or a per-command timeout) is set.
-`default_timeout` chains with the other builders, so a hardened, deadlined client
-is `Git::hardened().default_timeout(…)`.
+The helper only configures the completion policy; it does not set a deadline or a
+cancel token. Its timeout tier therefore has no effect unless `default_timeout` (or
+a per-command timeout) is set, while its cancellation tier has no effect unless
+`default_cancel_on` (or a per-command `cancel_on`) is set. Builders chain, so a
+hardened, deadlined, cancellable client can be composed from
+`Git::hardened().default_timeout(…).default_cancel_on(token)`.
 
-The hermetic wrapper tests assert the built grace/soft-trigger shape and drive the
-full streamed `events()` → `finish()` lifecycle, including cancellation observed
-after the child exits but before the finisher's first exit observation. They do not
-claim to prove Windows console delivery: a normal `cargo test` process does not
-guarantee a shared console or a child-side `CTRL_BREAK` handler, so this workspace
-does not include an ignored probe that would only simulate that boundary.
+The hermetic wrapper tests assert the built timeout/cancellation grace and
+soft-trigger shape and drive the full streamed `events()` → `finish()` lifecycle,
+including cancellation observed after the child exits but before the finisher's
+first exit observation. They do not claim to prove Windows console delivery: a
+normal `cargo test` process does not guarantee a shared console or a child-side
+`CTRL_BREAK` handler, so this workspace does not include an ignored probe that
+would only simulate that boundary.
 
 ## The error model
 

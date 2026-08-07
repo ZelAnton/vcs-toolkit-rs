@@ -213,7 +213,10 @@ impl<R: ProcessRunner> Jj<R> {
     /// here with a *fresh, never-fired* token means an already-fired cancellation of
     /// the failed operation cannot also short-circuit the cleanup (the defect the old
     /// `transaction` documented). The explicit timeout gives the cleanup a full fresh
-    /// budget even after a cancelled/timed-out main operation.
+    /// budget even after a cancelled/timed-out main operation. This local metadata
+    /// cleanup intentionally does not use the network completion helper: its fresh
+    /// token is never fired, and the dedicated deadline keeps rollback independent
+    /// of the cancelled mutation.
     fn rollback_cmd_in<I, S>(&self, dir: &Path, args: I) -> processkit::Command
     where
         I: IntoIterator<Item = S>,

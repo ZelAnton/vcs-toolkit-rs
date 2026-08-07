@@ -944,6 +944,13 @@ macro_rules! managed_client {
             }
 
             /// Cancel every command this client builds when `token` fires.
+            ///
+            /// Network `fetch`/`push`/`clone` commands additionally use the shared
+            /// [`FETCH_TIMEOUT_GRACE`] cancellation window when this token fires,
+            /// including the Windows-only soft-trigger opt-in where processkit can
+            /// deliver it. The process outcome remains
+            /// [`ErrorReason::Cancelled`]; the grace changes only the teardown path.
+            /// Other commands keep their existing immediate-cancellation policy.
             pub fn default_cancel_on(mut self, token: ::processkit::CancellationToken) -> Self {
                 self.core = self.core.default_cancel_on(token);
                 self
@@ -1043,20 +1050,22 @@ pub fn cleanup_failed_clone_dest(dest: &Path, cleanable: bool) {
 pub const FETCH_ATTEMPTS: u32 = 3;
 /// Fixed backoff between fetch retries.
 pub const FETCH_BACKOFF: Duration = Duration::from_millis(500);
-/// Grace period for a timed-out network operation: on Unix processkit sends its
-/// graceful terminate signal and waits this long before hard-killing. On Windows
+/// Grace period for a network operation that times out **or is cancelled**: on Unix
+/// processkit sends its graceful terminate signal and waits this long before
+/// hard-killing. On Windows
 /// the grace window is useful only when a child has a soft trigger: the shared
 /// [`apply_fetch_completion_policy`] opts console children into `CTRL_BREAK`, and
 /// processkit also tries `WM_CLOSE` for windowed children. A child without a
 /// shared console, including one started with `create_no_window` or
 /// `DETACHED_PROCESS`, skips the soft trigger and falls back to the atomic job
-/// kill. Only takes effect when a per-client timeout is set (`Git::default_timeout`
-/// / `Jj::default_timeout`); a network operation with no deadline is unaffected.
+/// kill. The cancellation outcome is still [`ErrorReason::Cancelled`]. The policy
+/// only takes effect when the relevant timeout or `default_cancel_on` token is set;
+/// a network operation with neither is unaffected.
 pub const FETCH_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 
-/// Apply the shared completion policy to a timed network command.
+/// Apply the shared completion policy to a network command.
 ///
-/// The policy keeps the existing [`FETCH_TIMEOUT_GRACE`] on every platform. On
+/// The policy applies [`FETCH_TIMEOUT_GRACE`] to both timeout and cancellation. On
 /// Windows it additionally opts the direct console child into `CTRL_BREAK`, so a
 /// child that handles the event can flush buffers, close connections, and release
 /// locks during the grace window. Delivery requires a console shared with the
@@ -1065,9 +1074,12 @@ pub const FETCH_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 /// `DETACHED_PROCESS` receive no console event. Windowed children may still
 /// receive processkit's best-effort `WM_CLOSE`, and any survivor is hard-killed
 /// after the grace window. On Unix the Windows builder is a no-op, so the
-/// existing signal → grace → hard-kill semantics are unchanged.
+/// existing signal → grace → hard-kill semantics are unchanged. The helper does not
+/// alter the structured cancellation outcome.
 pub fn apply_fetch_completion_policy(command: Command) -> Command {
-    let command = command.timeout_grace(FETCH_TIMEOUT_GRACE);
+    let command = command
+        .timeout_grace(FETCH_TIMEOUT_GRACE)
+        .cancel_grace(FETCH_TIMEOUT_GRACE);
     #[cfg(windows)]
     {
         command.windows_graceful_ctrl_break()
@@ -1667,8 +1679,12 @@ impl<R: ProcessRunner> ManagedClient<R> {
     /// Cancel every command this client builds when `token` fires — and cut a
     /// lock-contention retry backoff short the moment it does, so a cancelled
     /// operation returns promptly instead of sleeping out the remaining delay
-    /// before its next attempt. The token is applied to the spawned process (via
-    /// `inner`) *and* observed by the retry loop.
+    /// before its next attempt. Network `fetch`/`push`/`clone` commands add the
+    /// shared [`FETCH_TIMEOUT_GRACE`] soft-completion window (and the Windows
+    /// console trigger when available); their structured result remains
+    /// [`ErrorReason::Cancelled`]. The token is applied to the spawned process
+    /// (via `inner`) *and* observed by the retry loop. Other commands retain their
+    /// existing cancellation policy.
     pub fn default_cancel_on(mut self, token: CancellationToken) -> Self {
         self.inner = self.inner.default_cancel_on(token.clone());
         self.cancel = Some(token);
@@ -2029,6 +2045,7 @@ mod tests {
         let debug = format!("{command:?}");
 
         assert!(debug.contains("timeout_grace: Some(2s)"), "{debug}");
+        assert!(debug.contains("cancel_grace: Some(2s)"), "{debug}");
         #[cfg(windows)]
         assert!(
             debug.contains("windows_graceful_ctrl_break: true"),

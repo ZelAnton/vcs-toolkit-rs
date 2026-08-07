@@ -1363,6 +1363,12 @@ impl<R: ProcessRunner> Repo<R> {
     ///   staged, closing the gap where a cancelled probe abandoned it on git. (A
     ///   rollback that fails for another reason still propagates per the bullet
     ///   above.)
+    /// - A cancellation remains a structured `ErrorReason::Cancelled`; the soft
+    ///   grace used by network fetch/push/clone commands changes only how their
+    ///   child is asked to finish, not the classification. This probe is special:
+    ///   its rollback uses a fresh cancellation context. Do not generalize that
+    ///   guarantee to a dropped future or to cleanup a caller starts after this
+    ///   method returns.
     pub async fn try_merge(&self, source: &str) -> Result<MergeProbe> {
         match &self.backend {
             Backend::Git(g) => git_backend::try_merge(g, &self.cwd, source).await,

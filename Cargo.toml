@@ -54,7 +54,7 @@ authors = ["Anton Zhelezniakou"]
 # git/jj/gh subprocess tree dies on close), with the `CliClient` core, the
 # `cli_client!` macro, structured `Error`, and the `ScriptedRunner`/`RecordingRunner`
 # test seams the wrappers build on (under `processkit::testing`). Was the internal
-# `vcs-process` crate; now the published `processkit`. Pin `"3.1"`: the 3.x line is
+# `vcs-process` crate; now the published `processkit`. Pin `"3.2"`: the 3.x line is
 # semver-stable, so the caret spans future 3.x releases and `cargo update` pulls them
 # safely; it carries forward everything the 2.x pin was kept for (the `Error`
 # constructors `Error::spawn`/`not_found`/`stdin`/`parse`, the Windows
@@ -109,13 +109,15 @@ authors = ["Anton Zhelezniakou"]
 #     multi-hour CI. The other new 3.1 controls (CPU affinity and named-pipe readiness)
 #     are intentionally left opt-in for callers: VCS wrappers must not impose scheduler
 #     policy or assume that a command is a local Windows service.
-# What 3.2 adds, and what this workspace takes from it: nothing this build compiles
-# behaves differently, so the bump is a lockfile refresh rather than an adoption. Audited
-# against the published 3.2.0 crate source, not the release notes: `buffer.rs`, `pump.rs`,
-# `stdin.rs`, `lookup.rs`, `retry.rs`, `doubles.rs` and `cassette.rs` are byte-identical to
-# 3.1.0 — so no output-byte accounting unit, `PATH`-search algorithm, retry, mock or
-# cassette behaviour moved — and the crate's own `public-api.txt` grows by 193 lines with
-# none removed or changed. Per audited area:
+# What 3.2 adds, and what this workspace takes from it: the network completion helper
+# below adopts `Command::cancel_grace` alongside the existing `timeout_grace`, so a
+# caller cancellation gets the same soft-signal → grace → hard-kill ladder without
+# changing its `ErrorReason::Cancelled` outcome. Audited against the published 3.2.0
+# crate source, not the release notes: `buffer.rs`, `pump.rs`, `stdin.rs`, `lookup.rs`,
+# `retry.rs`, `doubles.rs` and `cassette.rs` are byte-identical to 3.1.0 — so no
+# output-byte accounting unit, `PATH`-search algorithm, retry, mock or cassette
+# behaviour moved — and the crate's own `public-api.txt` grows by 193 lines with none
+# removed or changed. Per audited area:
 #   * Executable resolution and environment. The spawn-free preflight and the post-spawn
 #     `NotFound` enrichment now resolve a bare name against the command's *effective
 #     child* `PATH` (one shared `resolution_path_source()`) instead of skipping the search
@@ -149,12 +151,13 @@ authors = ["Anton Zhelezniakou"]
 #     cancellation contract**, but no wrapper API or call-site change is required.
 #   * Graceful cancellation ladder. `Command::cancel_grace`/`cancel_signal` route a fired
 #     `cancel_on` token through the same soft-signal → grace → hard-kill ladder as
-#     `timeout_grace`/`timeout_signal`. Deliberately not adopted: left unset (the default)
-#     a cancellation is still an immediate whole-tree kill, and the runner's teardown bound
-#     is `grace.max(cancel_grace.unwrap_or(ZERO))` — unchanged without the knob. The
-#     clients here expose `default_cancel_on` so a *caller* supplies the token, and the
-#     `fetch`/`clone` verbs keep their own `timeout_grace`; how long a cancellation should
-#     wait before killing is consumer policy, the same reason 3.1's controls stayed opt-in.
+#     `timeout_grace`/`timeout_signal`. This workspace adopts the knob only through
+#     `vcs_cli_support::apply_fetch_completion_policy` for git/jj network `fetch`/`push`/
+#     `clone` commands, using the same `FETCH_TIMEOUT_GRACE` window as timeout. Other
+#     commands, including ordinary mutations and jj transaction rollback, keep their
+#     existing cancellation policy; a fresh rollback token makes its explicit cleanup
+#     deadline independent of the cancelled mutation. The outcome remains
+#     `ErrorReason::Cancelled` in every case.
 #   * Windows. The ConPTY fixes and the PTY terminal-EOF fix stay behind the non-default
 #     `pty` feature (they live in the PTY launch path), which no crate here enables — the
 #     same answer the 3.0 ConPTY note records. Two Windows changes do land on the ordinary
@@ -231,15 +234,15 @@ authors = ["Anton Zhelezniakou"]
 #     `JobRunner`. Verdict for both: **does not affect us**; no new feature is enabled.
 # The 3.3 byte-identity claims recorded for 3.1→3.2 therefore do **not** carry forward:
 # `pump`, `doubles`, and `cassette` changed upstream and were audited separately here.
-# No wrapper output, cassette schema, byte limit, or public wrapper signature changed,
-# so no user-facing `[Unreleased]` entry is warranted. The cancellation call sites were
-# nevertheless covered because the 3.3 audit changes the documented first-observation
-# boundary even though the workspace keeps the same API calls.
-# The requirement deliberately stays `"3.1"`: no 3.3-only API is used, and raising the
-# floor would constrain downstream resolution for no gain. `Cargo.lock` is the only
-# dependency-state change; unrelated `windows-sys` consolidation was reverted after the
-# scoped update because processkit 3.3 does not require it.
-processkit = "3.1"
+# No wrapper output, cassette schema, byte limit, or public wrapper signature changed.
+# The user-facing `[Unreleased]` entries for this task document the new network
+# cancellation teardown policy and its cleanup boundary; the 3.3 first-observation
+# audit remains unchanged even though the workspace keeps the same stream API calls.
+# The requirement deliberately stays at the 3.2 floor: no 3.3-only API is used, while
+# `cancel_grace` requires 3.2. `Cargo.lock` already resolves 3.3.0; unrelated
+# `windows-sys` consolidation was reverted after the scoped update because processkit
+# 3.3 does not require it.
+processkit = "3.2"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
 # Unified version: 0.15 satisfies both wrapper crate requirements (was 0.13) and processkit/mock needs.

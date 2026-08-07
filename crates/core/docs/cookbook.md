@@ -111,8 +111,10 @@ unified DTOs (it picks the binary; `gh`-specific bits like `run_watch` stay on
 `run_watch` blocks for the whole CI run; a `fetch`/`clone`/`push` over a dead
 network can hang for its full timeout. Cancellation is always available (no
 feature flag): a client built with `default_cancel_on(token)` carries that token
-into *every* command it runs, so one `token.cancel()` kills all of its in-flight
-calls — no new API, no per-call plumbing.
+into *every* command it runs, so one `token.cancel()` stops all of its in-flight
+calls — no new API, no per-call plumbing. Network fetch/push/clone commands use
+the shared two-second soft-completion window where the platform can deliver it;
+the result remains `ErrorReason::Cancelled` and a hard-kill fallback remains.
 
 ```rust,ignore
 // `CancellationToken`, `Error` and `ErrorReason` are all
@@ -144,17 +146,15 @@ treats it as non-transient and will not replay a cancelled run. Through the faca
 build the wrapped client the same way (`GitHub::new().default_cancel_on(t)`) and
 hand it to `Forge::from_github(cwd, client)` / `Repo::from_git(root, cwd, client)`.
 
-**Cancellation is "stop now", not "stop and clean up".** A fired token kills
-*every* command the client still runs — **including any cleanup the toolkit itself
-issues**. A multi-step facade operation that is cancelled mid-flight can therefore
-be left part-done: [`Repo::try_merge`](crate::Repo::try_merge) probes a throwaway merge and
-rolls it back with `op_restore` (jj) / `merge --abort` (git), but that rollback runs
-on the same client, so a token that fired during the probe also cancels the rollback
-— the probe change may remain. Likewise [`Jj::transaction`]'s op-log rollback runs
-on `Err`, and a cancellation *is* an `Err`, but the `op_restore` it would run is
-itself cancelled. If you need a guaranteed-clean state after cancelling, re-probe
-(`Repo::in_progress_state` / `Jj::op_head`) and reset with a **fresh, un-cancelled
-client** rather than assuming the interrupted call tidied up after itself.
+**Cancellation is "stop now", not a general cleanup contract.** A fired token
+still cancels the command it applies to and the result remains
+`ErrorReason::Cancelled`; the network grace only gives that child a soft-completion
+window. `Repo::try_merge` is an explicit exception: its git/jj rollback decision and
+rollback command use a fresh cancellation context, so a token firing during the
+probe does not leave the throwaway merge staged. [`Jj::transaction`]'s op-log
+rollback follows the same fresh-token protocol. A dropped future is different — no
+async `Drop` runs — and cleanup a caller starts after a cancelled operation still
+needs its own fresh, un-cancelled client and deadline.
 
 ## Probe a merge for conflicts
 
@@ -176,9 +176,9 @@ match repo.try_merge("feature").await? {
 ```
 
 Notes: a real merge failure unrelated to conflicts (missing ref, dirty tree)
-propagates as a plain error, not as `MergeProbe::Conflicts`. See the
-cancellation caveat above — a cancelled probe's own rollback can itself be
-cancelled, leaving the throwaway merge in place.
+propagates as a plain error, not as `MergeProbe::Conflicts`. A cancellation is still
+reported as `ErrorReason::Cancelled`, while this method's detached rollback preserves
+the cleanup guarantee when the token fires during the probe.
 
 ## Stash-safe branch switch
 

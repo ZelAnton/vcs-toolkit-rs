@@ -10,6 +10,10 @@ crates; tag releases as `vcs-jj-v<version>`.
 ## [Unreleased]
 
 ### Changed
+- `git fetch`, `git push`, and `git clone` cancellation now uses the same two-second
+  grace and platform soft-trigger policy as timeout, including progress variants;
+  cancellation remains `ErrorReason::Cancelled`. Transaction rollback keeps its
+  separate fresh-token/deadline cleanup protocol.
 - Route all typed git-sync `fetch`, `push`, and `clone` captured/streaming
   commands through the shared completion policy. Unix keeps its existing
   signal/grace behavior; Windows console children now opt into `CTRL_BREAK` with

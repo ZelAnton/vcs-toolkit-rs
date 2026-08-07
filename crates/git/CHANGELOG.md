@@ -10,6 +10,10 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Changed
+- Network `fetch`, `push`, and `clone` cancellation now uses the same two-second
+  grace and platform soft-trigger policy as timeout, including progress variants;
+  cancellation still maps to `ErrorReason::Cancelled` and cleanup/retry behavior
+  remains unchanged.
 - Route all typed network `fetch`, `push`, and `clone` captured/streaming
   commands through the shared completion policy. Unix keeps its existing
   signal/grace behavior; Windows console children now opt into `CTRL_BREAK` with
