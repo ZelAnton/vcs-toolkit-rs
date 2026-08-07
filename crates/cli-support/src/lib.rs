@@ -1995,6 +1995,43 @@ mod tests {
         ));
     }
 
+    // Processkit 3.3 makes the late-cancellation boundary explicit: a token is
+    // judged at the first exit observation, not at the instant the child died. The
+    // wrapper's real streamed path is exactly `events()` joined with `finish()`;
+    // keep this case here because a normal `run_with_progress_within` call has no
+    // hook between `start()` and that join. A scripted reply has already exited by
+    // the time `start()` returns, so firing the token before the joined finisher's
+    // first observation must still produce `Cancelled`.
+    #[tokio::test]
+    async fn streamed_run_late_cancel_before_first_finish_observation_is_cancelled() {
+        let token = CancellationToken::new();
+        let runner =
+            ScriptedRunner::new().on(["tool", "network-op"], Reply::ok("").with_stdout("done\n"));
+        let mut run = runner
+            .start(
+                &Command::new("tool")
+                    .arg("network-op")
+                    .cancel_on(token.clone()),
+            )
+            .await
+            .expect("scripted start");
+        let mut events = run.events().expect("events stream");
+
+        // The scripted child is already exited, but `events()` is not the exit
+        // observer. This is the late-token/first-finisher boundary under test.
+        token.cancel();
+        let forward = async { while events.next().await.is_some() {} };
+        let (_, finished) = tokio::join!(forward, run.finish());
+
+        assert!(
+            matches!(
+                finished.as_ref().map_err(Error::reason),
+                Err(ErrorReason::Cancelled { program }) if program == "tool"
+            ),
+            "first finish observation must classify the fired token: {finished:?}"
+        );
+    }
+
     #[tokio::test]
     async fn streamed_run_isolates_a_panicking_progress_callback() {
         use std::sync::atomic::{AtomicUsize, Ordering};

@@ -125,13 +125,28 @@ authors = ["Anton Zhelezniakou"]
 #     for every command this workspace builds and both versions take the same
 #     `PathSource::ProcessPath` branch.
 #   * Supervision, readiness and pipelines. The typed `SupervisionEvent` lifecycle stream,
-#     the `Supervisor` session, opt-in per-stage stderr merging (`merge_stderr_in_pipe`)
-#     and the pipeline teardown-drain fix all sit on surfaces this workspace never names:
-#     it runs one child at a time through `ProcessRunner`/`CliClient` and builds no
-#     `Pipeline`, and `vcs-watch` owns no `ProcessGroup` of its own — its bounded re-query
-#     relies on `JobRunner`'s kill-on-drop group, reached through `vcs-core`.
-#     `run_with_progress_within`'s `events()`/`finish()` path is untouched: everything
-#     added to processkit's stream module is behind the `json` feature.
+#     the `Supervisor` session, opt-in per-stage stderr merging (`merge_stderr_in_pipe`),
+#     and the pipeline teardown-drain/salvage fixes all sit on surfaces this workspace
+#     never names: it runs one child at a time through `ProcessRunner`/`CliClient` and
+#     builds no `Pipeline`, and `vcs-watch` owns no `ProcessGroup` of its own — its bounded
+#     re-query relies on `JobRunner`'s kill-on-drop group, reached through `vcs-core`.
+#     Verdict for those pipeline/supervision surfaces: **does not affect us**; no new
+#     feature is enabled.
+#   * Ordinary cancellation, finish, and late exit observation are a separate verdict.
+#     Processkit 3.3 documents first-observation-wins for `Command::cancel_on`: a token
+#     that fires after an observed reap cannot rewrite it, while a token fired before the
+#     first finisher observes an already-exited child still reports `Cancelled`. The
+#     `running` changes add crate-private exit-observation seams for buffering captures
+#     and bounded stdin finalization for borrowed waits; `runner` keeps the ordinary
+#     single-child path unchanged and only routes the opt-in merged pipe through the new
+#     reader. This contract does reach our concrete call sites: `ManagedClient::default_cancel_on`
+#     (`crates/cli-support/src/lib.rs:1639-1647`) supplies the token, and
+#     `run_with_progress_within` (`:195-222`) starts the run, consumes `events()`, and
+#     joins `finish()`. Existing cancellation coverage exercises this path through
+#     `vcs-git`/`vcs-github`/`vcs-jj`; the T-162 regression test beside those streamed
+#     tests also fires the token after a scripted child has exited but before the joined
+#     finisher makes its first observation. Verdict: **affects us at the audited
+#     cancellation contract**, but no wrapper API or call-site change is required.
 #   * Graceful cancellation ladder. `Command::cancel_grace`/`cancel_signal` route a fired
 #     `cancel_on` token through the same soft-signal → grace → hard-kill ladder as
 #     `timeout_grace`/`timeout_signal`. Deliberately not adopted: left unset (the default)
@@ -189,17 +204,22 @@ authors = ["Anton Zhelezniakou"]
 #     exercised by `crates/github/src/lib.rs:4304-4344`, and the only record writers are
 #     `crates/github/tests/cli.rs:159`/`:177`, each using the default piped
 #     `JobRunner`. Verdict: **does not affect us**; no cassette or test change is needed.
-#   * `command`: the changed PTY/merge/cancellation controls are opt-in. BASE has no
-#     `use_pty`, `pty_size`, `resize_pty`, `merge_stderr_in_pipe`, or command-level
-#     `line_terminator` call site; the wrapper calls above use ordinary piped commands.
-#     Verdict: **does not affect us**.
+#   * `command`: PTY/merge/line-framing controls remain opt-in — BASE has no `use_pty`,
+#     `pty_size`, `resize_pty`, `merge_stderr_in_pipe`, or command-level `line_terminator`
+#     call site — but the ordinary `cancel_on` first-observation contract is used by the
+#     `default_cancel_on`/`events()` + `finish()` path described above. Verdict: **affects
+#     us for cancellation semantics; does not affect us for the opt-in I/O knobs**.
 #   * `runner`: 3.3's new shared-pipe reader is only selected by
-#     `merge_stderr_in_pipe`; BASE has no such call and constructs no Pipeline. Verdict:
-#     **does not affect us**.
-#   * `running`: `LineCapture::snapshot`/`RawCapture` changes serve Pipeline timeout
-#     salvage; the only local lifecycle capture is the single-run
-#     `run_with_progress_within` path at `crates/cli-support/src/lib.rs:196-222`.
-#     Verdict: **does not affect us**.
+#     `merge_stderr_in_pipe`; BASE has no such call and constructs no `Pipeline`. The
+#     regular `ProcessRunner` path remains the same. Verdict: **does not affect us**.
+#   * `running`: `LineCapture::snapshot`/`RawCapture` and the exit-observer plumbing serve
+#     Pipeline timeout attribution/salvage; BASE constructs no `Pipeline`, but the shared
+#     `finish_lines`/`finish` observation point is exercised by the single-run
+#     `run_with_progress_within` path at `crates/cli-support/src/lib.rs:195-222`.
+#     The wrapper-level regression pins that an already-exited scripted run cancelled
+#     before its first `finish()` observation remains `Cancelled`; the existing wrapper
+#     tests pin mid-run cancellation and cleanup/fresh-token behavior. Verdict: **affects
+#     us for the ordinary finish/cancellation contract; no code migration is needed**.
 #   * `error`: the 3.3 error-path changes are for the new process-group/control paths;
 #     local matches at `crates/cli-support/src/lib.rs:1077-1193` and `:1977-2165`
 #     classify ordinary wrapper command results and do not construct those groups.
@@ -211,8 +231,10 @@ authors = ["Anton Zhelezniakou"]
 #     `JobRunner`. Verdict for both: **does not affect us**; no new feature is enabled.
 # The 3.3 byte-identity claims recorded for 3.1→3.2 therefore do **not** carry forward:
 # `pump`, `doubles`, and `cassette` changed upstream and were audited separately here.
-# No wrapper output, cassette schema, byte limit, or public call site changed, so no
-# user-facing `[Unreleased]` entry or regression code change is warranted.
+# No wrapper output, cassette schema, byte limit, or public wrapper signature changed,
+# so no user-facing `[Unreleased]` entry is warranted. The cancellation call sites were
+# nevertheless covered because the 3.3 audit changes the documented first-observation
+# boundary even though the workspace keeps the same API calls.
 # The requirement deliberately stays `"3.1"`: no 3.3-only API is used, and raising the
 # floor would constrain downstream resolution for no gain. `Cargo.lock` is the only
 # dependency-state change; unrelated `windows-sys` consolidation was reverted after the
