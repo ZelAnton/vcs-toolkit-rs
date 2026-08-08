@@ -9,6 +9,8 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+- Surface failed or divergence-refused rollback outcomes from a failed `jj`
+  `try_merge` probe instead of reporting only the original merge error.
 - Document the optional, default-disabled streaming output-inactivity watchdog,
   its separate `ErrorReason::Timeout { inactivity }` classification, and the
   Git/Jujutsu piped-stderr progress asymmetry.

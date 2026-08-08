@@ -526,9 +526,14 @@ pub(crate) async fn try_merge<R: ProcessRunner>(
             rollback_result(rollback)?;
             Err(err.into())
         }
-        // The merge itself failed — that's the root cause; a secondary
-        // restore/probe failure must not mask it.
-        (Err(err), _) => Err(err.into()),
+        // The merge itself failed — preserve it only after confirming the
+        // rollback completed. A failed or refused rollback means the probe
+        // change may still be present, so that structured cleanup failure must
+        // take precedence over the original merge error.
+        (Err(err), _) => {
+            rollback_result(rollback)?;
+            Err(err.into())
+        }
     }
 }
 

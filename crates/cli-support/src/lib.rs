@@ -1631,10 +1631,15 @@ impl<R: ProcessRunner> ManagedClient<R> {
         // Treat it as `None` (ambient), keeping the "no usable credential ⇒
         // ambient auth" contract consistent regardless of which adapter produced
         // it (matching `EnvToken`'s own whitespace-only ⇒ unset rule).
-        Ok(provider
-            .credential(&request)
-            .await?
-            .filter(|cred| !cred.secret().expose().trim().is_empty()))
+        let credential = provider.credential(&request).await?;
+        let Some(credential) = credential else {
+            return Ok(None);
+        };
+        credential.validate_for_resolution()?;
+        if credential.secret().expose().trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(credential))
     }
 
     /// Materialize `call` into a [`Command`], injecting the forge token env if a
@@ -2024,6 +2029,15 @@ mod tests {
     use processkit::testing::{Reply, ScriptedRunner};
     use proptest::prelude::*;
     use std::sync::Mutex;
+
+    struct UnvalidatedProvider(Credential);
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for UnvalidatedProvider {
+        async fn credential(&self, _request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
+            Ok(Some(self.0.clone()))
+        }
+    }
 
     #[tokio::test]
     async fn streamed_run_replays_scripted_lifecycle_and_preserves_failure_output() {
@@ -2860,7 +2874,7 @@ mod tests {
     async fn resolve_credential_treats_empty_secret_as_ambient() {
         // Service-agnostic: both the forge (token-env) and git (helper) paths route
         // through this chokepoint, so a blank secret is ambient for either.
-        for blank in ["", "   ", "\t\n"] {
+        for blank in ["", "   ", "\t"] {
             let client = ManagedClient::new("git")
                 .with_credentials(Arc::new(StaticCredential::token(blank)));
             for service in [CredentialService::GitHub, CredentialService::Git] {
@@ -2872,6 +2886,45 @@ mod tests {
                         .is_none(),
                     "blank secret {blank:?} → ambient (None) for {service:?}"
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_credential_rejects_crlf_secret_before_blank_fallback() {
+        for bad_secret in ["\r", "\n", "\t\r ", " \n\t"] {
+            for service in [CredentialService::GitHub, CredentialService::Git] {
+                let client = ManagedClient::new("git")
+                    .with_credentials(Arc::new(UnvalidatedProvider(Credential::token(bad_secret))));
+                let error = client
+                    .resolve_credential(service, None)
+                    .await
+                    .expect_err("CR/LF secret must not become ambient auth");
+                assert!(
+                    is_invalid_input(&error),
+                    "credential rejection must be InvalidInput: {error:?}"
+                );
+                assert!(error.to_string().contains("secret"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_credential_rejects_malformed_username_before_blank_fallback() {
+        for blank_secret in ["", "   ", "\t"] {
+            for bad_username in ["alice\r", "alice\n", "alice\t\r ", "alice \n\t"] {
+                let client = ManagedClient::new("git").with_credentials(Arc::new(
+                    UnvalidatedProvider(Credential::userpass(bad_username, blank_secret)),
+                ));
+                let error = client
+                    .resolve_credential(CredentialService::Git, None)
+                    .await
+                    .expect_err("malformed username must not become ambient auth");
+                assert!(
+                    is_invalid_input(&error),
+                    "credential rejection must be InvalidInput: {error:?}"
+                );
+                assert!(error.to_string().contains("username"));
             }
         }
     }
