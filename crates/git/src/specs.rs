@@ -665,7 +665,8 @@ impl SubmoduleUpdate {
 ///
 /// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
 /// no leading `-` or `.`, no `..`, no control characters or space, none of
-/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`.
+/// `~ ^ : ? * [ \`, and no empty slash-separated components. Each component
+/// must not start or end with `.` or end with `.lock`.
 /// The validator also rejects a trailing `.`, any `@{` sequence, and the
 /// standalone `@`. A rejected name is an
 /// [`vcs_cli_support::is_invalid_input`] failure.
@@ -682,6 +683,12 @@ impl RefName {
             || name.ends_with('/')
             || name.ends_with('.')
             || name.ends_with(".lock")
+            || name.split('/').any(|component| {
+                component.is_empty()
+                    || component.starts_with('.')
+                    || component.ends_with('.')
+                    || component.ends_with(".lock")
+            })
             || name.contains("..")
             || name.contains("@{")
             || name == "@"
@@ -790,6 +797,20 @@ mod tests {
             "feature.",
             "feature@{upstream}",
             "@",
+        ] {
+            assert_invalid_ref_name(name);
+        }
+    }
+
+    #[test]
+    fn ref_name_rejects_invalid_slash_separated_components() {
+        for name in [
+            "/feature",
+            "feature//name",
+            "feature/.hidden",
+            "feature/name.",
+            "feature.lock/name",
+            "feature/name.lock",
         ] {
             assert_invalid_ref_name(name);
         }
