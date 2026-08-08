@@ -69,8 +69,11 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Changed
 - Reject carriage-return and line-feed characters in Git credential usernames and
   secrets before constructing the inline `credential.helper` protocol output.
-  Invalid values now return the crate's deterministic `InvalidInput` error, while
-  valid credentials, the default username, and host scoping remain unchanged.
+  The direct helper validates both fields, while static, environment-backed,
+  closure-provider, and common-resolution paths validate the username before
+  applying the empty/whitespace-only secret fallback, so malformed values return
+  the crate's deterministic `InvalidInput` error while valid credentials, the
+  default username, and host scoping remain unchanged.
 - **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
   Breaking for a downstream that pattern-matches a `processkit::Error` this crate's
   classifiers accept: `Error` is no longer an enum but an opaque, pointer-sized

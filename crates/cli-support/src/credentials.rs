@@ -152,10 +152,14 @@ impl Credential {
     /// Apply the helper validation while preserving the ambient-auth rule for an
     /// empty or whitespace-only secret, which is never materialized into a helper.
     pub(crate) fn validate_for_resolution(&self) -> Result<()> {
+        validate_field(
+            "username",
+            self.username.as_deref().unwrap_or(DEFAULT_GIT_USERNAME),
+        )?;
         if self.secret.expose().trim().is_empty() {
             return Ok(());
         }
-        self.validate()
+        validate_field("secret", self.secret.expose())
     }
 }
 
@@ -295,6 +299,13 @@ impl EnvToken {
 #[async_trait]
 impl CredentialProvider for EnvToken {
     async fn credential(&self, _request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
+        // Validate the username before an unset/blank variable can defer to
+        // ambient auth. The username is still an input to the helper path even
+        // when this provider has no secret to materialize.
+        validate_field(
+            "username",
+            self.username.as_deref().unwrap_or(DEFAULT_GIT_USERNAME),
+        )?;
         match std::env::var(&self.var) {
             // A set-but-blank (or whitespace-only) variable is treated as unset →
             // `None` (defer to ambient auth), not an empty token that would override
@@ -586,6 +597,16 @@ mod tests {
             .expect("valid credential");
         assert!(helper.config_args.iter().all(|arg| !arg.contains("secret")));
         assert!(helper.config_args.iter().all(|arg| !arg.contains("alice")));
+
+        for blank_secret in ["", "   ", "\t\n"] {
+            for bad_username in ["alice\r", "alice\n"] {
+                let error = invalid_input(git_credential_helper(
+                    &Credential::userpass(bad_username, blank_secret),
+                    None,
+                ));
+                assert!(error.to_string().contains("username"));
+            }
+        }
     }
 
     #[tokio::test]
@@ -622,6 +643,25 @@ mod tests {
             );
         }
 
+        // Username validation must happen before the empty/whitespace-only
+        // secret is classified as ambient auth.
+        for blank_secret in ["", "   ", "\t\n"] {
+            for bad_username in ["alice\r", "alice\n"] {
+                invalid_input(
+                    StaticCredential::new(Credential::userpass(bad_username, blank_secret))
+                        .credential(&req)
+                        .await,
+                );
+                invalid_input(
+                    provider_fn(move |_request: &CredentialRequest<'_>| {
+                        Ok(Some(Credential::userpass(bad_username, blank_secret)))
+                    })
+                    .credential(&req)
+                    .await,
+                );
+            }
+        }
+
         // Environment-backed secrets are validated before they can reach `printf`.
         for (suffix, bad) in [("cr", "secret\r"), ("lf", "secret\n")] {
             let var = format!("VCS_TOOLKIT_TEST_ENV_TOKEN_CRLF_{suffix}");
@@ -644,6 +684,20 @@ mod tests {
                     .await,
             );
             unsafe { std::env::remove_var(&var) };
+        }
+
+        for (suffix, blank_secret) in [("empty", ""), ("space", "   "), ("ws", "\t\n")] {
+            for bad_username in ["alice\r", "alice\n"] {
+                let var = format!("VCS_TOOLKIT_TEST_ENV_USERNAME_BLANK_{suffix}");
+                unsafe { std::env::set_var(&var, blank_secret) };
+                invalid_input(
+                    EnvToken::new(&var)
+                        .with_username(bad_username)
+                        .credential(&req)
+                        .await,
+                );
+                unsafe { std::env::remove_var(&var) };
+            }
         }
     }
 

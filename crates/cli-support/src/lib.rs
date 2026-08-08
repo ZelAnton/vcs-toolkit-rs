@@ -1635,13 +1635,10 @@ impl<R: ProcessRunner> ManagedClient<R> {
         let Some(credential) = credential else {
             return Ok(None);
         };
+        credential.validate_for_resolution()?;
         if credential.secret().expose().trim().is_empty() {
             return Ok(None);
         }
-        // Validate here as well as in the built-in providers: custom providers
-        // implement the trait directly, so this is the common resolution boundary
-        // that keeps malformed values away from every credential consumer.
-        credential.validate()?;
         Ok(Some(credential))
     }
 
@@ -2032,6 +2029,15 @@ mod tests {
     use processkit::testing::{Reply, ScriptedRunner};
     use proptest::prelude::*;
     use std::sync::Mutex;
+
+    struct UnvalidatedProvider(Credential);
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for UnvalidatedProvider {
+        async fn credential(&self, _request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
+            Ok(Some(self.0.clone()))
+        }
+    }
 
     #[tokio::test]
     async fn streamed_run_replays_scripted_lifecycle_and_preserves_failure_output() {
@@ -2880,6 +2886,26 @@ mod tests {
                         .is_none(),
                     "blank secret {blank:?} → ambient (None) for {service:?}"
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_credential_rejects_malformed_username_before_blank_fallback() {
+        for blank_secret in ["", "   ", "\t\n"] {
+            for bad_username in ["alice\r", "alice\n"] {
+                let client = ManagedClient::new("git").with_credentials(Arc::new(
+                    UnvalidatedProvider(Credential::userpass(bad_username, blank_secret)),
+                ));
+                let error = client
+                    .resolve_credential(CredentialService::Git, None)
+                    .await
+                    .expect_err("malformed username must not become ambient auth");
+                assert!(
+                    is_invalid_input(&error),
+                    "credential rejection must be InvalidInput: {error:?}"
+                );
+                assert!(error.to_string().contains("username"));
             }
         }
     }
