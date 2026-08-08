@@ -875,7 +875,7 @@ impl<R: ProcessRunner> Git<R> {
             .await?
         {
             Some(cred) => {
-                let helper = git_credential_helper(&cred, expect_host);
+                let helper = git_credential_helper(&cred, expect_host)?;
                 Ok((helper.config_args, helper.env))
             }
             None => Ok((Vec::new(), Vec::new())),

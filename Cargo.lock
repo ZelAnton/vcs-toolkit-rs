@@ -1582,6 +1582,7 @@ name = "vcs-mcp"
 version = "0.7.0"
 dependencies = [
  "async-trait",
+ "libc",
  "processkit",
  "rmcp",
  "serde",
@@ -1591,6 +1592,7 @@ dependencies = [
  "vcs-core",
  "vcs-forge",
  "vcs-testkit",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
