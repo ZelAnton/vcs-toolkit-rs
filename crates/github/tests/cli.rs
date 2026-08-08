@@ -142,9 +142,205 @@ async fn release_list_and_view_round_trip() {
 // Run with: `cargo test -p vcs-github -- --ignored record_`
 mod record {
     use super::*;
-    use processkit::JobRunner;
-    use processkit::testing::RecordReplayRunner;
+    use processkit::testing::{CassetteField, RecordReplayRunner, Reply, ScriptedRunner};
+    use processkit::{JobRunner, ProcessRunner};
+    use proptest::prelude::*;
     use std::path::PathBuf;
+    use vcs_cli_support::logging::redact_value;
+
+    const SCRUBBED_CWD: &str = "<cwd>";
+    const SCRUBBED_PATH: &str = "<path>";
+
+    /// Make every field safe to persist while preserving the full shape of gh's
+    /// JSON output. The hook is deliberately stateless: processkit may call it
+    /// concurrently, and the same deterministic function is used for record and
+    /// replay lookup keys.
+    fn scrub_gh_cassette_field(field: CassetteField, text: &str) -> String {
+        if matches!(field, CassetteField::Cwd) && is_absolute_path(text) {
+            return SCRUBBED_CWD.to_owned();
+        }
+
+        scrub_absolute_paths(&redact_value(text))
+    }
+
+    fn is_absolute_path(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        PathBuf::from(value).is_absolute()
+            || value.starts_with('/')
+            || value.starts_with("\\\\")
+            || value.starts_with("//")
+            || (bytes.len() >= 3 && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\'))
+    }
+
+    /// Replace portable absolute-path spellings embedded in output/arguments.
+    ///
+    /// This intentionally handles both Windows and Unix spellings regardless of
+    /// the host doing the recording, so a cassette cannot retain a path merely
+    /// because it was recorded on the other platform. Quoted JSON strings may
+    /// contain spaces; unquoted argv values are delimited at whitespace.
+    fn scrub_absolute_paths(value: &str) -> String {
+        let bytes = value.as_bytes();
+        let mut out = String::with_capacity(value.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            if is_absolute_path_start(bytes, index) {
+                let quoted = index > 0 && bytes[index - 1] == b'"';
+                let end = path_end(bytes, index, quoted);
+                out.push_str(SCRUBBED_PATH);
+                index = end;
+            } else {
+                let ch = value[index..]
+                    .chars()
+                    .next()
+                    .expect("index always points into the string");
+                out.push(ch);
+                index += ch.len_utf8();
+            }
+        }
+        out
+    }
+
+    fn is_absolute_path_start(bytes: &[u8], index: usize) -> bool {
+        let boundary = index == 0
+            || matches!(
+                bytes[index - 1],
+                b' ' | b'\t'
+                    | b'\r'
+                    | b'\n'
+                    | b'"'
+                    | b'\''
+                    | b'='
+                    | b'('
+                    | b'['
+                    | b'{'
+                    | b','
+                    | b';'
+            );
+        if !boundary {
+            return false;
+        }
+
+        let drive_path = index + 2 < bytes.len()
+            && bytes[index].is_ascii_alphabetic()
+            && bytes[index + 1] == b':'
+            && matches!(bytes[index + 2], b'/' | b'\\');
+        let unix_path = bytes[index] == b'/' && index + 1 < bytes.len() && bytes[index + 1] != b'/';
+        let unc_path = index + 1 < bytes.len()
+            && matches!(bytes[index], b'/' | b'\\')
+            && bytes[index + 1] == bytes[index];
+        drive_path || unix_path || unc_path
+    }
+
+    fn path_end(bytes: &[u8], start: usize, quoted: bool) -> usize {
+        let mut index = start;
+        while index < bytes.len() {
+            if quoted {
+                if bytes[index] == b'"' && !is_escaped_quote(bytes, index) {
+                    break;
+                }
+            } else if bytes[index].is_ascii_whitespace()
+                || matches!(
+                    bytes[index],
+                    b'"' | b'\'' | b',' | b']' | b'}' | b')' | b';'
+                )
+            {
+                break;
+            }
+            index += 1;
+        }
+        index
+    }
+
+    fn is_escaped_quote(bytes: &[u8], index: usize) -> bool {
+        let mut backslashes = 0;
+        let mut cursor = index;
+        while cursor > 0 && bytes[cursor - 1] == b'\\' {
+            backslashes += 1;
+            cursor -= 1;
+        }
+        backslashes % 2 == 1
+    }
+
+    #[test]
+    fn scrubber_redacts_secrets_paths_and_preserves_ordinary_values() {
+        let secret = "github_pat_DO_NOT_PERSIST_123456";
+        assert_eq!(
+            scrub_gh_cassette_field(CassetteField::Argument, secret),
+            "<redacted>"
+        );
+        assert_eq!(
+            scrub_gh_cassette_field(
+                CassetteField::Stdout,
+                &format!(r#"{{"token":"{secret}","cwd":"C:\\Users\\alice\\repo"}}"#)
+            ),
+            r#"{"token":"<redacted>","cwd":"<path>"}"#
+        );
+        assert_eq!(
+            scrub_gh_cassette_field(CassetteField::Cwd, r"C:\Users\alice\repo"),
+            SCRUBBED_CWD
+        );
+        assert_eq!(scrub_gh_cassette_field(CassetteField::Cwd, "."), ".");
+        assert_eq!(
+            scrub_gh_cassette_field(CassetteField::Argument, "--json"),
+            "--json"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn scrubber_is_idempotent_and_preserves_plain_values(value in "[a-z0-9._-]{0,160}") {
+            let once = scrub_gh_cassette_field(CassetteField::Stdout, &value);
+            prop_assert_eq!(
+                scrub_gh_cassette_field(CassetteField::Stdout, &once),
+                once.clone()
+            );
+            prop_assert_eq!(once, value);
+        }
+    }
+
+    #[tokio::test]
+    async fn scrubber_is_symmetric_for_record_and_replay_without_live_gh() {
+        let path =
+            std::env::temp_dir().join(format!("vcs-github-t166-scrub-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let command = processkit::Command::new("gh")
+            .args(["run", "view", "--token=github_pat_NOT_IN_FIXTURE"])
+            .current_dir(r"C:\Users\recording\repo");
+        let recorder = RecordReplayRunner::record(
+            &path,
+            ScriptedRunner::new().on(
+                ["gh", "run", "view", "--token=github_pat_NOT_IN_FIXTURE"],
+                Reply::ok(
+                    r#"{"message":"github_pat_NOT_IN_FIXTURE","path":"C:\\Users\\recording\\repo"}"#,
+                ),
+            ),
+        )
+        .scrub_with(scrub_gh_cassette_field);
+        let _ = recorder
+            .output_string(&command)
+            .await
+            .expect("record scripted response");
+        recorder.save().expect("save scrubbed fixture");
+
+        let fixture = std::fs::read_to_string(&path).expect("read fixture");
+        assert!(!fixture.contains("github_pat_NOT_IN_FIXTURE"));
+        assert!(!fixture.contains(r"C:\Users\recording\repo"));
+
+        let replayer = RecordReplayRunner::replay(&path)
+            .expect("load scrubbed fixture")
+            .scrub_with(scrub_gh_cassette_field);
+        let replayed = replayer
+            .output_string(&command)
+            .await
+            .expect("scrubbed invocation matches scrubbed key");
+        assert_eq!(
+            replayed.stdout(),
+            r#"{"message":"<redacted>","path":"<path>"}"#
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     fn cassette_path(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -156,7 +352,8 @@ mod record {
     #[ignore = "records a live cassette against gh; requires network + an authenticated gh"]
     async fn record_release_round_trip() {
         let runner =
-            RecordReplayRunner::record(cassette_path("release_round_trip.json"), JobRunner::new());
+            RecordReplayRunner::record(cassette_path("release_round_trip.json"), JobRunner::new())
+                .scrub_with(scrub_gh_cassette_field);
         let gh = GitHub::with_runner(&runner);
         let dir = std::path::Path::new(".");
 
@@ -174,7 +371,8 @@ mod record {
     #[ignore = "records a live cassette against gh; requires network + an authenticated gh"]
     async fn record_run_round_trip() {
         let runner =
-            RecordReplayRunner::record(cassette_path("run_round_trip.json"), JobRunner::new());
+            RecordReplayRunner::record(cassette_path("run_round_trip.json"), JobRunner::new())
+                .scrub_with(scrub_gh_cassette_field);
         let gh = GitHub::with_runner(&runner);
         let dir = std::path::Path::new(".");
 

@@ -241,6 +241,7 @@ pub fn vcs_cli_support::logging::CommandObserver::on_command(&self, &vcs_cli_sup
 impl vcs_cli_support::logging::CommandObserver for vcs_cli_support::logging::StderrObserver
 pub fn vcs_cli_support::logging::StderrObserver::on_command(&self, &vcs_cli_support::logging::CommandRecord<'_>)
 pub fn vcs_cli_support::logging::redact_args(&[std::ffi::os_str::OsString]) -> alloc::vec::Vec<alloc::string::String>
+pub fn vcs_cli_support::logging::redact_value(&str) -> alloc::string::String
 pub macro vcs_cli_support::at_forwarders!
 pub macro vcs_cli_support::managed_client!
 pub macro vcs_cli_support::raw_run_forwarders!
@@ -593,6 +594,7 @@ pub fn vcs_cli_support::is_nothing_to_commit(&processkit::error::Error) -> bool
 pub fn vcs_cli_support::is_transient_fetch_error(&processkit::error::Error) -> bool
 pub fn vcs_cli_support::provider_fn<F>(F) -> vcs_cli_support::credentials::FnProvider<F> where F: core::ops::function::Fn(&vcs_cli_support::credentials::CredentialRequest<'_>) -> processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>> + core::marker::Send + core::marker::Sync
 pub fn vcs_cli_support::redact_args(&[std::ffi::os_str::OsString]) -> alloc::vec::Vec<alloc::string::String>
+pub fn vcs_cli_support::redact_value(&str) -> alloc::string::String
 pub fn vcs_cli_support::reject_flag_like(&str, &str, &str) -> processkit::error::Result<()>
 pub async fn vcs_cli_support::retry_async<T, Fut>(&vcs_cli_support::RetryPolicy, core::option::Option<&tokio_util::sync::cancellation_token::CancellationToken>, impl core::ops::function::Fn(&processkit::error::Error) -> bool, impl core::ops::function::FnMut() -> Fut) -> processkit::error::Result<T> where Fut: core::future::future::Future<Output = processkit::error::Result<T>>
 pub async fn vcs_cli_support::run_with_progress<R: processkit::runner::ProcessRunner + ?core::marker::Sized>(&R, &processkit::command::Command, &mut vcs_cli_support::ProgressCallback<'_>) -> processkit::error::Result<()>

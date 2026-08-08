@@ -130,22 +130,38 @@ replays that file — no subprocess, no network, deterministic. See the
 mechanism (portable match key, `match_on_cwd`/`match_on_env` opt-ins,
 durability/concurrency of `save`).
 
-Re-record a cassette when the wrapped `gh` subcommand's output shape changes
-(a new/renamed `--json` field, a reshaped error) or you add a scenario:
+The recording tests attach a deterministic scrubber before saving. It reuses
+the shared `vcs-cli-support` single-value redaction policy for every argument
+and captured output field, and replaces absolute paths in arguments, cwd,
+stdout, and stderr. The same hook is applied to replay lookup keys, so a
+scrubbed fixture still matches the real invocation. Hermetic scrubber tests use
+`ScriptedRunner`; they never need a live `gh`, network, or authentication.
+
+Re-record a cassette only when the wrapped `gh` subcommand's output shape
+changes (a new/renamed `--json` field, a reshaped error) or you add a scenario:
 
 ```bash
 # Requires network and an authenticated `gh` (`gh auth status`) against
 # ZelAnton/vcs-toolkit-rs, whose real releases/Actions runs the cassettes
-# capture. Re-run the specific `record_*` test(s) that cover the changed
-# subcommand — this overwrites only that cassette file.
-cargo test -p vcs-github -- --ignored record_release_round_trip
-cargo test -p vcs-github -- --ignored record_run_round_trip
+# capture. Select the exact recording test; it overwrites only that cassette.
+cargo test -p vcs-github --test cli record::record_release_round_trip -- --ignored
+cargo test -p vcs-github --test cli record::record_run_round_trip -- --ignored
 ```
 
-Then run `cargo test -p vcs-github` (no `--ignored`) to confirm the replaying
-unit tests still pass against the freshly recorded file, and commit the
-cassette alongside the code/test change that motivated re-recording — never on
-its own in an unrelated PR.
+Then run `cargo test -p vcs-github` (without `--ignored`) to confirm the
+replaying unit tests still pass against the freshly recorded file. If another
+ignored-test lane is needed, exclude both recording tests explicitly:
+
+```bash
+cargo test --workspace --all-features --tests -- \
+  --ignored \
+  --skip record::record_release_round_trip \
+  --skip record::record_run_round_trip
+```
+
+Review the scrubbed cassette for secrets and absolute paths, and commit it
+alongside the code/test change that motivated re-recording — never on its own
+in an unrelated PR.
 
 One exception to read past when reviewing a fresh recording: each entry also
 stores processkit's own capture metadata (`total_lines`/`total_bytes`/
@@ -165,10 +181,12 @@ a diff means that output changed (a new field, a reordered/renamed one, a
 different error shape) and whoever reviews it must confirm the wrapper's
 parser and any hermetic assertions still agree with the new shape before
 approving — never accept a re-recorded cassette as a silent, pass-through
-diff. A cassette also stores its invocation `program`/`args`/`cwd`/`stdout`/
-`stderr` verbatim (only env *values* are redacted, kept as variable names
-only) — skim a freshly recorded file for anything sensitive before committing
-it, same as reviewing any other fixture that touched a real service.
+diff. A cassette stores its invocation `program` plus scrubbed `args`/`cwd`/
+`stdout`/`stderr` (environment *values* are also omitted, kept as variable
+names only). The scrubber preserves ordinary output and JSON shape while
+replacing known credential/token forms and machine-specific absolute paths;
+still skim a fresh fixture before committing it, the same as any other fixture
+that touched a real service.
 
 **This is a distinct mechanism from the [scheduled CLI-drift
 lane](.github/workflows/scheduled-cli-drift.yml)**, which this pilot does not

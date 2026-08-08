@@ -391,7 +391,7 @@ pub fn redact_args(args: &[OsString]) -> Vec<String> {
                     out.push(format!(
                         "{}{name}={}",
                         &s[..dashes_len],
-                        redact_value(value)
+                        redact_arg_value(value)
                     ));
                 }
             } else {
@@ -403,7 +403,7 @@ pub fn redact_args(args: &[OsString]) -> Vec<String> {
                 out.push(s.into_owned());
             }
         } else {
-            out.push(redact_value(&s).into_owned());
+            out.push(redact_arg_value(&s));
         }
     }
     out
@@ -419,35 +419,81 @@ fn is_sensitive_flag(name: &str) -> bool {
     SENSITIVE_FLAGS.contains(&name.as_str())
 }
 
-/// Redact a single free-text value: mask it wholesale if it contains a secret shape,
-/// mask the userinfo of a credentialed URL, then truncate if it is long.
-fn redact_value(value: &str) -> std::borrow::Cow<'_, str> {
-    use std::borrow::Cow;
+/// Redact one free-text value without sequence-aware flag handling or truncation.
+///
+/// This is the single-value counterpart to [`redact_args`]. It is useful at
+/// boundaries that receive one field at a time, such as a record/replay cassette
+/// scrubber, where truncating a captured JSON document would make the fixture
+/// unusable. Long argv values are still truncated by [`redact_args`].
+pub fn redact_value(value: &str) -> String {
     if value.is_empty() {
-        return Cow::Borrowed(value);
+        return String::new();
     }
     let lower = value.to_ascii_lowercase();
     if let Some(masked) = mask_url_userinfo(value) {
-        // Preserve the useful host/path after removing userinfo, unless a second
-        // token shape remains elsewhere (for example in the URL path/query).
-        // In that case mask the whole value so URL-specific redaction cannot hide
-        // a later leak from the generic scanner.
-        let masked_lower = masked.to_ascii_lowercase();
-        if contains_secret_shape(&masked_lower) {
-            return Cow::Owned(REDACTED.to_string());
-        }
-        return Cow::Owned(truncate(&masked));
+        // Preserve the useful host/path after removing userinfo, and redact any
+        // second token shape that remains elsewhere (for example in the URL
+        // path/query) without destroying a captured JSON/document shape.
+        return redact_secret_shapes(&masked);
     }
     // Tokens are often embedded in a sentence, config fragment, or `--body=...`
     // value rather than occupying the entire argv slot. Fail closed on the shape
     // anywhere in free text; a false positive only hides one diagnostic value.
     if contains_secret_shape(&lower) {
-        return Cow::Owned(REDACTED.to_string());
+        return redact_secret_shapes(value);
     }
-    match truncate_cow(value) {
-        Some(t) => Cow::Owned(t),
-        None => Cow::Borrowed(value),
+    value.to_owned()
+}
+
+/// Apply the argv-only length cap after the shared single-value redaction policy.
+fn redact_arg_value(value: &str) -> String {
+    if contains_secret_shape(&value.to_ascii_lowercase()) && mask_url_userinfo(value).is_none() {
+        return REDACTED.to_string();
     }
+    truncate(&redact_value(value))
+}
+
+/// Replace known token-shaped spans in a larger text value while retaining the
+/// surrounding document (notably JSON output captured by a cassette).
+fn redact_secret_shapes(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    let mut out = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let Some((start, marker_len)) = SECRET_PREFIXES
+            .iter()
+            .map(|prefix| (*prefix, prefix.len()))
+            .chain(std::iter::once((
+                "x-access-token:",
+                "x-access-token:".len(),
+            )))
+            .filter_map(|(marker, marker_len)| {
+                lower[cursor..]
+                    .find(marker)
+                    .map(|at| (cursor + at, marker_len))
+            })
+            .min_by_key(|(start, _)| *start)
+        else {
+            out.push_str(&value[cursor..]);
+            break;
+        };
+        out.push_str(&value[cursor..start]);
+        let end = secret_shape_end(value.as_bytes(), start + marker_len);
+        out.push_str(REDACTED);
+        cursor = end;
+    }
+    out
+}
+
+fn secret_shape_end(bytes: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && !matches!(bytes[end], b'"' | b'\'' | b',' | b']' | b'}' | b')' | b';')
+    {
+        end += 1;
+    }
+    end
 }
 
 /// Whether an already-lowercased value contains a token form this crate knows.
@@ -623,6 +669,19 @@ mod tests {
     fn ordinary_argv_is_shown_verbatim() {
         let out = redact_args(&argv(&["status", "--porcelain", "-z"]));
         assert_eq!(out, vec!["status", "--porcelain", "-z"]);
+    }
+
+    #[test]
+    fn single_value_redaction_masks_secrets_without_truncating_output() {
+        let secret = "github_pat_SINGLE_VALUE_MUST_NOT_LEAK";
+        assert_eq!(redact_value(&format!("token={secret}")), "token=<redacted>");
+        assert_eq!(
+            redact_value("https://user:password@example.test/repo"),
+            "https://<redacted>@example.test/repo"
+        );
+        let output = "ordinary-json-value ".repeat(32);
+        assert_eq!(redact_value(&output), output);
+        assert_eq!(redact_value("status"), "status");
     }
 
     #[test]
@@ -831,6 +890,19 @@ mod tests {
                 redacted.iter().all(|arg| !arg.contains(&secret)),
                 "secret {secret:?} survived in {redacted:?}"
             );
+        }
+
+        #[test]
+        fn generated_single_value_secrets_never_survive(token in known_token()) {
+            let value = format!("gh output: {token}");
+            let redacted = redact_value(&value);
+            prop_assert!(!redacted.contains(&token), "secret {token:?} survived");
+        }
+
+        #[test]
+        fn arbitrary_single_values_are_idempotent(value in unicode_string(512)) {
+            let once = redact_value(&value);
+            prop_assert_eq!(redact_value(&once), once);
         }
 
         /// Arbitrary Unicode argv — flags included — must be total and stable if

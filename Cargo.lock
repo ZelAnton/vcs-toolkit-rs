@@ -1538,6 +1538,7 @@ dependencies = [
  "async-trait",
  "mockall",
  "processkit",
+ "proptest",
  "serde",
  "serde_json",
  "tokio",

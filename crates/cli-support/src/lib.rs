@@ -379,6 +379,7 @@ pub use credentials::{
 pub mod logging;
 pub use logging::{
     CommandObserver, CommandRecord, CommandStatus, LoggingRunner, StderrObserver, redact_args,
+    redact_value,
 };
 
 /// JSON helpers shared by the forge wrappers, behind the `serde` feature — so the

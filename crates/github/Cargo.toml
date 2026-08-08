@@ -53,6 +53,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "test-
 # workspace crate. See CONTRIBUTING.md, "Updating a `gh` CLI cassette", for
 # the re-recording procedure.
 processkit = { workspace = true, features = ["record"] }
+# Property coverage for the hermetic cassette scrubber in tests/cli.rs.
+proptest = "1"
 
 [package.metadata.docs.rs]
 # Build docs.rs with every feature so the optional surfaces (mock / tracing /

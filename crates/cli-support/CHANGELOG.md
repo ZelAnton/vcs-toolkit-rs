@@ -41,7 +41,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
   body, a commit message) is truncated — a fail-closed policy that upholds the
   workspace's "token never in argv" contract as defence in depth (the environment,
   which carries the token, is never logged). Also exports `CommandObserver`,
-  `CommandRecord`, `CommandStatus`, and `StderrObserver`. (T-117.)
+  `CommandRecord`, `CommandStatus`, `StderrObserver`, and the reusable
+  single-value `redact_value` editor. (T-117, T-166.)
 - `run_with_progress_within` / `ManagedClient::run_with_progress_within` — an
   `OutputBudget` ceiling on the stdout/stderr a **streamed** run retains, closing
   the memory-bound gap between a streaming `clone`/`fetch --progress` and its

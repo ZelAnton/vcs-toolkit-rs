@@ -73,6 +73,11 @@ crates; tag releases as `vcs-github-v<version>`.
   `RELEASE_LIST_FIELDS`/`RELEASE_VIEW_FIELDS` are widened accordingly.
 
 ### Changed
+- **`gh` cassette recording scrubs persisted process fields.** The ignored
+  record tests now apply one deterministic scrubber to arguments, cwd, stdout,
+  and stderr before persistence, reusing the shared credential/token policy and
+  replacing machine-specific absolute paths; the same transformation is used
+  for replay lookup keys, with hermetic coverage that does not require live `gh`.
 - **Test infrastructure: `gh` parser fixtures now come from recorded cassettes,
   not hand-invented JSON.** `processkit`'s `record` feature (`RecordReplayRunner`)
   is now enabled for this crate's dev/test profile only (`[dev-dependencies]` in
