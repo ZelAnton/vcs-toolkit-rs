@@ -70,7 +70,7 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 - Reject carriage-return and line-feed characters in Git credential usernames and
   secrets before constructing the inline `credential.helper` protocol output.
   The direct helper validates both fields, while static, environment-backed,
-  closure-provider, and common-resolution paths validate the username before
+  closure-provider, and common-resolution paths validate both fields before
   applying the empty/whitespace-only secret fallback, so malformed values return
   the crate's deterministic `InvalidInput` error while valid credentials, the
   default username, and host scoping remain unchanged.

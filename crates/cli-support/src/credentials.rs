@@ -156,10 +156,8 @@ impl Credential {
             "username",
             self.username.as_deref().unwrap_or(DEFAULT_GIT_USERNAME),
         )?;
-        if self.secret.expose().trim().is_empty() {
-            return Ok(());
-        }
-        validate_field("secret", self.secret.expose())
+        validate_field("secret", self.secret.expose())?;
+        Ok(())
     }
 }
 
@@ -310,13 +308,17 @@ impl CredentialProvider for EnvToken {
             // A set-but-blank (or whitespace-only) variable is treated as unset →
             // `None` (defer to ambient auth), not an empty token that would override
             // the ambient login with nothing.
-            Ok(value) if !value.trim().is_empty() => {
+            Ok(value) => {
                 let credential = match &self.username {
                     Some(user) => Credential::userpass(user.clone(), value.clone()),
                     None => Credential::token(value.clone()),
                 };
-                credential.validate()?;
-                Ok(Some(credential))
+                credential.validate_for_resolution()?;
+                if value.trim().is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(credential))
+                }
             }
             _ => Ok(None),
         }
@@ -574,16 +576,19 @@ mod tests {
         }
     }
 
+    const CRLF_USERNAMES: &[&str] = &["alice\r", "alice\n", "alice\t\r ", "alice \n\t"];
+    const CRLF_SECRETS: &[&str] = &["\r", "\n", "\t\r ", " \n\t"];
+
     #[test]
     fn git_credential_helper_rejects_cr_and_lf_before_protocol_output() {
-        for bad_username in ["alice\r", "alice\n"] {
+        for &bad_username in CRLF_USERNAMES {
             let error = invalid_input(git_credential_helper(
                 &Credential::userpass(bad_username, "secret"),
                 None,
             ));
             assert!(error.to_string().contains("username"));
         }
-        for bad_secret in ["secret\r", "secret\n"] {
+        for &bad_secret in CRLF_SECRETS {
             let error = invalid_input(git_credential_helper(
                 &Credential::userpass("alice", bad_secret),
                 None,
@@ -598,8 +603,8 @@ mod tests {
         assert!(helper.config_args.iter().all(|arg| !arg.contains("secret")));
         assert!(helper.config_args.iter().all(|arg| !arg.contains("alice")));
 
-        for blank_secret in ["", "   ", "\t\n"] {
-            for bad_username in ["alice\r", "alice\n"] {
+        for blank_secret in ["", "   ", "\t"] {
+            for &bad_username in CRLF_USERNAMES {
                 let error = invalid_input(git_credential_helper(
                     &Credential::userpass(bad_username, blank_secret),
                     None,
@@ -613,7 +618,7 @@ mod tests {
     async fn built_in_and_closure_providers_reject_the_same_cr_and_lf_inputs() {
         let req = CredentialRequest::new(CredentialService::Git);
 
-        for bad_username in ["alice\r", "alice\n"] {
+        for &bad_username in CRLF_USERNAMES {
             invalid_input(
                 StaticCredential::new(Credential::userpass(bad_username, "secret"))
                     .credential(&req)
@@ -628,7 +633,7 @@ mod tests {
             );
         }
 
-        for bad_secret in ["secret\r", "secret\n"] {
+        for &bad_secret in CRLF_SECRETS {
             invalid_input(
                 StaticCredential::new(Credential::userpass("alice", bad_secret))
                     .credential(&req)
@@ -645,8 +650,8 @@ mod tests {
 
         // Username validation must happen before the empty/whitespace-only
         // secret is classified as ambient auth.
-        for blank_secret in ["", "   ", "\t\n"] {
-            for bad_username in ["alice\r", "alice\n"] {
+        for blank_secret in ["", "   ", "\t"] {
+            for &bad_username in CRLF_USERNAMES {
                 invalid_input(
                     StaticCredential::new(Credential::userpass(bad_username, blank_secret))
                         .credential(&req)
@@ -662,8 +667,48 @@ mod tests {
             }
         }
 
+        for blank_secret in ["", "   ", "\t"] {
+            assert!(
+                StaticCredential::token(blank_secret)
+                    .credential(&req)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "plain blank static secret remains a provider result"
+            );
+            assert!(
+                provider_fn(move |_request: &CredentialRequest<'_>| {
+                    Ok(Some(Credential::token(blank_secret)))
+                })
+                .credential(&req)
+                .await
+                .unwrap()
+                .is_some(),
+                "plain blank closure secret remains a provider result"
+            );
+        }
+
+        for (suffix, blank) in [("empty", ""), ("space", "   "), ("tab", "\t")] {
+            let var = format!("VCS_TOOLKIT_TEST_ENV_TOKEN_BLANK_{suffix}");
+            unsafe { std::env::set_var(&var, blank) };
+            assert!(
+                EnvToken::new(&var)
+                    .credential(&req)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "plain blank environment secret remains ambient"
+            );
+            unsafe { std::env::remove_var(&var) };
+        }
+
         // Environment-backed secrets are validated before they can reach `printf`.
-        for (suffix, bad) in [("cr", "secret\r"), ("lf", "secret\n")] {
+        for (suffix, bad) in [
+            ("cr_only", "\r"),
+            ("lf_only", "\n"),
+            ("mixed_cr", "\t\r "),
+            ("mixed_lf", " \n\t"),
+        ] {
             let var = format!("VCS_TOOLKIT_TEST_ENV_TOKEN_CRLF_{suffix}");
             unsafe { std::env::set_var(&var, bad) };
             invalid_input(
@@ -674,7 +719,12 @@ mod tests {
             );
             unsafe { std::env::remove_var(&var) };
         }
-        for (suffix, bad) in [("cr", "alice\r"), ("lf", "alice\n")] {
+        for (suffix, bad) in [
+            ("cr", "alice\r"),
+            ("lf", "alice\n"),
+            ("mixed_cr", "alice\t\r "),
+            ("mixed_lf", "alice \n\t"),
+        ] {
             let var = format!("VCS_TOOLKIT_TEST_ENV_USERNAME_CRLF_{suffix}");
             unsafe { std::env::set_var(&var, "secret") };
             invalid_input(
@@ -686,8 +736,8 @@ mod tests {
             unsafe { std::env::remove_var(&var) };
         }
 
-        for (suffix, blank_secret) in [("empty", ""), ("space", "   "), ("ws", "\t\n")] {
-            for bad_username in ["alice\r", "alice\n"] {
+        for (suffix, blank_secret) in [("empty", ""), ("space", "   "), ("ws", "\t")] {
+            for &bad_username in CRLF_USERNAMES {
                 let var = format!("VCS_TOOLKIT_TEST_ENV_USERNAME_BLANK_{suffix}");
                 unsafe { std::env::set_var(&var, blank_secret) };
                 invalid_input(
