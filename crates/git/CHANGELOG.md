@@ -10,6 +10,10 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Changed
+- Complete `RefName`'s Git reference-name validation: names ending in `.`,
+  containing `@{`, or equal to `@` now fail as invalid input before a Git
+  subprocess can start. `RevSpec` remains intentionally permissive for
+  revision expressions.
 - Add the default-disabled `Git::default_inactivity_timeout` watchdog for
   progress-streaming fetch, push, and clone. Git's existing `--progress` output
   resets the watchdog, and inactivity remains distinguishable from an absolute
