@@ -31,7 +31,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use processkit::Result;
+use processkit::{Error, Result};
 
 /// A secret value — an API token, a password — that **redacts itself** whenever
 /// it is formatted, so it can't leak into a log line or an error message. Read
@@ -134,6 +134,42 @@ impl Credential {
     pub fn secret(&self) -> &Secret {
         &self.secret
     }
+
+    /// Reject values that the line-based Git credential protocol cannot carry.
+    ///
+    /// The constructors intentionally remain infallible so they can continue to
+    /// be used by non-Git credential consumers. Every path that resolves or
+    /// materializes a credential for a Git helper calls this shared check before
+    /// exposing either field to the helper.
+    pub(crate) fn validate(&self) -> Result<()> {
+        validate_field(
+            "username",
+            self.username.as_deref().unwrap_or(DEFAULT_GIT_USERNAME),
+        )?;
+        validate_field("secret", self.secret.expose())
+    }
+
+    /// Apply the helper validation while preserving the ambient-auth rule for an
+    /// empty or whitespace-only secret, which is never materialized into a helper.
+    pub(crate) fn validate_for_resolution(&self) -> Result<()> {
+        if self.secret.expose().trim().is_empty() {
+            return Ok(());
+        }
+        self.validate()
+    }
+}
+
+fn validate_field(field: &str, value: &str) -> Result<()> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(Error::spawn(
+            "git",
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("credential {field} must not contain CR or LF"),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Which backend/tool is asking for a credential — lets a provider return
@@ -224,6 +260,7 @@ impl StaticCredential {
 #[async_trait]
 impl CredentialProvider for StaticCredential {
     async fn credential(&self, _request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
+        self.0.validate_for_resolution()?;
         Ok(Some(self.0.clone()))
     }
 }
@@ -262,10 +299,14 @@ impl CredentialProvider for EnvToken {
             // A set-but-blank (or whitespace-only) variable is treated as unset →
             // `None` (defer to ambient auth), not an empty token that would override
             // the ambient login with nothing.
-            Ok(value) if !value.trim().is_empty() => Ok(Some(match &self.username {
-                Some(user) => Credential::userpass(user.clone(), value),
-                None => Credential::token(value),
-            })),
+            Ok(value) if !value.trim().is_empty() => {
+                let credential = match &self.username {
+                    Some(user) => Credential::userpass(user.clone(), value.clone()),
+                    None => Credential::token(value.clone()),
+                };
+                credential.validate()?;
+                Ok(Some(credential))
+            }
             _ => Ok(None),
         }
     }
@@ -297,7 +338,11 @@ where
     F: Fn(&CredentialRequest<'_>) -> Result<Option<Credential>> + Send + Sync,
 {
     async fn credential(&self, request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
-        (self.0)(request)
+        let credential = (self.0)(request)?;
+        if let Some(credential) = &credential {
+            credential.validate_for_resolution()?;
+        }
+        Ok(credential)
     }
 }
 
@@ -381,9 +426,11 @@ pub struct GitCredentialHelper {
 /// `get` action (never `store`/`erase`), so the secret is never written to a
 /// credential cache or config; it lives only in the child's environment.
 ///
-/// The username/secret must not contain a newline: git's credential protocol is
-/// line-based, so an embedded `\n` is read as the end of the value (git truncates
-/// there). Real tokens and usernames never contain one.
+/// The username/secret must not contain `\r` or `\n`: git's credential protocol is
+/// line-based, so either embedded byte is read as the end of the value (git
+/// truncates there, and a username newline can add extra protocol fields). Invalid
+/// values return an `InvalidInput` error before the helper is emitted. Real tokens
+/// and usernames never contain one.
 ///
 /// `expect_host` scopes the credential to a host: when `Some`, the helper reads
 /// git's request (which names the host git is about to authenticate to) and
@@ -391,8 +438,12 @@ pub struct GitCredentialHelper {
 /// submodule fetch to another host can't extract the token. `None` (or an
 /// unknown host) leaves the helper ungated. Callers that know the operation's
 /// target (e.g. `clone` from its URL) pass [`https_host`] of it.
-#[must_use]
-pub fn git_credential_helper(cred: &Credential, expect_host: Option<&str>) -> GitCredentialHelper {
+#[must_use = "handle the helper or its invalid-input error"]
+pub fn git_credential_helper(
+    cred: &Credential,
+    expect_host: Option<&str>,
+) -> Result<GitCredentialHelper> {
+    cred.validate()?;
     let username = cred.username().unwrap_or(DEFAULT_GIT_USERNAME).to_string();
     // Reference the values by env-var NAME inside the snippet, so `argv` never
     // carries the secret. Respond only to git's `get` action; ignore store/erase.
@@ -411,7 +462,7 @@ pub fn git_credential_helper(cred: &Credential, expect_host: Option<&str>) -> Gi
          printf 'username=%s\\npassword=%s\\n' \
          \"${GIT_USERNAME_VAR}\" \"${GIT_PASSWORD_VAR}\"; }}; f"
     );
-    GitCredentialHelper {
+    Ok(GitCredentialHelper {
         config_args: vec![
             "-c".to_string(),
             "credential.helper=".to_string(),
@@ -426,7 +477,7 @@ pub fn git_credential_helper(cred: &Credential, expect_host: Option<&str>) -> Gi
                 Secret::new(expect_host.unwrap_or_default()),
             ),
         ],
-    }
+    })
 }
 
 #[cfg(test)]
@@ -499,10 +550,107 @@ mod tests {
         assert!(provider.credential(&req).await.unwrap().is_none());
     }
 
+    fn invalid_input<T>(result: Result<T>) -> Error {
+        match result {
+            Ok(_) => panic!("credential unexpectedly accepted CR/LF"),
+            Err(error) => {
+                assert!(
+                    crate::is_invalid_input(&error),
+                    "credential rejection must be InvalidInput: {error:?}"
+                );
+                error
+            }
+        }
+    }
+
+    #[test]
+    fn git_credential_helper_rejects_cr_and_lf_before_protocol_output() {
+        for bad_username in ["alice\r", "alice\n"] {
+            let error = invalid_input(git_credential_helper(
+                &Credential::userpass(bad_username, "secret"),
+                None,
+            ));
+            assert!(error.to_string().contains("username"));
+        }
+        for bad_secret in ["secret\r", "secret\n"] {
+            let error = invalid_input(git_credential_helper(
+                &Credential::userpass("alice", bad_secret),
+                None,
+            ));
+            assert!(error.to_string().contains("secret"));
+        }
+
+        // A valid value still produces the helper, and the values remain in the
+        // environment rather than being interpolated into its argv/config text.
+        let helper = git_credential_helper(&Credential::userpass("alice", "secret"), None)
+            .expect("valid credential");
+        assert!(helper.config_args.iter().all(|arg| !arg.contains("secret")));
+        assert!(helper.config_args.iter().all(|arg| !arg.contains("alice")));
+    }
+
+    #[tokio::test]
+    async fn built_in_and_closure_providers_reject_the_same_cr_and_lf_inputs() {
+        let req = CredentialRequest::new(CredentialService::Git);
+
+        for bad_username in ["alice\r", "alice\n"] {
+            invalid_input(
+                StaticCredential::new(Credential::userpass(bad_username, "secret"))
+                    .credential(&req)
+                    .await,
+            );
+            invalid_input(
+                provider_fn(move |_request: &CredentialRequest<'_>| {
+                    Ok(Some(Credential::userpass(bad_username, "secret")))
+                })
+                .credential(&req)
+                .await,
+            );
+        }
+
+        for bad_secret in ["secret\r", "secret\n"] {
+            invalid_input(
+                StaticCredential::new(Credential::userpass("alice", bad_secret))
+                    .credential(&req)
+                    .await,
+            );
+            invalid_input(
+                provider_fn(move |_request: &CredentialRequest<'_>| {
+                    Ok(Some(Credential::userpass("alice", bad_secret)))
+                })
+                .credential(&req)
+                .await,
+            );
+        }
+
+        // Environment-backed secrets are validated before they can reach `printf`.
+        for (suffix, bad) in [("cr", "secret\r"), ("lf", "secret\n")] {
+            let var = format!("VCS_TOOLKIT_TEST_ENV_TOKEN_CRLF_{suffix}");
+            unsafe { std::env::set_var(&var, bad) };
+            invalid_input(
+                EnvToken::new(&var)
+                    .with_username("alice")
+                    .credential(&req)
+                    .await,
+            );
+            unsafe { std::env::remove_var(&var) };
+        }
+        for (suffix, bad) in [("cr", "alice\r"), ("lf", "alice\n")] {
+            let var = format!("VCS_TOOLKIT_TEST_ENV_USERNAME_CRLF_{suffix}");
+            unsafe { std::env::set_var(&var, "secret") };
+            invalid_input(
+                EnvToken::new(&var)
+                    .with_username(bad)
+                    .credential(&req)
+                    .await,
+            );
+            unsafe { std::env::remove_var(&var) };
+        }
+    }
+
     #[test]
     fn git_credential_helper_keeps_secret_out_of_argv() {
         let cred = Credential::userpass("alice", "s3cr3t");
-        let h = git_credential_helper(&cred, None);
+        let h = git_credential_helper(&cred, None).expect("valid credential");
         // The secret value must NOT appear in any config arg (only the env-var name).
         for a in &h.config_args {
             assert!(!a.contains("s3cr3t"), "secret leaked into argv: {a}");
@@ -531,7 +679,7 @@ mod tests {
 
     #[test]
     fn git_credential_helper_defaults_username() {
-        let h = git_credential_helper(&Credential::token("t"), None);
+        let h = git_credential_helper(&Credential::token("t"), None).expect("valid credential");
         let user = h
             .env
             .iter()
@@ -544,7 +692,8 @@ mod tests {
     fn git_credential_helper_scopes_to_expected_host() {
         // Ungated: the host env is present but empty, and the snippet's host
         // check is skipped — the credential is released for any host.
-        let ungated = git_credential_helper(&Credential::token("t"), None);
+        let ungated =
+            git_credential_helper(&Credential::token("t"), None).expect("valid credential");
         let host_env = ungated
             .env
             .iter()
@@ -554,7 +703,8 @@ mod tests {
 
         // Gated: the expected host travels in the env (never argv), and the
         // snippet gates on it — the host value is not baked into the shell text.
-        let gated = git_credential_helper(&Credential::token("t"), Some("github.com"));
+        let gated = git_credential_helper(&Credential::token("t"), Some("github.com"))
+            .expect("valid credential");
         assert_eq!(
             gated
                 .env
@@ -615,7 +765,7 @@ mod tests {
         // VALUES, and the helper snippet references them only by env-var NAME
         // (double-quoted), so the user-controlled bytes never enter the argv.
         let cred = Credential::userpass("$(rm -rf /); x", "tok'; echo pwned");
-        let h = git_credential_helper(&cred, Some("github.com"));
+        let h = git_credential_helper(&cred, Some("github.com")).expect("valid credential");
         for a in &h.config_args {
             assert!(
                 !a.contains("rm -rf"),

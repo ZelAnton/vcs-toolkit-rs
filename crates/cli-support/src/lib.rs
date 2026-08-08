@@ -1631,10 +1631,18 @@ impl<R: ProcessRunner> ManagedClient<R> {
         // Treat it as `None` (ambient), keeping the "no usable credential ⇒
         // ambient auth" contract consistent regardless of which adapter produced
         // it (matching `EnvToken`'s own whitespace-only ⇒ unset rule).
-        Ok(provider
-            .credential(&request)
-            .await?
-            .filter(|cred| !cred.secret().expose().trim().is_empty()))
+        let credential = provider.credential(&request).await?;
+        let Some(credential) = credential else {
+            return Ok(None);
+        };
+        if credential.secret().expose().trim().is_empty() {
+            return Ok(None);
+        }
+        // Validate here as well as in the built-in providers: custom providers
+        // implement the trait directly, so this is the common resolution boundary
+        // that keeps malformed values away from every credential consumer.
+        credential.validate()?;
+        Ok(Some(credential))
     }
 
     /// Materialize `call` into a [`Command`], injecting the forge token env if a
