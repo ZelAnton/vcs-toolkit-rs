@@ -331,7 +331,7 @@ mod secure_fs {
     use windows_sys::Win32::Foundation::{HANDLE, RtlNtStatusToDosError, UNICODE_STRING};
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, SetEndOfFile, SetFilePointerEx,
+        FILE_SHARE_WRITE, SetFilePointerEx,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -388,7 +388,7 @@ mod secure_fs {
         } else {
             FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT
         };
-        // Open first, then truncate the pinned handle below.  FILE_OVERWRITE
+        // Open first, then write through the pinned handle below. FILE_OVERWRITE
         // asks the Windows object manager to replace the file during open and
         // is rejected for some ordinary files when FILE_OPEN_REPARSE_POINT is
         // also present.
@@ -438,11 +438,9 @@ mod secure_fs {
             if repositioned == 0 {
                 return Err(io::Error::last_os_error());
             }
-            // SAFETY: the handle is still owned by `file` and was opened for
-            // write access above; this truncates that exact, pinned file.
-            if unsafe { SetEndOfFile(file.as_raw_handle() as HANDLE) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
+            // Truncation is deliberately deferred until after the resolved bytes
+            // are written; on Windows, pre-truncating this NtCreateFile handle
+            // can leave the subsequent Tokio write with an empty regular file.
         }
         Ok(file)
     }
@@ -570,8 +568,13 @@ pub(crate) async fn read_working_copy(
 
 /// Write resolved content through a no-follow-safe descriptor.
 pub(crate) async fn write_working_copy(p: &RepoPath, content: &[u8]) -> Result<(), std::io::Error> {
-    let file = secure_fs::open_write(p)?;
-    tokio::fs::File::from_std(file).write_all(content).await
+    let mut file = tokio::fs::File::from_std(secure_fs::open_write(p)?);
+    file.write_all(content).await?;
+    // Unix opened the descriptor with O_TRUNC; Windows defers truncation until
+    // the write succeeds so a valid regular-file resolution is not reduced to
+    // an empty file by the handle-relative open path. Set the exact final size
+    // on both platforms to remove any old tail when the resolution is shorter.
+    file.set_len(content.len() as u64).await
 }
 
 /// The refusal for a file the conflict model can't parse because it isn't text.
