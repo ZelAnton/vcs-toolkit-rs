@@ -91,7 +91,7 @@ configured.
 | Method | Runs | Returns |
 |---|---|---|
 | `pr_list(dir)` | `tea pr list --state open --limit 100 --fields index,title,state,head,base,url --output csv` | `Vec<PullRequest>` (compatibility default) |
-| `pr_list_with(dir, spec)` | `tea pr list --state open\|closed\|all --limit <limit> --fields … --output csv` | `Vec<PullRequest>` via `PrList`; `Merged` is `Unsupported` |
+| `pr_list_with(dir, spec)` | `tea pr list --state open\|closed\|all --limit <limit> [--page N] --fields … --output csv` | `Vec<PullRequest>` via `PrList`; `Closed` pages/filter merged rows; `Merged` is `Unsupported` |
 | `pr_view(dir, number)` | `tea pr list --state all --limit 50 --page N --fields … --output csv` (paged) + filter | [`PullRequest`] |
 | `pr_create(dir, spec)` | `tea pr create --title … --description … [--head …] [--base …] [--labels a,b]` | `String` |
 | `pr_add_labels` / `pr_remove_labels` | **Unsupported** (`tea` has no PR edit subcommand) | Use the Gitea REST API. |
@@ -169,9 +169,12 @@ PR's URL (it has no flag to shape create output), so do **not** parse the return
 The compatibility list methods request `state=open, limit=100`; the `*_with`
 forms select other states and limits. `tea` cannot filter merged-only PRs, so
 `PrListState::Merged` is a structured `Unsupported` without spawning. The Gitea **server** caps a page at
-`MAX_RESPONSE_ITEMS` (default 50), so each returns **at most ~50** rows in one call —
-a busier repo is silently truncated. Page beyond that through `run` (`--page N`) or
-the API. `issue_list` also pins `--fields` to fetch `body`/`url` (tea's default issue
+`MAX_RESPONSE_ITEMS` (default 50). Open/all PR lists still return at most ~50
+rows in one call — a busier repo is silently truncated, so page beyond that through
+`run` (`--page N`) or the API. Closed PR lists page until they collect the requested
+number of unique non-merged rows or receive an empty page; a merged row therefore
+does not consume the requested closed result limit, and a safety-bound walk returns
+a parse error rather than a partial result. `issue_list` also pins `--fields` to fetch `body`/`url` (tea's default issue
 columns omit them). Like `pr_view`, **`issue_view` is synthesized by paging and
 filtering** because `tea issues <number>` (the bare-index form) renders Markdown
 and ignores `--output`.

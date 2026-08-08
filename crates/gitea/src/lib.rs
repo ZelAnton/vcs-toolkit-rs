@@ -778,8 +778,13 @@ pub trait GiteaApi: Send + Sync {
     async fn pr_list(&self, dir: &Path) -> Result<Vec<PullRequest>>;
     /// Pull requests selected by `spec` (`--state` / `--limit`). `Merged` is a
     /// structured `ErrorReason::Unsupported` because tea only accepts `open`,
-    /// `closed`, and `all`. A zero limit is rejected before spawning. **Defaulted**
-    /// to `Unsupported` so external implementers keep compiling.
+    /// `closed`, and `all`. A zero limit is rejected before spawning. `Closed`
+    /// pages through the listing until it has the requested number of
+    /// non-merged PRs or reaches an empty page, because tea may include merged
+    /// PRs in its closed listing. A pathologically large walk reaches a safety
+    /// bound with a parse error rather than silently returning an incomplete
+    /// result. **Defaulted** to `Unsupported` so external implementers keep
+    /// compiling.
     #[allow(unused_variables)]
     async fn pr_list_with(&self, dir: &Path, spec: PrList) -> Result<Vec<PullRequest>> {
         Err(Error::from(ErrorReason::Unsupported {
@@ -1097,14 +1102,71 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
             })
         })?;
         let limit = spec.limit.to_string();
+        // Gitea represents merged PRs as closed at the issue layer, so some
+        // servers include them in `--state closed`. Walk the paged listing until
+        // the requested number of closed-unmerged PRs is collected or an empty
+        // page proves that the remote listing is exhausted. Keep the walk bounded
+        // like `pr_view`, and de-duplicate by PR number in case a changing remote
+        // repeats a row across pages.
+        if requested_state == PrListState::Closed {
+            let mut closed: Vec<PullRequest> = Vec::new();
+            for page in 1..=VIEW_MAX_PAGES {
+                let page_str = page.to_string();
+                let page_prs = self
+                    .core
+                    .try_parse(
+                        self.core.command_in(
+                            dir,
+                            [
+                                "pr",
+                                "list",
+                                "--state",
+                                state,
+                                "--limit",
+                                limit.as_str(),
+                                "--page",
+                                page_str.as_str(),
+                                "--fields",
+                                PR_FIELDS,
+                                "--output",
+                                "csv",
+                            ],
+                        ),
+                        parse::parse_pr_list,
+                    )
+                    .await?;
+                if page_prs.is_empty() {
+                    return Ok(closed);
+                }
+                for pr in page_prs {
+                    if pr.merged || closed.iter().any(|seen| seen.number == pr.number) {
+                        continue;
+                    }
+                    closed.push(pr);
+                    if closed.len() == spec.limit {
+                        return Ok(closed);
+                    }
+                }
+            }
+            return Err(Error::parse(
+                BINARY,
+                format!(
+                    "closed pull-request listing did not reach the requested limit of {} in the \
+                     first {} rows (stopped at the {VIEW_MAX_PAGES}-page safety bound)",
+                    spec.limit,
+                    VIEW_MAX_PAGES * VIEW_PAGE_SIZE
+                ),
+            ));
+        }
+
         // `--limit 100` raises tea's default page size (30), but the Gitea *server*
-        // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so this returns at most
-        // ~50 open PRs in one call — a repo with more is silently truncated here; page
-        // via `run`/the API for the rest (see the trait doc). `--fields` selects the
-        // table columns we parse — tea's default set omits `head`/`base`/`url`, so
-        // without this the branches and URL would always be empty.
-        let mut prs = self
-            .core
+        // caps a page at `MAX_RESPONSE_ITEMS` (default 50), so open/all listings
+        // still return at most ~50 rows in one call — a repo with more is silently
+        // truncated here; page via `run`/the API for the rest (see the trait doc).
+        // `--fields` selects the table columns we parse — tea's default set omits
+        // `head`/`base`/`url`, so without this the branches and URL would always be
+        // empty.
+        self.core
             .try_parse(
                 self.core.command_in(
                     dir,
@@ -1123,15 +1185,7 @@ impl<R: ProcessRunner> GiteaApi for Gitea<R> {
                 ),
                 parse::parse_pr_list,
             )
-            .await?;
-        // Gitea represents merged PRs as closed at the issue layer, so some
-        // servers include them in `--state closed`. Preserve the portable
-        // `Closed` = closed-without-merge contract by using tea's parsed
-        // `merged` marker as the final discriminator.
-        if requested_state == PrListState::Closed {
-            prs.retain(|pr| !pr.merged);
-        }
-        Ok(prs)
+            .await
     }
 
     async fn pr_view(&self, dir: &Path, number: u64) -> Result<PullRequest> {
@@ -1884,13 +1938,68 @@ mod tests {
         );
     }
 
+    // Closed listings can spend an entire server-capped page on merged PRs.
+    // The unmerged rows must still be found on later pages, without duplicates,
+    // and the walk must make one empty-page request to confirm exhaustion.
+    #[tokio::test]
+    async fn closed_pr_list_pages_past_merged_page_and_deduplicates() {
+        let header = "\"index\",\"title\",\"state\",\"head\",\"base\",\"url\"\n";
+        let page1_rows: String = (1..=50)
+            .map(|number| {
+                format!("\"{number}\",\"Merged {number}\",\"merged\",\"h\",\"main\",\"u\"\n")
+            })
+            .collect();
+        let page1 = format!("{header}{page1_rows}");
+        let page2 = format!(
+            "{header}\"77\",\"Target\",\"closed\",\"h\",\"main\",\"u77\"\n\
+             \"77\",\"Target duplicate\",\"closed\",\"h\",\"main\",\"u77\"\n\
+             \"78\",\"Second\",\"closed\",\"h\",\"main\",\"u78\"\n"
+        );
+        let rec = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["tea", "pr", "list"],
+            [Reply::ok(&page1), Reply::ok(&page2), Reply::ok("")],
+        ));
+        let tea = Gitea::with_runner(&rec);
+
+        let prs = tea
+            .pr_list_with(
+                Path::new("/repo"),
+                PrList::new().state(PrListState::Closed).limit(100),
+            )
+            .await
+            .expect("closed PR list pages past merged rows");
+
+        assert_eq!(
+            prs.iter().map(|pr| pr.number).collect::<Vec<_>>(),
+            [77, 78],
+            "merged rows are filtered and repeated rows are not duplicated"
+        );
+        assert!(prs.iter().all(|pr| !pr.merged));
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 3, "the empty third page confirms exhaustion");
+        for (index, call) in calls.iter().enumerate() {
+            let expected_page = (index + 1).to_string();
+            assert!(
+                call.args_str()
+                    .windows(2)
+                    .any(|window| window[0] == "--page" && window[1] == expected_page),
+                "closed listing requested page {}: {:?}",
+                index + 1,
+                call.args_str()
+            );
+        }
+    }
+
     #[tokio::test]
     async fn pr_list_spec_maps_state_and_limit_and_rejects_merged() {
         let csv = r#""index","title","state","head","base","url"
 "1","Closed","closed","h","main","u1"
 "2","Merged","merged","h","main","u2"
 "#;
-        let rec = RecordingRunner::replying(Reply::ok(csv));
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on_sequence(["tea", "pr", "list"], [Reply::ok(csv), Reply::ok("")]),
+        );
         let tea = Gitea::with_runner(&rec);
         let prs = tea
             .pr_list_with(
@@ -1901,12 +2010,21 @@ mod tests {
             .expect("closed PR list");
         assert_eq!(prs.len(), 1, "merged PRs are not closed-unmerged");
         assert_eq!(prs[0].title, "Closed");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "closed listing stops at the empty page");
         assert_eq!(
-            rec.only_call().args_str(),
+            calls[0].args_str(),
             [
-                "pr", "list", "--state", "closed", "--limit", "7", "--fields", PR_FIELDS,
-                "--output", "csv"
+                "pr", "list", "--state", "closed", "--limit", "7", "--page", "1", "--fields",
+                PR_FIELDS, "--output", "csv"
             ]
+        );
+        assert!(
+            calls[1]
+                .args_str()
+                .windows(2)
+                .any(|window| window == ["--page", "2"]),
+            "closed listing requests the next page before declaring exhaustion"
         );
 
         let guarded = RecordingRunner::replying(Reply::ok(""));
@@ -1920,6 +2038,15 @@ mod tests {
             guarded.calls().is_empty(),
             "unsupported state must not spawn"
         );
+
+        let guarded = RecordingRunner::replying(Reply::ok(""));
+        let tea = Gitea::with_runner(&guarded);
+        let err = tea
+            .pr_list_with(Path::new("/repo"), PrList::new().limit(0))
+            .await
+            .expect_err("zero limit must be rejected");
+        assert!(matches!(err.reason(), ErrorReason::Spawn { .. }));
+        assert!(guarded.calls().is_empty(), "zero limit must not spawn");
     }
 
     // auth_status counts login DSV rows: a data row ⇒ true, header-only ⇒ false.

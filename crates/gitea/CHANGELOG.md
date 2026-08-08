@@ -94,6 +94,11 @@ crates; tag releases as `vcs-gitea-v<version>`.
   gate. (T-129.)
 
 ### Fixed
+- **Closed PR listings no longer lose unmerged rows behind merged entries.**
+  `pr_list_with` now pages `tea pr list --state closed` until it has collected
+  the requested number of unique closed-unmerged PRs or the remote listing is
+  exhausted, reporting a parse error at the safety bound instead of silently
+  truncating, because Gitea can include merged PRs in a server-capped closed page.
 - **`pr_edit` now fails safely instead of silently listing PRs.** `tea` 0.9.2 has no
   `pr edit` subcommand and degrades an unknown subcommand into `pr list`; the concrete
   client implementation was removed so `GiteaApi::pr_edit` now uses its default
