@@ -1844,10 +1844,10 @@ impl<R: ProcessRunner> ManagedClient<R> {
         budget: OutputBudget,
     ) -> Result<()> {
         let mut cmd = self.prepare(call).await?;
-        if cmd.configured_inactivity_timeout().is_none() {
-            if let Some(timeout) = self.inactivity_timeout {
-                cmd = cmd.inactivity_timeout(timeout);
-            }
+        if cmd.configured_inactivity_timeout().is_none()
+            && let Some(timeout) = self.inactivity_timeout
+        {
+            cmd = cmd.inactivity_timeout(timeout);
         }
         crate::run_with_progress_within(self.inner.runner(), &cmd, progress, budget).await
     }
