@@ -83,6 +83,11 @@ crates; tag releases as `vcs-mcp-v<version>`.
   secret are redacted (the existing "token never in argv" contract is not
   weakened). Off by default. (T-117.)
 
+### Security
+- The conflict tools now refuse repository-relative paths containing symlink or
+  reparse-point components that resolve outside the repository, and perform
+  direct reads and resolution writes through no-follow-safe file opens.
+
 ### Changed
 - **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
   This crate's own public surface is unchanged (its `public-api.txt` snapshot does not

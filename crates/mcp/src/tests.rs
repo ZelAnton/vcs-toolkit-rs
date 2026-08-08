@@ -2459,6 +2459,56 @@ mod conflict_tools {
         assert!(!staged(&runner), "nothing was staged");
     }
 
+    // T-170: lexical containment is not enough when a conflicted path is a
+    // symlink. The read must refuse before exposing the outside file, and the
+    // write must refuse before truncating or staging anything.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn conflict_tools_refuse_a_symlink_to_an_outside_file() {
+        let dir = worktree("in-repository placeholder\n");
+        let outside = TempDir::new("mcp-conflict-outside");
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, GIT_MERGE).expect("seed outside target");
+        std::fs::remove_file(dir.path().join("f.txt")).expect("remove regular path");
+        std::os::unix::fs::symlink(&outside_file, dir.path().join("f.txt"))
+            .expect("create in-repository symlink");
+
+        let runner = git_conflicted_runner();
+        let server = git_server_at(dir.path(), runner.clone(), WriteGate::All);
+        let err = server
+            .repo_conflict_regions(regions_params("f.txt"))
+            .await
+            .expect_err("the read must not follow an outside symlink");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("outside") || err.message.contains("symbolic link"),
+            "the refusal should identify the containment problem: {}",
+            err.message
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).expect("outside target readable"),
+            GIT_MERGE,
+            "the read did not return or alter outside content"
+        );
+
+        let err = server
+            .repo_resolve_conflict(resolve_params("f.txt", ConflictSideArg::Ours, None))
+            .await
+            .expect_err("the write must not follow an outside symlink");
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).expect("outside target readable"),
+            GIT_MERGE,
+            "resolution did not modify the outside target"
+        );
+        assert_eq!(
+            std::fs::read_link(dir.path().join("f.txt")).expect("link remains in place"),
+            outside_file,
+            "resolution did not replace the repository symlink"
+        );
+        assert!(!staged(&runner), "a refused path must not be staged");
+    }
+
     // The write gate rejects before anything is read, spawned, or written.
     #[tokio::test]
     async fn resolve_conflict_is_write_gated() {

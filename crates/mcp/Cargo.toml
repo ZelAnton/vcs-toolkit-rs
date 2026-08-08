@@ -45,6 +45,24 @@ tokio = { version = "1", features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[target.'cfg(unix)'.dependencies]
+# Anchor direct conflict-file opens to a directory descriptor and apply
+# O_NOFOLLOW to every component, so a concurrent symlink swap cannot redirect
+# the read or resolution write outside the repository.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Use handle-relative NtCreateFile opens with FILE_OPEN_REPARSE_POINT for the
+# Windows equivalent of Unix's descriptor-relative O_NOFOLLOW traversal.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+] }
+
 [lib]
 path = "src/lib.rs"
 

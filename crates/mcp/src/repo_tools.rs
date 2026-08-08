@@ -327,7 +327,7 @@ impl VcsMcpServer {
                 None,
             ));
         }
-        tokio::fs::write(&path.abs, resolved.content.as_bytes())
+        conflicts::write_working_copy(&path, resolved.content.as_bytes())
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
