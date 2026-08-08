@@ -665,7 +665,10 @@ impl SubmoduleUpdate {
 ///
 /// Rules follow the load-bearing core of `git check-ref-format`: non-empty,
 /// no leading `-` or `.`, no `..`, no control characters or space, none of
-/// `~ ^ : ? * [ \`, no trailing `/` or `.lock`. A rejected name is an
+/// `~ ^ : ? * [ \`, and no empty slash-separated components. Each component
+/// must not start or end with `.` or end with `.lock`.
+/// The validator also rejects a trailing `.`, any `@{` sequence, and the
+/// standalone `@`. A rejected name is an
 /// [`vcs_cli_support::is_invalid_input`] failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RefName(String);
@@ -678,8 +681,17 @@ impl RefName {
             || name.starts_with('-')
             || name.starts_with('.')
             || name.ends_with('/')
+            || name.ends_with('.')
             || name.ends_with(".lock")
+            || name.split('/').any(|component| {
+                component.is_empty()
+                    || component.starts_with('.')
+                    || component.ends_with('.')
+                    || component.ends_with(".lock")
+            })
             || name.contains("..")
+            || name.contains("@{")
+            || name == "@"
             || name
                 .chars()
                 .any(|c| c.is_control() || " ~^:?*[\\".contains(c));
@@ -749,6 +761,72 @@ impl std::str::FromStr for RevSpec {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
         Self::new(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RefName, RevSpec};
+
+    fn assert_invalid_ref_name(name: &str) {
+        let err = RefName::new(name).expect_err(&format!("{name:?} must be rejected"));
+        assert!(
+            vcs_cli_support::is_invalid_input(&err),
+            "{name:?} must classify as invalid input: {err:?}"
+        );
+    }
+
+    #[test]
+    fn ref_name_rejects_git_check_ref_format_boundaries() {
+        for name in [
+            "",
+            "-feature",
+            ".feature",
+            "feature/",
+            "feature.lock",
+            "feature..name",
+            "feature name",
+            "feature~name",
+            "feature^name",
+            "feature:name",
+            "feature?name",
+            "feature*name",
+            "feature[name",
+            "feature\\name",
+            "feature\0name",
+            "feature.",
+            "feature@{upstream}",
+            "@",
+        ] {
+            assert_invalid_ref_name(name);
+        }
+    }
+
+    #[test]
+    fn ref_name_rejects_invalid_slash_separated_components() {
+        for name in [
+            "/feature",
+            "feature//name",
+            "feature/.hidden",
+            "feature/name.",
+            "feature.lock/name",
+            "feature/name.lock",
+        ] {
+            assert_invalid_ref_name(name);
+        }
+    }
+
+    #[test]
+    fn ref_name_accepts_valid_names_without_widening_revspec() {
+        for name in ["main", "feature/login", "release/v1.2.3", "feature@review"] {
+            assert_eq!(RefName::new(name).unwrap().as_str(), name);
+        }
+
+        // These values remain valid revision expressions even though some are
+        // deliberately invalid as concrete ref names.
+        for rev in ["main..feature", "feature@{upstream}", "@"] {
+            assert_eq!(RevSpec::new(rev).unwrap().as_str(), rev);
+        }
     }
 }
 

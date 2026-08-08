@@ -3939,6 +3939,52 @@ mod tests {
         assert!(broken.try_merge("feature").await.is_err());
     }
 
+    // A failed new-merge still runs the probe cleanup. Preserve the original
+    // merge error when rollback succeeds, but surface structured rollback
+    // failures when the trial change cannot be safely removed.
+    #[tokio::test]
+    async fn jj_try_merge_failed_new_preserves_rollback_outcome() {
+        use processkit::ErrorReason;
+
+        let restored = jj_repo(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("op42\n"), Reply::ok("op42\t1\n")],
+                )
+                .on(["jj", "op", "restore"], Reply::ok(""))
+                .on(["jj", "new"], Reply::fail(1, "merge failed"))
+                .on(["jj", "log"], Reply::ok("0\n")),
+        );
+        let err = restored
+            .try_merge("feature")
+            .await
+            .expect_err("the failed merge must remain an error");
+        assert!(
+            matches!(&err, Error::Vcs(e) if matches!(e.reason(), ErrorReason::Exit { .. })),
+            "a successful rollback must preserve the merge error: {err:?}"
+        );
+
+        let rollback_failed = jj_repo(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("op42\n"), Reply::ok("op42\t1\n")],
+                )
+                .on(["jj", "op", "restore"], Reply::fail(1, "restore failed"))
+                .on(["jj", "new"], Reply::fail(1, "merge failed"))
+                .on(["jj", "log"], Reply::ok("0\n")),
+        );
+        let err = rollback_failed
+            .try_merge("feature")
+            .await
+            .expect_err("a failed rollback must not report probe success");
+        assert!(
+            matches!(err, Error::Rollback(vcs_jj::Rollback::Failed(_))),
+            "expected structured rollback failure, got {err:?}"
+        );
+    }
+
     // jj try_merge shares `Jj::rollback_to`'s concurrency guard: if a concurrent jj
     // process advances the op log during the trial merge (jj records a `>= 2`-parent
     // "reconcile divergent operations" merge), the rollback is REFUSED rather than
@@ -3957,7 +4003,7 @@ mod tests {
                     ],
                 )
                 .on(["jj", "op", "restore"], Reply::ok(""))
-                .on(["jj", "new"], Reply::ok(""))
+                .on(["jj", "new"], Reply::fail(1, "merge failed"))
                 .on(["jj", "log"], Reply::ok("0\n")),
         );
         let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&rec));
