@@ -290,7 +290,19 @@ mod record {
         #![proptest_config(ProptestConfig::with_cases(128))]
 
         #[test]
-        fn scrubber_is_idempotent_and_preserves_plain_values(value in "[a-z0-9._-]{0,160}") {
+        fn scrubber_is_idempotent_and_preserves_plain_values(
+            value in "[a-z0-9._-]{0,160}".prop_filter(
+                "plain values do not contain known secret-shaped prefixes",
+                |value| {
+                    [
+                        "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-",
+                        "glptt-", "xoxb-", "xoxp-", "xoxa-", "xoxr-",
+                    ]
+                    .iter()
+                    .all(|prefix| !value.contains(*prefix))
+                },
+            )
+        ) {
             let once = scrub_gh_cassette_field(CassetteField::Stdout, &value);
             prop_assert_eq!(
                 scrub_gh_cassette_field(CassetteField::Stdout, &once),
