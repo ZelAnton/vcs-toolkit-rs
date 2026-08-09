@@ -239,9 +239,71 @@ authors = ["Anton Zhelezniakou"]
 # cancellation teardown policy and its cleanup boundary; the 3.3 first-observation
 # audit remains unchanged even though the workspace keeps the same stream API calls.
 # The requirement deliberately stays at the 3.2 floor: no 3.3-only API is used, while
-# `cancel_grace` requires 3.2. `Cargo.lock` already resolves 3.3.0; unrelated
-# `windows-sys` consolidation was reverted after the scoped update because processkit
-# 3.3 does not require it.
+# `cancel_grace` requires 3.2. At that bump `Cargo.lock` already resolved 3.3.0;
+# unrelated `windows-sys` consolidation was reverted after the scoped update because
+# processkit 3.3 does not require it.
+# What 3.3.1 fixes, and why neither the floor nor a call site moves for it. Audited
+# against the published 3.3.0 and 3.3.1 crate sources rather than the release notes
+# (`diff -rq` over cargo's extracted registry copies): the manifest differs by its own
+# `version` line alone — no dependency, feature or `rust-version` moved — and only
+# `src/command.rs`, `src/group.rs`, `src/pipeline.rs`, `src/sys/linux.rs` and
+# `src/sys/pty/windows.rs` differ. `buffer.rs`, `pump.rs`, `runner.rs`, `running/*`,
+# `error.rs`, `doubles.rs`, `cassette.rs`, `stdin.rs`, `lookup.rs` and `retry.rs` are
+# byte-identical, so no output-byte accounting unit, mock, cassette, retry or
+# `ErrorReason` variant moved.
+#   * `sys/linux.rs` — the legacy/restricted cgroup teardown, and the one change that
+#     lands on a path this workspace really drives. `Cgroup::kill`'s post-sweep thaw
+#     was `let _ = cgroup_write(<..>/cgroup.freeze, b"0")`; it is now retried once and,
+#     when `cgroup.freeze` reads back frozen, returned as an `io::Error` carrying the
+#     refusal's own kind, so a cgroup left frozen is no longer reported as a clean
+#     kill. Note what this is: Job/cgroup teardown (`kill_all`), **not**
+#     `ProcessGroup::suspend`/`resume` — so the 3.2 note above ("nothing here
+#     constructs or drives a `ProcessGroup` directly") does not answer for it. The
+#     path itself is ours: `JobRunner`'s kill-on-drop reaches it, and so does the
+#     `timeout_grace`/`cancel_grace` ladder `apply_fetch_completion_policy` puts on
+#     git/jj `fetch`/`push`/`clone`. What settles the verdict is where the new report
+#     can be *observed*. Only the public `ProcessGroup::kill_all`/`signal(Kill)`/
+#     `graceful_terminate`/`shutdown{,_ref}` verbs and `RunningProcess::shutdown`
+#     propagate it, and no crate here names any of them (nor `start_kill`, nor
+#     `Supervisor`); every teardown this workspace does reach discards the result with
+#     `let _ =` — `Job::drop`, `RunningProcess::kill_tree`, the shared
+#     `graceful_teardown` both the timeout and the cancel paths run through, and the
+#     cancel watchdog — all in files byte-identical between 3.3.0 and 3.3.1. Verdict:
+#     **the changed path is ours, the changed report is not reachable through our
+#     surface**. A cancelled or timed-out network command still ends in
+#     `ErrorReason::Cancelled`/`Timeout`, so nothing here needs a migration or a new
+#     regression test, and the classifiers in `vcs_cli_support` are untouched: a
+#     refused thaw carries `PermissionDenied`, which `is_transient_fetch_error` would
+#     reject even if it did arrive, since processkit's `is_transient_io` admits only
+#     `Interrupted`/`WouldBlock`/`ResourceBusy`/`ExecutableFileBusy` (plus the two
+#     Windows sharing/lock codes). The extra cost — one `cgroup.freeze` read, one
+#     retried write and a 2 ms sleep — is paid only on the refused-thaw path; a thaw
+#     that succeeds costs exactly what it did before.
+#   * `sys/pty/windows.rs` — ConPTY `wait`/`try_wait` stop masking a failed
+#     `WaitForSingleObject` (`try_wait` now separates `WAIT_TIMEOUT` from
+#     `WAIT_FAILED`). Not applicable, re-checked rather than inherited: the module sits
+#     behind the non-default `pty` feature, the crates here enable only `mock`,
+#     `tracing` and `record`, and there is no `use_pty`/`pty_size`/`resize_pty` call
+#     site — the same answer the 3.0 and 3.2 ConPTY notes record.
+#   * `pipeline.rs` and `command.rs` — a non-final `Pipeline` stage's configured stdout
+#     is now overridden by the pipe it owes the next stage, via a new private
+#     `Command::pipe_stdout_for_downstream` that only `Pipeline::launch` calls;
+#     `pipe_stdout_for_discard` keeps its behaviour, refactored onto the shared core.
+#     Not applicable, also re-checked: nothing here constructs a `Pipeline` or calls
+#     `Command::pipe`, `merge_stderr_in_pipe`, `stdout_file` or `StdioMode`. The only
+#     identifiers carrying the word Pipeline are the GitLab CI JSON models in
+#     `crates/gitlab/src/parse.rs`.
+#   * `group.rs` — rustdoc only, spelling out the `kill_all`/`shutdown` error surface
+#     the linux change adds; no code in it changed.
+# So the floor stays `"3.2"`: nothing 3.3.1-only is used, `cancel_grace` still sets the
+# real requirement, and raising it would narrow downstream resolution for no gain. No
+# new cargo feature is enabled, and no crate takes a `[Unreleased]` entry — nothing
+# user-facing moved. `Cargo.lock` advances processkit 3.3.0 → 3.3.1 and nothing else:
+# a scoped `cargo update -p processkit --precise 3.3.1` again produced the unrelated
+# partial `windows-sys` 0.60.2 → 0.61.2 consolidation seen at 3.2, which `notify` still
+# holds out of — so both entries survive and the churn buys nothing. The lock was
+# restored to base and its two processkit lines hand-bumped instead, verified with
+# `cargo metadata --locked --all-features`.
 processkit = "3.2"
 
 # Auto-generated Mock*Api (git, jj, github, gitlab, gitea) for consumers' async-trait tests.
