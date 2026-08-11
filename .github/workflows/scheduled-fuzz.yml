@@ -43,7 +43,57 @@ jobs:
           workspaces: fuzz -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - uses: taiki-e/install-action@cargo-fuzz
+      - name: Install cargo-fuzz
+        id: install-cargo-fuzz
+        continue-on-error: true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+          fallback: cargo-install
+      # cargo-fuzz is installed as cargo-fuzz in CARGO_HOME/bin.  Add that
+      # directory explicitly: a successful installer step must not leave the
+      # following `cargo +nightly fuzz ...` invocation dependent on the
+      # runner's inherited PATH.
+      - name: Expose cargo-fuzz to subsequent steps
+        run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
+      - name: Preflight nightly cargo-fuzz and targets
+        id: preflight
+        working-directory: fuzz
+        run: |
+          set -uo pipefail
+          expected_targets=(diff_parse git_conflict git_porcelain_v2 jj_conflict)
+          setup_failed=false
+
+          if ! cargo +nightly fuzz --version; then
+            echo "::warning::cargo-fuzz is unavailable through cargo +nightly; skipping fuzz targets"
+            setup_failed=true
+          else
+            target_list="$(cargo +nightly fuzz list 2>&1)"
+            list_status=$?
+            if [ "$list_status" -ne 0 ]; then
+              echo "::warning::cargo-fuzz could not enumerate fuzz targets; skipping fuzz targets"
+              setup_failed=true
+            else
+              for target in "${expected_targets[@]}"; do
+                if ! grep -Fxq "$target" <<<"$target_list"; then
+                  echo "::warning::expected fuzz target is unavailable: $target"
+                  setup_failed=true
+                fi
+              done
+            fi
+          fi
+
+          if [ "$setup_failed" = true ]; then
+            {
+              echo "### Scheduled fuzzing setup"
+              echo
+              echo "cargo-fuzz/nightly setup was not usable; no target failure was classified as a crash."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "All expected fuzz targets are available through cargo +nightly."
+          fi
+          echo "setup_failed=$setup_failed" >> "$GITHUB_OUTPUT"
 
       # A run-specific primary key permits the restored corpus to be saved back
       # after every weekly run.  The target-specific prefix means unrelated
@@ -79,41 +129,55 @@ jobs:
 
       - name: Fuzz parser targets (five minutes each)
         id: fuzz
+        if: steps.preflight.outputs.setup_failed != 'true'
         # Do not use `continue-on-error`: handling each exit status here lets
         # every target run after a crash and keeps the job green/report-only.
         working-directory: fuzz
         run: |
           set -uo pipefail
-          failed_targets=""
+          crashed_targets=""
+          setup_failed_targets=""
           for target in diff_parse git_conflict git_porcelain_v2 jj_conflict; do
             echo "::group::Fuzzing ${target}"
-            if cargo +nightly fuzz run "$target" -- -max_total_time=300; then
+            # A fresh target artifact directory makes the classification apply
+            # to this invocation only, not to a stale local reproducer.
+            rm -rf -- "artifacts/${target}"
+            run_status=0
+            cargo +nightly fuzz run "$target" -- -max_total_time=300 || run_status=$?
+            artifact_count="$(find "artifacts/${target}" -type f -print 2>/dev/null | wc -l)"
+            if [ "${artifact_count}" -gt 0 ]; then
+              echo "${target}: crash reproducer saved (${artifact_count} file(s))"
+              echo "${target}: crash reproducer saved" >> "$GITHUB_STEP_SUMMARY"
+              crashed_targets="${crashed_targets}${crashed_targets:+, }${target}"
+            elif [ "$run_status" -eq 0 ]; then
               echo "${target}: completed without a crash" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "::error::${target} exited non-zero; preserving its crash artifacts"
-              echo "${target}: **non-zero exit; repro artifact uploaded**" >> "$GITHUB_STEP_SUMMARY"
-              failed_targets="${failed_targets}${failed_targets:+, }${target}"
+              echo "::warning::${target} exited ${run_status} without a reproducer; treating it as a setup/runtime error"
+              echo "${target}: setup/runtime error (no reproducer; not tracked as a crash)" >> "$GITHUB_STEP_SUMMARY"
+              setup_failed_targets="${setup_failed_targets}${setup_failed_targets:+, }${target}"
             fi
             echo "::endgroup::"
           done
-          if [ -n "$failed_targets" ]; then
+          if [ -n "$crashed_targets" ]; then
             echo "crashed=true" >> "$GITHUB_OUTPUT"
-            echo "targets=$failed_targets" >> "$GITHUB_OUTPUT"
+            echo "targets=$crashed_targets" >> "$GITHUB_OUTPUT"
           else
             echo "crashed=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "setup_failed_targets=$setup_failed_targets" >> "$GITHUB_OUTPUT"
 
       - name: Upload crash reproducers
+        id: upload-reproducers
         if: steps.fuzz.outputs.crashed == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: fuzz-crash-reproducers-${{ github.run_id }}
           path: fuzz/artifacts
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Report fuzz crash as a GitHub issue
-        if: steps.fuzz.outputs.crashed == 'true'
+        if: steps.fuzz.outputs.crashed == 'true' && steps.upload-reproducers.outcome == 'success'
         continue-on-error: true
         # Maintain one open, stable issue instead of opening a new issue every
         # week.  The workflow itself stays green and is never referenced by
@@ -122,10 +186,10 @@ jobs:
           set -euo pipefail
           title="Scheduled fuzzing found crashes"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          body="The weekly scheduled fuzzing lane observed a non-zero exit for: ${{ steps.fuzz.outputs.targets }}.
+          body="The weekly scheduled fuzzing lane saved libFuzzer reproducers for: ${{ steps.fuzz.outputs.targets }}.
 
           Run: ${run_url}
-          Artifact: fuzz-crash-reproducers-${{ github.run_id }}
+          Artifact: ${{ steps.upload-reproducers.outputs.artifact-url }}
 
           This workflow is report-only and does not block regular CI or PRs. Download the reproducer artifact, run the matching target locally with cargo-fuzz, then add a regression test or otherwise resolve the parser failure. Close this issue when fixed; a future failing run will reopen it."
           existing="$(gh issue list --state all --search "in:title \"Scheduled fuzzing found crashes\"" \

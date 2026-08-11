@@ -33,15 +33,26 @@ Artifacts, corpora, and the build dir are git-ignored.
 building on previously discovered inputs.
 
 This is a report-only scheduled lane, not a `ci.yml` or PR gate. If a target
-crashes, the workflow uploads its `fuzz/artifacts/` reproducers and creates or
-updates one tracking issue. Download that artifact, then reproduce a failing
-input locally from the repository root with:
+crashes and writes a reproducer, the workflow uploads the contents of
+`fuzz/artifacts` and creates or updates one tracking issue. After extracting the
+downloaded artifact into `fuzz/`, its layout is `<target>/crash-*` at the
+artifact root (there is no additional `artifacts/` directory). Setup/runtime
+failures without a reproducer are reported in the workflow summary and are not
+tracked as parser crashes. From the `fuzz/` directory, reproduce a failing input
+with the same nightly cargo-fuzz command used by CI:
 
 ```bash
-cargo +nightly fuzz run <target> <path-to-reproducer>
+cd fuzz
+cargo +nightly fuzz run <target> <target>/crash-<hash>
 ```
 
-For example, replace `<target>` with `git_porcelain_v2` and
-`<path-to-reproducer>` with the downloaded file under
-`fuzz/artifacts/git_porcelain_v2/`. After confirming the failure, minimise it
-if useful and add a regression unit test in the relevant parser.
+For a five-minute campaign matching scheduled CI, run:
+
+```bash
+cd fuzz
+cargo +nightly fuzz run <target> -- -max_total_time=300
+```
+
+Replace `<target>` with `git_porcelain_v2` (or another listed target) and
+`<hash>` with the downloaded filename. After confirming the failure, minimise
+it if useful and add a regression unit test in the relevant parser.
