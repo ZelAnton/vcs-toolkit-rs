@@ -24,6 +24,9 @@ crates; tag releases as `vcs-jj-v<version>`.
   the existing hard-kill fallback when no console delivery is possible.
 
 ### Added
+- Add explicit `diff_text_between`/`diff_between` APIs, plus budgeted
+  `*_between_within` variants on `Jj` and `JjAt`, using jj 0.38+'s separate
+  `--from`/`--to` flags without changing `DiffSpec::Rev` semantics.
 - **New optional `serde` feature** (off by default) deriving `serde::Serialize`
   on the public conflict model — `conflict::JjConflictSegment`,
   `conflict::JjConflictRegion`, `conflict::JjConflictSection`, and

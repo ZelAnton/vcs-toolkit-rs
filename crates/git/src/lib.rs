@@ -459,6 +459,17 @@ pub trait GitApi: Send + Sync {
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](GitApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
+    /// Raw git-format unified diff comparing the tree at `from` with the tree at
+    /// `to` (`git diff <from> <to> --no-color --no-ext-diff -M`). Each endpoint
+    /// is a separately validated [`RevSpec`], so compound selectors stay in
+    /// their own argv slot and the `from` → `to` direction is explicit.
+    /// Unlike [`DiffSpec::Rev`], this operation never includes the working tree
+    /// implicitly: only the two supplied endpoints are compared.
+    async fn diff_text_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec) -> Result<String>;
+    /// Parsed per-file unified diff comparing the tree at `from` with the tree
+    /// at `to`, layered on [`diff_text_between`](GitApi::diff_text_between).
+    async fn diff_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec)
+    -> Result<Vec<FileDiff>>;
 
     // --- In-progress state ---------------------------------------------------
 
@@ -937,6 +948,32 @@ impl<R: ProcessRunner> Git<R> {
         Ok(parse_diff(&text))
     }
 
+    /// [`GitApi::diff_text_between`] with an explicit per-call
+    /// [`OutputBudget`], instead of this client's default budget.
+    pub async fn diff_text_between_within(
+        &self,
+        dir: &Path,
+        from: &RevSpec,
+        to: &RevSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_between_budgeted(dir, from, to, budget).await
+    }
+
+    /// [`GitApi::diff_between`] with an explicit per-call [`OutputBudget`].
+    pub async fn diff_between_within(
+        &self,
+        dir: &Path,
+        from: &RevSpec,
+        to: &RevSpec,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self
+            .diff_text_between_budgeted(dir, from, to, budget)
+            .await?;
+        Ok(parse_diff(&text))
+    }
+
     /// Shared body of [`diff_text`](GitApi::diff_text) /
     /// [`diff_text_within`](Git::diff_text_within): builds the `git diff` and runs
     /// it under `budget` (a fail-loud byte ceiling; unbounded when the budget is
@@ -996,6 +1033,43 @@ impl<R: ProcessRunner> Git<R> {
                     [
                         "diff",
                         target.as_str(),
+                        "--no-color",
+                        "--no-ext-diff",
+                        "-M",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
+                        "--",
+                    ],
+                ),
+                budget,
+            )
+            .await
+    }
+
+    /// Shared body of [`GitApi::diff_text_between`] and
+    /// [`Git::diff_text_between_within`]. Both endpoints are already validated
+    /// by [`RevSpec`]; keeping them as separate argv values avoids turning a
+    /// compound selector into a range string or allowing one endpoint to be
+    /// reinterpreted as a pathspec.
+    async fn diff_text_between_budgeted(
+        &self,
+        dir: &Path,
+        from: &RevSpec,
+        to: &RevSpec,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // Keep the same stable output flags and explicit prefixes as the
+        // one-endpoint diff. The trailing `--` makes both validated endpoints
+        // unambiguously revisions, never pathspecs; it also keeps the endpoint
+        // direction exactly `from` → `to`.
+        self.core
+            .run_untrimmed_within(
+                self.core.command_in(
+                    dir,
+                    [
+                        "diff",
+                        from.as_str(),
+                        to.as_str(),
                         "--no-color",
                         "--no-ext-diff",
                         "-M",
@@ -1801,6 +1875,21 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>> {
         let text = self.diff_text(dir, spec).await?;
+        Ok(parse_diff(&text))
+    }
+
+    async fn diff_text_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec) -> Result<String> {
+        self.diff_text_between_budgeted(dir, from, to, self.core.output_budget())
+            .await
+    }
+
+    async fn diff_between(
+        &self,
+        dir: &Path,
+        from: &RevSpec,
+        to: &RevSpec,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_between(dir, from, to).await?;
         Ok(parse_diff(&text))
     }
 
@@ -3471,6 +3560,18 @@ vcs_cli_support::at_forwarders! {
         fn diff_stat(range: &RevSpec) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
         fn diff(spec: DiffSpec) -> Result<Vec<FileDiff>>;
+        fn diff_text_between(from: &RevSpec, to: &RevSpec) -> Result<String>;
+        fn diff_between(from: &RevSpec, to: &RevSpec) -> Result<Vec<FileDiff>>;
+        fn diff_text_between_within(
+            from: &RevSpec,
+            to: &RevSpec,
+            budget: OutputBudget,
+        ) -> Result<String>;
+        fn diff_between_within(
+            from: &RevSpec,
+            to: &RevSpec,
+            budget: OutputBudget,
+        ) -> Result<Vec<FileDiff>>;
         fn staged_is_empty() -> Result<bool>;
         fn is_rebase_in_progress() -> Result<bool>;
         fn is_merge_in_progress() -> Result<bool>;
@@ -5205,6 +5306,53 @@ mod tests {
                 "--",
             ]
         );
+    }
+
+    // Two endpoint selectors stay independent argv values, preserving both the
+    // from -> to direction and compound-selector contents without constructing a
+    // range string that Git could parse differently.
+    #[tokio::test]
+    async fn diff_text_between_builds_explicit_endpoint_args() {
+        let from = rv("main | release");
+        let to = rv("feature | hotfix");
+        let diff = "diff --git a/m b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(diff));
+        let git = Git::with_runner(&rec);
+        git.diff_text_between(Path::new("."), &from, &to)
+            .await
+            .expect("diff_text_between");
+
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "diff",
+                "main | release",
+                "feature | hotfix",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_between_reuses_parser_and_bound_view() {
+        let from = rv("base");
+        let to = rv("tip");
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(out));
+        let git = Git::with_runner(&rec);
+        let files = git
+            .at(Path::new("/repo"))
+            .diff_between(&from, &to)
+            .await
+            .expect("diff_between");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("m"));
+        assert_eq!(rec.only_call().cwd.as_deref(), Some(Path::new("/repo")));
     }
 
     // On an unborn repo the working-tree diff targets the empty tree instead of
@@ -7193,6 +7341,25 @@ mod tests {
         assert_eq!(got, big);
     }
 
+    #[tokio::test]
+    async fn diff_text_between_within_honours_output_budget() {
+        let from = rv("base");
+        let to = rv("tip");
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let git = Git::with_runner(ScriptedRunner::new().on(["git", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            err_reason(&git.diff_text_between(Path::new("/r"), &from, &to).await),
+            Some(ErrorReason::OutputTooLarge { .. })
+        ));
+
+        let got = git
+            .diff_text_between_within(Path::new("/r"), &from, &to, OutputBudget::unlimited())
+            .await
+            .expect("unlimited override reads the large diff");
+        assert_eq!(got, big);
+    }
+
     // A blob read (`show_file`) honours the same budget and its per-call override.
     #[tokio::test]
     async fn show_file_over_budget_errors_and_override_reads() {
@@ -7642,6 +7809,16 @@ mod tests {
         mock.expect_current_branch()
             .returning(|_| Ok(Some("main".to_string())));
         assert!(on_branch(&mock, "main").await);
+
+        let from = rv("base");
+        let to = rv("tip");
+        mock.expect_diff_text_between()
+            .returning(|_, _, _| Ok(String::new()));
+        assert!(
+            mock.diff_text_between(Path::new("."), &from, &to)
+                .await
+                .is_ok()
+        );
     }
 }
 

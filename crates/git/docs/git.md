@@ -394,6 +394,8 @@ git.submodule_update(repo, SubmoduleUpdate::new().init().recursive())
 ```rust,ignore
 async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
 async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
+async fn diff_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec) -> Result<Vec<FileDiff>>;
+async fn diff_text_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec) -> Result<String>;
 async fn diff_is_empty(&self, dir: &Path) -> Result<bool>;
 async fn diff_range_is_empty(&self, dir: &Path, range: &str) -> Result<bool>;
 async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
@@ -406,6 +408,18 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
   empty-tree id is resolved for the repo's active object format via
   `Git::empty_tree_oid` (so it also works in a `sha256` repo), not the SHA-1-only
   `EMPTY_TREE_SHA1` constant.
+- **`diff_text_between`** — raw git-format unified diff comparing the tree at
+  `from` with the tree at `to` (`diff <from> <to> --no-color --no-ext-diff -M`),
+  with the existing explicit prefixes, rename detection, and trailing `--`.
+  The two [`RevSpec`] endpoints are validated independently and are never joined
+  into a range string; the operation therefore excludes implicit working-tree
+  changes and preserves the `from` → `to` direction.
+- **`diff_between`** — parsed per-file counterpart of `diff_text_between`.
+  `Git::diff_text_between_within` and `Git::diff_between_within` accept an
+  explicit per-call [`OutputBudget`]; the same budgeted methods are available on
+  [`GitAt`]. All four content methods preserve diff output verbatim, including
+  trailing context, and over-budget output remains an error rather than a
+  truncated result.
 - **`diff_is_empty`** — `git diff --quiet`, exit-code mapped: are there unstaged
   modifications to **tracked** files? Untracked files are not counted — not a full
   "is the working tree clean?" check; use `status` for that.
@@ -418,7 +432,7 @@ async fn diff_stat(&self, dir: &Path, range: &str) -> Result<DiffStat>;
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_git::{Git, GitApi, DiffSpec};
+# use vcs_git::{Git, GitApi, DiffSpec, RevSpec};
 # async fn demo(git: &Git, repo: &Path) -> Result<(), processkit::Error> {
 if !git.diff_is_empty(repo).await? {
     println!("working tree has unstaged tracked changes");
@@ -427,9 +441,10 @@ for file in git.diff(repo, DiffSpec::WorkingTree).await? {  // Vec<FileDiff>
     println!("{:?} {}", file.change, file.path.display());
 }
 let raw = git.diff_text(repo, DiffSpec::Rev("main..HEAD".into())).await?; // String
+let between = git.diff_text_between(repo, &RevSpec::new("main")?, &RevSpec::new("HEAD")?).await?;
 let stat = git.diff_stat(repo, "main..HEAD").await?;        // DiffStat
 println!("{} files, +{} -{}", stat.files_changed, stat.insertions, stat.deletions);
-let _ = raw;
+let _ = (raw, between);
 # Ok(()) }
 ```
 
@@ -1058,6 +1073,11 @@ string straight to git, except for `WorkingTree`'s documented unborn fallback.
 
 How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
 Changing it would be a semver-breaking change.
+
+For an explicit tree-to-tree comparison use `diff_text_between`/`diff_between`
+with two independently validated [`RevSpec`] values. This separate API is the
+unambiguous alternative when the working tree must be excluded; it does not
+change the backend-specific `DiffSpec::Rev` behavior above.
 
 ### `MergeCheck`
 

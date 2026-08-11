@@ -28,6 +28,9 @@ crates; tag releases as `vcs-git-v<version>`.
   the existing hard-kill fallback when no console delivery is possible.
 
 ### Added
+- Add explicit `diff_text_between`/`diff_between` APIs, plus budgeted
+  `*_between_within` variants on `Git` and `GitAt`, for comparing two
+  independently validated `RevSpec` endpoints without changing `DiffSpec::Rev`.
 - Add Git-only typed bisect sessions: `bisect_start` with validated `RevSpec`
   bounds and `bisect_good`/`bisect_bad`/`bisect_skip`, each returning a parsed
   `BisectStep` for the next checked-out candidate or the first bad commit.

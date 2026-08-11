@@ -264,6 +264,8 @@ if let Some(trunk) = jj.trunk(repo).await? {          // Option<String>
 ```rust,ignore
 async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
 async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
+async fn diff_between(&self, dir: &Path, from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<FileDiff>>;
+async fn diff_text_between(&self, dir: &Path, from: &RevsetExpr, to: &RevsetExpr) -> Result<String>;
 async fn diff_summary(&self, dir: &Path, from: &str, to: &str) -> Result<Vec<ChangedPath>>;
 async fn diff_stat(&self, dir: &Path, revset: &str) -> Result<DiffStat>;
 async fn commit_count(&self, dir: &Path, revset: &str) -> Result<usize>;
@@ -273,6 +275,17 @@ async fn template_query(&self, dir: &Path, revset: &str, template: &str, limit: 
 - `diff` — parsed per-file unified diff for [`DiffSpec`] (layered on `diff_text`).
 - `diff_text` — raw git-format unified diff (`diff -r <spec> --git`); stable
   machine output.
+- `diff_text_between` — raw git-format unified diff comparing the tree at `from`
+  with the tree at `to` (`diff --from <from> --to <to> --git`). The two
+  [`RevsetExpr`] endpoints are validated independently and remain separate argv
+  values, so compound selectors cannot be reinterpreted through a constructed
+  range. The explicit endpoint flags are supported on the crate's jj 0.38.0
+  floor and exclude implicit working-copy changes beyond the selected trees.
+- `diff_between` — parsed per-file counterpart of `diff_text_between`.
+  `Jj::diff_text_between_within` and `Jj::diff_between_within` accept an explicit
+  per-call [`OutputBudget`]; the same budgeted methods are available on [`JjAt`].
+  Diff output remains verbatim, including trailing context, and over-budget
+  output remains an error rather than a truncated result.
 - `diff_summary` — per-file change summary for a range; the endpoints are
   parenthesised internally (`(from)..(to)`) so a compound revset keeps its
   meaning.
@@ -284,14 +297,15 @@ async fn template_query(&self, dir: &Path, revset: &str, template: &str, limit: 
 
 ```rust,ignore
 # use std::path::Path;
-# use vcs_jj::{Jj, JjApi, DiffSpec};
+# use vcs_jj::{Jj, JjApi, DiffSpec, RevsetExpr};
 # async fn demo(jj: &Jj, repo: &Path) -> Result<(), processkit::Error> {
 let files = jj.diff(repo, DiffSpec::WorkingTree).await?;     // Vec<FileDiff>
 let text  = jj.diff_text(repo, DiffSpec::Rev("@-".into())).await?; // String (git format)
+let between = jj.diff_text_between(repo, &RevsetExpr::new("@--")?, &RevsetExpr::new("@-")?).await?;
 let stat  = jj.diff_stat(repo, "@").await?;                  // DiffStat
 let n     = jj.commit_count(repo, "main..@").await?;         // usize
 let raw   = jj.template_query(repo, "@", "change_id.short()", Some(1)).await?; // String
-# let _ = (files, text, stat, n, raw); Ok(()) }
+# let _ = (files, text, between, stat, n, raw); Ok(()) }
 ```
 
 ## File inspection
@@ -880,6 +894,11 @@ deliberately exhaustive (not `#[non_exhaustive]`).
 
 How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
 Changing it would be a semver-breaking change.
+
+For an explicit tree-to-tree comparison use `diff_text_between`/`diff_between`
+with two independently validated [`RevsetExpr`] values. This separate API uses
+jj's `--from`/`--to` flags directly and does not change the backend-specific
+`DiffSpec::Rev` behavior above.
 
 ### `SparseMode` (enum, `Copy`, `#[non_exhaustive]`)
 How a new workspace inherits sparse patterns (`--sparse-patterns <mode>`).

@@ -527,6 +527,26 @@ pub trait JjApi: Send + Sync {
     async fn diff_text(&self, dir: &Path, spec: DiffSpec) -> Result<String>;
     /// Parsed per-file unified diff for `spec`, layered on [`diff_text`](JjApi::diff_text).
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>>;
+    /// Raw git-format unified diff comparing the tree at `from` with the tree at
+    /// `to` (`jj diff --from <from> --to <to> --git`). Each endpoint is a
+    /// separately validated [`RevsetExpr`], so compound selectors remain in
+    /// their own argv slot and the `from` → `to` direction is explicit. This
+    /// uses jj's explicit endpoint flags available since the supported 0.38.0
+    /// floor instead of assembling a range revset.
+    async fn diff_text_between(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<String>;
+    /// Parsed per-file unified diff comparing the tree at `from` with the tree
+    /// at `to`, layered on [`diff_text_between`](JjApi::diff_text_between).
+    async fn diff_between(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<FileDiff>>;
     /// Count commits in a revset (`log -r <revset> --no-graph`, one id per line).
     async fn commit_count(&self, dir: &Path, revset: &RevsetExpr) -> Result<usize>;
     /// Whether the commit a revset resolves to has a conflict.
@@ -1048,6 +1068,32 @@ impl<R: ProcessRunner> Jj<R> {
         Ok(parse_diff(&text))
     }
 
+    /// [`JjApi::diff_text_between`] with an explicit per-call
+    /// [`OutputBudget`], instead of this client's default budget.
+    pub async fn diff_text_between_within(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        self.diff_text_between_budgeted(dir, from, to, budget).await
+    }
+
+    /// [`JjApi::diff_between`] with an explicit per-call [`OutputBudget`].
+    pub async fn diff_between_within(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+        budget: OutputBudget,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self
+            .diff_text_between_budgeted(dir, from, to, budget)
+            .await?;
+        Ok(parse_diff(&text))
+    }
+
     /// Shared body of [`diff_text`](JjApi::diff_text) /
     /// [`diff_text_within`](Jj::diff_text_within), run under `budget`.
     async fn diff_text_budgeted(
@@ -1069,6 +1115,38 @@ impl<R: ProcessRunner> Jj<R> {
         self.core
             .run_untrimmed_within(
                 self.cmd_in(dir, ["diff", "-r", revset.as_str(), "--git"]),
+                budget,
+            )
+            .await
+    }
+
+    /// Shared body of [`JjApi::diff_text_between`] and
+    /// [`Jj::diff_text_between_within`]. Each validated endpoint is passed to
+    /// jj's explicit flag independently; no ambiguous range/revset string is
+    /// constructed.
+    async fn diff_text_between_budgeted(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+        budget: OutputBudget,
+    ) -> Result<String> {
+        // `cmd_in` preserves the normal jj snapshot and `--color never` policy.
+        // It appends only global flags after this argv; there is no `--`
+        // terminator in the caller-supplied command for it to reorder.
+        self.core
+            .run_untrimmed_within(
+                self.cmd_in(
+                    dir,
+                    [
+                        "diff",
+                        "--from",
+                        from.as_str(),
+                        "--to",
+                        to.as_str(),
+                        "--git",
+                    ],
+                ),
                 budget,
             )
             .await
@@ -1630,6 +1708,26 @@ impl<R: ProcessRunner> JjApi for Jj<R> {
 
     async fn diff(&self, dir: &Path, spec: DiffSpec) -> Result<Vec<FileDiff>> {
         let text = self.diff_text(dir, spec).await?;
+        Ok(parse_diff(&text))
+    }
+
+    async fn diff_text_between(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<String> {
+        self.diff_text_between_budgeted(dir, from, to, self.core.output_budget())
+            .await
+    }
+
+    async fn diff_between(
+        &self,
+        dir: &Path,
+        from: &RevsetExpr,
+        to: &RevsetExpr,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_between(dir, from, to).await?;
         Ok(parse_diff(&text))
     }
 
@@ -2247,6 +2345,18 @@ vcs_cli_support::at_forwarders! {
         fn diff_stat(revset: &RevsetExpr) -> Result<DiffStat>;
         fn diff_text(spec: DiffSpec) -> Result<String>;
         fn diff(spec: DiffSpec) -> Result<Vec<FileDiff>>;
+        fn diff_text_between(from: &RevsetExpr, to: &RevsetExpr) -> Result<String>;
+        fn diff_between(from: &RevsetExpr, to: &RevsetExpr) -> Result<Vec<FileDiff>>;
+        fn diff_text_between_within(
+            from: &RevsetExpr,
+            to: &RevsetExpr,
+            budget: OutputBudget,
+        ) -> Result<String>;
+        fn diff_between_within(
+            from: &RevsetExpr,
+            to: &RevsetExpr,
+            budget: OutputBudget,
+        ) -> Result<Vec<FileDiff>>;
         fn commit_count(revset: &RevsetExpr) -> Result<usize>;
         fn is_conflicted(revset: &RevsetExpr) -> Result<bool>;
         fn has_workingcopy_conflict() -> Result<bool>;
@@ -4838,6 +4948,52 @@ mod tests {
         );
     }
 
+    // Two compound revsets remain separate endpoint values; jj's explicit
+    // --from/--to flags preserve the requested direction without a range
+    // string whose operator precedence could change their meaning.
+    #[tokio::test]
+    async fn diff_text_between_builds_explicit_endpoint_args() {
+        let from = rv("main | release");
+        let to = rv("feature | hotfix");
+        let diff = "diff --git a/m b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(diff));
+        let jj = Jj::with_runner(&rec);
+        jj.diff_text_between(Path::new("."), &from, &to)
+            .await
+            .expect("diff_text_between");
+
+        assert_eq!(
+            rec.only_call().args_str(),
+            [
+                "diff",
+                "--from",
+                "main | release",
+                "--to",
+                "feature | hotfix",
+                "--git",
+                "--color",
+                "never",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_between_reuses_parser_and_bound_view() {
+        let from = rv("base");
+        let to = rv("tip");
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+        let rec = RecordingRunner::replying(Reply::ok(out));
+        let jj = Jj::with_runner(&rec);
+        let files = jj
+            .at(Path::new("/repo"))
+            .diff_between(&from, &to)
+            .await
+            .expect("diff_between");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, Path::new("m"));
+        assert_eq!(rec.only_call().cwd.as_deref(), Some(Path::new("/repo")));
+    }
+
     // Every repo-scoped command forces `--color never` so a user's
     // `ui.color = "always"` config can't wrap parsed output in ANSI escapes.
     #[tokio::test]
@@ -4915,6 +5071,25 @@ mod tests {
         assert_eq!(files[0].path, Path::new("m"));
     }
 
+    #[tokio::test]
+    async fn diff_text_between_within_honours_output_budget() {
+        let from = rv("base");
+        let to = rv("tip");
+        let big = "diff --git a/f b/f\n".to_string() + &"+padding line\n".repeat(10_000);
+        let jj = Jj::with_runner(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(&big)))
+            .default_output_budget(OutputBudget::bytes(64 * 1024));
+        assert!(matches!(
+            err_reason(&jj.diff_text_between(Path::new("."), &from, &to).await),
+            Some(ErrorReason::OutputTooLarge { .. })
+        ));
+
+        let got = jj
+            .diff_text_between_within(Path::new("."), &from, &to, OutputBudget::unlimited())
+            .await
+            .expect("unlimited override reads the large diff");
+        assert_eq!(got, big);
+    }
+
     // A blob read (`file_show`) honours the same budget, and its per-call override
     // reads a legitimately large file the default budget would refuse.
     #[tokio::test]
@@ -4944,6 +5119,16 @@ mod tests {
         let mut mock = MockJjApi::new();
         mock.expect_describe().returning(|_, _| Ok(()));
         assert!(mock.describe(Path::new("."), "msg").await.is_ok());
+
+        let from = rv("base");
+        let to = rv("tip");
+        mock.expect_diff_text_between()
+            .returning(|_, _, _| Ok(String::new()));
+        assert!(
+            mock.diff_text_between(Path::new("."), &from, &to)
+                .await
+                .is_ok()
+        );
     }
 }
 

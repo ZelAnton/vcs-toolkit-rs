@@ -729,3 +729,42 @@ async fn diff_summary_paths_are_root_relative_from_a_nested_directory() {
         "paths must be forward-slash, workspace-root-relative: {paths:?}"
     );
 }
+
+// The explicit endpoint operation uses jj's --from/--to contract and compares
+// two recorded trees, not the current working copy's unrecorded state.
+#[tokio::test]
+#[ignore = "requires the jj binary"]
+async fn diff_between_compares_from_tree_to_tree() {
+    let sandbox = JjSandbox::init("diff-between");
+    let dir = sandbox.path();
+    let jj = Jj::new();
+
+    std::fs::write(dir.join("regression.txt"), "base\n").expect("write base");
+    jj.new_change(dir, "tip").await.expect("record base");
+    std::fs::write(dir.join("regression.txt"), "tip\n").expect("write tip");
+    jj.new_change(dir, "after").await.expect("record tip");
+
+    let text = jj
+        .diff_text_between(dir, &rv("@--"), &rv("@-"))
+        .await
+        .expect("diff_text_between");
+    assert!(
+        text.contains("-base"),
+        "from tree content should be removed: {text}"
+    );
+    assert!(
+        text.contains("+tip"),
+        "to tree content should be added: {text}"
+    );
+    assert!(
+        text.contains("regression.txt"),
+        "file should be present: {text}"
+    );
+
+    let files = jj
+        .diff_between(dir, &rv("@--"), &rv("@-"))
+        .await
+        .expect("diff_between");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, std::path::Path::new("regression.txt"));
+}

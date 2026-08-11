@@ -262,6 +262,46 @@ async fn diff_is_empty_tracks_worktree_changes() {
     );
 }
 
+// The explicit endpoint operation compares committed trees only, preserving
+// direction even when the working tree has a further uncommitted edit.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn diff_between_compares_from_tree_to_tree() {
+    let tmp = TempDir::new("diff-between");
+    let dir = tmp.path();
+    let git = Git::new();
+
+    git.init(dir).await.expect("init");
+    configure(dir);
+    let from = write_and_commit(&git, dir, 0, "base").await;
+    let to = write_and_commit(&git, dir, 1, "tip").await;
+    std::fs::write(dir.join("regression.txt"), "working tree only\n").expect("modify");
+
+    let text = git
+        .diff_text_between(dir, &rv(&from), &rv(&to))
+        .await
+        .expect("diff_text_between");
+    assert!(
+        text.contains("-0"),
+        "from tree content should be removed: {text}"
+    );
+    assert!(
+        text.contains("+1"),
+        "to tree content should be added: {text}"
+    );
+    assert!(
+        !text.contains("working tree only"),
+        "uncommitted content must not enter an explicit tree-to-tree diff: {text}"
+    );
+
+    let files = git
+        .diff_between(dir, &rv(&from), &rv(&to))
+        .await
+        .expect("diff_between");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, Path::new("regression.txt"));
+}
+
 // End-to-end check of the `-z` rename parsing: a real `git mv` must surface as a
 // rename entry carrying both the new path and the original (`old_path`).
 #[tokio::test]

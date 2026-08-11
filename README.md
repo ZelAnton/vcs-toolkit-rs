@@ -242,13 +242,14 @@ use vcs_jj::{Jj, JjApi};
 Each client is a typed async API over its binary; its guide lists every method
 with the parsed return type. In brief:
 
-- **`vcs-git` (`GitApi`)** — status, branches, commit/checkout, diff & log,
+- **`vcs-git` (`GitApi`)** — status, branches, commit/checkout, diff (including
+  explicit tree-to-tree endpoints) & log,
   merge/rebase/reset, worktrees, tags, blame, clone, config, cherry-pick/revert,
   conflict parsing/resolution, and a hardened (hooks-off) mode for untrusted repos.
   → [full reference](crates/git/docs/git.md)
 - **`vcs-jj` (`JjApi`)** — changes & descriptions, bookmarks, the operation log
-  (restore/undo), workspaces, squash/split/absorb/duplicate/abandon, diff & template
-  queries, git sync (fetch/push/clone/import), conflict parsing/resolution, and
+  (restore/undo), workspaces, squash/split/absorb/duplicate/abandon, diff (including
+  explicit tree-to-tree endpoints) & template queries, git sync (fetch/push/clone/import), conflict parsing/resolution, and
   op-log-rollback transactions.
   → [full reference](crates/jj/docs/jj.md)
 - **`vcs-github` (`GitHubApi`)** — auth, repo view, the full PR lifecycle

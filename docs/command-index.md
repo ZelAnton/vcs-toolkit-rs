@@ -120,6 +120,8 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 |---|---|---|
 | `diff` | layered on `diff_text` | parsed `Vec<FileDiff>` |
 | `diff_text` | `diff <spec> --no-color --no-ext-diff -M` | verbatim, incl. trailing blank context |
+| `diff_between` | layered on `diff_text_between` | explicit `from` → `to` trees |
+| `diff_text_between` | `diff <from> <to> --no-color --no-ext-diff -M --src-prefix=a/ --dst-prefix=b/ --` | independently validated endpoints |
 | `diff_is_empty` | `diff --quiet` | tracked files only |
 | `diff_range_is_empty` | `diff --quiet <range>` | |
 | `diff_stat` | `diff --shortstat <range>` | |
@@ -229,6 +231,8 @@ Guide: [vcs-jj](../crates/jj/docs/jj.md). Trait: `JjApi`
 |---|---|---|
 | `diff` | layered on `diff_text` | parsed `Vec<FileDiff>` |
 | `diff_text` | `diff -r <spec> --git` | verbatim |
+| `diff_between` | layered on `diff_text_between` | explicit `from` → `to` trees |
+| `diff_text_between` | `diff --from <from> --to <to> --git` | separate endpoint flags; jj ≥ 0.38 |
 | `diff_summary` | `diff -r <from>..<to> --summary` | per-file |
 | `diff_stat` | `diff -r <revset> --stat` | |
 | `commit_count` | `log -r <revset> --no-graph` | one id per line |
