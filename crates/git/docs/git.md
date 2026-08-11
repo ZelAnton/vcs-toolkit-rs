@@ -1046,12 +1046,15 @@ do at the shell for that exact string is what `Rev(rev)` does here.
 
 One consequence follows from plain `git diff`'s own rules: a *lone* revision (no
 `..`/`...`) diffs the *working tree* against that revision, not the revision
-against its parent — `Rev("HEAD".into())` behaves exactly like `WorkingTree`,
-and `Rev("abc".into())` includes any uncommitted changes on top of `abc`. To
-diff two commits with the working tree excluded, put a range in the string
-instead (`Rev("abc..def".into())` or `Rev("abc^..abc".into())`) — git's
-two-dot/three-dot forms compare commit-to-commit. None of this is `vcs-git`
-logic; it's inherited by passing the string straight to git.
+against its parent — when `HEAD` exists, `Rev("HEAD".into())` behaves exactly
+like `WorkingTree`, and `Rev("abc".into())` includes any uncommitted changes on
+top of `abc`. On an unborn repository the two differ: `WorkingTree` deliberately
+diffs against the empty tree, while `Rev("HEAD".into())` passes the unresolved
+name through and errors. To diff two commits with the working tree excluded,
+put a range in the string instead (`Rev("abc..def".into())` or
+`Rev("abc^..abc".into())`) — git's two-dot/three-dot forms compare
+commit-to-commit. None of this is `vcs-git` logic; it's inherited by passing the
+string straight to git, except for `WorkingTree`'s documented unborn fallback.
 
 How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
 Changing it would be a semver-breaking change.

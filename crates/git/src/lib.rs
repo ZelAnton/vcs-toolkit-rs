@@ -442,14 +442,17 @@ pub trait GitApi: Send + Sync {
     ///
     /// One consequence follows from plain `git diff`'s own rules: a *single*
     /// revision (no `..`/`...`) diffs the **working tree** against that revision,
-    /// not the revision against its parent — `Rev("HEAD".into())` behaves exactly
-    /// like [`DiffSpec::WorkingTree`] (which diffs tracked working-tree changes
-    /// against `HEAD`), and `Rev("abc".into())` includes any uncommitted changes
-    /// on top of `abc`. To compare two commits with the working tree excluded,
-    /// put a range in the `Rev` string instead (`"abc..def"` / `"abc^..abc"`) —
-    /// git's two-dot/three-dot forms diff
+    /// not the revision against its parent — when `HEAD` exists,
+    /// `Rev("HEAD".into())` behaves exactly like [`DiffSpec::WorkingTree`], and
+    /// `Rev("abc".into())` includes any uncommitted changes on top of `abc`. On
+    /// an unborn repository the two differ: [`DiffSpec::WorkingTree`]
+    /// deliberately diffs against the empty tree, while `Rev("HEAD".into())`
+    /// passes the unresolved name through and errors. To compare two commits
+    /// with the working tree excluded, put a range in the `Rev` string instead
+    /// (`"abc..def"` / `"abc^..abc"`) — git's two-dot/three-dot forms diff
     /// commit-to-commit. None of this is `vcs-git` logic; it's inherited by
-    /// passing the string straight to git.
+    /// passing the string straight to git, except for `WorkingTree`'s documented
+    /// unborn fallback.
     ///
     /// How `DiffSpec` is interpreted here is stable behavior, not an implementation detail.
     /// Changing it would be a semver-breaking change.
@@ -950,9 +953,11 @@ impl<R: ProcessRunner> Git<R> {
         // output stable and machine-parseable.
         //
         // That passthrough is why a lone `Rev` revision (no `..`/`...`) still
-        // includes working-copy changes: `git diff <rev>` always diffs the
-        // working tree against `<rev>`, same as `WorkingTree`'s `HEAD` target
-        // above — see `GitApi::diff_text`'s doc for the full explanation.
+        // includes working-copy changes: `git diff <rev>` diffs the working tree
+        // against `<rev>`. When `HEAD` exists that matches `WorkingTree`'s target;
+        // on an unborn repository, `WorkingTree` selects the empty tree below
+        // while a literal `Rev("HEAD")` remains unresolved and errors. See
+        // `GitApi::diff_text`'s doc for the full explanation.
         let target = match spec {
             DiffSpec::WorkingTree => {
                 // On an unborn repo `HEAD` doesn't resolve (`git diff HEAD` errors);
