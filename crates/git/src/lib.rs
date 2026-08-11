@@ -465,11 +465,34 @@ pub trait GitApi: Send + Sync {
     /// their own argv slot and the `from` → `to` direction is explicit.
     /// Unlike [`DiffSpec::Rev`], this operation never includes the working tree
     /// implicitly: only the two supplied endpoints are compared.
-    async fn diff_text_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec) -> Result<String>;
+    ///
+    /// The default implementation returns [`ErrorReason::Unsupported`] so an
+    /// existing downstream implementor remains source-compatible; concrete
+    /// [`Git`] clients override it with the real Git operation.
+    async fn diff_text_between(
+        &self,
+        _dir: &Path,
+        _from: &RevSpec,
+        _to: &RevSpec,
+    ) -> Result<String> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "GitApi::diff_text_between".into(),
+        }))
+    }
     /// Parsed per-file unified diff comparing the tree at `from` with the tree
     /// at `to`, layered on [`diff_text_between`](GitApi::diff_text_between).
-    async fn diff_between(&self, dir: &Path, from: &RevSpec, to: &RevSpec)
-    -> Result<Vec<FileDiff>>;
+    /// The default implementation uses the default text method, allowing an
+    /// implementor to opt into the parsed operation by overriding only that
+    /// method.
+    async fn diff_between(
+        &self,
+        dir: &Path,
+        from: &RevSpec,
+        to: &RevSpec,
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_between(dir, from, to).await?;
+        Ok(parse_diff(&text))
+    }
 
     // --- In-progress state ---------------------------------------------------
 

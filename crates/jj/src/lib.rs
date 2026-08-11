@@ -533,20 +533,34 @@ pub trait JjApi: Send + Sync {
     /// their own argv slot and the `from` → `to` direction is explicit. This
     /// uses jj's explicit endpoint flags available since the supported 0.38.0
     /// floor instead of assembling a range revset.
+    ///
+    /// The default implementation returns [`ErrorReason::Unsupported`] so an
+    /// existing downstream implementor remains source-compatible; concrete
+    /// [`Jj`] clients override it with the real jj operation.
     async fn diff_text_between(
         &self,
-        dir: &Path,
-        from: &RevsetExpr,
-        to: &RevsetExpr,
-    ) -> Result<String>;
+        _dir: &Path,
+        _from: &RevsetExpr,
+        _to: &RevsetExpr,
+    ) -> Result<String> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "JjApi::diff_text_between".into(),
+        }))
+    }
     /// Parsed per-file unified diff comparing the tree at `from` with the tree
     /// at `to`, layered on [`diff_text_between`](JjApi::diff_text_between).
+    /// The default implementation uses the default text method, allowing an
+    /// implementor to opt into the parsed operation by overriding only that
+    /// method.
     async fn diff_between(
         &self,
         dir: &Path,
         from: &RevsetExpr,
         to: &RevsetExpr,
-    ) -> Result<Vec<FileDiff>>;
+    ) -> Result<Vec<FileDiff>> {
+        let text = self.diff_text_between(dir, from, to).await?;
+        Ok(parse_diff(&text))
+    }
     /// Count commits in a revset (`log -r <revset> --no-graph`, one id per line).
     async fn commit_count(&self, dir: &Path, revset: &RevsetExpr) -> Result<usize>;
     /// Whether the commit a revset resolves to has a conflict.
