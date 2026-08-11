@@ -9,6 +9,17 @@ crates; tag releases as `vcs-core-v<version>`.
 
 ## [Unreleased]
 
+### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.10.0] - 2026-08-11
+
 - Surface failed or divergence-refused rollback outcomes from a failed `jj`
   `try_merge` probe instead of reporting only the original merge error.
 - Document the optional, default-disabled streaming output-inactivity watchdog,
@@ -897,7 +908,8 @@ crates; tag releases as `vcs-core-v<version>`.
 - Re-exports `vcs_git` and `vcs_jj` so a consumer depending only on `vcs-core`
   can reach the raw clients and their types without a separate dependency.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.9.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.10.0...HEAD
+[0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.9.0...vcs-core-v0.10.0
 [0.9.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.8.0...vcs-core-v0.9.0
 [0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.2...vcs-core-v0.8.0
 [0.7.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-core-v0.7.1...vcs-core-v0.7.2

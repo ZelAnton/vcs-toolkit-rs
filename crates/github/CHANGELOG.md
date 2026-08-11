@@ -10,6 +10,17 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.12.0] - 2026-08-11
+
+### Added
 - **Typed GitHub Actions workflow discovery.** `Workflow` exposes the `id`,
   `name`, `path`, and `state` JSON fields; `workflow_list` and the
   `WorkflowList`-driven `workflow_list_with` wrap `gh workflow list`, including
@@ -1029,7 +1040,8 @@ crates; tag releases as `vcs-github-v<version>`.
   out — a timeout surfaces as `processkit::Error::Timeout` (via `CliClient::code`,
   backed by processkit 0.3's first-class timeout error).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.11.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.12.0...HEAD
+[0.12.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.11.0...vcs-github-v0.12.0
 [0.11.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.10.0...vcs-github-v0.11.0
 [0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.2...vcs-github-v0.10.0
 [0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-github-v0.9.1...vcs-github-v0.9.2

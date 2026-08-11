@@ -1,6 +1,6 @@
 [package]
 name = "vcs-gitea"
-version = "0.7.0"
+version = "0.8.0"
 description = "Automate Gitea and Forgejo from Rust: a typed, async wrapper for the tea CLI — pull requests, issues, and releases."
 edition.workspace = true
 rust-version.workspace = true
@@ -21,12 +21,12 @@ processkit.workspace = true
 # and the `managed_client!`/`at_forwarders!`/`raw_run_forwarders!` scaffolding macros.
 # No `serde` feature: the read ops parse tea's quoted-DSV `--output csv` positionally
 # (see `parse.rs`), not JSON, so the cli-support JSON helpers are no longer needed here.
-vcs-cli-support = { path = "../cli-support", version = "0.7" }
+vcs-cli-support = { path = "../cli-support", version = "0.8" }
 # The shared `major.minor.patch` version type + tolerant `<tool> --version` parser
 # `vcs-git`/`vcs-jj`/`vcs-github` also gate on, reused for the `tea` version floor
 # (`GiteaCapabilities`). std-only, no async — the same crate the other wrappers
 # use for their capability gate, so all four share one version-parsing contract.
-vcs-diff = { path = "../diff", version = "0.7" }
+vcs-diff = { path = "../diff", version = "0.8" }
 # `async fn` in the object-safe `GiteaApi` trait (dyn + mockall friendly).
 async-trait = "0.1"
 # Auto-generated `MockGiteaApi` for consumers' tests. Test-only — enabled only

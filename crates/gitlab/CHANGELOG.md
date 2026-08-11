@@ -10,6 +10,17 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-08-11
+
+### Added
 - **MR/issue label management.** `MrCreate` and the new extensible
   `IssueCreate` accept creation labels; `mr_add_labels`/`mr_remove_labels` and
   `issue_add_labels`/`issue_remove_labels` map to `glab … update` with repeated
@@ -531,7 +542,8 @@ crates; tag releases as `vcs-gitlab-v<version>`.
 - `mr_list` passes `--per-page 100` — glab's default of 30 silently truncated
   larger result sets. The cap is now explicit and documented.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.7.0...vcs-gitlab-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.6.0...vcs-gitlab-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.2...vcs-gitlab-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-gitlab-v0.5.1...vcs-gitlab-v0.5.2

@@ -10,6 +10,17 @@ crates; tag releases as `vcs-diff-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-08-11
+
+### Added
 - `unquote_c_style_path` — shared decoding of git C-quoted path text into raw
   bytes, used by both `vcs-diff` and `vcs-git` so their quoting rules cannot
   drift. (T-128.)
@@ -302,7 +313,8 @@ crates; tag releases as `vcs-diff-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.7.0...vcs-diff-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.6.0...vcs-diff-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.2...vcs-diff-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-diff-v0.5.1...vcs-diff-v0.5.2

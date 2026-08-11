@@ -10,6 +10,17 @@ crates; tag releases as `vcs-testkit-v<version>`.
 ## [Unreleased]
 
 ### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-08-11
+
+### Added
 - New `forge_fixtures` module: canonical **forge-CLI output** builders for
   hermetic consumer tests — `GhPr`/`GhIssue`/`GhRelease` (`gh … --json`, in
   gh's alphabetical key order, with `release view` and `release list` kept on
@@ -352,7 +363,8 @@ crates; tag releases as `vcs-testkit-v<version>`.
   hooks a test installs on purpose still run (`core.hooksPath` is deliberately
   not touched).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.7.0...vcs-testkit-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.6.0...vcs-testkit-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.5.2...vcs-testkit-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-testkit-v0.5.1...vcs-testkit-v0.5.2

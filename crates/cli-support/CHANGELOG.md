@@ -9,6 +9,17 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 
 ## [Unreleased]
 
+### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-08-11
+
 - Add `ManagedClient::default_inactivity_timeout` for streamed runs. It is
   disabled by default and preserves captured-command timeout, retry, credential,
   and cleanup behavior while retaining the separate inactivity-timeout result.
@@ -596,7 +607,8 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ### Fixed
 -
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.7.0...vcs-cli-support-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.6.0...vcs-cli-support-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.2...vcs-cli-support-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-cli-support-v0.5.1...vcs-cli-support-v0.5.2

@@ -9,6 +9,17 @@ crates; tag releases as `vcs-jj-v<version>`.
 
 ## [Unreleased]
 
+### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.12.0] - 2026-08-11
+
 ### Changed
 - Add the default-disabled `Jj::default_inactivity_timeout` watchdog for
   progress-streaming git fetch, push, and clone. Because jj has no general
@@ -1015,7 +1026,8 @@ crates; tag releases as `vcs-jj-v<version>`.
 - Optional `tracing` feature (forwards to `processkit/tracing`): a `debug` event
   per `jj` command.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.11.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.12.0...HEAD
+[0.12.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.11.0...vcs-jj-v0.12.0
 [0.11.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.10.0...vcs-jj-v0.11.0
 [0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.2...vcs-jj-v0.10.0
 [0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-jj-v0.9.1...vcs-jj-v0.9.2

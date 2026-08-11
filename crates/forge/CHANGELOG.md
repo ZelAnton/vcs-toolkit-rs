@@ -9,6 +9,17 @@ crates; tag releases as `vcs-forge-v<version>`.
 
 ## [Unreleased]
 
+### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.8.0] - 2026-08-11
+
 ### Fixed
 - **Gitea `Forge::pr_edit` is now structurally unsupported.** `tea` 0.9.2 has no
   `pr edit` subcommand and silently falls back to `pr list`; the facade now returns
@@ -618,7 +629,8 @@ crates; tag releases as `vcs-forge-v<version>`.
   as private — `ForgeRepo.private` is `false` unless the forge positively says
   non-public (never claim privacy that isn't proven).
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.7.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.8.0...HEAD
+[0.8.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.7.0...vcs-forge-v0.8.0
 [0.7.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.6.0...vcs-forge-v0.7.0
 [0.6.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.2...vcs-forge-v0.6.0
 [0.5.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-forge-v0.5.1...vcs-forge-v0.5.2

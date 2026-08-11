@@ -9,6 +9,17 @@ crates; tag releases as `vcs-git-v<version>`.
 
 ## [Unreleased]
 
+### Added
+-
+
+### Changed
+-
+
+### Fixed
+-
+
+## [0.12.0] - 2026-08-11
+
 ### Changed
 - Complete `RefName`'s Git reference-name validation: names ending in `.`,
   containing `@{`, equal to `@`, or containing invalid slash-separated
@@ -1092,7 +1103,8 @@ crates; tag releases as `vcs-git-v<version>`.
   raw instead of being trimmed, which had stripped leading `--porcelain` status
   spaces and `branch` markers.
 
-[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.11.0...HEAD
+[Unreleased]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.12.0...HEAD
+[0.12.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.11.0...vcs-git-v0.12.0
 [0.11.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.10.0...vcs-git-v0.11.0
 [0.10.0]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.9.2...vcs-git-v0.10.0
 [0.9.2]: https://github.com/ZelAnton/vcs-toolkit-rs/compare/vcs-git-v0.9.1...vcs-git-v0.9.2
