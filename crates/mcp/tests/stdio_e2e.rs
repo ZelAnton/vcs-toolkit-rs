@@ -59,9 +59,13 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     let info = client
         .peer_info()
         .expect("server_info present after a successful initialize");
-    assert_eq!(info.server_info.name, "vcs-mcp");
+    let server_info = info
+        .server_info
+        .as_ref()
+        .expect("vcs-mcp must advertise server_info");
+    assert_eq!(server_info.name, "vcs-mcp");
     assert!(
-        !info.server_info.version.is_empty(),
+        !server_info.version.is_empty(),
         "server_info.version must be populated"
     );
 

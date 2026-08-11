@@ -89,6 +89,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
   direct reads and resolution writes through no-follow-safe file opens.
 
 ### Changed
+- **Bumped the official `rmcp` SDK from 2.2.0 to 3.1.1.** Library embedders
+  must use compatible `rmcp` 3.x traits and transports with `VcsMcpServer`;
+  the `vcs-mcp` binary, wire-level tool surface, and advertised server identity
+  are unchanged. As required by the new `ServerHandler` trait,
+  `VcsMcpServer::call_tool` now returns `rmcp::model::mrtr::CallToolResponse`
+  instead of `rmcp::model::CallToolResult`; this intentional public-API change
+  is recorded in `public-api.txt`. The stdio end-to-end test now accommodates
+  `rmcp` 3.x's optional `server_info` model while continuing to require this
+  server to provide a non-empty name and version.
 - **Bumped `processkit` to the 3.0 line** (workspace requirement `"2.1"` → `"3.0"`).
   This crate's own public surface is unchanged (its `public-api.txt` snapshot does not
   move) — it maps failures to MCP error payloads through `vcs-core`/`vcs-forge`

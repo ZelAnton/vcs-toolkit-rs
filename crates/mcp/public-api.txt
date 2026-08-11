@@ -893,7 +893,7 @@ pub fn vcs_mcp::VcsMcpServer::repo_worktrees_tool_attr() -> rmcp::model::tool::T
 impl core::clone::Clone for vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::clone(&self) -> vcs_mcp::VcsMcpServer
 impl rmcp::handler::server::ServerHandler for vcs_mcp::VcsMcpServer
-pub async fn vcs_mcp::VcsMcpServer::call_tool(&self, rmcp::model::CallToolRequestParams, rmcp::service::RequestContext<rmcp::service::server::RoleServer>) -> core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>
+pub async fn vcs_mcp::VcsMcpServer::call_tool(&self, rmcp::model::CallToolRequestParams, rmcp::service::RequestContext<rmcp::service::server::RoleServer>) -> core::result::Result<rmcp::model::mrtr::CallToolResponse, rmcp::model::ErrorData>
 pub fn vcs_mcp::VcsMcpServer::get_info(&self) -> rmcp::model::ServerInfo
 pub fn vcs_mcp::VcsMcpServer::get_tool(&self, &str) -> core::option::Option<rmcp::model::tool::Tool>
 pub async fn vcs_mcp::VcsMcpServer::list_tools(&self, core::option::Option<rmcp::model::PaginatedRequestParams>, rmcp::service::RequestContext<rmcp::service::server::RoleServer>) -> core::result::Result<rmcp::model::ListToolsResult, rmcp::model::ErrorData>
