@@ -253,6 +253,7 @@ pub async fn conflicted_files(&self) -> Result<Vec<PathBuf>>;
 pub async fn changed_files(&self)    -> Result<Vec<FileChange>>;
 pub async fn diff_stat(&self)        -> Result<DiffStat>;
 pub async fn diff(&self)             -> Result<Vec<FileDiff>>;
+pub async fn diff_between(&self, from: &str, to: &str) -> Result<Vec<FileDiff>>;
 pub async fn snapshot(&self)         -> Result<RepoSnapshot>;
 ```
 
@@ -278,11 +279,16 @@ insertion/deletion counts; `diff` is the same working-copy scope, but returns th
 **full parsed diff** (per-file hunks/lines, `Vec<FileDiff>`) — dispatching to the
 already-existing `GitApi::diff`/`JjApi::diff` with `DiffSpec::WorkingTree`, so it
 inherits the backend client's `OutputBudget`: an over-budget diff errors with
-`OutputTooLarge` rather than being silently truncated. Cross-backend
-revision-range diffs are deliberately **not** exposed here — see
-["When to use the facade vs the raw client"](#when-to-use-the-facade-vs-the-raw-client);
-reach a range diff through the raw `git()`/`jj()` client (`GitApi::diff`/
-`JjApi::diff` with `DiffSpec::Rev`).
+`OutputTooLarge` rather than being silently truncated. `diff_between(from, to)` is
+the explicit tree-to-tree counterpart: each endpoint remains a backend-native
+Git revision or jj revset, is validated before spawning, and is passed to the
+backend in its own selector position. The returned diff is directed from the
+`from` tree to the `to` tree; callers do not construct a Git range or jj revset.
+
+On jj, `diff_between` uses the ordinary snapshotting `jj diff --from ... --to ...`
+mode. The endpoints remain explicit, but jj still snapshots the working copy and
+records that bookkeeping operation before evaluating them; use a raw jj client
+when a non-recording `--ignore-working-copy` query is the actual requirement.
 
 > **Lossless paths.** `changed_files`/`conflicted_files` carry each path as a
 > `PathBuf` (not a `String`): a filename whose bytes are not valid UTF-8 — legal on
@@ -750,8 +756,11 @@ The backend-agnostic common surface of `Repo`, as an **object-safe** trait — s
 consumer can hold a `Box<dyn VcsRepo>` / `&dyn VcsRepo` and code against the
 operations *without* naming the `ProcessRunner` generic or wrapping `Repo`
 themselves. Every method mirrors the like-named inherent method on `Repo`; the
-trait adds nothing but the abstraction boundary. Tool-specific operations stay
-off it — reach those through the concrete `Repo` and its bound handles.
+trait adds nothing but the abstraction boundary. `diff_between` is a required
+method, so adding it is semver-relevant for external `VcsRepo` implementors even
+though it is additive for callers using the built-in `Repo` implementation.
+Tool-specific operations stay off it — reach those through the concrete `Repo`
+and its bound handles.
 
 For hermetic tests, build a `Repo` over a fake runner with `from_git` /
 `from_jj` rather than mocking this trait.

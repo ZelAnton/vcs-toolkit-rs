@@ -74,6 +74,7 @@
 //!   [`rename_branch`](Repo::rename_branch) (branch on git, bookmark on jj).
 //! - **Status** — [`changed_files`](Repo::changed_files),
 //!   [`diff_stat`](Repo::diff_stat), [`diff`](Repo::diff),
+//!   [`diff_between`](Repo::diff_between),
 //!   [`has_uncommitted_changes`](Repo::has_uncommitted_changes),
 //!   [`has_tracked_changes`](Repo::has_tracked_changes),
 //!   [`conflicted_files`](Repo::conflicted_files), and
@@ -126,9 +127,11 @@
 //!   [`undo`](Repo::undo) expose the portable recovery boundary, with structural
 //!   `Unsupported` on git. Restoring an arbitrary operation id remains jj-specific;
 //!   use [`Jj::transaction`](vcs_jj::Jj::transaction) on the jj client.
-//! - **Range / revset queries** — commit counts and diff stats over a range: git's
-//!   `a..b` and jj's revsets aren't interchangeable, so neither is forced onto a
-//!   shared signature.
+//! - **Range / revset queries** — commit counts and aggregate diff stats over a
+//!   range: git's `a..b` and jj's revsets aren't interchangeable, so neither is
+//!   forced onto a shared signature. Explicit tree-to-tree diffs are the exception:
+//!   [`Repo::diff_between`] accepts one backend-native selector for each endpoint
+//!   without asking the caller to assemble a Git range or jj revset.
 //!
 //! # Recipes
 //!
@@ -1075,6 +1078,37 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// The parsed diff from the tree selected by `from` to the tree selected by
+    /// `to`. Selectors remain backend-native: Git accepts a `RevSpec` expression
+    /// and jj accepts a `RevsetExpr`, but each is validated and passed as its own
+    /// endpoint rather than being assembled into a range by the facade.
+    ///
+    /// Only the two supplied trees are compared; this does not inherit the
+    /// working-copy semantics of [`diff`](Self::diff). The backend client's
+    /// [`OutputBudget`] still bounds the captured diff, and an over-budget result
+    /// is returned as [`OutputTooLarge`](processkit::ErrorReason::OutputTooLarge)
+    /// rather than silently truncated output.
+    ///
+    /// On jj, the ordinary `jj diff --from ... --to ...` query still snapshots the
+    /// working copy before evaluating the selectors and records that bookkeeping
+    /// operation. This is the documented jj snapshot caveat: the explicit
+    /// endpoints control the compared trees, but do not turn the read into a
+    /// non-recording `--ignore-working-copy` query.
+    ///
+    /// ```no_run
+    /// # async fn example(repo: &vcs_core::Repo) -> vcs_core::Result<()> {
+    /// let changes = repo.diff_between("main", "feature").await?;
+    /// println!("{changes:?}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn diff_between(&self, from: &str, to: &str) -> Result<Vec<FileDiff>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::diff_between(g, &self.cwd, from, to).await,
+            Backend::Jj(j) => jj_backend::diff_between(j, &self.cwd, from, to).await,
+        }
+    }
+
     /// Recent history: up to `max` commits reachable from `revspec_or_revset`
     /// (git revspec / jj revset), most-recent-first (git `log`'s default order /
     /// jj `log`'s topological order).
@@ -1695,6 +1729,7 @@ facade_trait! {
         fn changed_files() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
         fn diff() -> Result<Vec<FileDiff>>;
+        fn diff_between(from: &str, to: &str) -> Result<Vec<FileDiff>>;
         fn log(revspec_or_revset: &str, max: usize) -> Result<Vec<Commit>>;
         fn show_file(rev: &str, path: &str) -> Result<String>;
         fn annotate(path: &str, rev: Option<&str>) -> Result<Vec<AnnotationLine>>;
@@ -4517,6 +4552,121 @@ mod tests {
                 "{name} must let jj snapshot the working copy (no --ignore-working-copy), \
                  consistent with its sibling: {:?}",
                 rec.calls()
+            );
+        }
+    }
+
+    // Explicit endpoints stay in separate backend-native selector positions. Both
+    // adapters feed the same git-format parser, so a facade caller sees the same
+    // FileDiff regardless of whether Git or jj supplied the output. Calling through
+    // the object-safe trait on Git also pins the new required trait method.
+    #[tokio::test]
+    async fn diff_between_dispatches_native_endpoints_and_parses_identically() {
+        let out = "diff --git a/m b/m\n--- a/m\n+++ b/m\n@@ -1 +1 @@\n-a\n+b\n";
+
+        let git_rec =
+            RecordingRunner::new(ScriptedRunner::new().on(["git", "diff"], Reply::ok(out)));
+        let git = Repo::from_git("/repo", "/repo", Git::with_runner(&git_rec));
+        let dynamic: &dyn VcsRepo = &git;
+        let git_files = dynamic
+            .diff_between("main | release", "feature | hotfix")
+            .await
+            .unwrap();
+        let jj_rec = RecordingRunner::new(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(out)));
+        let jj = Repo::from_jj("/repo", "/repo", Jj::with_runner(&jj_rec));
+        let jj_files = jj
+            .diff_between("main | release", "feature | hotfix")
+            .await
+            .unwrap();
+
+        assert_eq!(git_files, jj_files);
+        assert_eq!(git_files.len(), 1);
+        assert_eq!(git_files[0].change, ChangeKind::Modified);
+        assert_eq!(git_files[0].path, Path::new("m"));
+        assert_eq!(
+            git_rec.only_call().args_str(),
+            [
+                "diff",
+                "main | release",
+                "feature | hotfix",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--",
+            ]
+        );
+        assert_eq!(
+            jj_rec.only_call().args_str(),
+            [
+                "diff",
+                "--from",
+                "main | release",
+                "--to",
+                "feature | hotfix",
+                "--git",
+                "--color",
+                "never",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_between_preserves_addition_and_deletion_direction() {
+        let added = "diff --git a/new.txt b/new.txt\nnew file mode 100644\nindex 0000000..1234567\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+new\n";
+        let deleted = "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\nindex 1234567..0000000\n--- a/old.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n";
+
+        let git_added = git_repo(ScriptedRunner::new().on(["git", "diff"], Reply::ok(added)))
+            .diff_between("empty", "feature")
+            .await
+            .unwrap();
+        let git_deleted = git_repo(ScriptedRunner::new().on(["git", "diff"], Reply::ok(deleted)))
+            .diff_between("feature", "empty")
+            .await
+            .unwrap();
+        let jj_added = jj_repo(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(added)))
+            .diff_between("empty", "feature")
+            .await
+            .unwrap();
+        let jj_deleted = jj_repo(ScriptedRunner::new().on(["jj", "diff"], Reply::ok(deleted)))
+            .diff_between("feature", "empty")
+            .await
+            .unwrap();
+
+        assert_eq!(git_added, jj_added);
+        assert_eq!(git_deleted, jj_deleted);
+        assert_eq!(git_added[0].change, ChangeKind::Added);
+        assert_eq!(git_added[0].path, Path::new("new.txt"));
+        assert_eq!(git_deleted[0].change, ChangeKind::Deleted);
+        assert_eq!(git_deleted[0].path, Path::new("old.txt"));
+    }
+
+    #[tokio::test]
+    async fn diff_between_rejects_invalid_endpoints_before_spawn() {
+        for (from, to) in [("--invalid", "feature"), ("main", "--invalid")] {
+            let git_rec = RecordingRunner::new(ScriptedRunner::new());
+            let git = Repo::from_git("/repo", "/repo", Git::with_runner(&git_rec));
+            let err = git
+                .diff_between(from, to)
+                .await
+                .expect_err("invalid Git endpoint");
+            assert!(err.is_invalid_input(), "expected invalid input: {err:?}");
+            assert!(
+                git_rec.calls().is_empty(),
+                "Git must not spawn: {from:?}, {to:?}"
+            );
+
+            let jj_rec = RecordingRunner::new(ScriptedRunner::new());
+            let jj = Repo::from_jj("/repo", "/repo", Jj::with_runner(&jj_rec));
+            let err = jj
+                .diff_between(from, to)
+                .await
+                .expect_err("invalid jj endpoint");
+            assert!(err.is_invalid_input(), "expected invalid input: {err:?}");
+            assert!(
+                jj_rec.calls().is_empty(),
+                "jj must not spawn: {from:?}, {to:?}"
             );
         }
     }

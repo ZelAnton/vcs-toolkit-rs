@@ -26,6 +26,12 @@ crates; tag releases as `vcs-core-v<version>`.
   without hiding backend retries behind a terminal `Exited` event.
 
 ### Added
+- Add `Repo::diff_between(from, to)` and the matching required
+  `VcsRepo::diff_between` method for explicit, backend-native tree-to-tree diffs.
+  Git and jj receive the two validated selectors independently, preserving the
+  `from` → `to` direction, inherited `OutputBudget`/`OutputTooLarge` handling, and
+  pre-spawn validation. This is additive for `Repo` callers, but the required
+  public-trait method is semver-relevant for external `VcsRepo` implementors.
 - `Repo::mark_resolved(paths)` / `VcsRepo::mark_resolved` records paths as
   resolved after their conflict markers have been rewritten in the working copy —
   the finishing half of a programmatic conflict resolution, and what makes it

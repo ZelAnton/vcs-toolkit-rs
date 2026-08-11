@@ -223,6 +223,19 @@ pub(crate) async fn diff<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<Vec
         .map_err(Into::into)
 }
 
+pub(crate) async fn diff_between<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+    from: &str,
+    to: &str,
+) -> Result<Vec<FileDiff>> {
+    // Validate both revsets before dispatching so neither endpoint can reach a
+    // process as an untrusted flag-like argument.
+    let from = rev(from)?;
+    let to = rev(to)?;
+    Ok(jj.diff_between(dir, &from, &to).await?)
+}
+
 pub(crate) async fn log<R: ProcessRunner>(
     jj: &Jj<R>,
     dir: &Path,

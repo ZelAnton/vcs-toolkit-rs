@@ -169,6 +169,19 @@ pub(crate) async fn diff<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<V
         .map_err(Into::into)
 }
 
+pub(crate) async fn diff_between<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    from: &str,
+    to: &str,
+) -> Result<Vec<FileDiff>> {
+    // Keep the endpoints independent all the way to GitApi: validation happens
+    // before the backend call, and no caller-provided range string is assembled.
+    let from = RevSpec::new(from)?;
+    let to = RevSpec::new(to)?;
+    Ok(git.diff_between(dir, &from, &to).await?)
+}
+
 pub(crate) async fn log<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
