@@ -181,6 +181,61 @@ anything spawns (gh would otherwise parse `gh api -evil` as a flag).
 [`RepoView`] — `owner` is the login string, `default_branch` is the ref name (empty
 for an empty repository).
 
+### Running as a specific `gh` account — `GhAccountToken`
+
+A machine often holds **several** `gh` logins for the same host (personal and
+work), but exactly one is *active*. If the active account can't see the repository
+you target, every forge call fails, and the only ambient fix — `gh auth switch` —
+rewrites the user's global gh state. [`GhAccountToken`] is the per-operation
+alternative: it resolves the token of the account you name with
+`gh auth token --user <login>` and injects it like any other credential, leaving
+the active account alone.
+
+```rust,ignore
+# use std::sync::Arc;
+use vcs_github::{GhAccountToken, GitHub, GitHubApi, GitHubHost};
+# async fn demo() -> Result<(), processkit::Error> {
+// Run every call as the `work-acct` login, whichever account gh has active.
+let gh = GitHub::new()
+    .with_host(GitHubHost::github_com())
+    .with_credentials(Arc::new(GhAccountToken::new("work-acct")));
+
+// The first call resolves `gh auth token --user work-acct --hostname github.com`
+// once; later calls reuse the cached token.
+let prs = gh.pr_list(std::path::Path::new(".")).await?;
+# let _ = prs; Ok(()) }
+```
+
+What it guarantees, and what to know:
+
+- **Fail-closed.** Naming a login states *which identity* the operation runs
+  under. A login whose token can't be resolved is an **error naming the login and
+  the host**, never `Ok(None)` — falling back to ambient auth there would silently
+  run the work as the *active* account.
+- **No ambient token bleed.** The `gh auth token` probe runs on its own client, so
+  it never goes through the calling client's credential injection (which would
+  recurse into the provider), and with `GH_TOKEN`, `GITHUB_TOKEN`,
+  `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN` removed from its
+  environment — otherwise `gh` could answer with the token from the *process
+  environment* instead of the requested account's.
+- **The token stays out of sight.** Only the login and host are arguments (gh
+  prints the token on stdout), so command diagnostics such as `--log-commands`
+  never observe it; the provider's `Debug` shows the login and cache size, not the
+  secret; and no error it raises carries the captured stdout.
+- **Cached per `(login, host)` for the provider's life** — one `gh` spawn, not one
+  per forge call. The trade-off is deliberate: **a token rotated in the external
+  `gh` mid-session is not picked up**; build a new provider to re-resolve. Failed
+  resolutions are not cached, so a transient failure doesn't poison the provider.
+- **Requires gh ≥ 2.40** (multi-account support). An older binary rejects `--user`
+  and the provider reports that required version instead of a bare non-zero exit.
+- **GitHub only.** It answers `gh` requests and git HTTPS-against-GitHub requests
+  (where the request host may carry git's `host:port`, which is stripped — gh names
+  hosts without a port); a GitLab or Gitea request gets `Ok(None)`, because a GitHub
+  token must never be handed to `glab`/`tea`.
+
+Use one provider per account, and pair it with `with_host` when you target a GHES
+host so the resolved token lands in `GH_ENTERPRISE_TOKEN`.
+
 ## Pull requests — listing & creation
 
 ```rust,ignore

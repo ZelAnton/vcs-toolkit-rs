@@ -10,7 +10,25 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **Per-account credential provider — `GhAccountToken`.** Runs operations as one
+  *named* `gh` account on a machine with several logins, instead of switching the
+  user's active account globally (`gh auth switch`). It resolves that account's
+  token lazily with `gh auth token --user <login>` (adding `--hostname <host>`
+  when the client bound a host) and yields it as a plain token credential through
+  the existing `with_credentials` path, so it lands in the variable `gh` reads for
+  that host (`GH_TOKEN`, or `GH_ENTERPRISE_TOKEN` after `with_host`) and never in
+  `argv`. Fail-closed: a named login whose token cannot be resolved is an error
+  naming the login and the host, never a silent fall back to the active account.
+  The probe runs on its own client — outside the calling client's credential
+  injection, and with `GH_TOKEN`/`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/
+  `GITHUB_ENTERPRISE_TOKEN` removed from its environment — so an ambient token
+  can't be echoed back in place of the requested account's. A `gh` older than 2.40
+  (which lacks `--user`) is reported with that required version rather than a bare
+  non-zero exit. Resolution is cached per `(login, host)` for the provider's life:
+  one `gh` spawn instead of one per forge call, with the deliberate consequence
+  that a token rotated in the external `gh` mid-session is not picked up.
+  Constructors: `GhAccountToken::new`, `with_runner` (test seam), plus
+  `default_timeout` and `login`.
 
 ### Changed
 -

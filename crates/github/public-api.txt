@@ -1480,6 +1480,24 @@ impl core::marker::Unpin for vcs_github::Comment
 impl core::marker::UnsafeUnpin for vcs_github::Comment
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_github::Comment
 impl core::panic::unwind_safe::UnwindSafe for vcs_github::Comment
+pub struct vcs_github::GhAccountToken<R: processkit::runner::ProcessRunner>
+impl vcs_github::GhAccountToken<processkit::runner::JobRunner>
+pub fn vcs_github::GhAccountToken<processkit::runner::JobRunner>::new(impl core::convert::Into<alloc::string::String>) -> Self
+impl<R: processkit::runner::ProcessRunner> vcs_github::GhAccountToken<R>
+pub fn vcs_github::GhAccountToken<R>::default_timeout(self, core::time::Duration) -> Self
+pub fn vcs_github::GhAccountToken<R>::login(&self) -> &str
+pub fn vcs_github::GhAccountToken<R>::with_runner(R, impl core::convert::Into<alloc::string::String>) -> Self
+impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_github::GhAccountToken<R>
+pub fn vcs_github::GhAccountToken<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: processkit::runner::ProcessRunner> vcs_cli_support::credentials::CredentialProvider for vcs_github::GhAccountToken<R>
+pub fn vcs_github::GhAccountToken<R>::credential<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 vcs_cli_support::credentials::CredentialRequest<'life2>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<vcs_cli_support::credentials::Credential>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl<R> !core::marker::Freeze for vcs_github::GhAccountToken<R>
+impl<R> core::marker::Send for vcs_github::GhAccountToken<R>
+impl<R> core::marker::Sync for vcs_github::GhAccountToken<R>
+impl<R> core::marker::Unpin for vcs_github::GhAccountToken<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for vcs_github::GhAccountToken<R> where R: core::marker::UnsafeUnpin
+impl<R> !core::panic::unwind_safe::RefUnwindSafe for vcs_github::GhAccountToken<R>
+impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_github::GhAccountToken<R>
 pub struct vcs_github::GitHub<R: processkit::runner::ProcessRunner>
 impl vcs_github::GitHub<processkit::runner::JobRunner>
 pub fn vcs_github::GitHub<processkit::runner::JobRunner>::new() -> Self

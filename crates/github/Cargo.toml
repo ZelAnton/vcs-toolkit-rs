@@ -30,6 +30,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `async fn` in the object-safe `GitHubApi` trait (dyn + mockall friendly).
 async-trait = "0.1"
+# `tokio::sync::OnceCell` backs `GhAccountToken`'s per-`(login, host)` token cache:
+# async single-init, so concurrent forge calls resolve one `gh auth token` spawn
+# between them instead of racing several (a std `OnceLock` cannot host an `await`).
+# Only the `sync` feature; the runtime itself is executor-agnostic — the same
+# dependency shape `crates/forge` uses for its version-probe cache. Adds nothing to
+# the dependency graph: `processkit` already pulls tokio in.
+tokio = { version = "1", features = ["sync"] }
 # Auto-generated `MockGitHubApi` for consumers' tests. Test-only — enabled only
 # via the `mock` feature, never compiled into production builds.
 mockall = { workspace = true, optional = true }
