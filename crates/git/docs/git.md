@@ -47,10 +47,6 @@ command the client runs:
   env-based config (`GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n`, which overrides even the
   *repo-local* `.git/config`) — and `core.fsmonitor` is forced `false` (a
   config-driven daemon launch).
-- **Neutralizes `core.sshCommand`** — pinned empty (the config-key twin of the
-  scrubbed `GIT_SSH_COMMAND`), so a repo-local override can't run an arbitrary
-  program for the SSH transport. The default `ssh` (ambient `~/.ssh/config`/agent)
-  still works.
 - **Scrubs inherited `GIT_*` redirectors** so a poisoned parent environment
   can't point commands at another repo: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
@@ -64,19 +60,25 @@ command the client runs:
 - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal prompts
   off everywhere (`GIT_TERMINAL_PROMPT=0`).
 
-**Residual repo-local-config vectors (not neutralized).** A few repo-local
+**Residual repo-local-config vectors (not neutralized).** Several repo-local
 `.git/config` / `.gitattributes` keys still run an arbitrary program and are *not*
-pinned: `filter.<drv>.clean`/`smudge` (run on any working-tree materialization —
+pinned: `core.sshCommand` (run for the SSH transport — the *env* twins
+`GIT_SSH_COMMAND`/`GIT_SSH` are scrubbed, the config key is not),
+`filter.<drv>.clean`/`smudge` (run on any working-tree materialization —
 checkout, `stash pop`, `worktree add`) and `diff.<drv>.textconv`/`diff.external`
 (run when a diff is produced; `diff_text` defends with `--no-ext-diff`, other diff/
 blame reads do not). For a **fully untrusted** repo, don't materialize its working
-tree or run diffs through a hardened client without an OS-level sandbox — `harden()`
-is hardening, not a sandbox.
+tree, run diffs, or drive SSH network operations through a hardened client without an
+OS-level sandbox — `harden()` is hardening, not a sandbox. (`core.sshCommand` was
+briefly pinned empty; that broke every SSH operation instead of neutralizing the key,
+because git reads an empty value as "the user's ssh command", so the pin was removed.
+Closing the vector properly is a separate, not-yet-shipped change — see
+[Security & hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/).)
 
-**Requires git ≥ 2.31.** The hook / `fsmonitor` / `sshCommand` pins ride
-`GIT_CONFIG_COUNT` (added in git 2.31); on **older git they silently no-op** — the
-`GIT_*` scrub and `GIT_TERMINAL_PROMPT=0` still apply, but repo-local hooks/fsmonitor/
-sshCommand are **not** disabled, with no error. `capabilities().ensure_supported()` now
+**Requires git ≥ 2.31.** The hook / `fsmonitor` pins ride `GIT_CONFIG_COUNT`
+(added in git 2.31); on **older git they silently no-op** — the `GIT_*` scrub and
+`GIT_TERMINAL_PROMPT=0` still apply, but repo-local hooks/fsmonitor are **not**
+disabled, with no error. `capabilities().ensure_supported()` now
 enforces the `≥ 2.31` floor — call it before relying on `harden()` against an untrusted
 repo, or add an OS-level sandbox.
 

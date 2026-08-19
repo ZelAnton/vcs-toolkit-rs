@@ -757,8 +757,10 @@ pub trait GitApi: Send + Sync {
     /// including code-execution keys like `core.sshCommand` or `filter.<drv>.clean`.
     /// The `--` guard stops a `value` being *misparsed* as a flag; it does **not**
     /// sanitise a genuinely dangerous *key* you choose to write. Never wire
-    /// untrusted input into it; a `harden()`ed client does *not* protect against
-    /// config *you* write.
+    /// untrusted input into it: [`harden()`](Git::harden) pins only `core.hooksPath`
+    /// and `core.fsmonitor`, so every other code-execution key written here — and
+    /// `core.sshCommand` in particular, whoever wrote it — still takes effect under a
+    /// hardened client (see that method's residual-vectors section).
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
     /// Add a remote (`remote add <name> <url>`).
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
@@ -843,7 +845,7 @@ vcs_cli_support::managed_client! {
     /// from the parent process — e.g. running inside a git hook, which exports
     /// `GIT_DIR`/`GIT_INDEX_FILE` — can't silently redirect commands at a *different*
     /// repository than the bound `dir`. (`harden()` additionally scrubs the
-    /// command-hook vars and pins hooks/fsmonitor/sshCommand off.)
+    /// command-hook vars and pins hooks/fsmonitor off.)
     pub struct Git => BINARY, scrub_env = [
         "GIT_DIR",
         "GIT_WORK_TREE",
@@ -3258,10 +3260,10 @@ impl<R: ProcessRunner> Git<R> {
     /// honours its config — arbitrary code execution by default. The profile
     /// (applied to **every** command this client runs):
     ///
-    /// **⚠ Requires git ≥ 2.31.** The hook / `fsmonitor` / `sshCommand` pins ride
+    /// **⚠ Requires git ≥ 2.31.** The hook / `fsmonitor` pins ride
     /// git's env-based config (`GIT_CONFIG_COUNT`), which older git **silently
     /// ignores** — so on git < 2.31 `harden()` still scrubs the environment and
-    /// turns prompts off, but repo-local hooks/fsmonitor/sshCommand are **not**
+    /// turns prompts off, but repo-local hooks/fsmonitor are **not**
     /// disabled (no error is raised). [`capabilities().ensure_supported()`](GitCapabilities::ensure_supported)
     /// now enforces the **≥ 2.31 floor** (major.minor), so a too-old git is rejected
     /// up front with a clear message instead of silently no-op-ing the pins — call it
@@ -3274,10 +3276,6 @@ impl<R: ProcessRunner> Git<R> {
     ///   (a config-driven daemon launch). Env-config overrides even the
     ///   *repo-local* `.git/config` for the keys it names, so these pins beat a
     ///   poisoned `.git/config`.
-    /// - **Neutralizes `core.sshCommand`** (pinned empty) — the config-key twin of
-    ///   the scrubbed `GIT_SSH_COMMAND`, an arbitrary program git would run for the
-    ///   SSH transport. Empty is falsy to git, so the default `ssh` (ambient
-    ///   `~/.ssh/config`/agent) still works; only the repo's override is dropped.
     /// - **Removes inherited repo redirectors** so a poisoned parent
     ///   environment can't point commands at another repository: `GIT_DIR`,
     ///   `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
@@ -3304,16 +3302,33 @@ impl<R: ProcessRunner> Git<R> {
     ///   prompts off everywhere (`GIT_TERMINAL_PROMPT=0`).
     ///
     /// **Residual repo-local-config vectors (NOT neutralized).** `harden()` closes
-    /// the *hooks*, `fsmonitor`, `core.sshCommand`, and the env redirector/command-
-    /// hook paths — but a few **repo-local `.git/config` / `.gitattributes`** keys
-    /// still run an arbitrary program and are not pinned: `filter.<drv>.clean`/
-    /// `smudge` (run on any working-tree materialization — `checkout`, `stash pop`,
-    /// `worktree add`), and `diff.<drv>.textconv` / `diff.external` (run when a diff
-    /// is produced; [`diff_text`](GitApi::diff_text) defends itself with
-    /// `--no-ext-diff`, but other diff/blame reads do not). So for a **fully
-    /// untrusted** repo, do not materialize its working tree or run diffs through a
-    /// hardened client without an OS-level sandbox — `harden()` is hardening, not a
-    /// sandbox.
+    /// the *hooks*, `fsmonitor`, and the env redirector/command-hook paths — but
+    /// several **repo-local `.git/config` / `.gitattributes`** keys still run an
+    /// arbitrary program and are not pinned:
+    ///
+    /// - **`core.sshCommand`** — the config-key twin of the scrubbed
+    ///   `GIT_SSH_COMMAND`, run for the SSH transport on `fetch`/`push`/`clone`/
+    ///   `ls-remote`. This profile scrubs the *environment* vectors
+    ///   (`GIT_SSH_COMMAND`/`GIT_SSH`) but leaves the *config* key alone, so a
+    ///   `core.sshCommand` set by the repository still executes. It used to be
+    ///   pinned to the empty string, which did not work — git branches on the key
+    ///   being set rather than on a non-empty value, so the pin made **every** SSH
+    ///   operation fail to spawn (`cannot spawn` / `unable to fork`) instead of
+    ///   neutralizing anything, and no
+    ///   non-empty pin is correct either (a config `core.sshCommand` goes through a
+    ///   shell, silently changing which ssh binary and identity are used). Closing
+    ///   this vector needs a different mechanism and has not shipped yet; until it
+    ///   does, treat SSH network operations against an untrusted
+    ///   repository as unprotected by `harden()`.
+    /// - **`filter.<drv>.clean`/`smudge`** — run on any working-tree
+    ///   materialization (`checkout`, `stash pop`, `worktree add`).
+    /// - **`diff.<drv>.textconv` / `diff.external`** — run when a diff is produced;
+    ///   [`diff_text`](GitApi::diff_text) defends itself with `--no-ext-diff`, but
+    ///   other diff/blame reads do not.
+    ///
+    /// So for a **fully untrusted** repo, do not materialize its working tree, run
+    /// diffs, or drive SSH network operations through a hardened client without an
+    /// OS-level sandbox — `harden()` is hardening, not a sandbox.
     ///
     /// What it does NOT do beyond that: sandbox the git binary itself, or stop the
     /// repo's *content* from being malicious. In a **colocated jj repo**, git hooks
@@ -3372,7 +3387,7 @@ impl<R: ProcessRunner> Git<R> {
             // *repo-local* `.git/config` for the keys it names — so these pins beat
             // a poisoned `.git/config`, which `GIT_CONFIG_NOSYSTEM` (system) and the
             // scrubbed `GIT_CONFIG_GLOBAL` (global) do not reach.
-            .default_env("GIT_CONFIG_COUNT", "3")
+            .default_env("GIT_CONFIG_COUNT", "2")
             .default_env("GIT_CONFIG_KEY_0", "core.hooksPath")
             // `/dev/null` as the hooks dir disables hooks on every platform,
             // Windows included: git looks for `<hooksPath>/<hook-name>`, and no
@@ -3383,13 +3398,21 @@ impl<R: ProcessRunner> Git<R> {
             .default_env("GIT_CONFIG_VALUE_0", "/dev/null")
             .default_env("GIT_CONFIG_KEY_1", "core.fsmonitor")
             .default_env("GIT_CONFIG_VALUE_1", "false")
-            // Neutralize a repo-local `core.sshCommand` (an arbitrary program git
-            // runs for the SSH transport on fetch/push/clone) — the config-key twin
-            // of the scrubbed `GIT_SSH_COMMAND` env var. An empty value is falsy to
-            // git, so it falls back to the default `ssh` (ambient `~/.ssh/config` /
-            // agent still work); only the repo's override is dropped.
-            .default_env("GIT_CONFIG_KEY_2", "core.sshCommand")
-            .default_env("GIT_CONFIG_VALUE_2", "")
+        // NO `core.sshCommand` pin here, deliberately — do not re-add one (T-176).
+        // The profile used to pin it to the empty string as a kill-switch for a
+        // repo-local override, on the assumption that "" is falsy to git and it
+        // would fall back to the built-in `ssh`. That is wrong: git branches on the
+        // key being *set*, not on its value being non-empty, so an empty value is
+        // taken as "the user's ssh command is the empty string" and every SSH
+        // operation dies before it starts — `error: cannot spawn : No such file or
+        // directory` / `fatal: unable to fork` on fetch/push/clone/ls-remote
+        // (reproduced on git 2.54.0). Nor can the pin simply carry a non-empty
+        // value: a config `core.sshCommand` is run **through a shell**, while the
+        // built-in default is spawned directly, so pinning e.g. `ssh` silently
+        // re-resolves which ssh binary (and therefore which identity/agent) is used
+        // on a host with several ssh installs. Neutralizing the key needs a
+        // mechanism that can express "unset", which env-config cannot — see the
+        // "Residual repo-local-config vectors" section of `harden`'s doc comment.
     }
 
     /// Switch to `branch`, carrying uncommitted changes (tracked *and*
@@ -6626,13 +6649,38 @@ mod tests {
                     .any(|(key, val)| key.to_str() == Some(k) && val.is_none())
             };
             assert!(has("GIT_CONFIG_NOSYSTEM", "1"), "{:?}", call.args_str());
-            assert!(has("GIT_CONFIG_COUNT", "3"));
+            assert!(has("GIT_CONFIG_COUNT", "2"));
             assert!(has("GIT_CONFIG_KEY_0", "core.hooksPath"));
             assert!(has("GIT_CONFIG_VALUE_0", "/dev/null"));
             assert!(has("GIT_CONFIG_KEY_1", "core.fsmonitor"));
-            // The repo-local core.sshCommand kill-switch (pinned empty).
-            assert!(has("GIT_CONFIG_KEY_2", "core.sshCommand"));
-            assert!(has("GIT_CONFIG_VALUE_2", ""));
+            assert!(has("GIT_CONFIG_VALUE_1", "false"));
+            // T-176: `core.sshCommand` must NOT be pinned under ANY index. The
+            // profile used to pin `GIT_CONFIG_KEY_2=core.sshCommand` with an EMPTY
+            // `GIT_CONFIG_VALUE_2` as a kill-switch, betting that "" is falsy to git
+            // and it would fall back to the built-in `ssh`. git instead branches on
+            // the key being *set* — an empty value means "the user's ssh command is
+            // the empty string" — so it tried to spawn the empty program and every
+            // SSH operation died with `error: cannot spawn : No such file or
+            // directory` / `fatal: unable to fork`. A non-empty pin is wrong too (a
+            // config `core.sshCommand` is run through a shell, unlike the directly
+            // spawned default), so the key is asserted absent rather than re-pinned;
+            // closing the vector properly is T-177. Scanning EVERY `GIT_CONFIG_KEY_n`
+            // slot (not just the old slot 2), case-insensitively as git compares
+            // config keys, keeps the guarantee if the pin list is ever reordered or
+            // spelled `core.sshcommand`.
+            let pinned_ssh_command_slot = call.envs.iter().find(|(key, value)| {
+                key.to_str()
+                    .is_some_and(|k| k.starts_with("GIT_CONFIG_KEY_"))
+                    && value
+                        .as_deref()
+                        .and_then(|v| v.to_str())
+                        .is_some_and(|v| v.eq_ignore_ascii_case("core.sshcommand"))
+            });
+            assert!(
+                pinned_ssh_command_slot.is_none(),
+                "core.sshCommand must not be pinned, found {pinned_ssh_command_slot:?} for {:?}",
+                call.args_str()
+            );
             assert!(has("GIT_TERMINAL_PROMPT", "0"));
             assert!(removed("GIT_DIR"), "GIT_DIR scrubbed");
             assert!(removed("GIT_CONFIG_GLOBAL"), "global config scrubbed");
