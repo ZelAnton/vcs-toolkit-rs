@@ -405,8 +405,11 @@ Two layers, both on by default or one call away:
   `with_ssh_command(…)` / `trust_repo_ssh_command()` are the two explicit ways to
   continue. (It is still hardening, not a sandbox: repo-local `filter`/`textconv`
   keys survive, so don't checkout or diff a *fully* untrusted repo without an OS
-  sandbox — see the security guide.) jj needs no equivalent
-  (no repo-local hooks); in a colocated repo, harden the `Git` client you point at it.
+  sandbox — see the security guide.) jj needs no equivalent for **hooks** (it has
+  none that are repo-local), but hardening only covers what the `Git` client itself
+  runs: in a colocated repo `vcs-core` drives **jj** (a valid `.jj` wins detection),
+  and `jj git fetch`/`push` still honour the repo's `core.sshCommand` — there is no
+  `Jj::hardened()` to refuse it.
 
 A related opt-in is **supplying** a secret rather than guarding against one:
 `Git`/`GitHub`/`GitLab` accept a `CredentialProvider` via `with_credentials(...)`,

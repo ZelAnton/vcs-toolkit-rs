@@ -18,7 +18,11 @@
 //! hardened client also **refuses** a network operation when the repository
 //! overrides `core.sshCommand` (git would run that value through a shell);
 //! `--ssh-command` / `--trust-repo-ssh-command` are the two explicit ways to
-//! continue. That profile does *not* disable repo-local config wholesale — see
+//! continue. That refusal is the **git backend's** alone: a valid `.jj` wins
+//! backend detection, so on a jj or colocated repo `repo_fetch`/`repo_push` run
+//! `jj git fetch`/`jj git push`, which still honour the repository's
+//! `core.sshCommand`, and both flags are no-ops there.
+//! That profile does *not* disable repo-local config wholesale — see
 //! "A hardened git client" in `crates/mcp/docs/mcp.md` for the residual vectors it
 //! leaves (`filter.*`, `diff.*.textconv`).
 //! `--log-commands` wraps the git/jj/forge clients in a command-logging
@@ -126,12 +130,14 @@ OPTIONS:
     --ssh-command <command>   Run SSH network operations with this command
                               (delivered as GIT_SSH_COMMAND). Also lifts the
                               refusal below, and outranks whatever the
-                              repository set, so its value never runs.
+                              repository set, so its value never runs. Applies to
+                              the git backend only (see below).
     --trust-repo-ssh-command  Accept a `core.sshCommand` the REPOSITORY sets, and
                               lift the refusal below. Use it for a repository you
                               own that carries its own ssh identity — it accepts
                               whatever that repository says. --ssh-command wins
-                              when both are given (whatever the order).
+                              when both are given (whatever the order). Applies to
+                              the git backend only (see below).
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
@@ -140,9 +146,13 @@ The server speaks MCP over stdio; point an agent harness at it via a
 its hooks. It also refuses a git network operation (repo_fetch/repo_push) when
 the repository overrides `core.sshCommand` — git runs that value through a
 shell — naming the value and these two flags; a `core.sshCommand` that is only
-in your own global git config is not affected. Repo-local config is otherwise
-not disabled wholesale — see \"A hardened git client\" in the vcs-mcp guide for
-the vectors it leaves (`filter.*`, `diff.*.textconv`).";
+in your own global git config is not affected. That refusal covers the GIT
+backend only: a valid `.jj` wins backend detection, so on a jj or colocated repo
+repo_fetch/repo_push run `jj git fetch`/`jj git push`, which still honour the
+repository's `core.sshCommand`, and neither flag above has any effect there.
+Repo-local config is otherwise not disabled wholesale — see \"A hardened git
+client\" in the vcs-mcp guide for the vectors it leaves (`filter.*`,
+`diff.*.textconv`).";
 
 struct Args {
     repo: PathBuf,
@@ -214,7 +224,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// disables repo hooks and `core.fsmonitor`, scrubs repo-redirecting `GIT_*`
 /// variables, and skips system config, so serving a repository the operator
 /// didn't create can't execute its hooks (or honour a `core.fsmonitor` program)
-/// on a tool call. jj has no repo-local hooks, so its client needs no equivalent.
+/// on a tool call. jj has no repo-local hooks, so its client needs no equivalent
+/// for *that* vector — but the hardened client's `core.sshCommand` refusal is
+/// git-only in the same way: a colocated repo is driven by jj, whose
+/// `git fetch`/`push` still honour the repository's value (see `hardened_git`).
 /// Both carry the per-command `timeout` and the content-output `budget`.
 ///
 /// Delegates the whole discovery walk to `Repo::discover_with`, injecting the
@@ -265,10 +278,13 @@ fn output_budget(max_bytes: Option<usize>) -> OutputBudget {
 /// command-logging) runner. `Git::with_runner(...).harden()` is `Git::hardened()`
 /// with the injected runner.
 ///
-/// The `ssh` opt-in is applied to the **client**, which is what the repo tools
-/// end up running through: `Repo::discover_with` takes this very client and every
-/// `repo_fetch`/`repo_push` dispatches to it, so the setting reaches the actual
-/// network calls without any facade-level plumbing.
+/// The `ssh` opt-in is applied to the **client**, which is what the repo tools end
+/// up running through **when the repository is git-backed**: `Repo::discover_with`
+/// takes this very client and dispatches `repo_fetch`/`repo_push` to it, so the
+/// setting reaches the actual network calls without any facade-level plumbing. It
+/// reaches nothing on a **jj-backed** repo: a valid `.jj` wins detection (colocated
+/// included), so this closure is never called, `repo_fetch`/`repo_push` go to
+/// `jj git fetch`/`push`, and the repository's `core.sshCommand` runs unchecked.
 fn hardened_git(
     timeout: Option<Duration>,
     budget: OutputBudget,

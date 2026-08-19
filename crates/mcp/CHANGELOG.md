@@ -22,8 +22,12 @@ crates; tag releases as `vcs-mcp-v<version>`.
   narrower setting, resolved once after the parse loop exactly as `--allow-write`
   is resolved against `--allow-tools`. A `core.sshCommand` that lives only in the
   operator's global git config is unaffected and needs neither flag. The setting is
-  applied to the client `Repo::discover_with` is given, so it reaches the actual
-  network commands the repo tools run.
+  applied to the `Git` client `Repo::discover_with` is given, so it reaches the
+  actual network commands the repo tools run **on a git-backed repository**. Both
+  the refusal and these flags therefore cover the **git backend only**: a valid
+  `.jj` wins backend detection, so on a jj or colocated repository
+  `repo_fetch`/`repo_push` run `jj git fetch`/`jj git push`, no check runs, the
+  flags do nothing, and the repository's `core.sshCommand` still executes.
 
 ### Changed
 - `repo_snapshot`'s tool description now documents the new

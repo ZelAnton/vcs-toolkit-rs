@@ -11,8 +11,12 @@ with the code-execution `GIT_*` variables scrubbed, and a network operation refu
 when the repository overrides `core.sshCommand`) and tool
 arguments are injection-guarded (the wrappers keep caller values out of flag
 position — flag-VALUE slots plus `reject_flag_like` on the few bare positionals), so
-serving a repository you didn't create can't run its hooks, redirect its ssh
-transport, or smuggle a flag into argv.
+serving a repository you didn't create can't run its hooks or smuggle a flag into
+argv — and, **on a git-backed repo**, can't redirect its ssh transport either. That
+last guarantee belongs to the hardened `Git` client alone: a valid `.jj` wins backend
+detection, so on a **jj or colocated** repo `repo_fetch`/`repo_push` run
+`jj git fetch` / `jj git push`, which still honour the repository's
+`core.sshCommand` — see "A hardened git client" below.
 
 It's the workspace's **first binary crate** — a thin `vcs-mcp` binary over a
 hermetically-testable library (`VcsMcpServer`) — and its **second runtime-tokio**
@@ -207,7 +211,10 @@ The `vcs-mcp` binary applies, in order:
    command-hook `GIT_*`
    variables, and skips system config — so serving a repository you didn't create
    can't execute its hooks (even on a read tool like `repo_status`). jj has no
-   repo-local hooks, so its client needs no equivalent. **Residual:** `harden()`
+   repo-local hooks, so its client needs no equivalent **for the hook vector** —
+   that reasoning does not carry over to the SSH-transport check below, which a
+   jj-backed repo never runs (see "Only the git backend" at the end of this point).
+   **Residual:** `harden()`
    does *not* sandbox repo-local `filter.*` (smudge/clean) or `diff.*.textconv`
    drivers, which run when working-tree content is materialized (`repo_checkout`,
    the worktree tools, `repo_try_merge`) or a diff is produced. Those
@@ -229,6 +236,18 @@ The `vcs-mcp` binary applies, in order:
    before-the-command read, not a sandbox — a repository rewritten *between* that
    read and git's own can still slip a value through — so a fully untrusted
    repository still belongs either read-only or inside an OS-level sandbox.
+   **Only the git backend.** The check lives in the hardened `Git` client, and
+   `Repo::discover_with` builds that client only for a repository it detects as
+   **git**. A valid `.jj` **wins** over `.git`, so on a **colocated** checkout (both
+   markers present) the server drives jj: `repo_fetch`/`repo_push` become
+   `jj git fetch` / `jj git push`, no comparison runs, and jj's own git subprocess
+   executes the repository's `core.sshCommand` (reproduced on jj 0.42 — the
+   repo-local command ran on `jj git fetch` exactly as it does on a plain
+   `git fetch`). `--ssh-command` / `--trust-repo-ssh-command` configure that same
+   git client, so they are **no-ops** on a jj-backed repo. There is deliberately no
+   `Jj::hardened()`, so for an untrusted **jj or colocated** repository this vector
+   is not covered here at all: both network tools are write-gated, so the default
+   read-only mode keeps them unreachable — otherwise use an OS-level sandbox.
 4. **Argv injection guards.** A tool parameter can't smuggle a leading-`-` flag
    into argv: the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
    position — typed (`u64`/`Path`) or flag-VALUE arguments, with `reject_flag_like`

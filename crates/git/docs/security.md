@@ -295,11 +295,22 @@ own argv and is the caller's responsibility, as it is for every other guard here
 What it does **not** do beyond that: sandbox the git binary itself, or stop the
 repo's *content* from being malicious.
 
-**jj needs no equivalent.** jj has no repo-local hooks, and its config comes from
-the user/repo TOML files jj itself trusts — there is deliberately no
-`Jj::hardened()`. In a **colocated** repo the risk lives entirely on the git
-side (git hooks fire only when *git* commands run there), so harden the `Git`
-client you point at it and leave `Jj` plain.
+**jj needs no equivalent for hooks — but not for SSH.** jj has no repo-local
+hooks, and its config comes from the user/repo TOML files jj itself trusts — there
+is deliberately no `Jj::hardened()`. For the **hook** vector a colocated repo is
+therefore covered by hardening the `Git` client you point at it (git hooks fire
+only when *git* commands run there) and leaving `Jj` plain.
+
+The **SSH-transport** vector is not covered that way: `jj git fetch` / `jj git
+push` drive git themselves and honour the repository's `core.sshCommand`
+(reproduced on jj 0.42 — the repo-local command ran on `jj git fetch` exactly as it
+does on a plain `git fetch`), and no `Jj` client performs the comparison above.
+This matters for anything that routes by *detected backend* rather than by client:
+`vcs_core::Repo` prefers a valid `.jj` over `.git`, so on a colocated checkout its
+`fetch`/`push` never reach the hardened `Git` client at all. Treat SSH network
+operations against an untrusted **colocated** repository as outside what
+`harden()` protects — run them only against a repository you trust, or inside an
+OS-level sandbox.
 
 ## Submodules (untrusted nested config)
 
