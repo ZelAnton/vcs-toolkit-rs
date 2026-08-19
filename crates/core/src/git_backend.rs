@@ -259,6 +259,11 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
     let dirty = bs.is_dirty();
     let change_count = bs.tracked_changes + bs.untracked;
     let conflicted = bs.conflicts > 0;
+    // All three split counters are already parsed into `bs` (porcelain v2's `1`/`2`,
+    // `u`, and `?` records) — no extra spawn, so all three are `Some` on git.
+    let tracked_changes = Some(bs.tracked_changes);
+    let untracked = Some(bs.untracked);
+    let conflict_count = Some(bs.conflicts);
     // Upstream and its ahead/behind counts are separate signals: git names the
     // upstream branch whenever one is configured, but reports the counts only when
     // that upstream ref actually resolves. So carry the counts as `Option` — a set-
@@ -275,6 +280,9 @@ pub(crate) async fn snapshot<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resu
         tracking,
         dirty,
         change_count,
+        tracked_changes,
+        untracked,
+        conflict_count,
         conflicted,
         operation,
     })

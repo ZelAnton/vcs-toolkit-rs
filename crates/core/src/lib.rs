@@ -2339,6 +2339,109 @@ mod tests {
         assert_eq!(s.change_count, 2, "1 tracked + 1 untracked");
         assert!(!s.conflicted);
         assert_eq!(s.operation, OperationState::Clear);
+        // T-178: the split counters are already parsed into `BranchStatus`, so all
+        // three are `Some` on git — no extra spawn.
+        assert_eq!(s.tracked_changes, Some(1));
+        assert_eq!(s.untracked, Some(1));
+        assert_eq!(s.conflict_count, Some(0));
+    }
+
+    // T-178: a tree with ONLY untracked files must not be conflated with "no
+    // changes" or "tracked changes" — `dirty` is true, `change_count` counts the
+    // untracked files, but `tracked_changes` is `Some(0)` and `untracked` carries
+    // the real count. This is the exact motivating case from the task ({ dirty:
+    // true, change_count: N } with zero tracked changes).
+    #[tokio::test]
+    async fn git_snapshot_untracked_only_splits_tracked_and_untracked() {
+        let v2 = concat!(
+            "# branch.oid abc123\0",
+            "# branch.head main\0",
+            "? build/artifact.o\0",
+            "? build/other.o\0",
+        );
+        let gitdir = TempDir::new("snap-git-untracked-only");
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        assert!(s.dirty, "untracked-only is still a dirty working copy");
+        assert_eq!(s.change_count, 2);
+        assert_eq!(
+            s.tracked_changes,
+            Some(0),
+            "no tracked changes despite dirty: true"
+        );
+        assert_eq!(s.untracked, Some(2));
+        assert_eq!(s.conflict_count, Some(0));
+        assert!(!s.conflicted);
+    }
+
+    // T-178: a mixed tree (tracked AND untracked changes) splits both counters
+    // correctly, and their sum still equals the unchanged `change_count`.
+    #[tokio::test]
+    async fn git_snapshot_mixed_tracked_and_untracked_splits_counters() {
+        let v2 = concat!(
+            "# branch.oid abc123\0",
+            "# branch.head main\0",
+            "1 .M N... 100644 100644 100644 1111 2222 a.rs\0",
+            "? new.txt\0",
+        );
+        let gitdir = TempDir::new("snap-git-mixed");
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        assert_eq!(s.change_count, 2);
+        assert_eq!(s.tracked_changes, Some(1));
+        assert_eq!(s.untracked, Some(1));
+        assert_eq!(
+            s.tracked_changes.unwrap() + s.untracked.unwrap(),
+            s.change_count,
+            "the split counters must still sum to the unchanged change_count"
+        );
+        assert_eq!(s.conflict_count, Some(0));
+    }
+
+    // T-178: an unmerged (`u`) path is counted BOTH in `tracked_changes` (it's a
+    // tracked path) and in `conflict_count` — mirroring `BranchStatus`, which
+    // already double-counts conflicts into `tracked_changes` (see
+    // `porcelain_v2_parses_branch_and_change_counts` in vcs-git).
+    #[tokio::test]
+    async fn git_snapshot_conflict_count_is_split_and_included_in_tracked() {
+        let v2 = concat!(
+            "# branch.oid abc123\0",
+            "# branch.head main\0",
+            "u UU N... 100644 100644 100644 100644 5 6 7 conflict.rs\0",
+        );
+        let gitdir = TempDir::new("snap-git-conflict-count");
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on(["git", "status", "--porcelain=v2"], Reply::ok(v2))
+                .on(
+                    ["git", "rev-parse", "--git-dir"],
+                    Reply::ok(gitdir.path().to_str().unwrap()),
+                ),
+        );
+        let s = repo.snapshot().await.unwrap();
+        assert!(s.conflicted);
+        assert_eq!(s.change_count, 1);
+        assert_eq!(
+            s.tracked_changes,
+            Some(1),
+            "the conflicted path is also a tracked change"
+        );
+        assert_eq!(s.untracked, Some(0));
+        assert_eq!(s.conflict_count, Some(1));
     }
 
     // M20 (whole-solution): `snapshot()` has its OWN operation probe (separate from
@@ -2444,6 +2547,12 @@ mod tests {
         assert!(s.conflicted);
         assert_eq!(s.operation, OperationState::Conflict);
         assert!(s.tracking.is_none(), "jj has no upstream tracking");
+        // T-178: jj has no tracked/untracked split — `tracked_changes` mirrors
+        // `change_count`; `untracked`/`conflict_count` are always `None` (no such
+        // category / no count from this query).
+        assert_eq!(s.tracked_changes, Some(s.change_count));
+        assert_eq!(s.untracked, None);
+        assert_eq!(s.conflict_count, None);
     }
 
     // jj: a clean `@` (empty=1) skips the change-count spawn entirely — the test
@@ -2465,6 +2574,10 @@ mod tests {
         assert_eq!(s.change_count, 0);
         assert!(!s.conflicted);
         assert_eq!(s.operation, OperationState::Clear);
+        // T-178: `tracked_changes` mirrors `change_count` (0 here too).
+        assert_eq!(s.tracked_changes, Some(0));
+        assert_eq!(s.untracked, None);
+        assert_eq!(s.conflict_count, None);
     }
 
     // jj: a conflicted `@` that jj marks `empty` (conflict but no net content change)
@@ -2488,6 +2601,10 @@ mod tests {
         assert!(s.dirty, "a conflicted change is a dirty working copy");
         assert_eq!(s.change_count, 1);
         assert_eq!(s.operation, OperationState::Conflict);
+        // T-178: still mirrors `change_count`; jj has no conflict count query.
+        assert_eq!(s.tracked_changes, Some(1));
+        assert_eq!(s.untracked, None);
+        assert_eq!(s.conflict_count, None);
     }
 
     // jj `list_worktrees` resolves each workspace's root via the batched

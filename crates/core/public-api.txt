@@ -447,19 +447,25 @@ impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_core::Repo<R>
 #[non_exhaustive] pub struct vcs_core::RepoSnapshot
 pub vcs_core::RepoSnapshot::branch: core::option::Option<alloc::string::String>
 pub vcs_core::RepoSnapshot::change_count: usize
+pub vcs_core::RepoSnapshot::conflict_count: core::option::Option<usize>
 pub vcs_core::RepoSnapshot::conflicted: bool
 pub vcs_core::RepoSnapshot::dirty: bool
 pub vcs_core::RepoSnapshot::head: core::option::Option<alloc::string::String>
 pub vcs_core::RepoSnapshot::operation: vcs_core::OperationState
+pub vcs_core::RepoSnapshot::tracked_changes: core::option::Option<usize>
 pub vcs_core::RepoSnapshot::tracking: core::option::Option<vcs_core::UpstreamTracking>
+pub vcs_core::RepoSnapshot::untracked: core::option::Option<usize>
 impl vcs_core::RepoSnapshot
 pub fn vcs_core::RepoSnapshot::branch(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_core::RepoSnapshot::conflict_count(self, usize) -> Self
 pub fn vcs_core::RepoSnapshot::conflicted(self) -> Self
 pub fn vcs_core::RepoSnapshot::dirty(self, usize) -> Self
 pub fn vcs_core::RepoSnapshot::head(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_core::RepoSnapshot::new() -> Self
 pub fn vcs_core::RepoSnapshot::operation(self, vcs_core::OperationState) -> Self
+pub fn vcs_core::RepoSnapshot::tracked_changes(self, usize) -> Self
 pub fn vcs_core::RepoSnapshot::tracking(self, vcs_core::UpstreamTracking) -> Self
+pub fn vcs_core::RepoSnapshot::untracked(self, usize) -> Self
 impl core::clone::Clone for vcs_core::RepoSnapshot
 pub fn vcs_core::RepoSnapshot::clone(&self) -> vcs_core::RepoSnapshot
 impl core::cmp::Eq for vcs_core::RepoSnapshot

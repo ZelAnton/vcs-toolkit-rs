@@ -13,7 +13,10 @@ crates; tag releases as `vcs-mcp-v<version>`.
 -
 
 ### Changed
--
+- `repo_snapshot`'s tool description now documents the new
+  `tracked_changes`/`untracked`/`conflict_count` fields on the returned
+  `RepoSnapshot` (see the `vcs-core` changelog), so a caller doesn't need to
+  cross-reference the crate docs to discover them.
 
 ### Fixed
 -

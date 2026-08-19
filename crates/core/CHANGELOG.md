@@ -10,7 +10,15 @@ crates; tag releases as `vcs-core-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- Add `RepoSnapshot::tracked_changes`, `untracked`, and `conflict_count`
+  (`Option<usize>`, plus matching builder setters), splitting the combined
+  `change_count` into tracked/untracked/conflict categories so a consumer no
+  longer has to make a second call to tell "many untracked build artifacts"
+  from "tracked changes are pending". `change_count` keeps its prior sum
+  meaning unchanged. Git populates all three from the already-parsed
+  `BranchStatus`; jj sets `tracked_changes` to `change_count` and leaves
+  `untracked`/`conflict_count` `None` (no such category / no count from the
+  current query).
 
 ### Changed
 -
