@@ -1866,3 +1866,131 @@ async fn clean_respects_gitignore_unless_told_to_include_or_only_ignored() {
     assert!(!dir.join("plain.txt").exists());
     assert!(dir.join(".gitignore").exists(), "tracked file must survive");
 }
+
+// T-176: an SSH network operation through a HARDENED client must actually reach
+// the ssh program, not die trying to spawn one.
+//
+// The hardened profile used to pin `core.sshCommand` to the empty string as a
+// kill-switch for a repo-local override, on the theory that "" is falsy to git and
+// it would fall back to the built-in `ssh`. git instead branches on the key being
+// *set*, so it took "" as the user's ssh command and tried to spawn the empty
+// program — `error: cannot spawn : No such file or directory` / `fatal: unable to
+// fork`, i.e. EVERY fetch/push/clone/ls-remote over `ssh://` failed for every
+// consumer of `Git::hardened()` (`vcs-mcp` among them). HTTPS was unaffected,
+// which is why it went unnoticed. Reproduced on git 2.54.0 before the fix.
+//
+// This is deliberately stronger than the hermetic argv/env assertion in
+// `src/lib.rs` (`harden_applies_env_profile_to_every_command`): recording that the
+// pin is gone only proves what we *asked* git for, not that a real git then
+// spawns a real ssh. So a stub named `ssh` is put first on PATH and has to leave
+// a marker file behind. PATH is the only usable injection point — the profile
+// scrubs `GIT_SSH_COMMAND`/`GIT_SSH` from the environment by design.
+//
+// Cross-platform without a compiled helper: the stub is an extensionless
+// `#!/bin/sh` script. On Unix that is the shebang plus the executable bit. On
+// Windows it is *git* (not cmd.exe) that spawns `ssh`, and Git-for-Windows' spawn
+// layer looks up the extensionless name on PATH and honours the shebang via its
+// bundled `sh` — confirmed empirically against git 2.54.0.windows.1, both that the
+// stub runs after this fix and that it is never reached with the old pin in place.
+// No network is involved: the stub replaces ssh before any name resolution.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn hardened_client_spawns_the_real_ssh_program_for_an_ssh_remote() {
+    let tmp = TempDir::new("harden-ssh");
+    let dir = tmp.path();
+    let bin = dir.join("stub-bin");
+    std::fs::create_dir(&bin).expect("create stub bin dir");
+    let marker = dir.join("ssh-stub-ran.txt");
+
+    // `sh` reads the path with forward slashes on Windows too, and single quotes
+    // keep a temp path containing spaces in one word.
+    let marker_for_sh = marker.display().to_string().replace('\\', "/");
+    let stub = bin.join("ssh");
+    std::fs::write(
+        &stub,
+        format!(
+            "#!/bin/sh\nprintf 'ssh stub argv: %s\\n' \"$*\" > '{marker_for_sh}'\n\
+             echo 'vcs-git T-176 ssh stub: refusing to connect' >&2\nexit 3\n"
+        ),
+    )
+    .expect("write ssh stub");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+            .expect("make the ssh stub executable");
+    }
+
+    let mut entries = vec![bin.clone()];
+    entries.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    // Windows only: Git-for-Windows runs the extensionless stub through its
+    // shebang, so it must find `sh.exe` on the CHILD's PATH. A box where git was
+    // installed "from the command line only" has just `Git\cmd` there and no
+    // `sh.exe` — and git then reports `cannot spawn ssh` / `unable to fork`, the
+    // very shape this test treats as the regression. So the interpreter is located
+    // explicitly (verified: with no `sh` reachable the stub is never executed)
+    // rather than assumed, and its absence fails loudly for the real reason.
+    #[cfg(windows)]
+    if !entries.iter().any(|dir| dir.join("sh.exe").is_file()) {
+        let exec_path = Git::new()
+            .run_args(&["--exec-path"])
+            .await
+            .expect("git --exec-path");
+        let sh_dir = Path::new(exec_path.trim())
+            .ancestors()
+            .flat_map(|root| [root.join("usr").join("bin"), root.join("bin")])
+            .find(|dir| dir.join("sh.exe").is_file())
+            .expect(
+                "no `sh.exe` on PATH or in the git installation reachable from \
+                 `git --exec-path`; Git-for-Windows cannot run a shebang stub without \
+                 one, so this test cannot distinguish the regression from a missing \
+                 interpreter",
+            );
+        entries.push(sh_dir);
+    }
+    let path = std::env::join_paths(entries).expect("build a PATH with the stub dir first");
+
+    let git = Git::hardened()
+        .default_env("PATH", &path)
+        // Test hermeticity, NOT part of the profile under test: a developer's (or
+        // runner's) *global* `core.sshCommand` — a perfectly normal setting, e.g.
+        // an absolute path to System32's OpenSSH — outranks PATH lookup and would
+        // make the stub unreachable for reasons unrelated to this regression.
+        // `harden()` scrubs `GIT_CONFIG_GLOBAL`; registering it again afterwards
+        // supersedes that removal (last registration wins), and `/dev/null` is
+        // git's documented "skip this config level" value on every platform.
+        .default_env("GIT_CONFIG_GLOBAL", "/dev/null");
+
+    // A real repository of our own, so no ambient repo config can reach the run.
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    // `.invalid` is reserved and unresolvable, but nothing resolves it here: the
+    // stub stands in for ssh and exits immediately.
+    let url = "ssh://git@vcs-git-t176.invalid/repo.git";
+    let outcome = git.remote_branches(dir, url).await;
+    let rendered = match &outcome {
+        Ok(branches) => format!("unexpected success: {branches:?}"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(
+        marker.exists(),
+        "git must have spawned the `ssh` stub on PATH for {url}; it never ran. \
+         Outcome was: {rendered}"
+    );
+    let recorded = std::fs::read_to_string(&marker).expect("read stub marker");
+    assert!(
+        recorded.contains("vcs-git-t176.invalid"),
+        "the stub must have been handed the ssh remote, got: {recorded:?}"
+    );
+    // The regression's exact signature, from git's own failure to spawn "".
+    for signature in ["cannot spawn", "unable to fork"] {
+        assert!(
+            !rendered.contains(signature),
+            "hardened client must not fail to spawn ssh ({signature:?}): {rendered}"
+        );
+    }
+}

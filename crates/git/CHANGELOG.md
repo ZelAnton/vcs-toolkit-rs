@@ -16,7 +16,33 @@ crates; tag releases as `vcs-git-v<version>`.
 -
 
 ### Fixed
--
+- **`harden()` no longer breaks every SSH network operation.** The hardened
+  profile pinned `core.sshCommand` to the empty string (`GIT_CONFIG_KEY_2` /
+  `GIT_CONFIG_VALUE_2`, `GIT_CONFIG_COUNT=3`) as a kill-switch for a repo-local
+  override, assuming git would read an empty value as "unset" and fall back to the
+  built-in `ssh`. It does not: git branches on the key being *set*, so it treated
+  the empty string as the user's ssh command and failed to spawn it — `error:
+  cannot spawn : No such file or directory` / `fatal: unable to fork` on **every**
+  `fetch`, `push`, `clone`, `ls-remote`, and submodule update against an `ssh://`
+  remote through `Git::hardened()` (and therefore through `vcs-mcp`, which opens
+  repositories that way). HTTPS remotes were unaffected, which is why the
+  regression went unnoticed. The pin is removed and `GIT_CONFIG_COUNT` is back to
+  `2`; the `core.hooksPath` / `core.fsmonitor` pins, the `GIT_SSH_COMMAND`/
+  `GIT_SSH` environment scrub, and the rest of the profile are unchanged, and no
+  public API changed.
+
+  A non-empty pin is not a usable substitute: a config `core.sshCommand` is run
+  through a shell while the built-in default is spawned directly, so pinning e.g.
+  `ssh` would silently change which ssh binary — and which identity — is used on a
+  host with more than one ssh install. Repo-local `core.sshCommand` is therefore
+  **not** neutralized by `harden()` any more, and the hardening docs now say so
+  next to the existing `filter.*` / `diff.*.textconv` residual vectors; treat SSH
+  network operations against a fully untrusted repository as needing an OS-level
+  sandbox until that vector is closed by a separate change. Covered by a unit test
+  asserting no `GIT_CONFIG_KEY_n` names `core.sshCommand` under any index, and by
+  an integration test that puts a stub `ssh` first on `PATH` (the profile scrubs
+  `GIT_SSH_COMMAND`, so `PATH` is the only injection point) and requires a real
+  `git ls-remote` through a hardened client to actually run it.
 
 ## [0.12.0] - 2026-08-11
 

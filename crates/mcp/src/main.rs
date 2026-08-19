@@ -10,9 +10,13 @@
 //! Read tools are always available; `--allow-write` enables every mutating tool,
 //! `--allow-tools` enables only the named ones.
 //! The forge is auto-detected from the repo's `origin` remote unless `--forge`
-//! overrides it. The git client is **hardened** (repo hooks and config disabled)
-//! so serving a repository you didn't create can't execute its hooks, and every
-//! command carries a `--timeout` so a stalled network call can't hang the server.
+//! overrides it. The git client is **hardened** (repo hooks and `core.fsmonitor`
+//! disabled, with the code-execution `GIT_*` variables scrubbed) so serving a
+//! repository you didn't create can't execute its hooks, and every command
+//! carries a `--timeout` so a stalled network call can't hang the server. That
+//! profile does *not* disable repo-local config wholesale — see "A hardened git
+//! client" in `crates/mcp/docs/mcp.md` for the residual vectors it leaves
+//! (`core.sshCommand`, `filter.*`, `diff.*.textconv`).
 //! `--log-commands` wraps the git/jj/forge clients in a command-logging
 //! [`ProcessRunner`](vcs_cli_support::logging::LoggingRunner) that reports every
 //! spawn (program, redacted argv, working directory, exit code, duration) to
@@ -118,8 +122,10 @@ OPTIONS:
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
-`mcpServers` config entry. The git client is hardened (repo hooks and config
-disabled), so serving a repository you didn't create can't run its hooks.";
+`mcpServers` config entry. The git client is hardened (repo hooks and
+`core.fsmonitor` disabled), so serving a repository you didn't create can't run
+its hooks; repo-local config is not disabled wholesale — see \"A hardened git
+client\" in the vcs-mcp guide for the vectors it leaves.";
 
 struct Args {
     repo: PathBuf,
