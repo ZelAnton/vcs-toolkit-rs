@@ -381,6 +381,16 @@ async fn snapshot_with<R: ProcessRunner>(
         tracking: None,
         dirty,
         change_count,
+        // jj has no tracked/untracked split: any non-ignored file is already part
+        // of the `@` change, so the tracked-changes count is just `change_count`.
+        tracked_changes: Some(change_count),
+        // No such category on jj — `0` would falsely claim "checked, there are
+        // none" rather than "this backend can't tell".
+        untracked: None,
+        // The current jj query doesn't produce a conflict *count* — only the
+        // `conflicted` flag (from the conflict-flag field of the snapshot
+        // template).
+        conflict_count: None,
         conflicted,
         operation,
     })

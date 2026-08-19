@@ -703,7 +703,10 @@ pub struct RepoSnapshot {
     pub branch: Option<String>,    // current branch (git) / nearest reachable bookmark (jj); None when detached/no bookmark on or above @
     pub tracking: Option<UpstreamTracking>, // upstream ref + ahead/behind, bundled; Some only with an upstream, ALWAYS None on jj
     pub dirty: bool,               // any uncommitted change (tracked or untracked)
-    pub change_count: usize,       // number of changed paths
+    pub change_count: usize,       // number of changed paths (tracked + untracked); unchanged, kept for compatibility
+    pub tracked_changes: Option<usize>, // changed TRACKED paths only; Some on both backends (jj: == change_count)
+    pub untracked: Option<usize>,  // untracked file count; Some on git, ALWAYS None on jj (no such category)
+    pub conflict_count: Option<usize>, // conflicting-path count; Some on git (also counted in tracked_changes), ALWAYS None on jj (no count from this query — see `conflicted`)
     pub conflicted: bool,          // an unresolved conflict is present
     pub operation: OperationState, // in-progress operation / conflict state
 }

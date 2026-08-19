@@ -521,8 +521,28 @@ pub struct RepoSnapshot {
     /// Whether the working copy has any uncommitted change (tracked or untracked).
     pub dirty: bool,
     /// Number of changed paths (tracked + untracked on git; the `@` change's
-    /// files on jj).
+    /// files on jj). Kept for backward compatibility with existing consumers
+    /// (e.g. `vcs_watch::RepoEvent::WorkingCopyChanged`) — it stays the sum even
+    /// now that the categories below are broken out separately.
     pub change_count: usize,
+    /// Number of changed **tracked** paths, isolated from `untracked` — `Some` on
+    /// both backends: git's `bs.tracked_changes` (already parsed, no extra spawn),
+    /// jj's `change_count` (jj has no tracked/untracked split — any non-ignored
+    /// file is already part of the `@` change). `None` would mean "the backend
+    /// can't tell", which never happens here; this field exists so a consumer
+    /// doesn't have to subtract `untracked` from `change_count` itself.
+    pub tracked_changes: Option<usize>,
+    /// Number of untracked files — `Some(bs.untracked)` on git (already parsed, no
+    /// extra spawn); always `None` on jj, which has no such category (an
+    /// unignored file is already snapshotted into the `@` change, so `0` would
+    /// falsely claim "checked, there are none").
+    pub untracked: Option<usize>,
+    /// Number of paths with an unresolved merge conflict — `Some(bs.conflicts)` on
+    /// git (already parsed, no extra spawn; conflicted paths are also counted in
+    /// `tracked_changes`, same as `BranchStatus`); always `None` on jj, since the
+    /// current jj query doesn't produce a count (the fact of a conflict is already
+    /// carried by [`conflicted`](RepoSnapshot::conflicted)).
+    pub conflict_count: Option<usize>,
     /// Whether the working copy has an unresolved conflict.
     pub conflicted: bool,
     /// In-progress operation / conflict state (see [`OperationState`]).
@@ -531,10 +551,11 @@ pub struct RepoSnapshot {
 
 impl RepoSnapshot {
     /// A clean snapshot: detached (no `head`/`branch`), no upstream tracking, not
-    /// dirty or conflicted, change count 0, [`OperationState::Clear`]. Chain the
-    /// setters to fill it — for a test double or a custom `VcsRepo` backend that must
-    /// return a `RepoSnapshot` (the struct is `#[non_exhaustive]`, so it can't be
-    /// built with a literal outside this crate).
+    /// dirty or conflicted, change count 0, the split counters unset (`None`),
+    /// [`OperationState::Clear`]. Chain the setters to fill it — for a test double
+    /// or a custom `VcsRepo` backend that must return a `RepoSnapshot` (the struct
+    /// is `#[non_exhaustive]`, so it can't be built with a literal outside this
+    /// crate).
     pub fn new() -> Self {
         Self {
             head: None,
@@ -542,6 +563,9 @@ impl RepoSnapshot {
             tracking: None,
             dirty: false,
             change_count: 0,
+            tracked_changes: None,
+            untracked: None,
+            conflict_count: None,
             conflicted: false,
             operation: OperationState::Clear,
         }
@@ -577,6 +601,30 @@ impl RepoSnapshot {
     /// Mark the working copy as having an unresolved conflict.
     pub fn conflicted(mut self) -> Self {
         self.conflicted = true;
+        self
+    }
+
+    /// Set the number of changed tracked paths (see
+    /// [`tracked_changes`](RepoSnapshot::tracked_changes)); unset (`None`) by
+    /// default.
+    pub fn tracked_changes(mut self, n: usize) -> Self {
+        self.tracked_changes = Some(n);
+        self
+    }
+
+    /// Set the number of untracked files (see
+    /// [`untracked`](RepoSnapshot::untracked)); unset (`None`) by default.
+    pub fn untracked(mut self, n: usize) -> Self {
+        self.untracked = Some(n);
+        self
+    }
+
+    /// Set the number of conflicting paths (see
+    /// [`conflict_count`](RepoSnapshot::conflict_count)); unset (`None`) by
+    /// default. Does not itself flip [`conflicted`](RepoSnapshot::conflicted) —
+    /// chain that setter too when the count is nonzero.
+    pub fn conflict_count(mut self, n: usize) -> Self {
+        self.conflict_count = Some(n);
         self
     }
 
@@ -772,6 +820,9 @@ mod serde_tests {
             }),
             dirty: true,
             change_count: 2,
+            tracked_changes: Some(1),
+            untracked: Some(1),
+            conflict_count: None,
             conflicted: false,
             operation: OperationState::Merge,
         };
@@ -779,6 +830,9 @@ mod serde_tests {
         assert_eq!(v["branch"], "main");
         assert_eq!(v["operation"], "Merge"); // enum → variant name
         assert_eq!(v["change_count"], 2);
+        assert_eq!(v["tracked_changes"], 1);
+        assert_eq!(v["untracked"], 1);
+        assert!(v["conflict_count"].is_null(), "None serialises to null");
         // Tracking serialises as one nested object (or null), not three fields.
         assert_eq!(v["tracking"]["branch"], "origin/main");
         assert_eq!(v["tracking"]["ahead"], 1);
@@ -886,6 +940,9 @@ mod ctor_tests {
             .branch("main")
             .tracking(up)
             .dirty(4)
+            .tracked_changes(3)
+            .untracked(1)
+            .conflict_count(1)
             .conflicted()
             .operation(OperationState::Merge);
         assert_eq!(snap.head.as_deref(), Some("deadbeef"));
@@ -894,14 +951,20 @@ mod ctor_tests {
         assert_eq!(snap.tracking.as_ref().unwrap().ahead, Some(2));
         assert!(snap.dirty);
         assert_eq!(snap.change_count, 4);
+        assert_eq!(snap.tracked_changes, Some(3));
+        assert_eq!(snap.untracked, Some(1));
+        assert_eq!(snap.conflict_count, Some(1));
         assert!(snap.conflicted);
         assert_eq!(snap.operation, OperationState::Merge);
 
-        // A default snapshot is clean.
+        // A default snapshot is clean and the split counters are unset.
         let clean = RepoSnapshot::default();
         assert!(!clean.dirty && !clean.conflicted && clean.head.is_none());
         assert_eq!(clean.operation, OperationState::Clear);
         assert_eq!(clean.change_count, 0);
+        assert_eq!(clean.tracked_changes, None);
+        assert_eq!(clean.untracked, None);
+        assert_eq!(clean.conflict_count, None);
     }
 
     // The unified `CloneSpec` builder lands each option where the dispatch expects it,

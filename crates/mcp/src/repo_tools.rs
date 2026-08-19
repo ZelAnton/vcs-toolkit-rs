@@ -30,7 +30,7 @@ impl VcsMcpServer {
     // Safety model note in `docs/mcp.md`. It stays callable without a write gate (an
     // op-log snapshot is not a content/ref mutation).
     #[tool(
-        description = "A batched snapshot of the repo state: branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, and operation state. Read query; on jj it snapshots the working copy (records a reversible op-log operation), so it is annotated non-destructive rather than readOnlyHint.",
+        description = "A batched snapshot of the repo state: branch, upstream, ahead/behind, HEAD, dirtiness, change count, conflict, and operation state. change_count is the combined tracked+untracked total; tracked_changes/untracked/conflict_count split it out (null when a backend can't report that category without an extra spawn — e.g. jj has no untracked/conflict-count category, so those are always null there; on git all three are populated). Read query; on jj it snapshots the working copy (records a reversible op-log operation), so it is annotated non-destructive rather than readOnlyHint.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub async fn repo_snapshot(&self) -> Result<CallToolResult, ErrorData> {

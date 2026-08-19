@@ -6,7 +6,8 @@ agent harness (Claude Code, an IDE assistant, any MCP client) drives a git/jj re
 — and its forge — through **structured, validated calls** instead of raw shell.
 Each tool wraps a [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (`Repo`) or [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 (`Forge`) operation and returns its DTO as JSON. The binary drives git through a
-**hardened** client (`Git::hardened()` — repo hooks and config disabled) and tool
+**hardened** client (`Git::hardened()` — repo hooks and `core.fsmonitor` disabled,
+with the code-execution `GIT_*` variables scrubbed) and tool
 arguments are injection-guarded (the wrappers keep caller values out of flag
 position — flag-VALUE slots plus `reject_flag_like` on the few bare positionals), so
 serving a repository you didn't create can't run its hooks or smuggle a flag into argv.
@@ -197,8 +198,8 @@ The `vcs-mcp` binary applies, in order:
    merge that materializes working-tree content, so it is treated like
    `repo_checkout` — see the next point.
 3. **A hardened git client.** The binary opens the repo with `Git::hardened()`,
-   which disables repo hooks and `core.fsmonitor`, pins a repo-local
-   `core.sshCommand` empty, scrubs repo-redirecting and command-hook `GIT_*`
+   which disables repo hooks and `core.fsmonitor`, scrubs repo-redirecting and
+   command-hook `GIT_*`
    variables, and skips system config — so serving a repository you didn't create
    can't execute its hooks (even on a read tool like `repo_status`). jj has no
    repo-local hooks, so its client needs no equivalent. **Residual:** `harden()`
@@ -208,6 +209,12 @@ The `vcs-mcp` binary applies, in order:
    content-materializing tools are write-gated, so the default read-only mode does
    not expose the smudge-filter path; a `textconv` driver can still run on a diff of
    a **fully untrusted** repo, so sandbox the process (OS-level) for that case.
+   A repo-local **`core.sshCommand`** is likewise *not* neutralized — the env twins
+   `GIT_SSH_COMMAND`/`GIT_SSH` are scrubbed, but the config key runs on any SSH
+   network operation (`repo_fetch`/`repo_push`, all write-gated). It was pinned
+   empty until that turned out to break SSH entirely rather than disable the key;
+   closing the vector is a separate, not-yet-shipped change, so until then serve a
+   fully untrusted repository either read-only or inside an OS-level sandbox.
 4. **Argv injection guards.** A tool parameter can't smuggle a leading-`-` flag
    into argv: the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
    position — typed (`u64`/`Path`) or flag-VALUE arguments, with `reject_flag_like`

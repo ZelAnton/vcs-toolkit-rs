@@ -148,24 +148,20 @@ rejected later for flag-shape.
 
 Running `git` inside a repository you didn't create is **arbitrary code
 execution by default**: git fires that repo's hooks and honours its config on
-ordinary commands. The hardened profile closes the **hooks**, **`fsmonitor`**,
-**`core.sshCommand`**, and **environment** code-execution paths, applying the same
-settings to **every** command the client runs (see the residual-vectors note at
-the end of this section for what it does *not* cover):
+ordinary commands. The hardened profile closes the **hooks**, **`fsmonitor`**, and
+**environment** code-execution paths, applying the same settings to **every**
+command the client runs (see the residual-vectors note at the end of this section
+for what it does *not* cover — repo-local `core.sshCommand` among them):
 
 - **Disables hooks** — `core.hooksPath=/dev/null`, pinned through git's
   env-based config (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`;
   verified to suppress hooks on Windows too) — and `core.fsmonitor=false` (a
   config-driven daemon launch). Env-config overrides even the *repo-local*
   `.git/config` for the keys it names, so these pins beat a poisoned `.git/config`.
-  **`GIT_CONFIG_COUNT` needs git ≥ 2.31** — on older git these hook/fsmonitor/sshCommand
+  **`GIT_CONFIG_COUNT` needs git ≥ 2.31** — on older git these hook/fsmonitor
   pins **silently no-op** (the `GIT_*` scrub + prompt-off below still apply). Call
   `capabilities().ensure_supported()` (now the `≥ 2.31` gate) before trusting `harden()`
   against an untrusted repo, or add an OS-level sandbox.
-- **Neutralizes `core.sshCommand`** — pinned empty (the config-key twin of the
-  scrubbed `GIT_SSH_COMMAND`), so a repo-local override can't run an arbitrary
-  program for the SSH transport. Empty is falsy to git, so the default `ssh`
-  (ambient `~/.ssh/config`/agent) still works.
 - **Scrubs repo-redirecting `GIT_*` variables** so a poisoned parent environment
   can't point a command at another repository: `GIT_DIR`, `GIT_WORK_TREE`,
   `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
@@ -196,20 +192,33 @@ It is chainable, so it composes with a runner in tests
 (`Git::hardened().default_timeout(…)`).
 
 **Residual repo-local-config vectors (NOT neutralized).** The profile pins the
-hooks, `fsmonitor`, and `core.sshCommand` keys and scrubs the env vectors, but a
-few **repo-local `.git/config` / `.gitattributes`** keys still run an arbitrary
-program and are *not* pinned (there is no git switch to ignore repo-local config
-wholesale, only a per-key override):
+hooks and `fsmonitor` keys and scrubs the env vectors, but several **repo-local
+`.git/config` / `.gitattributes`** keys still run an arbitrary program and are
+*not* pinned (there is no git switch to ignore repo-local config wholesale, only
+a per-key override):
 
+- `core.sshCommand` — run for the SSH transport on `fetch`/`push`/`clone`/
+  `ls-remote`. The env twins `GIT_SSH_COMMAND`/`GIT_SSH` *are* scrubbed (below),
+  but the config key is not, so a `core.sshCommand` that the repository supplies
+  still executes. This profile did pin it — to the empty string — until that pin
+  was found to break SSH outright rather than neutralize anything: git treats the
+  key as set (an empty ssh command) instead of falling back to the built-in `ssh`,
+  so every SSH operation failed with `cannot spawn` / `unable to fork`. A
+  non-empty pin is not a fix either, because a config `core.sshCommand` runs
+  through a shell while the built-in default does not — pinning e.g. `ssh` would
+  silently change which ssh binary and which identity are used. Closing this
+  vector needs a different mechanism and is a separate, not-yet-shipped change;
+  until it lands, treat SSH network operations against an untrusted repository as
+  outside what `harden()` protects.
 - `filter.<drv>.clean` / `smudge` + `.gitattributes` — run on any working-tree
   materialization (`checkout`, `stash pop`, `switch_with_stash`, `worktree add`).
 - `diff.<drv>.textconv` / `diff.external` — run when a diff is produced.
   [`diff_text`](https://docs.rs/vcs-git/latest/vcs_git/trait.GitApi.html#tymethod.diff_text)
   defends itself with `--no-ext-diff`, but other diff/blame reads do not.
 
-So for a **fully untrusted** repo, do not materialize its working tree or run diffs
-through a hardened client without an OS-level sandbox. `harden()` is hardening, not
-a sandbox.
+So for a **fully untrusted** repo, do not materialize its working tree, run diffs,
+or drive SSH network operations through a hardened client without an OS-level
+sandbox. `harden()` is hardening, not a sandbox.
 
 What it does **not** do beyond that: sandbox the git binary itself, or stop the
 repo's *content* from being malicious.
@@ -250,10 +259,10 @@ untrusted, so is every submodule it declares. The three submodule methods sit on
 
   The hardened environment *does* extend into the update: the `git` subprocesses
   `submodule update` spawns inherit the client's environment, so the env-based
-  pins (`core.hooksPath=/dev/null`, `core.fsmonitor=false`, the empty
-  `core.sshCommand`, `GIT_CONFIG_NOSYSTEM`, `GIT_TERMINAL_PROMPT=0`, and the
-  scrubbed `GIT_*` redirectors) apply to the nested operations too. But those pins
-  do not close the filter/textconv or `protocol.file.allow` vectors. So for a
+  pins (`core.hooksPath=/dev/null`, `core.fsmonitor=false`, `GIT_CONFIG_NOSYSTEM`,
+  `GIT_TERMINAL_PROMPT=0`, and the scrubbed `GIT_*` redirectors) apply to the
+  nested operations too. But those pins do not close the filter/textconv,
+  repo-local `core.sshCommand`, or `protocol.file.allow` vectors. So for a
   **fully untrusted** superproject, run `submodule_update` only inside an OS-level
   sandbox — or vet the declared submodules with `submodule_list` first and update
   only the ones you trust.
