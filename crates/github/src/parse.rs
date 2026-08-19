@@ -499,6 +499,191 @@ pub(crate) fn parse_repo(json: &str) -> Result<RepoView> {
     })
 }
 
+/// One account `gh auth status` reports as logged in: the host it is logged in
+/// to, its login, and whether `gh` marks it **active** for that host.
+///
+/// A machine can hold several `gh` logins for one host (a personal and a work
+/// account) but runs commands as exactly one of them — the active one. That
+/// distinction is what makes an auth probe honest: a session existing says
+/// nothing about *which* identity a call will run under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AuthAccount {
+    /// The host this account is logged in to, verbatim from `gh` (e.g.
+    /// `github.com`, or a GitHub Enterprise Server hostname).
+    pub host: String,
+    /// The account login.
+    pub login: String,
+    /// Whether `gh` marks this account as the **active** one for its host — the
+    /// identity commands actually run as. `None` when the report says nothing
+    /// either way: a `gh` older than 2.40 has no multi-account concept and prints
+    /// no active marker at all. Read [`GitHubAuth::active`] rather than this field
+    /// to answer "which account is in use" — it resolves the `None` case and
+    /// refuses to guess when the report is ambiguous.
+    pub active: Option<bool>,
+}
+
+/// What one `gh auth status` run says: whether a session exists at all, and the
+/// accounts `gh` reports as logged in. Returned by
+/// [`auth_info`](crate::GitHubApi::auth_info).
+///
+/// **Fail-soft.** `gh auth status` has no `--json`, so the accounts are read from
+/// its human-readable output. A format this parser doesn't model degrades to an
+/// **empty** [`accounts`](Self::accounts) — "unknown", never an error — so a `gh`
+/// upgrade that reshapes the text can't break the probe. Distinguish the two empty
+/// cases with [`authed`](Self::authed): `authed == false` means *no session*, while
+/// `authed == true` with no accounts means the output wasn't recognised (see
+/// [`is_unknown`](Self::is_unknown)).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct GitHubAuth {
+    /// Whether `gh auth status` exited zero — the same coarse "some session
+    /// exists" answer [`auth_status`](crate::GitHubApi::auth_status) returns, from
+    /// the same run that produced [`accounts`](Self::accounts).
+    pub authed: bool,
+    /// Every account `gh` reported as logged in, in gh's own order. Empty when
+    /// there is no session **or** when the output format wasn't recognised.
+    pub accounts: Vec<AuthAccount>,
+}
+
+impl GitHubAuth {
+    /// The account commands run as, when that is unambiguous — `None` when it
+    /// isn't (which is itself the honest answer, not a failure).
+    ///
+    /// Resolution, in order:
+    ///
+    /// - exactly one account marked active → that account (the ordinary case,
+    ///   including a machine with several logins on one host);
+    /// - a lone account the report says **nothing** about → that account. A `gh`
+    ///   older than 2.40 has no multi-account concept and prints no active marker,
+    ///   so its single login *is* the identity in use;
+    /// - anything else → `None`: several hosts each contribute their own active
+    ///   account (which one applies depends on the repository's host, which this
+    ///   probe does not resolve); or the report marks accounts active and none of
+    ///   the ones recognised here is the active one — notably when the active
+    ///   entry is a **failed** login (an invalid `GH_TOKEN` in the environment
+    ///   outranks a working keyring account, and gh reports it as failed rather
+    ///   than as a logged-in account), where naming the surviving account would be
+    ///   exactly the wrong answer; or nothing was recognised at all. Read
+    ///   [`accounts`](Self::accounts) — each entry carries its host and active
+    ///   flag — to see the full picture.
+    pub fn active(&self) -> Option<&AuthAccount> {
+        let mut marked = self
+            .accounts
+            .iter()
+            .filter(|account| account.active == Some(true));
+        match (marked.next(), marked.next()) {
+            // Exactly one account is flagged active — the unambiguous answer.
+            (Some(only), None) => Some(only),
+            // Several hosts, each with its own active account: ambiguous here.
+            (Some(_), Some(_)) => None,
+            // Nothing recognised is flagged active. A lone login the report is
+            // *silent* about (a pre-2.40 `gh`) is the identity in use; a lone
+            // login the report explicitly did not flag is not — the active entry
+            // is then something this parser skipped.
+            (None, _) => match self.accounts.as_slice() {
+                [only] if only.active.is_none() => Some(only),
+                _ => None,
+            },
+        }
+    }
+
+    /// Whether `gh` reported a session but **no** account line was recognised —
+    /// i.e. the output is in a format this parser doesn't model (a future `gh`,
+    /// or a locale/format this crate hasn't seen). The honest "unknown", as
+    /// opposed to the "no session" that [`authed`](Self::authed) `== false` means.
+    pub fn is_unknown(&self) -> bool {
+        self.authed && self.accounts.is_empty()
+    }
+}
+
+/// The marker that opens an account line in `gh auth status` output — the same
+/// wording in the pre-2.40 single-account form (`Logged in to github.com as
+/// octocat (keyring)`) and the multi-account one gh 2.40+ prints (`Logged in to
+/// github.com account octocat (keyring)`). A *failed* login is worded differently
+/// (`Failed to log in to …`), so it never matches: an account whose token gh
+/// rejects is not reported as logged in.
+const LOGGED_IN: &str = "Logged in to ";
+
+/// The per-account detail line (gh 2.40+) that names the active account.
+const ACTIVE_ACCOUNT: &str = "Active account:";
+
+/// The widest prefix accepted before a marker on its line: gh indents the line
+/// and prefixes a one-character status glyph (`✓`, `✗`, `X`) or a `-` bullet.
+/// Bounding it keeps a marker that merely *appears* inside some other sentence
+/// from being read as an account line.
+const MAX_MARKER_PREFIX_CHARS: usize = 2;
+
+/// The text after `marker` on `line`, when the marker opens the line (modulo
+/// indentation and gh's one-character status glyph / `-` bullet). `None` when the
+/// line doesn't carry the marker in that position.
+fn after_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let at = line.find(marker)?;
+    let prefix = line[..at].trim();
+    (prefix.chars().count() <= MAX_MARKER_PREFIX_CHARS).then(|| line[at + marker.len()..].trim())
+}
+
+/// Parse one `Logged in to <host> account|as <login> (<source>)` line's tail
+/// (everything after the [`LOGGED_IN`] marker) into an account. `None` when the
+/// shape isn't the one gh prints — the fail-soft path: an unrecognised line is
+/// skipped, never an error.
+fn parse_account_line(rest: &str) -> Option<AuthAccount> {
+    let mut fields = rest.split_whitespace();
+    let host = fields.next()?;
+    // `account` is the gh >= 2.40 wording, `as` the pre-2.40 one. Anything else
+    // is a sentence this parser doesn't model.
+    if !matches!(fields.next()?, "account" | "as") {
+        return None;
+    }
+    let login = fields.next()?;
+    // gh appends the credential source in parentheses (`(keyring)`); a login that
+    // *starts* one means the login itself was missing from the line.
+    if login.starts_with('(') {
+        return None;
+    }
+    Some(AuthAccount {
+        host: host.to_string(),
+        login: login.to_string(),
+        // Not "inactive": nothing has been said yet. Only an `Active account:`
+        // line below turns this into a `Some`.
+        active: None,
+    })
+}
+
+/// Parse the accounts out of `gh auth status` output (the command has no
+/// `--json`, so this reads its human-readable text).
+///
+/// **Never fails.** Lines that don't match the shapes gh prints are skipped, so an
+/// unrecognised format yields an empty list — "unknown" rather than an error, which
+/// is what keeps a `gh` upgrade from breaking the probe (see [`GitHubAuth`]).
+///
+/// Handles both wordings gh has shipped — pre-2.40 `Logged in to <host> as
+/// <login>` and the multi-account `Logged in to <host> account <login>` with its
+/// `- Active account: true|false` detail line — and feeds on stdout **and** stderr
+/// concatenated, because `gh` printed this report on stderr before it moved to
+/// stdout.
+pub(crate) fn parse_auth_accounts(raw: &str) -> Vec<AuthAccount> {
+    let mut accounts: Vec<AuthAccount> = Vec::new();
+    for line in raw.lines() {
+        if let Some(rest) = after_marker(line, LOGGED_IN) {
+            accounts.extend(parse_account_line(rest));
+            continue;
+        }
+        // The active marker qualifies the account line above it. One that arrives
+        // before any account belongs to an entry this parser skipped — a *failed*
+        // login, which gh words differently — so it is dropped rather than
+        // misattributed to a later account. A value that isn't a plain bool is
+        // likewise left as "not said".
+        if let Some(value) = after_marker(line, ACTIVE_ACCOUNT)
+            && let Some(account) = accounts.last_mut()
+            && let Ok(active) = value.trim().parse::<bool>()
+        {
+            account.active = Some(active);
+        }
+    }
+    accounts
+}
+
 // gh nests the author as `{"login": …}` (and reports `null` for a deleted
 // account); deserialize into these and flatten into the public types.
 #[derive(Deserialize)]
@@ -810,6 +995,208 @@ mod tests {
         let repo = parse_repo(json).expect("parse repo");
         assert_eq!(repo.default_branch, "");
         assert!(repo.is_private);
+    }
+
+    // The typical gh >= 2.40 report for one login (captured from a real `gh auth
+    // status`): the active account is recognised, and the masked token line is
+    // *not* mistaken for account data.
+    #[test]
+    fn parses_auth_status_single_account() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com account octocat (keyring)\n  \
+                   - Active account: true\n  - Git operations protocol: ssh\n  \
+                   - Token: gho_************************************\n  \
+                   - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n";
+        let accounts = parse_auth_accounts(raw);
+        assert_eq!(
+            accounts,
+            vec![AuthAccount {
+                host: "github.com".into(),
+                login: "octocat".into(),
+                active: Some(true),
+            }]
+        );
+        let auth = GitHubAuth {
+            authed: true,
+            accounts,
+        };
+        assert_eq!(auth.active().map(|a| a.login.as_str()), Some("octocat"));
+        assert!(!auth.is_unknown(), "a parsed account is not `unknown`");
+    }
+
+    // Several logins on one host — the exact situation that makes a bare
+    // "authenticated: true" misleading. Every account is listed, and only the one
+    // gh marks active is reported as the identity in use.
+    #[test]
+    fn parses_auth_status_multiple_accounts_on_one_host() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+                   - Active account: false\n  - Git operations protocol: https\n  \
+                   - Token: gho_************************************\n\n  \
+                   \u{2713} Logged in to github.com account personal (keyring)\n  \
+                   - Active account: true\n  - Git operations protocol: https\n  \
+                   - Token: gho_************************************\n";
+        let auth = GitHubAuth {
+            authed: true,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts
+                .iter()
+                .map(|a| (a.login.as_str(), a.active))
+                .collect::<Vec<_>>(),
+            [("work-acct", Some(false)), ("personal", Some(true))],
+            "both logins listed, with gh's own active flag"
+        );
+        assert_eq!(auth.active().map(|a| a.login.as_str()), Some("personal"));
+    }
+
+    // A pre-2.40 `gh` says "as <login>" and prints no active marker at all. Its
+    // single login *is* the identity in use, so `active()` resolves it.
+    #[test]
+    fn parses_pre_multi_account_auth_status_wording() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com as octocat (keyring)\n  \
+                   \u{2713} Git operations for github.com configured to use https protocol.\n  \
+                   \u{2713} Token: *******************\n  \
+                   \u{2713} Token scopes: gist, read:org, repo\n";
+        let auth = GitHubAuth {
+            authed: true,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts,
+            vec![AuthAccount {
+                host: "github.com".into(),
+                login: "octocat".into(),
+                active: None,
+            }],
+            "this gh says nothing about active accounts — `None`, not `false`"
+        );
+        assert_eq!(
+            auth.active().map(|a| a.login.as_str()),
+            Some("octocat"),
+            "a lone login is the identity in use"
+        );
+    }
+
+    // Two hosts, each with its own active account: which one applies depends on
+    // the repository's host, which this probe does not resolve — so `active()` is
+    // honestly `None` while both accounts stay listed with their hosts.
+    #[test]
+    fn active_account_is_unresolved_across_two_hosts() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com account octocat (keyring)\n  \
+                   - Active account: true\n\nghe.example.com\n  \
+                   \u{2713} Logged in to ghe.example.com account acme-bot (keyring)\n  \
+                   - Active account: true\n";
+        let auth = GitHubAuth {
+            authed: true,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts
+                .iter()
+                .map(|a| (a.host.as_str(), a.login.as_str()))
+                .collect::<Vec<_>>(),
+            [("github.com", "octocat"), ("ghe.example.com", "acme-bot")]
+        );
+        assert!(
+            auth.active().is_none(),
+            "two hosts, two active accounts — ambiguous, not a guess"
+        );
+        assert!(!auth.is_unknown(), "accounts were recognised");
+    }
+
+    // The fail-soft contract: output this parser doesn't model — a future `gh`
+    // that switches to JSON, a translated build, an unrelated message — yields an
+    // empty list, never a panic or an `Err`. `is_unknown` reports that honestly
+    // instead of implying "no accounts".
+    #[test]
+    fn unrecognised_auth_status_output_is_unknown_not_an_error() {
+        for raw in [
+            // A hypothetical future JSON report.
+            r#"{"hosts":[{"host":"github.com","accounts":[{"login":"octocat","active":true}]}]}"#,
+            // Reworded/translated output.
+            "github.com\n  \u{2713} Angemeldet bei github.com als octocat (keyring)\n",
+            // The marker inside a sentence, not opening an account line.
+            "note: the string \"Logged in to github.com account octocat\" is not a report\n",
+            // A line that starts right but has no login.
+            "  \u{2713} Logged in to github.com account (keyring)\n",
+            // Truncated mid-word, and a stray active marker with no account.
+            "  \u{2713} Logged in to\n  - Active account: true\n",
+            "",
+        ] {
+            let auth = GitHubAuth {
+                authed: true,
+                accounts: parse_auth_accounts(raw),
+            };
+            assert!(
+                auth.accounts.is_empty(),
+                "unrecognised output must parse to no accounts: {raw:?}"
+            );
+            assert!(auth.active().is_none(), "nothing to be active: {raw:?}");
+            assert!(
+                auth.is_unknown(),
+                "a session with no parsed account: {raw:?}"
+            );
+        }
+
+        // With no session at all, the same empty list means "not logged in" —
+        // `is_unknown` must not claim the format was unrecognised.
+        let none = GitHubAuth::default();
+        assert!(!none.authed);
+        assert!(!none.is_unknown());
+    }
+
+    // gh's "not logged in" message parses to nothing (and, paired with the
+    // non-zero exit the caller folds into `authed`, reads as "no session").
+    #[test]
+    fn logged_out_auth_status_has_no_accounts() {
+        let raw = "You are not logged into any GitHub hosts. To log in, run: gh auth login\n";
+        assert!(parse_auth_accounts(raw).is_empty());
+    }
+
+    // A login gh reports as *broken* is not a usable identity: the failure wording
+    // differs, so it is not listed as logged in.
+    #[test]
+    fn failed_login_is_not_reported_as_logged_in() {
+        let raw = "github.com\n  X Failed to log in to github.com account stale-acct (keyring)\n  \
+                   - Active account: true\n  - The token in keyring is invalid.\n";
+        assert!(
+            parse_auth_accounts(raw).is_empty(),
+            "a rejected token is not a logged-in account"
+        );
+    }
+
+    // Regression, captured verbatim from a real `gh auth status` run with an
+    // invalid `GH_TOKEN` in the environment: the **active** entry is the failed
+    // env token, and the surviving keyring account is explicitly NOT active. The
+    // skipped entry's `Active account: true` line must not be misattributed to the
+    // account below it, and the lone surviving login must not be reported as the
+    // identity in use — gh is not using it.
+    #[test]
+    fn active_marker_of_a_failed_entry_is_not_inherited() {
+        let raw = "github.com\n  X Failed to log in to github.com using token (GH_TOKEN)\n  \
+                   - Active account: true\n  - The token in GH_TOKEN is invalid.\n\n  \
+                   \u{2713} Logged in to github.com account octocat (keyring)\n  \
+                   - Active account: false\n  - Git operations protocol: ssh\n";
+        let auth = GitHubAuth {
+            // gh exits non-zero when any configured entry fails, even with a
+            // working account alongside it.
+            authed: false,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts,
+            vec![AuthAccount {
+                host: "github.com".into(),
+                login: "octocat".into(),
+                active: Some(false),
+            }],
+            "the failed entry's active marker stays with the failed entry"
+        );
+        assert!(
+            auth.active().is_none(),
+            "the only recognised login is explicitly not the active one — \
+             naming it would point at the wrong identity"
+        );
     }
 
     #[test]

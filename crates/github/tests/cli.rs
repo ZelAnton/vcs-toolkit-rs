@@ -64,6 +64,51 @@ async fn auth_status_for_host_does_not_error() {
         .expect("auth_status_for should not error");
 }
 
+// Drift detection for the one command this crate reads as *text*: `gh auth
+// status` has no `--json`, so a reworded report would silently degrade
+// `auth_info` to "unknown". The skip below is positively identified — gh itself
+// reporting no session — so a *recognised* session whose accounts we cannot read
+// fails hard instead of masquerading as an environment gap.
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn auth_info_recognises_the_live_report_format() {
+    if !gh_present().await {
+        eprintln!("skipping: gh not installed");
+        return;
+    }
+    let auth = GitHub::new()
+        .auth_info()
+        .await
+        .expect("auth_info should not error");
+    if !auth.authed {
+        // gh answered "no session" — nothing was printed to recognise.
+        eprintln!("skipping: gh is not authenticated");
+        return;
+    }
+    assert!(
+        !auth.is_unknown(),
+        "gh reports a session but no account line was recognised — \
+         `gh auth status` output has drifted from the shapes this crate parses"
+    );
+    // Not `active().is_some()`: a machine logged in to several *hosts* leaves the
+    // active account legitimately unresolved (see `GitHubAuth::active`).
+}
+
+#[tokio::test]
+#[ignore = "requires the gh binary"]
+async fn repo_visible_does_not_error() {
+    if !gh_present().await {
+        eprintln!("skipping: gh not installed");
+        return;
+    }
+    // Reports the bool whether or not this checkout's repository is visible to
+    // the active account (and whether or not gh is logged in); must not error.
+    let _visible = GitHub::new()
+        .repo_visible(std::path::Path::new("."))
+        .await
+        .expect("repo_visible should not error");
+}
+
 // Read-only, auth-gated checks against this very repository (it has real
 // Actions runs and releases). Skipped politely when gh isn't authenticated.
 // PR-scoped reads (`pr_checks`, `pr_feedback`) have NO live coverage — the

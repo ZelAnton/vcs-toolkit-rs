@@ -5,21 +5,54 @@ use std::path::Path;
 
 use processkit::ProcessRunner;
 use vcs_github::{
-    CheckRun, GitHub, GitHubApi, Issue, IssueCreate as GhIssueCreate, IssueList as GhIssueList,
-    IssueListState as GhIssueListState, PrClose as GhPrClose, PrCreate as GhPrCreate,
-    PrEdit as GhPrEdit, PrList as GhPrList, PrListState as GhPrListState, PrMerge as GhPrMerge,
-    PullRequest, Release, ReleaseCreate as GhReleaseCreate, RepoView, ReviewAction,
+    AuthAccount, CheckRun, GitHub, GitHubApi, Issue, IssueCreate as GhIssueCreate,
+    IssueList as GhIssueList, IssueListState as GhIssueListState, PrClose as GhPrClose,
+    PrCreate as GhPrCreate, PrEdit as GhPrEdit, PrList as GhPrList, PrListState as GhPrListState,
+    PrMerge as GhPrMerge, PullRequest, Release, ReleaseCreate as GhReleaseCreate, RepoView,
+    ReviewAction,
 };
 
 use crate::dto::{
-    CiStatus, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState, ForgeRelease, ForgeRepo,
-    IssueCreate, IssueList, IssueListState, MergeStrategy, PrCreate, PrEdit, PrList, PrListState,
-    PrMerge, ReleaseCreate,
+    CiStatus, ForgeAccount, ForgeAuth, ForgeIssue, ForgeIssueState, ForgePr, ForgePrState,
+    ForgeRelease, ForgeRepo, IssueCreate, IssueList, IssueListState, MergeStrategy, PrCreate,
+    PrEdit, PrList, PrListState, PrMerge, ReleaseCreate,
 };
 use crate::error::Result;
 
 pub(crate) async fn auth_status<R: ProcessRunner>(gh: &GitHub<R>) -> Result<bool> {
     Ok(gh.auth_status().await?)
+}
+
+/// The honest auth picture for a GitHub handle: which account `gh` acts as, which
+/// others are logged in, and — **only when a session exists** — whether `dir`'s
+/// repository is visible to that account.
+///
+/// The visibility probe is a second `gh` spawn, so it is gated on the session the
+/// first spawn already established: with no session the answer is a foregone
+/// "can't see anything", and spawning to rediscover that would cost a process per
+/// call for nothing.
+pub(crate) async fn auth_info<R: ProcessRunner>(gh: &GitHub<R>, dir: &Path) -> Result<ForgeAuth> {
+    let auth = gh.auth_info().await?;
+    let mut info = ForgeAuth::unknown().authed(auth.authed);
+    if let Some(active) = auth.active() {
+        info = info.active_account(active.login.clone());
+    }
+    info = info.accounts(auth.accounts.iter().map(map_account).collect());
+    if auth.authed {
+        info = info.repo_visible(gh.repo_visible(dir).await?);
+    }
+    Ok(info)
+}
+
+fn map_account(account: &AuthAccount) -> ForgeAccount {
+    let mapped = ForgeAccount::new(&account.host, &account.login);
+    // Three states, carried across verbatim: active, explicitly not active, and
+    // "the report didn't say" (a pre-multi-account `gh`).
+    match account.active {
+        Some(true) => mapped.active(),
+        Some(false) => mapped.inactive(),
+        None => mapped,
+    }
 }
 
 /// Probe the `gh` version for the capability map: `(installed version, meets the

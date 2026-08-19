@@ -45,6 +45,13 @@
 //!   github.com or a GitHub Enterprise Server host), so the credential lands in
 //!   the env var `gh` reads for *that* host (`GH_TOKEN` vs `GH_ENTERPRISE_TOKEN`)
 //!   and [`auth_status_for`](GitHubApi::auth_status_for) probes just that host.
+//! - **[`GitHubAuth`]** — the honest auth picture behind `auth_status`'s bool:
+//!   which account `gh` acts as and which others are logged in
+//!   ([`auth_info`](GitHubApi::auth_info)), paired with
+//!   [`repo_visible`](GitHubApi::repo_visible) for "can that account see *this*
+//!   repository". A session existing is not the same as the session you expect —
+//!   with several logins for one host, a repo the active account can't see fails
+//!   deep while every coarse probe stays green.
 //! - **[`GhAccountToken`]** — a [`CredentialProvider`] that runs operations as one
 //!   **named `gh` account** on a machine with several logins, resolving its token
 //!   lazily with `gh auth token --user <login>` (cached per host) instead of
@@ -173,8 +180,8 @@ pub use processkit::CancellationToken;
 
 mod parse;
 pub use parse::{
-    CheckBucket, CheckRun, Comment, Issue, PrFeedback, PullRequest, Release, RepoView, Review,
-    Workflow, WorkflowRun,
+    AuthAccount, CheckBucket, CheckRun, Comment, GitHubAuth, Issue, PrFeedback, PullRequest,
+    Release, RepoView, Review, Workflow, WorkflowRun,
 };
 // Re-exported so `vcs_github::FileDiff` (and the types nested in it) resolve
 // without a direct `vcs-diff` dependency — `pr_diff` returns `vcs-diff`'s model
@@ -1225,6 +1232,62 @@ pub trait GitHubApi: Send + Sync {
             operation: "auth_status_for".into(),
         }))
     }
+    /// **Which account** `gh` acts as, and which others are logged in on this
+    /// machine (`gh auth status`) — the honest twin of
+    /// [`auth_status`](GitHubApi::auth_status)'s bare bool.
+    ///
+    /// A session existing does not mean the session you expect: with several
+    /// logins for one host, `gh` runs as exactly one of them, and a call against a
+    /// repository the *active* account cannot see fails deep ("Could not resolve
+    /// to a Repository") even though `auth_status` said `true`. [`GitHubAuth`]
+    /// answers "as whom?" — pair it with [`repo_visible`](GitHubApi::repo_visible)
+    /// for "and can it see this repo?".
+    ///
+    /// `gh auth status` has no `--json`, so the accounts are read from its
+    /// human-readable output (stdout and stderr both, since gh moved the report
+    /// between the two) and the run's exit code becomes
+    /// [`authed`](GitHubAuth::authed). Parsing is **fail-soft**: output this crate
+    /// doesn't model yields no accounts — "unknown", never an error — so a `gh`
+    /// upgrade can't break the probe. A spawn failure or timeout still errors, like
+    /// `auth_status`.
+    ///
+    /// One spawn, and no secret: without `--show-token` `gh` masks the token in
+    /// this report, and neither the parsed value nor any error this method builds
+    /// carries captured stdout.
+    ///
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers of the
+    /// trait keep compiling when the crate bumps (only the `GitHub` concrete impl
+    /// and the regenerated `MockGitHubApi` override it).
+    async fn auth_info(&self) -> Result<GitHubAuth> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "auth_info".into(),
+        }))
+    }
+    /// Whether the repository in `dir` is **visible to the account `gh` acts as**
+    /// (`gh repo view --json name` exits zero).
+    ///
+    /// The complement of [`auth_info`](GitHubApi::auth_info): being logged in says
+    /// nothing about whether *this* identity can see *this* repository — a private
+    /// repo the active account isn't a member of is invisible to it while every
+    /// other auth probe stays green. Asking `gh` in the repository's own directory
+    /// is the cheapest faithful test, and it is exactly the resolution path every
+    /// other repo-scoped method here takes.
+    ///
+    /// Folds only the exit code into the bool, like
+    /// [`auth_status`](GitHubApi::auth_status): any non-zero exit reads as `false`
+    /// (a spawn failure or timeout still errors). `false` is therefore "gh could
+    /// not see the repository from `dir` as this account" — it does not
+    /// distinguish "no such repository" from "no permission", and gh does not
+    /// either.
+    ///
+    /// **Defaulted** to `ErrorReason::Unsupported` so external implementers of the
+    /// trait keep compiling when the crate bumps.
+    #[allow(unused_variables)]
+    async fn repo_visible(&self, dir: &Path) -> Result<bool> {
+        Err(Error::from(ErrorReason::Unsupported {
+            operation: "repo_visible".into(),
+        }))
+    }
     /// The repository for `dir` (`gh repo view --json …`).
     async fn repo_view(&self, dir: &Path) -> Result<RepoView>;
     /// Pull requests for `dir` (`gh pr list --limit 100 --json …`). Returns up to
@@ -2172,6 +2235,58 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
             == 0)
     }
 
+    async fn auth_info(&self) -> Result<GitHubAuth> {
+        // `output_string` (not `run`/`ensure_success`) so the ordinary "not logged
+        // in" non-zero exit is captured as data instead of raised as an error —
+        // and so no captured stdout can ride into an error message. That second
+        // reason is `GhAccountToken::resolve`'s rule (above), where it guards an
+        // actual secret; `gh auth status` masks its token unless `--show-token` is
+        // passed (it never is here), and keeping stdout out of errors keeps the
+        // guarantee independent of what a future gh decides to print.
+        let result = self.core.output_string(["auth", "status"]).await?;
+        if result.timed_out() {
+            return Err(Error::timeout(
+                BINARY,
+                result.configured_timeout().unwrap_or_default(),
+                "",
+                stderr_hint(result.stderr()),
+            ));
+        }
+        // No exit code at all (signal-killed, cancelled) is a genuine failure, not
+        // "unauthenticated": `ensure_success` renders each of those faithfully. It
+        // cannot return `Ok` for a result with no code, so the `Some` arm below is
+        // the only one that carries on.
+        let result = match result.code() {
+            Some(_) => result,
+            None => result.ensure_success()?,
+        };
+        Ok(GitHubAuth {
+            // Same exit-code-as-bool contract as `auth_status`: ANY non-zero exit
+            // reads as "no session", never an error.
+            authed: result.code() == Some(0),
+            // Both streams: gh printed this report on stderr before moving it to
+            // stdout, and `combined` concatenates them in that order.
+            accounts: parse::parse_auth_accounts(&result.combined()),
+        })
+    }
+
+    async fn repo_visible(&self, dir: &Path) -> Result<bool> {
+        // The cheapest faithful visibility test: ask gh for one field of the repo
+        // the working directory resolves to. `--json name` (a subset of the
+        // `repo_view` request) keeps the payload minimal — the answer is the exit
+        // code, not the body. `exit_code` reads that code without erroring on a
+        // non-zero one, so "not visible" is data, while a spawn failure or timeout
+        // still errors.
+        Ok(self
+            .core
+            .exit_code(
+                self.core
+                    .command_in(dir, ["repo", "view", "--json", "name"]),
+            )
+            .await?
+            == 0)
+    }
+
     async fn repo_view(&self, dir: &Path) -> Result<RepoView> {
         self.core
             .try_parse(
@@ -2868,9 +2983,11 @@ vcs_cli_support::at_forwarders! {
         fn capabilities() -> Result<GitHubCapabilities>;
         fn auth_status() -> Result<bool>;
         fn auth_status_for(host: &GitHubHost) -> Result<bool>;
+        fn auth_info() -> Result<GitHubAuth>;
     }
     dir {
         fn api(endpoint: &str) -> Result<String>;
+        fn repo_visible() -> Result<bool>;
         fn repo_view() -> Result<RepoView>;
         fn pr_list() -> Result<Vec<PullRequest>>;
         fn pr_list_with(spec: PrList) -> Result<Vec<PullRequest>>;
@@ -3133,6 +3250,137 @@ mod tests {
         let weird =
             GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::fail(2, "boom")));
         assert!(!weird.auth_status().await.unwrap());
+    }
+
+    // The honest probe: from ONE `gh auth status` run, `auth_info` reports both
+    // the session bool and *which* account gh acts as — the answer `auth_status`
+    // alone cannot give on a machine with several logins.
+    #[tokio::test]
+    async fn auth_info_names_the_active_account_among_several_logins() {
+        use processkit::testing::RecordingRunner;
+        let report = "github.com\n  \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+                      - Active account: false\n  - Git operations protocol: https\n  \
+                      - Token: gho_************************************\n\n  \
+                      \u{2713} Logged in to github.com account personal (keyring)\n  \
+                      - Active account: true\n  - Git operations protocol: https\n  \
+                      - Token: gho_************************************\n";
+        let rec = RecordingRunner::replying(Reply::ok(report));
+        let gh = GitHub::with_runner(&rec);
+        let auth = gh.auth_info().await.expect("auth_info");
+
+        assert!(auth.authed, "a zero exit is a session");
+        assert_eq!(
+            auth.accounts
+                .iter()
+                .map(|a| (a.host.as_str(), a.login.as_str(), a.active))
+                .collect::<Vec<_>>(),
+            [
+                ("github.com", "work-acct", Some(false)),
+                ("github.com", "personal", Some(true)),
+            ],
+            "every login on the host is listed"
+        );
+        assert_eq!(auth.active().map(|a| a.login.as_str()), Some("personal"));
+        // One spawn, and no `--show-token`: the probe never asks gh to unmask.
+        assert_eq!(rec.only_call().args_str(), ["auth", "status"]);
+    }
+
+    // gh printed this report on **stderr** before it moved to stdout, so the probe
+    // must read both streams — a version-dependent stream choice must not silently
+    // degrade the answer to "unknown".
+    #[tokio::test]
+    async fn auth_info_parses_a_report_printed_on_stderr() {
+        let report = "github.com\n  \u{2713} Logged in to github.com as octocat (keyring)\n";
+        let gh = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "auth"], Reply::ok("").with_stderr(report)),
+        );
+        let auth = gh.auth_info().await.expect("auth_info");
+        assert!(auth.authed);
+        assert_eq!(auth.active().map(|a| a.login.as_str()), Some("octocat"));
+    }
+
+    // Fail-soft: output this crate doesn't model degrades to "unknown" — no
+    // accounts, no panic, and NOT an error — so a `gh` that reshapes its report
+    // can't break the probe. `authed` still reflects the exit code.
+    #[tokio::test]
+    async fn auth_info_unrecognised_output_is_unknown_not_an_error() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "auth"],
+            Reply::ok(r#"{"hosts":[{"host":"github.com","user":"octocat"}]}"#),
+        ));
+        let auth = gh
+            .auth_info()
+            .await
+            .expect("an unknown format is not an error");
+        assert!(auth.authed, "the exit code still answers");
+        assert!(auth.accounts.is_empty(), "nothing recognised");
+        assert!(auth.active().is_none());
+        assert!(auth.is_unknown(), "a session whose accounts we can't read");
+    }
+
+    // No session: the non-zero exit reads as `authed: false` (never an error), and
+    // that empty account list means "not logged in", not "format unknown".
+    #[tokio::test]
+    async fn auth_info_reports_no_session_without_erroring() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "auth"],
+            Reply::fail(
+                1,
+                "You are not logged into any GitHub hosts. To log in, run: gh auth login",
+            ),
+        ));
+        let auth = gh
+            .auth_info()
+            .await
+            .expect("a logged-out gh is not an error");
+        assert!(!auth.authed);
+        assert!(auth.accounts.is_empty());
+        assert!(!auth.is_unknown(), "no session is not an unknown format");
+    }
+
+    // Same contract as `auth_status`: a timeout is a real failure, never a quiet
+    // "not authenticated".
+    #[tokio::test]
+    async fn auth_info_errors_on_timeout() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], Reply::timeout()));
+        assert!(matches!(
+            gh.auth_info().await.unwrap_err().reason(),
+            ErrorReason::Timeout { .. }
+        ));
+    }
+
+    // `repo_visible` asks gh, in the repository's own directory, for one field —
+    // and folds only the exit code into the bool. A repo the active account cannot
+    // see is `false`, not an error.
+    #[tokio::test]
+    async fn repo_visible_reads_exit_code_in_the_bound_dir() {
+        use processkit::testing::RecordingRunner;
+        let rec = RecordingRunner::replying(Reply::ok(r#"{"name":"vcs-toolkit-rs"}"#));
+        let gh = GitHub::with_runner(&rec);
+        assert!(gh.repo_visible(Path::new("/repo")).await.unwrap());
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["repo", "view", "--json", "name"]);
+        assert_eq!(
+            call.cwd.as_deref(),
+            Some(Path::new("/repo")),
+            "visibility is resolved from the repository's own directory"
+        );
+
+        // The failure this whole probe exists for: a session exists, but the
+        // active account cannot resolve the repository.
+        let invisible = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "repo", "view"],
+            Reply::fail(
+                1,
+                "Could not resolve to a Repository with the name 'acme/private'.",
+            ),
+        ));
+        assert!(!invisible.repo_visible(Path::new("/repo")).await.unwrap());
+        // An unusual exit code is still just "not visible", never an error.
+        let weird = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "repo", "view"], Reply::fail(4, "boom")),
+        );
+        assert!(!weird.repo_visible(Path::new("/repo")).await.unwrap());
     }
 
     // Regression guard for the timeout fix: a timed-out auth check must error,

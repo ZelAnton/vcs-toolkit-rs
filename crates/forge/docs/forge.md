@@ -55,6 +55,7 @@ client (the test seam); `forge.at(dir)` re-binds the cwd, sharing the client.
 
 ```rust,ignore
 pub async fn auth_status(&self)  -> Result<bool>;
+pub async fn auth_info(&self)    -> Result<ForgeAuth>; // who the CLI acts as + is this repo visible to it (GitHub only)
 pub async fn repo_view(&self)    -> Result<ForgeRepo>;
 pub async fn pr_list(&self)      -> Result<Vec<ForgePr>>;
 pub async fn pr_list_with(&self, spec: PrList) -> Result<Vec<ForgePr>>;
@@ -242,6 +243,7 @@ with [`Forge::supports_review_kind`] / [`Forge::supports_merge_option`] /
 | Operation | GitHub | GitLab | Gitea |
 |---|:---:|:---:|:---:|
 | `auth_status` / `pr_list` / `pr_view` / `pr_create` / `pr_merge` / `pr_close` / `pr_checkout` | ✅ | ✅ | ✅ |
+| `auth_info` (which account, and is this repo visible to it) | ✅ | — all-unknown, no spawn (no account report to read) | — all-unknown, no spawn (no account report to read) |
 | `pr_approve` | ✅ | ✅ | ✅ |
 | `issue_list` / `issue_view` / `issue_create` / `release_list` | ✅ | ✅ | ✅ |
 | `issue_close` / `issue_reopen` / `issue_comment` | ✅ | ✅ | ✅ |
@@ -299,6 +301,53 @@ if forge.supports_pr_close_delete_branch() { /* offer "delete branch on close" *
 `InvalidInput(String)`, with `is_unsupported()`, `is_invalid_input()`,
 `is_resource_not_found()`, `is_transient_fetch_error()`, `is_unauthorized()`,
 `is_rate_limited()`, `is_not_found()`, and `is_transient()` classifiers.
+
+## Is the session the one you think?
+
+`auth_status` (and `ForgeCapabilities::authed`) answer only "does *a* session
+exist". That is a weaker statement than it looks: a machine can hold several
+logins for one host while the CLI runs as exactly one of them, so a repository
+the **active** account cannot see fails deep — GitHub answers `Could not resolve
+to a Repository` — with every coarse auth probe green. [`Forge::auth_info`]
+reports the two facts behind such a failure before it happens:
+
+```rust,ignore
+# use vcs_forge::Forge;
+# async fn demo(forge: &Forge) -> Result<(), vcs_forge::Error> {
+let auth = forge.auth_info().await?;
+if auth.authed == Some(true) && auth.repo_visible == Some(false) {
+    eprintln!(
+        "gh is logged in{}, but this repository is not visible to it",
+        match &auth.active_account {
+            Some(login) => format!(" as {login}"),
+            None => String::new(),
+        }
+    );
+    for account in &auth.accounts {
+        eprintln!("  {} on {} (active: {:?})", account.login, account.host, account.active);
+    }
+}
+# Ok(()) }
+```
+
+**Every field is honestly optional** — `None`/empty means *unknown*, never a
+negative answer. `active_account` is `None` when the CLI's report was in a shape
+the wrapper doesn't model (`gh auth status` has no `--json`, so it is parsed
+fail-soft: an upgraded `gh` degrades this probe instead of breaking it), when
+logins span several hosts (each with its own active account, and which applies
+depends on the repository's host), or when the active entry is one gh reported as
+*failed* — an invalid `GH_TOKEN` in the environment outranks a working keyring
+login, and naming the surviving account would point at the wrong identity.
+
+**Cost:** one `gh auth status` for the session and the accounts, then — **only if
+that found a session** — one `gh repo view --json name` in the bound directory
+for the visibility answer. With no session there is nothing to be visible to, so
+that second spawn is skipped and `repo_visible` stays `None`.
+
+**GitHub only.** `glab`/`tea` expose no equivalent account report, so their
+handles (and an `Unknown` one) answer `ForgeAuth::unknown()` — every field
+unknown — **without spawning anything**, rather than erroring: this is
+introspection, like `capabilities`, where "we don't know" is a legitimate answer.
 
 ## When to drop to the wrapped client (the escape hatch)
 

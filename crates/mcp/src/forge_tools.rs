@@ -563,16 +563,24 @@ impl VcsMcpServer {
     }
 
     #[tool(
-        description = "The forge's identity and flat capability map (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, issue_close, issue_reopen, issue_comment, release_create, release_delete, version, supported, authed } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_edit` and `pr_checks` are always false for Gitea; `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test.",
+        description = "The forge's identity, flat capability map, and who the CLI acts as (read-only). Returns `{ kind, capabilities: { pr_create, pr_comment, pr_edit, pr_labels, pr_checks, pr_merge, pr_approve, pr_request_changes, issue_create, issue_close, issue_reopen, issue_comment, issue_labels, release_create, release_delete, version, supported, authed }, auth: { authed, active_account, accounts: [{ host, login, active }], repo_visible } }` for the configured forge. `version` is the installed CLI's `{major,minor,patch}` (or null if unknown/unrecognisable) and `supported` whether it meets the CLI's declared version floor; the per-op flags are the intersection of \"the CLI ships the command\", `supported`, and `authed`. `pr_edit`, `pr_checks`, `pr_labels` and `issue_labels` are always false for Gitea; `pr_request_changes` is always false for GitLab (its review model is approve/revoke). Note: for GitLab, `authed` is best-effort (`glab auth status` can report authed when it is not); a real API call is the sure test. The `auth` block answers what `capabilities.authed` cannot — with several logins for one host the CLI runs as exactly one of them, so `active_account` names that identity and `repo_visible` reports whether THIS repository is visible to it (`false` there, with `authed` true, is why an otherwise-authenticated call fails with \"Could not resolve to a Repository\"). It is GitHub-only for now and every field is honestly optional: null/empty means unknown (GitLab/Gitea report unknown without spawning, and `repo_visible` is probed only when a session exists), never a negative answer.",
         annotations(read_only_hint = true)
     )]
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
         let forge = self.forge()?;
         let kind = forge.kind();
         let capabilities = forge.capabilities().await.map_err(forge_err)?;
+        // Additive: `auth` sits beside `capabilities` rather than reshaping it, so
+        // an existing consumer of this tool's JSON is unaffected. It is a separate
+        // probe (the capability map is about the CLI; this is about the identity
+        // behind it and this repository), which is why it runs its own
+        // `gh auth status` — plus, only when that finds a session, one
+        // `gh repo view` for the visibility answer.
+        let auth = forge.auth_info().await.map_err(forge_err)?;
         ok_json(&serde_json::json!({
             "kind": kind.as_str(),
             "capabilities": capabilities,
+            "auth": auth,
         }))
     }
 }

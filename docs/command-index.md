@@ -337,6 +337,9 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 |---|---|---|
 | `auth_status` | `auth status` | exit code only; unscoped across hosts |
 | `auth_status_for` | `auth status --hostname <host>` | scoped to a `GitHubHost` |
+| `auth_info` | `auth status` | same run, read as text: which account gh acts as + every login; unrecognised output degrades to "unknown", never an error |
+| `repo_visible` | `repo view --json name` | exit code only: is this repo visible to the active account |
+| `Forge::auth_info` | `auth status`, then `repo view --json name` **only when a session exists** | active account + every login + repo visibility; no second spawn when unauthenticated |
 | `repo_view` | `repo view --json …` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
 | `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100 |
@@ -404,6 +407,7 @@ breadth.
 | Method | Runs | Notes |
 |---|---|---|
 | `auth_status` | `auth status` | exit code only; see the glab#911 caveat in the guide |
+| `Forge::auth_info` | — | no account report modelled for `glab`: reports "unknown", spawning nothing |
 | `repo_view` | `repo view --output json` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
 | `mr_list` | `mr list --per-page 100 --output json` | compatibility default: open MRs, ≤100 |
@@ -462,6 +466,7 @@ do](../crates/gitea/docs/gitea.md#what-tea-does-not-do).
 | Method | Runs | Notes |
 |---|---|---|
 | `auth_status` | `login list --output csv`, non-empty | `tea` has no per-instance auth status |
+| `Forge::auth_info` | — | no account report modelled for `tea`: reports "unknown", spawning nothing |
 | `pr_list` | `pr list --state open --limit 100 --fields … --output csv` | compatibility default; ≤~50 (Gitea server page cap) |
 | `pr_list_with` | `pr list --state open\|closed\|all --limit <n> --fields … --output csv` | `merged` is `Unsupported` before spawn |
 | `Forge::pr_for_branch` | Unsupported | `tea` has no source-branch filter |

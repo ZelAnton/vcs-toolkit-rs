@@ -99,6 +99,8 @@ hatches](#raw-escape-hatches)).
 async fn version(&self) -> Result<String>;            // `gh --version`
 async fn auth_status(&self) -> Result<bool>;          // `gh auth status` exits 0
 async fn auth_status_for(&self, host: &GitHubHost) -> Result<bool>;// `gh auth status --hostname <host>`
+async fn auth_info(&self) -> Result<GitHubAuth>;      // …the same run, read as text
+async fn repo_visible(&self, dir: &Path) -> Result<bool>;// `gh repo view --json name` exits 0
 async fn api(&self, dir: &Path, endpoint: &str) -> Result<String>;// `gh api <endpoint>` in `dir`
 async fn repo_view(&self, dir: &Path) -> Result<RepoView>;// `gh repo view --json …`
 ```
@@ -122,6 +124,54 @@ match gh.auth_status().await {
 }
 # Ok(()) }
 ```
+
+### Who is `gh` acting as, and can it see this repo?
+
+A session existing is not the same as *the session you expect*. A machine can
+hold several `gh` logins for one host, and commands run as exactly one of them —
+the **active** account. When that account can't see the repository you target,
+`auth_status` still says `true` and the first real call fails deep with `Could
+not resolve to a Repository`. Two probes answer the questions behind that
+failure:
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_github::{GitHub, GitHubApi};
+# async fn demo() -> Result<(), processkit::Error> {
+let gh = GitHub::new();
+let auth = gh.auth_info().await?;              // one `gh auth status` run
+if auth.authed && !gh.repo_visible(Path::new(".")).await? {
+    match auth.active() {
+        Some(account) => eprintln!(
+            "logged in as {} — but it cannot see this repository",
+            account.login
+        ),
+        // Unknown: an unrecognised report, or logins on several hosts.
+        None => eprintln!("logged in, but this repository is not visible"),
+    }
+    for account in &auth.accounts {
+        eprintln!("  {} on {} (active: {:?})", account.login, account.host, account.active);
+    }
+}
+# Ok(()) }
+```
+
+`gh auth status` has **no `--json`**, so `auth_info` reads its human-readable
+output (both streams — gh moved the report from stderr to stdout) and folds the
+same run's exit code into [`GitHubAuth::authed`]. Parsing is deliberately
+**fail-soft**: a report shape this crate doesn't model yields *no* accounts —
+"unknown", never an error — so a `gh` upgrade degrades the probe instead of
+breaking it. `authed == true` with an empty `accounts` is exactly that case, and
+[`GitHubAuth::is_unknown`] names it. `active()` refuses to guess when the report
+is ambiguous (logins on several hosts, or an *active* entry gh reported as
+failed — an invalid `GH_TOKEN` outranks a working keyring login).
+
+`repo_visible` is the complement, and the cheaper half: it asks `gh` in the
+repository's own directory for one field and reads only the exit code, so
+"not visible" is data, not an error. It doesn't distinguish "no such repository"
+from "no permission" — neither does `gh`. Spawn it only when a session exists;
+with none, there is nothing for the repository to be visible *to* — `vcs-forge`'s
+`Forge::auth_info` pairs the two probes with exactly that gate.
 
 ### Host selection — github.com vs GitHub Enterprise Server
 

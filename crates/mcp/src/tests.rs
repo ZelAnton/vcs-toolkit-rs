@@ -1604,7 +1604,9 @@ async fn forge_info_without_a_forge_errors() {
 // GitHub handle on a modern `gh`. `capabilities()` probes the CLI version
 // (`gh --version`, scripted to a modern banner above the 2.0 floor) and auth
 // (`auth status`, exit 0); every static cap is `true` post-fork, and the map
-// now also carries `version`/`supported`.
+// now also carries `version`/`supported`. The `auth` block rides alongside it
+// (its own `auth status` read plus, since a session exists, a `repo view`
+// visibility probe) — asserted in full by the tests below.
 #[tokio::test]
 async fn forge_info_with_authed_github_reports_all_true() {
     let gh = vcs_forge::vcs_github::GitHub::with_runner(
@@ -1613,7 +1615,8 @@ async fn forge_info_with_authed_github_reports_all_true() {
                 ["gh", "--version"],
                 Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
             )
-            .on(["gh", "auth", "status"], Reply::ok("")),
+            .on(["gh", "auth", "status"], Reply::ok(""))
+            .on(["gh", "repo", "view"], Reply::ok(r#"{"name":"r"}"#)),
     );
     let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
         "/repo",
@@ -1652,6 +1655,102 @@ async fn forge_info_with_authed_github_reports_all_true() {
     assert_eq!(value["capabilities"]["issue_close"], true);
     assert_eq!(value["capabilities"]["issue_reopen"], true);
     assert_eq!(value["capabilities"]["issue_comment"], true);
+}
+
+/// A `forge_info`-ready server whose `gh` is scripted with `auth_status` for the
+/// account report and `repo_view` for the visibility probe.
+fn github_info_server(auth: Reply, repo_view: Reply) -> VcsMcpServer {
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(
+        ScriptedRunner::new()
+            .on(
+                ["gh", "--version"],
+                Reply::ok("gh version 2.40.1 (2024-01-05)\n"),
+            )
+            .on(["gh", "auth", "status"], auth)
+            .on(["gh", "repo", "view"], repo_view),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None)
+}
+
+/// The inner JSON a tool result carries (`ok_json` wraps it in a text content
+/// block).
+fn tool_json(out: &rmcp::model::CallToolResult) -> serde_json::Value {
+    let text = out
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.clone())
+        .expect("text content");
+    serde_json::from_str(&text).expect("valid JSON")
+}
+
+// The honest-auth block, in the shape the tool's description promises: with two
+// logins on one host and a repository the ACTIVE one cannot see, `forge_info`
+// reports `authed: true` (a session exists) next to `repo_visible: false` — the
+// pair that explains a "Could not resolve to a Repository" failure before it
+// happens — and names every logged-in account.
+#[tokio::test]
+async fn forge_info_reports_active_account_and_invisible_repo() {
+    let report = "github.com\n  \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+                  - Active account: false\n\n  \
+                  \u{2713} Logged in to github.com account personal (keyring)\n  \
+                  - Active account: true\n";
+    let server = github_info_server(
+        Reply::ok(report),
+        Reply::fail(
+            1,
+            "Could not resolve to a Repository with the name 'acme/x'.",
+        ),
+    );
+    let value = tool_json(&server.forge_info().await.expect("forge_info ok"));
+
+    // The pre-existing shape is untouched — the new block is purely additive.
+    assert_eq!(value["kind"], "github");
+    assert_eq!(value["capabilities"]["authed"], true);
+
+    assert_eq!(value["auth"]["authed"], true, "{value}");
+    assert_eq!(value["auth"]["repo_visible"], false, "{value}");
+    assert_eq!(value["auth"]["active_account"], "personal", "{value}");
+    assert_eq!(
+        value["auth"]["accounts"],
+        serde_json::json!([
+            { "host": "github.com", "login": "work-acct", "active": false },
+            { "host": "github.com", "login": "personal", "active": true },
+        ]),
+        "{value}"
+    );
+}
+
+// `forge_auth_status` keeps its fixed boolean shape — the richer data went into
+// `forge_info` instead, so no existing consumer of this tool has to change.
+#[tokio::test]
+async fn forge_auth_status_stays_a_bare_boolean() {
+    let server = github_info_server(Reply::ok("github.com\n"), Reply::ok(r#"{"name":"r"}"#));
+    let value = tool_json(&server.forge_auth_status().await.expect("auth_status ok"));
+    assert_eq!(value, serde_json::json!(true), "{value}");
+}
+
+// Fail-soft, end to end: a `gh auth status` format the wrapper doesn't model
+// leaves the identity fields null/empty in the JSON — `forge_info` still answers
+// instead of failing, so an upgraded `gh` degrades the report rather than
+// breaking the tool.
+#[tokio::test]
+async fn forge_info_unknown_auth_format_reports_nulls_not_an_error() {
+    let server = github_info_server(
+        Reply::ok(r#"{"hosts":{"github.com":{"user":"octocat"}}}"#),
+        Reply::ok(r#"{"name":"r"}"#),
+    );
+    let value = tool_json(&server.forge_info().await.expect("forge_info ok"));
+    assert_eq!(value["auth"]["authed"], true, "{value}");
+    assert_eq!(value["auth"]["active_account"], serde_json::Value::Null);
+    assert_eq!(value["auth"]["accounts"], serde_json::json!([]), "{value}");
+    assert_eq!(value["auth"]["repo_visible"], true, "{value}");
 }
 
 // The `forge_info` tool is read-only — its annotation is `readOnlyHint`,

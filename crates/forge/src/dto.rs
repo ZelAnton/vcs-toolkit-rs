@@ -1407,6 +1407,136 @@ pub struct ForgeCapabilities {
     pub authed: bool,
 }
 
+/// One account a forge CLI reports as logged in on this machine.
+///
+/// A machine can hold several logins for one host (a personal and a work
+/// account) while commands run as exactly one of them — see
+/// [`ForgeAuth::active_account`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ForgeAccount {
+    /// The host this account is logged in to, verbatim from the CLI (e.g.
+    /// `github.com`, or a self-hosted instance's hostname).
+    pub host: String,
+    /// The account login.
+    pub login: String,
+    /// Whether the CLI marks this account as the **active** one for its host —
+    /// the identity operations actually run as. `None` when the CLI's report says
+    /// nothing either way (an older `gh` with no multi-account concept), which is
+    /// not the same as "not active". [`ForgeAuth::active_account`] is the resolved
+    /// answer; this field is what the CLI literally reported.
+    pub active: Option<bool>,
+}
+
+impl ForgeAccount {
+    /// An account entry for `login` on `host`, with active-ness **unreported**.
+    /// Chain [`active`](Self::active) / [`inactive`](Self::inactive) to record
+    /// what the CLI said (the struct is `#[non_exhaustive]`, so this is the way to
+    /// build one outside the crate).
+    pub fn new(host: impl Into<String>, login: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            login: login.into(),
+            active: None,
+        }
+    }
+
+    /// Record that the CLI marks this account active for its host.
+    pub fn active(mut self) -> Self {
+        self.active = Some(true);
+        self
+    }
+
+    /// Record that the CLI marks this account **not** active for its host —
+    /// distinct from [`new`](Self::new)'s "the CLI didn't say".
+    pub fn inactive(mut self) -> Self {
+        self.active = Some(false);
+        self
+    }
+}
+
+/// **Who** the forge CLI acts as on this machine, and whether the bound
+/// repository is visible to that identity. Returned by
+/// [`Forge::auth_info`](crate::Forge::auth_info); the
+/// [`forge_info`](crate::ForgeApi::capabilities) MCP tool surfaces it as JSON
+/// alongside [`ForgeCapabilities`].
+///
+/// [`ForgeCapabilities::authed`] answers only "does *a* session exist". That is
+/// not the same question as "will my next call work": with several logins for one
+/// host the CLI runs as exactly one of them, so a repository the **active**
+/// account cannot see fails deep (GitHub answers "Could not resolve to a
+/// Repository") while every coarse auth probe stays green. This type reports the
+/// two facts that explain such a failure before it happens — the identity in use,
+/// and whether it can see the repository.
+///
+/// **Every field is honestly optional.** `None`/empty means *unknown*, never a
+/// negative answer: the identity probe is implemented for the GitHub backend
+/// (`gh auth status` output, which has no `--json` and is therefore parsed
+/// fail-soft), so GitLab/Gitea/[`Unknown`](ForgeKind::Unknown) handles report
+/// unknown for all of it without spawning anything.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ForgeAuth {
+    /// Whether the CLI reports a session at all — the same coarse bool as
+    /// [`ForgeCapabilities::authed`], from the run that produced
+    /// [`accounts`](Self::accounts). `None` when this backend has no identity
+    /// probe (GitLab/Gitea/Unknown), where [`ForgeCapabilities::authed`] remains
+    /// the answer.
+    pub authed: Option<bool>,
+    /// The login operations run as, when the CLI names it unambiguously; `None`
+    /// when unknown — no session, an output format the wrapper doesn't model, or
+    /// logins on several hosts (each with its own active account, and which one
+    /// applies depends on the repository's host). [`accounts`](Self::accounts)
+    /// carries the full picture in that last case.
+    pub active_account: Option<String>,
+    /// Every account the CLI reports as logged in on this machine, in its own
+    /// order. Empty when there is no session, when the output wasn't recognised,
+    /// or when this backend has no identity probe.
+    pub accounts: Vec<ForgeAccount>,
+    /// Whether the **bound repository** is visible to the active account.
+    /// `Some(false)` is the honest report of the failure this type exists for: a
+    /// session exists, but the identity behind it cannot resolve this repository,
+    /// so every repo-scoped call will fail. `None` = not probed — there is no
+    /// session to probe with, or this backend has no identity probe.
+    pub repo_visible: Option<bool>,
+}
+
+impl ForgeAuth {
+    /// The all-unknown shape: nothing probed, nothing claimed. The answer for a
+    /// backend without an identity probe, and the base to chain the setters from
+    /// (the struct is `#[non_exhaustive]`, so this is the way to build one outside
+    /// the crate): `ForgeAuth::unknown().authed(true).repo_visible(false)`.
+    pub fn unknown() -> Self {
+        Self::default()
+    }
+
+    /// Record whether the CLI reports a session.
+    pub fn authed(mut self, authed: bool) -> Self {
+        self.authed = Some(authed);
+        self
+    }
+
+    /// Record the login operations run as.
+    pub fn active_account(mut self, login: impl Into<String>) -> Self {
+        self.active_account = Some(login.into());
+        self
+    }
+
+    /// Record the accounts logged in on this machine.
+    pub fn accounts(mut self, accounts: Vec<ForgeAccount>) -> Self {
+        self.accounts = accounts;
+        self
+    }
+
+    /// Record whether the bound repository is visible to the active account.
+    pub fn repo_visible(mut self, visible: bool) -> Self {
+        self.repo_visible = Some(visible);
+        self
+    }
+}
+
 impl ForgeCapabilities {
     /// The all-`false` shape, for the [`Unknown`](ForgeKind::Unknown) case and
     /// as the trait's defaulted answer for any external implementer: no op, no

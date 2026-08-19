@@ -316,6 +316,7 @@ pub fn vcs_forge::Forge<processkit::runner::JobRunner>::gitlab(impl core::conver
 pub fn vcs_forge::Forge<processkit::runner::JobRunner>::gitlab_with_token(impl core::convert::Into<std::path::PathBuf>, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
 impl<R: processkit::runner::ProcessRunner> vcs_forge::Forge<R>
 pub fn vcs_forge::Forge<R>::at(&self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub async fn vcs_forge::Forge<R>::auth_info(&self) -> vcs_forge::Result<vcs_forge::ForgeAuth>
 pub async fn vcs_forge::Forge<R>::auth_status(&self) -> vcs_forge::Result<bool>
 pub async fn vcs_forge::Forge<R>::capabilities(&self) -> vcs_forge::Result<vcs_forge::ForgeCapabilities>
 pub fn vcs_forge::Forge<R>::cwd(&self) -> &std::path::Path
@@ -363,6 +364,7 @@ pub fn vcs_forge::Forge<R>::supports_review_kind(&self, vcs_forge::ReviewKind) -
 impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_forge::Forge<R>
 pub fn vcs_forge::Forge<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: processkit::runner::ProcessRunner> vcs_forge::ForgeApi for vcs_forge::Forge<R>
+pub fn vcs_forge::Forge<R>::auth_info<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeAuth>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::cwd(&self) -> &std::path::Path
@@ -405,6 +407,61 @@ impl<R> core::marker::Unpin for vcs_forge::Forge<R>
 impl<R> core::marker::UnsafeUnpin for vcs_forge::Forge<R>
 impl<R> !core::panic::unwind_safe::RefUnwindSafe for vcs_forge::Forge<R>
 impl<R> !core::panic::unwind_safe::UnwindSafe for vcs_forge::Forge<R>
+#[non_exhaustive] pub struct vcs_forge::ForgeAccount
+pub vcs_forge::ForgeAccount::active: core::option::Option<bool>
+pub vcs_forge::ForgeAccount::host: alloc::string::String
+pub vcs_forge::ForgeAccount::login: alloc::string::String
+impl vcs_forge::ForgeAccount
+pub fn vcs_forge::ForgeAccount::active(self) -> Self
+pub fn vcs_forge::ForgeAccount::inactive(self) -> Self
+pub fn vcs_forge::ForgeAccount::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for vcs_forge::ForgeAccount
+pub fn vcs_forge::ForgeAccount::clone(&self) -> vcs_forge::ForgeAccount
+impl core::cmp::Eq for vcs_forge::ForgeAccount
+impl core::cmp::PartialEq for vcs_forge::ForgeAccount
+pub fn vcs_forge::ForgeAccount::eq(&self, &vcs_forge::ForgeAccount) -> bool
+impl core::fmt::Debug for vcs_forge::ForgeAccount
+pub fn vcs_forge::ForgeAccount::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_forge::ForgeAccount
+impl serde_core::ser::Serialize for vcs_forge::ForgeAccount
+pub fn vcs_forge::ForgeAccount::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::ForgeAccount
+impl core::marker::Send for vcs_forge::ForgeAccount
+impl core::marker::Sync for vcs_forge::ForgeAccount
+impl core::marker::Unpin for vcs_forge::ForgeAccount
+impl core::marker::UnsafeUnpin for vcs_forge::ForgeAccount
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ForgeAccount
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgeAccount
+#[non_exhaustive] pub struct vcs_forge::ForgeAuth
+pub vcs_forge::ForgeAuth::accounts: alloc::vec::Vec<vcs_forge::ForgeAccount>
+pub vcs_forge::ForgeAuth::active_account: core::option::Option<alloc::string::String>
+pub vcs_forge::ForgeAuth::authed: core::option::Option<bool>
+pub vcs_forge::ForgeAuth::repo_visible: core::option::Option<bool>
+impl vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::accounts(self, alloc::vec::Vec<vcs_forge::ForgeAccount>) -> Self
+pub fn vcs_forge::ForgeAuth::active_account(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn vcs_forge::ForgeAuth::authed(self, bool) -> Self
+pub fn vcs_forge::ForgeAuth::repo_visible(self, bool) -> Self
+pub fn vcs_forge::ForgeAuth::unknown() -> Self
+impl core::clone::Clone for vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::clone(&self) -> vcs_forge::ForgeAuth
+impl core::cmp::Eq for vcs_forge::ForgeAuth
+impl core::cmp::PartialEq for vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::eq(&self, &vcs_forge::ForgeAuth) -> bool
+impl core::default::Default for vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::default() -> vcs_forge::ForgeAuth
+impl core::fmt::Debug for vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_forge::ForgeAuth
+impl serde_core::ser::Serialize for vcs_forge::ForgeAuth
+pub fn vcs_forge::ForgeAuth::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for vcs_forge::ForgeAuth
+impl core::marker::Send for vcs_forge::ForgeAuth
+impl core::marker::Sync for vcs_forge::ForgeAuth
+impl core::marker::Unpin for vcs_forge::ForgeAuth
+impl core::marker::UnsafeUnpin for vcs_forge::ForgeAuth
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ForgeAuth
+impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ForgeAuth
 #[non_exhaustive] pub struct vcs_forge::ForgeCapabilities
 pub vcs_forge::ForgeCapabilities::authed: bool
 pub vcs_forge::ForgeCapabilities::issue_close: bool
@@ -814,6 +871,7 @@ impl core::marker::UnsafeUnpin for vcs_forge::ReleaseCreate
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_forge::ReleaseCreate
 impl core::panic::unwind_safe::UnwindSafe for vcs_forge::ReleaseCreate
 pub trait vcs_forge::ForgeApi: core::marker::Send + core::marker::Sync
+pub fn vcs_forge::ForgeApi::auth_info<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeAuth>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::ForgeApi::cwd(&self) -> &std::path::Path
@@ -850,6 +908,7 @@ pub fn vcs_forge::ForgeApi::release_list<'life0, 'async_trait>(&'life0 self) -> 
 pub fn vcs_forge::ForgeApi::release_view<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeRelease>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_forge::ForgeApi::repo_view<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeRepo>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 impl<R: processkit::runner::ProcessRunner> vcs_forge::ForgeApi for vcs_forge::Forge<R>
+pub fn vcs_forge::Forge<R>::auth_info<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeAuth>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::auth_status<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<bool>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::capabilities<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = vcs_forge::Result<vcs_forge::ForgeCapabilities>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn vcs_forge::Forge<R>::cwd(&self) -> &std::path::Path

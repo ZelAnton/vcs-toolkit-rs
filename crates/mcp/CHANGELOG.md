@@ -64,6 +64,22 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `tracked_changes`/`untracked`/`conflict_count` fields on the returned
   `RepoSnapshot` (see the `vcs-core` changelog), so a caller doesn't need to
   cross-reference the crate docs to discover them.
+- **`forge_info` gained an `auth` block** — `{ authed, active_account, accounts:
+  [{ host, login, active }], repo_visible }` beside the existing `kind` and
+  `capabilities` (both unchanged, so existing consumers are unaffected). It
+  answers what `capabilities.authed` cannot: with several logins for one host the
+  CLI runs as exactly one of them, so `active_account` names that identity and
+  `repo_visible` reports whether **this** repository is visible to it —
+  `repo_visible: false` beside `authed: true` is precisely why an otherwise
+  authenticated call fails with `Could not resolve to a Repository`. GitHub-only
+  for now, with every field honestly optional (`null`/`[]` = unknown, never a
+  negative answer): GitLab/Gitea report unknown without spawning, an unrecognised
+  `gh auth status` format degrades to unknown instead of failing the tool, and the
+  visibility probe spawns only when a session exists. The tool description now
+  lists the new fields — and the `pr_labels`/`issue_labels` capability flags it had
+  been omitting.
+  **`forge_auth_status` is deliberately unchanged**: it stays a bare boolean, so
+  the richer answer is additive rather than a reshaped response.
 
 ### Fixed
 -

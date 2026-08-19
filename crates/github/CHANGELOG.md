@@ -39,6 +39,35 @@ crates; tag releases as `vcs-github-v<version>`.
   leaves fetch/push on ambient auth.
   Constructors: `GhAccountToken::new`, `with_runner` (test seam), plus
   `with_git_host`, `default_timeout` and `login`.
+- **An auth probe that says *whose* session it is — `GitHubApi::auth_info`.**
+  `auth_status` folds `gh auth status` into a bare bool, which on a machine with
+  several logins for one host is routinely `true` while the **active** account
+  cannot see the repository you target — the first real call then fails with
+  `Could not resolve to a Repository`. `auth_info` reads the same single run and
+  returns `GitHubAuth { authed, accounts }`, where each `AuthAccount` carries its
+  `host`, `login`, and `active: Option<bool>` (`None` = the report said nothing,
+  as a pre-2.40 `gh` doesn't), plus `GitHubAuth::active()` — the account in use
+  when the report names it unambiguously, and `None` rather than a guess when it
+  doesn't (logins across several hosts, or an *active* entry gh reported as
+  **failed**, e.g. an invalid `GH_TOKEN` outranking a working keyring login).
+  `gh auth status` has no `--json`, so this parses its human-readable output —
+  both streams, since gh moved the report from stderr to stdout, and both
+  wordings it has shipped (`Logged in to <host> as <login>` pre-2.40, `… account
+  <login>` since). Parsing is **fail-soft**: a shape this crate doesn't model
+  yields no accounts — "unknown", reported by `GitHubAuth::is_unknown()`, never an
+  error — so a `gh` upgrade degrades the probe instead of breaking it. The exit
+  code still answers `authed` with the same contract as `auth_status` (any
+  non-zero → `false`; a spawn failure or timeout errors), and no captured stdout
+  rides into an error.
+- **`GitHubApi::repo_visible`** — whether the repository in `dir` is visible to
+  the account `gh` acts as (`gh repo view --json name` in that directory, exit
+  code folded into the bool exactly like `auth_status`; a spawn failure or timeout
+  still errors). The complement of `auth_info`: `false` is "gh could not see this
+  repository as this account", which it does not distinguish from "no such
+  repository" — neither does `gh`.
+  Both methods are **defaulted** on the trait (`ErrorReason::Unsupported`), so
+  external `GitHubApi` implementers keep compiling, and both are available on the
+  cwd-bound `GitHubAt` view.
 
 ### Changed
 -

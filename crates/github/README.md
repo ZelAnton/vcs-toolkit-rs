@@ -81,7 +81,11 @@ use vcs_github::{GitHub, GitHubApi, PrCreate};
 
 `auth_status` reports the bool from `gh auth status`'s exit code, but a spawn
 failure or a timeout still surfaces as a `processkit::Error` rather than a
-silent `false`:
+silent `false`. That bool says a session *exists*, not whose it is: on a machine
+with several logins for one host, `auth_info()` names the account `gh` acts as
+(and lists the rest), while `repo_visible(dir)` says whether that account can see
+the repository — the pair behind an otherwise-baffling `Could not resolve to a
+Repository`.
 
 ```rust
 # use vcs_github::{GitHub, GitHubApi};

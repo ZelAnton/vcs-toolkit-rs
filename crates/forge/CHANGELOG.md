@@ -10,7 +10,27 @@ crates; tag releases as `vcs-forge-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Forge::auth_info` — who the CLI acts as, and whether this repository is
+  visible to it.** `auth_status` (and `ForgeCapabilities::authed`) report only
+  that *a* session exists; on a machine with several logins for one host that is
+  routinely true while the **active** account cannot resolve the bound repository,
+  so the first real call fails with `Could not resolve to a Repository`. The new
+  method returns `ForgeAuth { authed, active_account, accounts, repo_visible }`
+  (with `ForgeAccount { host, login, active }`) so that failure is visible before
+  it happens. Every field is honestly optional — `None`/empty means *unknown*,
+  never a negative answer.
+  **Cost is bounded and gated:** one `gh auth status` yields the session bool and
+  the accounts, and the visibility probe (`gh repo view --json name`, in the bound
+  directory) runs **only when that found a session** — with none there is nothing
+  to be visible to, and `repo_visible` stays `None` rather than a manufactured
+  `false`.
+  **GitHub only.** `glab`/`tea` expose no equivalent account report, so a
+  GitLab/Gitea/`Unknown` handle answers `ForgeAuth::unknown()` **without spawning
+  anything** rather than erroring — introspection, like `capabilities`, where
+  "we don't know" is a legitimate answer. The identity itself is parsed fail-soft
+  in `vcs-github`, so an upgraded `gh` degrades this to unknown instead of
+  breaking it. On the `ForgeApi` trait the method is **defaulted** to
+  `Error::Unsupported`, so external implementers keep compiling.
 
 ### Changed
 -

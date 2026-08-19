@@ -70,7 +70,9 @@
 //!   `url`/`draft`/`prerelease`/`author`), so `None` ("backend can't/didn't report
 //!   it") is distinct from a *confirmed* `Some(false)`/empty list, never a false
 //!   sentinel (see each DTO's field docs).
-//! - **Operation groups** — auth ([`auth_status`](Forge::auth_status)); the repo
+//! - **Operation groups** — auth ([`auth_status`](Forge::auth_status) for "is
+//!   there a session", [`auth_info`](Forge::auth_info) for the honest "*whose*
+//!   session, and can it see this repository"); the repo
 //!   ([`repo_view`](Forge::repo_view)); the PR/MR lifecycle
 //!   ([`pr_list`](Forge::pr_list) / [`pr_view`](Forge::pr_view) /
 //!   [`pr_create`](Forge::pr_create) / [`pr_comment`](Forge::pr_comment) /
@@ -170,10 +172,10 @@ mod github_forge;
 mod gitlab_forge;
 
 pub use dto::{
-    CiStatus, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind, ForgeOp, ForgePr,
-    ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, IssueList, IssueListState, MergeOption,
-    MergeStrategy, PrClose, PrCreate, PrEdit, PrList, PrListState, PrMerge, ReleaseCreate,
-    ReviewKind,
+    CiStatus, ForgeAccount, ForgeAuth, ForgeCapabilities, ForgeIssue, ForgeIssueState, ForgeKind,
+    ForgeOp, ForgePr, ForgePrState, ForgeRelease, ForgeRepo, IssueCreate, IssueList,
+    IssueListState, MergeOption, MergeStrategy, PrClose, PrCreate, PrEdit, PrList, PrListState,
+    PrMerge, ReleaseCreate, ReviewKind,
 };
 pub use error::{Error, Result};
 
@@ -526,6 +528,37 @@ impl<R: ProcessRunner> Forge<R> {
             Backend::GitLab(c) => gitlab_forge::auth_status(c).await,
             Backend::Gitea(c) => gitea_forge::auth_status(c).await,
             Backend::Unknown => Ok(false),
+        }
+    }
+
+    /// **Who** the CLI acts as, and whether the bound repository is visible to
+    /// that identity — the honest answer [`auth_status`](Forge::auth_status)'s bool
+    /// cannot give.
+    ///
+    /// `auth_status` (and [`ForgeCapabilities::authed`]) report only that *a*
+    /// session exists. On a machine with several logins for one host that is
+    /// routinely true while the **active** account cannot see the repository, so
+    /// the first real call fails with a bewildering "Could not resolve to a
+    /// Repository". [`ForgeAuth`] surfaces the two facts behind such a failure up
+    /// front, with `None`/empty meaning *unknown* rather than a negative answer.
+    ///
+    /// **Cost: at most two spawns, and the second only when it can answer.**
+    /// `gh auth status` yields the session bool and the accounts in one run; the
+    /// repository-visibility probe (`gh repo view --json name`, run in the bound
+    /// directory) follows **only if that run found a session** — with no session
+    /// there is nothing to be visible to.
+    ///
+    /// **GitHub only.** GitLab and Gitea have no equivalent account report this
+    /// facade models, so their handles — and an [`Unknown`](ForgeKind::Unknown)
+    /// one — answer [`ForgeAuth::unknown`] **without spawning anything**, rather
+    /// than erroring: this is introspection, like
+    /// [`capabilities`](Forge::capabilities), where "we don't know" is a legitimate
+    /// answer and an error would only force every caller to special-case a backend.
+    pub async fn auth_info(&self) -> Result<ForgeAuth> {
+        match &self.backend {
+            Backend::GitHub(c) => github_forge::auth_info(c, &self.cwd).await,
+            // No identity probe for these CLIs: report unknown, spawn nothing.
+            Backend::GitLab(_) | Backend::Gitea(_) | Backend::Unknown => Ok(ForgeAuth::unknown()),
         }
     }
 
@@ -1358,6 +1391,13 @@ pub trait ForgeApi: Send + Sync {
     fn cwd(&self) -> &Path;
     /// See [`Forge::auth_status`](crate::Forge::auth_status).
     async fn auth_status(&self) -> Result<bool>;
+    /// See [`Forge::auth_info`](crate::Forge::auth_info). **Defaulted** to
+    /// `Error::Unsupported` so external trait implementers keep compiling when the
+    /// crate bumps. (The concrete `Forge` overrides it and never errors: a backend
+    /// without an identity probe answers [`ForgeAuth::unknown`] instead.)
+    async fn auth_info(&self) -> Result<ForgeAuth> {
+        Err(Error::unsupported(self.kind(), "auth_info"))
+    }
     /// See [`Forge::repo_view`](crate::Forge::repo_view).
     async fn repo_view(&self) -> Result<ForgeRepo>;
     /// See [`Forge::pr_list`](crate::Forge::pr_list).
@@ -1522,6 +1562,9 @@ impl<R: ProcessRunner> ForgeApi for Forge<R> {
     }
     async fn auth_status(&self) -> Result<bool> {
         self.auth_status().await
+    }
+    async fn auth_info(&self) -> Result<ForgeAuth> {
+        self.auth_info().await
     }
     async fn repo_view(&self) -> Result<ForgeRepo> {
         self.repo_view().await
@@ -2044,6 +2087,184 @@ mod tests {
                 patch: 1
             })
         );
+    }
+
+    /// The `gh auth status` report for two logins on one host, the second active
+    /// — the shape that makes a bare `authed: true` misleading.
+    const TWO_LOGINS: &str = "github.com\n  \
+        \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+        - Active account: false\n  - Git operations protocol: https\n\n  \
+        \u{2713} Logged in to github.com account personal (keyring)\n  \
+        - Active account: true\n  - Git operations protocol: https\n";
+
+    // The headline case: several logins on one host, and the repository is NOT
+    // visible to the active one. `authed` is still true (a session exists), but
+    // `repo_visible` is honestly `false` — the fact that explains why the next
+    // forge call would fail with "Could not resolve to a Repository".
+    #[tokio::test]
+    async fn github_auth_info_reports_active_account_and_invisible_repo() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(["gh", "auth", "status"], Reply::ok(TWO_LOGINS))
+                .on(
+                    ["gh", "repo", "view"],
+                    Reply::fail(
+                        1,
+                        "Could not resolve to a Repository with the name 'acme/private'.",
+                    ),
+                ),
+        );
+        let auth = forge.auth_info().await.expect("auth_info");
+        assert_eq!(auth.authed, Some(true), "a session exists");
+        assert_eq!(
+            auth.repo_visible,
+            Some(false),
+            "…but this repository is not visible to the account gh acts as"
+        );
+        assert_eq!(auth.active_account.as_deref(), Some("personal"));
+        assert_eq!(
+            auth.accounts,
+            vec![
+                ForgeAccount::new("github.com", "work-acct").inactive(),
+                ForgeAccount::new("github.com", "personal").active(),
+            ],
+            "every login on the host is listed, with the CLI's own active flag"
+        );
+    }
+
+    // The happy path, and the spawn budget: exactly two `gh` runs — the account
+    // report, then the visibility probe — with no `--version` probe (this is not a
+    // version-gated mutation) and no third call.
+    #[tokio::test]
+    async fn github_auth_info_visible_repo_costs_two_spawns() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            "github.com\n  \u{2713} Logged in to github.com account octocat (keyring)\n  \
+             - Active account: true\n",
+        ));
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        let auth = forge.auth_info().await.expect("auth_info");
+        assert_eq!(auth.authed, Some(true));
+        assert_eq!(auth.active_account.as_deref(), Some("octocat"));
+        assert_eq!(
+            auth.repo_visible,
+            Some(true),
+            "a zero-exit `repo view` means the account can see this repository"
+        );
+        assert_eq!(
+            rec.calls().iter().map(|c| c.args_str()).collect::<Vec<_>>(),
+            [
+                vec!["auth".to_string(), "status".to_string()],
+                vec![
+                    "repo".to_string(),
+                    "view".to_string(),
+                    "--json".to_string(),
+                    "name".to_string()
+                ],
+            ]
+        );
+        assert_eq!(
+            rec.calls()[1].cwd.as_deref(),
+            Some(Path::new("/repo")),
+            "visibility is resolved from the bound repository's directory"
+        );
+    }
+
+    // With no session there is nothing for the repository to be visible *to*, so
+    // the second spawn is not made at all — the probe costs one `gh` run, and
+    // `repo_visible` stays honestly unknown rather than a manufactured `false`.
+    #[tokio::test]
+    async fn github_auth_info_skips_the_visibility_spawn_without_a_session() {
+        let rec = RecordingRunner::replying(Reply::fail(
+            1,
+            "You are not logged into any GitHub hosts. To log in, run: gh auth login",
+        ));
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        let auth = forge.auth_info().await.expect("auth_info");
+        assert_eq!(auth.authed, Some(false));
+        assert_eq!(auth.repo_visible, None, "not probed, so not claimed");
+        assert!(auth.active_account.is_none());
+        assert!(auth.accounts.is_empty());
+        assert_eq!(
+            rec.calls().len(),
+            1,
+            "no blind `repo view` spawn when there is no session: {:?}",
+            rec.calls()
+        );
+    }
+
+    // An invalid `GH_TOKEN` in the environment outranks a working keyring login:
+    // gh reports the env entry as *failed* (and exits non-zero) while the keyring
+    // account is explicitly not active. The honest answer names no active account
+    // — the identity gh would use is the broken one — and, with no session, the
+    // visibility probe is not spawned.
+    #[tokio::test]
+    async fn github_auth_info_does_not_name_a_surviving_account_as_active() {
+        let report = "github.com\n  X Failed to log in to github.com using token (GH_TOKEN)\n  \
+                      - Active account: true\n  - The token in GH_TOKEN is invalid.\n\n  \
+                      \u{2713} Logged in to github.com account octocat (keyring)\n  \
+                      - Active account: false\n";
+        let rec = RecordingRunner::replying(Reply::fail(1, "").with_stdout(report));
+        let forge = Forge::from_github("/repo", GitHub::with_runner(&rec));
+        let auth = forge.auth_info().await.expect("auth_info");
+        assert_eq!(
+            auth.authed,
+            Some(false),
+            "gh exits non-zero on a failed entry"
+        );
+        assert!(
+            auth.active_account.is_none(),
+            "the surviving login is not the identity gh acts as"
+        );
+        assert_eq!(
+            auth.accounts,
+            vec![ForgeAccount::new("github.com", "octocat").inactive()],
+            "the failed entry is not a logged-in account"
+        );
+        assert_eq!(auth.repo_visible, None);
+        assert_eq!(rec.calls().len(), 1, "{:?}", rec.calls());
+    }
+
+    // Fail-soft: a `gh auth status` format this crate doesn't model leaves the
+    // identity unknown (`None`/empty) without erroring — an upgraded `gh` must
+    // degrade the probe, never break it. The session bool and the visibility probe
+    // (which don't depend on the text) still answer.
+    #[tokio::test]
+    async fn github_auth_info_unknown_report_format_degrades_without_erroring() {
+        let forge = github(
+            ScriptedRunner::new()
+                .on(
+                    ["gh", "auth", "status"],
+                    Reply::ok(r#"{"hosts":{"github.com":{"user":"octocat"}}}"#),
+                )
+                .on(["gh", "repo", "view"], Reply::ok(r#"{"name":"r"}"#)),
+        );
+        let auth = forge
+            .auth_info()
+            .await
+            .expect("an unrecognised format is not an error");
+        assert_eq!(auth.authed, Some(true));
+        assert!(auth.active_account.is_none(), "unknown, not guessed");
+        assert!(auth.accounts.is_empty());
+        assert_eq!(auth.repo_visible, Some(true), "still probed and answered");
+    }
+
+    // GitLab/Gitea have no account report this facade models: they answer
+    // "unknown" for every field — and, crucially, spawn nothing to say so.
+    #[tokio::test]
+    async fn non_github_auth_info_is_unknown_without_spawning() {
+        let glab = RecordingRunner::replying(Reply::ok(""));
+        let forge = Forge::from_gitlab("/repo", GitLab::with_runner(&glab));
+        assert_eq!(forge.auth_info().await.unwrap(), ForgeAuth::unknown());
+        assert!(glab.calls().is_empty(), "{:?}", glab.calls());
+
+        let tea = RecordingRunner::replying(Reply::ok(""));
+        let forge = Forge::from_gitea("/repo", Gitea::with_runner(&tea));
+        assert_eq!(forge.auth_info().await.unwrap(), ForgeAuth::unknown());
+        assert!(tea.calls().is_empty(), "{:?}", tea.calls());
+
+        // An Unknown handle has no CLI at all — same answer, same silence.
+        let forge: Forge = Forge::from_unknown("/repo");
+        assert_eq!(forge.auth_info().await.unwrap(), ForgeAuth::unknown());
     }
 
     // An unauthed GitHub keeps the static map's "ships the op" shape but flips
