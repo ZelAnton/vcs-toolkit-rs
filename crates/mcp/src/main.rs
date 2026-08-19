@@ -33,12 +33,15 @@
 //! values that could carry a secret are redacted.
 //! The forge tools authenticate through the forge CLI's own ambient login unless
 //! one of the two **GitHub** identity flags picks another: `--gh-account <login>`
-//! runs them as that `gh` account (its token is resolved per operation with
-//! `gh auth token --user`, leaving the machine's active account untouched) and
-//! `--gh-token-env <VAR>` takes the token from that environment variable. They
-//! are mutually exclusive, and either one is an error when the forge in play is
-//! not GitHub. Neither puts a token in argv: only the login, or the variable's
-//! *name*, is ever a command argument.
+//! runs them as that `gh` account (its token is resolved **once** — lazily, on
+//! the first forge call that needs it — with `gh auth token --user`, then cached
+//! for the life of the server and injected into each command's environment,
+//! leaving the machine's active account untouched; a token rotated or revoked in
+//! `gh` afterwards is picked up only when the server restarts) and
+//! `--gh-token-env <VAR>` takes the token from that environment variable, which
+//! is re-read on every call. They are mutually exclusive, and either one is an
+//! error when the forge in play is not GitHub. Neither puts a token in argv:
+//! only the login, or the variable's *name*, is ever a command argument.
 //! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`, and the
 //! two conflict tools' working-copy read) are bounded by an
 //! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
@@ -149,19 +152,25 @@ OPTIONS:
                               when both are given (whatever the order). Applies to
                               the git backend only (see below).
     --gh-account <login>      Run the forge tools as this `gh` account instead of
-                              the machine's active one. Its token is resolved per
-                              operation with `gh auth token --user <login>` and
-                              injected into the command's environment; the active
-                              account is never switched. Only the login is ever an
-                              argument, so the token stays out of --log-commands.
-                              GITHUB ONLY, and exclusive with --gh-token-env (see
-                              the note under both flags).
+                              the machine's active one. Its token is resolved
+                              ONCE — lazily, on the first forge call that needs
+                              it — with `gh auth token --user <login>`, then
+                              cached for the life of the server and injected into
+                              each command's environment; the active account is
+                              never switched. A token rotated or revoked in gh
+                              after that is picked up only on restart. Only the
+                              login is ever an argument, so the token stays out of
+                              --log-commands. GITHUB ONLY, and exclusive with
+                              --gh-token-env (see the note under both flags).
     --gh-token-env <VAR>      Take the GitHub token from environment variable VAR
                               (for CI). Only the NAME is a flag value; the value
                               is read per operation and injected into the
-                              command's environment, never argv. An unset or blank
-                              VAR falls back to the ambient `gh` login. GITHUB
-                              ONLY, and exclusive with --gh-account.
+                              command's environment, never argv. A VAR that is
+                              unset, blank, or simply misspelled (a typo is still
+                              a valid NAME, so it passes the startup check and
+                              reads as unset) falls back to the ambient `gh`
+                              login. GITHUB ONLY, and exclusive with
+                              --gh-account.
 
                               Both GitHub identity flags fail loudly rather than
                               being ignored: giving BOTH is a startup error (they
@@ -241,9 +250,11 @@ enum SshOptIn {
 /// repeating *one* of them is not (last wins, matching `--repo`/`--ssh-command`).
 ///
 /// Both variants carry an identifier, never a secret: the account **login**, or
-/// the **name** of the environment variable. The token itself is resolved per
-/// operation inside the client's credential path and injected into the child's
-/// environment, so it reaches neither argv nor the `--log-commands` log.
+/// the **name** of the environment variable. The token itself is resolved inside
+/// the client's credential path — once, then cached for the provider's life, for
+/// [`GhAuth::Account`]; on every request for [`GhAuth::TokenEnv`], which just
+/// reads the variable — and injected into the child's environment, so it reaches
+/// neither argv nor the `--log-commands` log.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 enum GhAuth {
     /// No flag: the forge CLI's own ambient login, as before.
@@ -1301,6 +1312,48 @@ mod tests {
         assert_eq!(
             probe.only_call().args_str(),
             ["auth", "token", "--user", "octocat"]
+        );
+    }
+
+    // What the flag's documentation claims about *when* the token is resolved:
+    // once, on the first call that needs it, and cached from then on — only the
+    // injection is per operation. Two forge calls, one `gh auth token` spawn.
+    // This is the visible half of the trade-off the docs spell out: a token
+    // rotated in `gh` after the first call is not picked up until restart, since
+    // this binary builds the provider once (`resolve_forge`) and the server holds
+    // that forge for its whole life.
+    #[tokio::test]
+    async fn gh_account_resolves_its_token_once_and_then_reuses_it() {
+        const TOKEN: &str = "gho_t180_cached_token";
+        let probe = Arc::new(RecordingRunner::replying(Reply::ok(format!("{TOKEN}\n"))));
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let client = apply_gh_auth(
+            GitHub::with_runner(&rec),
+            &GhAuth::Account("octocat".to_string()),
+            || Arc::clone(&probe),
+            None,
+        );
+
+        client
+            .pr_list(Path::new("/r"))
+            .await
+            .expect("first pr list");
+        client
+            .pr_list(Path::new("/r"))
+            .await
+            .expect("second pr list");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2, "both forge calls ran");
+        assert!(
+            calls.iter().all(|c| c.env_is("GH_TOKEN", TOKEN)),
+            "every command carries the token in its environment (injection is \
+             what happens per operation)"
+        );
+        assert_eq!(
+            probe.calls().len(),
+            1,
+            "the token is resolved once and cached, not re-resolved per operation"
         );
     }
 

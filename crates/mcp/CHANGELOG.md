@@ -33,12 +33,19 @@ crates; tag releases as `vcs-mcp-v<version>`.
   is active on the machine (previously the only way to change it was
   `gh auth switch`, which rewrites the user's global gh state for every tool, not
   just this server). `--gh-account` attaches `vcs-github`'s `GhAccountToken`, which
-  resolves that account's token with `gh auth token --user <login>` per operation
-  and fails the call — naming the login — if it cannot, rather than quietly
-  running as the active account; `--gh-token-env` reads the token from the named
-  environment variable (`GitHub::with_env_token`, the CI case) and takes the
-  variable's **name**, refusing at startup a value that could not be one (`=` or
-  whitespace) so a typo can't silently degrade to the ambient login. Neither puts
+  resolves that account's token with `gh auth token --user <login>` and fails the
+  call — naming the login — if it cannot, rather than quietly running as the
+  active account. That resolution happens **once**, lazily on the first forge call
+  that needs it, and is then cached for the life of the server (only the injection
+  into the command's environment is per operation), so a token rotated or revoked
+  in `gh` mid-session keeps being used until the server is restarted.
+  `--gh-token-env` reads the token from the named environment variable
+  (`GitHub::with_env_token`, the CI case) on every call, and takes the variable's
+  **name**: a value that could never be one — it contains `=` or whitespace — is
+  refused at startup. That check rejects an impossible name, not a wrong one; this
+  flag is deliberately **not** fail-closed, so a `VAR` that is misspelled, unset,
+  or blank falls back to the ambient `gh` login rather than failing, unlike
+  `--gh-account`. Neither flag puts
   a secret in argv — the tokens travel in the child process's environment, which
   `--log-commands` never logs — so the log can show which identity is in use but
   not the credential, and the `gh auth token` probe runs under the same
