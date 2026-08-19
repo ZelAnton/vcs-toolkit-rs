@@ -1486,6 +1486,7 @@ pub fn vcs_github::GhAccountToken<processkit::runner::JobRunner>::new(impl core:
 impl<R: processkit::runner::ProcessRunner> vcs_github::GhAccountToken<R>
 pub fn vcs_github::GhAccountToken<R>::default_timeout(self, core::time::Duration) -> Self
 pub fn vcs_github::GhAccountToken<R>::login(&self) -> &str
+pub fn vcs_github::GhAccountToken<R>::with_git_host(self, vcs_github::GitHubHost) -> Self
 pub fn vcs_github::GhAccountToken<R>::with_runner(R, impl core::convert::Into<alloc::string::String>) -> Self
 impl<R: processkit::runner::ProcessRunner> core::fmt::Debug for vcs_github::GhAccountToken<R>
 pub fn vcs_github::GhAccountToken<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

@@ -27,8 +27,18 @@ crates; tag releases as `vcs-github-v<version>`.
   non-zero exit. Resolution is cached per `(login, host)` for the provider's life:
   one `gh` spawn instead of one per forge call, with the deliberate consequence
   that a token rotated in the external `gh` mid-session is not picked up.
+  Scope is host-checked, not assumed: besides `gh` requests it answers a **git
+  HTTPS** request only when that request *names* the provider's GitHub host —
+  github.com, or the GHES host bound with `with_git_host` (a plain hostname cannot
+  prove a host is GitHub). A git request for any other host, or one naming **no**
+  host — where git's credential helper is ungated and the token would be offered to
+  every HTTPS host the operation touches — gets `Ok(None)` and ambient auth, with no
+  `gh` spawn, so a provider attached to a `Git` client neither leaks the account's
+  token to a foreign host nor breaks a clone from one. In practice a `Git` client
+  authenticates a `clone` from the bound host (the verb that knows its URL) and
+  leaves fetch/push on ambient auth.
   Constructors: `GhAccountToken::new`, `with_runner` (test seam), plus
-  `default_timeout` and `login`.
+  `with_git_host`, `default_timeout` and `login`.
 
 ### Changed
 -

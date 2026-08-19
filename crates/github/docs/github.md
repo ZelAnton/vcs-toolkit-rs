@@ -220,21 +220,37 @@ What it guarantees, and what to know:
   environment* instead of the requested account's.
 - **The token stays out of sight.** Only the login and host are arguments (gh
   prints the token on stdout), so command diagnostics such as `--log-commands`
-  never observe it; the provider's `Debug` shows the login and cache size, not the
-  secret; and no error it raises carries the captured stdout.
+  never observe it; the provider's `Debug` shows the login, its git host, and the
+  cache size, not the secret; and no error it raises carries the captured stdout.
 - **Cached per `(login, host)` for the provider's life** — one `gh` spawn, not one
   per forge call. The trade-off is deliberate: **a token rotated in the external
   `gh` mid-session is not picked up**; build a new provider to re-resolve. Failed
   resolutions are not cached, so a transient failure doesn't poison the provider.
 - **Requires gh ≥ 2.40** (multi-account support). An older binary rejects `--user`
   and the provider reports that required version instead of a bare non-zero exit.
-- **GitHub only.** It answers `gh` requests and git HTTPS-against-GitHub requests
-  (where the request host may carry git's `host:port`, which is stripped — gh names
-  hosts without a port); a GitLab or Gitea request gets `Ok(None)`, because a GitHub
-  token must never be handed to `glab`/`tea`.
+- **GitHub only, and host-scoped on the git path.** `gh` requests are answered —
+  that is what the provider is for. A **git HTTPS** request is answered only when it
+  *names* this provider's GitHub host: github.com, or the host bound with
+  `with_git_host(GitHubHost::new("ghe.example.com")?)` (git's `host:port` is
+  accepted with the port stripped, since gh names hosts without one). Every other
+  request gets `Ok(None)` — ambient auth, no `gh` spawn:
+  - a GitLab or Gitea request, because a GitHub token must never be handed to
+    `glab`/`tea`;
+  - a git request for another host, for the same reason — and because a plain
+    hostname cannot prove a host is GitHub, which is why a GHES host has to be named
+    with `with_git_host` before it is served;
+  - a git request that names **no** host, because git's credential helper is then
+    ungated (`git_credential_helper` without an `expect_host`) and the secret would
+    be offered to every HTTPS host that operation touches — a second remote on
+    another forge, a submodule, a cross-host redirect.
 
-Use one provider per account, and pair it with `with_host` when you target a GHES
-host so the resolved token lands in `GH_ENTERPRISE_TOKEN`.
+  Concretely, on a vcs-git `Git` client the account's token authenticates a
+  **clone** from the provider's host (the verb that knows its URL); fetch and push
+  on an existing checkout name no host and stay on ambient git auth.
+
+Use one provider per account. `with_git_host` says which host's *git* requests it
+serves; `GitHub::with_host` is separate — pair it when you target a GHES host so the
+resolved token lands in `GH_ENTERPRISE_TOKEN`.
 
 ## Pull requests — listing & creation
 

@@ -49,7 +49,10 @@
 //!   **named `gh` account** on a machine with several logins, resolving its token
 //!   lazily with `gh auth token --user <login>` (cached per host) instead of
 //!   switching the user's active account. A login whose token can't be resolved is
-//!   an error, never a quiet fall back to the active account.
+//!   an error, never a quiet fall back to the active account. It answers `gh`
+//!   requests, and a git HTTPS request only when that request names its own GitHub
+//!   host ([`with_git_host`](GhAccountToken::with_git_host) binds a GHES one);
+//!   every other request defers to ambient auth.
 //! - **[`GitHubAt`]** — a cwd-bound view ([`GitHub::at`]) whose methods drop the
 //!   leading `dir`, so `gh.at(dir).pr_list()` reads as `gh.pr_list(dir)` — handy
 //!   when one client drives one checkout.
@@ -1737,8 +1740,8 @@ type TokenCell = Arc<tokio::sync::OnceCell<Secret>>;
 /// **Secrecy.** Only the login and the host travel in `argv`, so the token never
 /// reaches command diagnostics (`--log-commands`, a
 /// [`LoggingRunner`](vcs_cli_support::logging::LoggingRunner)); [`Debug`](fmt::Debug)
-/// renders the login and the cache size but no secret; and no error text this type
-/// builds carries captured stdout — where `gh` prints the token.
+/// renders the login, the git host, and the cache size but no secret; and no error
+/// text this type builds carries captured stdout — where `gh` prints the token.
 ///
 /// **Caching.** A resolved token is cached per `(login, host)` pair for the life of
 /// the provider, so a second forge call reuses it instead of spawning `gh` again.
@@ -1747,19 +1750,40 @@ type TokenCell = Arc<tokio::sync::OnceCell<Secret>>;
 /// client) to re-resolve. Only *successful* resolutions are cached, so a transient
 /// failure doesn't poison the provider.
 ///
-/// **Scope.** It answers [`CredentialService::GitHub`] and
-/// [`CredentialService::Git`] (a git HTTPS operation against GitHub, where the
-/// token is the password). For any other service it yields `Ok(None)` — a GitHub
-/// token is not a GitLab or Gitea credential, and handing it to `glab`/`tea` would
-/// ship the secret to the wrong service.
+/// **Scope.** It answers [`CredentialService::GitHub`] — the `gh` path this type
+/// exists for — and a [`CredentialService::Git`] request (a git HTTPS operation,
+/// where the token is the password) **only when that request names this provider's
+/// GitHub host**: github.com, or the host
+/// [`with_git_host`](GhAccountToken::with_git_host) bound. git's `host[:port]` form
+/// is accepted, port stripped, because `gh` names hosts without a port.
+///
+/// Anything else yields `Ok(None)` — ambient auth, and no `gh` spawn:
+///
+/// - a **GitLab or Gitea** request, because a GitHub token is not their credential
+///   and handing it to `glab`/`tea` would ship the secret to the wrong service;
+/// - a **git request for another host**, for exactly the same reason (a plain
+///   hostname cannot prove a host is GitHub, so an unbound provider serves only
+///   github.com);
+/// - a **git request that names no host**, because the git credential helper is
+///   then ungated (`vcs_cli_support::git_credential_helper` with no `expect_host`)
+///   and the secret would be offered to every HTTPS host the operation touches — a
+///   second remote on another forge, a submodule, a cross-host redirect.
+///
+/// Concretely, on a vcs-git client this authenticates a **clone** from the
+/// provider's host (the verb that knows its URL), while fetch/push on an existing
+/// checkout name no host and stay on ambient git auth. `Ok(None)` here is "not my
+/// request", decided before any resolution — it does not weaken the fail-closed
+/// rule above, which governs a request that *is* this provider's.
 ///
 /// # Errors
 ///
 /// [`credential`](CredentialProvider::credential) fails — rather than falling back
-/// to ambient auth — when:
+/// to ambient auth — for a request within that scope when:
 ///
-/// - the login or the request's host is malformed (an `InvalidInput`
-///   [`ErrorReason::Spawn`], as elsewhere in this crate);
+/// - the login is malformed, or a `gh` request's host is (an `InvalidInput`
+///   [`ErrorReason::Spawn`], as elsewhere in this crate). A host a git request
+///   carries is checked against this provider's own first, so an unusable one is
+///   "not my request" (`Ok(None)`) rather than a failed git operation;
 /// - the installed `gh` predates 2.40 and rejects `--user` (an `Unsupported`
 ///   [`ErrorReason::Spawn`] naming the required version, like
 ///   [`GitHubCapabilities::ensure_supported`]);
@@ -1769,6 +1793,11 @@ type TokenCell = Arc<tokio::sync::OnceCell<Secret>>;
 pub struct GhAccountToken<R: ProcessRunner = processkit::JobRunner> {
     /// The `gh` account whose token this provider hands out.
     login: String,
+    /// The GitHub host whose **git HTTPS** requests this provider answers —
+    /// github.com unless [`with_git_host`](GhAccountToken::with_git_host) bound
+    /// another. Consulted only on the git path: on the `gh` path the attached
+    /// client's own host binding decides, and the consumer is `gh` itself.
+    git_host: GitHubHost,
     /// The client running the `gh auth token` probe: no credential provider (so the
     /// probe can't recurse into this one) and the ambient token vars scrubbed.
     probe: vcs_cli_support::ManagedClient<R>,
@@ -1797,6 +1826,32 @@ impl<R: ProcessRunner> GhAccountToken<R> {
         )
     }
 
+    /// Bind the GitHub host whose **git HTTPS** requests this provider answers;
+    /// github.com unless bound. Use it for an account on a GitHub Enterprise Server
+    /// host: a hostname alone cannot prove that a host is GitHub — github.com is the
+    /// one name that does — so naming the GHES host here is what permits handing the
+    /// account's token to a git operation against it. The binding is **exact, not
+    /// additive**: a bound provider stops serving github.com.
+    ///
+    /// It does not touch the `gh` path. There the host travels on the request from
+    /// the client this provider is attached to (see [`GitHub::with_host`]) and
+    /// selects which account token to resolve; `gh` is a GitHub tool either way, so
+    /// there is no foreign service to withhold the token from.
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use vcs_github::{GhAccountToken, GitHubHost};
+    /// # fn demo() -> Result<(), processkit::Error> {
+    /// let ghes = GitHubHost::new("ghe.example.com")?;
+    /// let provider = Arc::new(GhAccountToken::new("work-acct").with_git_host(ghes));
+    /// # let _ = provider; Ok(()) }
+    /// ```
+    #[must_use]
+    pub fn with_git_host(mut self, host: GitHubHost) -> Self {
+        self.git_host = host;
+        self
+    }
+
     /// Bound the `gh auth token` probe with a timeout. Off by default. Worth
     /// setting: a client's own [`default_timeout`](GitHub::default_timeout) bounds
     /// the *spawned command*, not credential resolution, so an unresponsive `gh`
@@ -1819,9 +1874,36 @@ impl<R: ProcessRunner> GhAccountToken<R> {
             .fold(probe, |client, var| client.default_env_remove(var));
         Self {
             login: login.into().trim().to_string(),
+            git_host: GitHubHost::github_com(),
             probe,
             cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether a git HTTPS request for `host` is this provider's to answer: only
+    /// when the request **names** a host and that host is this provider's GitHub
+    /// host (github.com, or the one `with_git_host` bound). Everything else defers
+    /// to ambient git auth — `Ok(None)`, no `gh` spawn — for two distinct reasons:
+    ///
+    /// - **No host.** A git backend that cannot name the host it is about to
+    ///   authenticate to cannot scope its credential helper to one either:
+    ///   `vcs_cli_support::git_credential_helper` leaves the helper **ungated**
+    ///   without an `expect_host`, so the secret would be offered to every HTTPS
+    ///   host that operation touches — a second remote on another forge, a
+    ///   submodule elsewhere, a cross-host redirect. Handing out a token there
+    ///   would push a GitHub account's secret past the boundary this type exists to
+    ///   hold. (In vcs-git only `clone` knows its URL's host; the other remote verbs
+    ///   pass none and so run on ambient auth.)
+    /// - **Another host.** A GitHub token is not that host's credential — the same
+    ///   rule that withholds it from `glab`/`tea`. Deferring rather than failing
+    ///   also keeps a provider attached to a vcs-git client from breaking a clone or
+    ///   fetch from a non-GitHub remote, which a hard error would.
+    fn serves_git_host(&self, host: Option<&str>) -> bool {
+        // git's `host[:port]`, normalized exactly as the probe would normalize it.
+        // An authority `gh` could never name is simply not this provider's host:
+        // deferring beats failing a git operation we have no credential for.
+        host.and_then(|host| probe_hostname(host).ok())
+            .is_some_and(|host| host == self.git_host.as_str())
     }
 
     /// The cached token for `(login, host)`, resolving it once on first use.
@@ -1943,15 +2025,16 @@ impl<R: ProcessRunner> GhAccountToken<R> {
 }
 
 impl<R: ProcessRunner> fmt::Debug for GhAccountToken<R> {
-    /// Renders the login (an account name, already visible in `argv`) and how many
-    /// `(login, host)` pairs are cached — never a token, and never the resolved
-    /// [`Secret`] itself.
+    /// Renders the login (an account name, already visible in `argv`), the GitHub
+    /// host whose git requests this provider serves, and how many `(login, host)`
+    /// pairs are cached — never a token, and never the resolved [`Secret`] itself.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let cached = self.cache.lock().map_or(0, |cache| {
             cache.values().filter(|c| c.initialized()).count()
         });
         f.debug_struct("GhAccountToken")
             .field("login", &self.login)
+            .field("git_host", &self.git_host.as_str())
             .field("cached_tokens", &cached)
             .finish_non_exhaustive()
     }
@@ -1961,10 +2044,18 @@ impl<R: ProcessRunner> fmt::Debug for GhAccountToken<R> {
 impl<R: ProcessRunner> CredentialProvider for GhAccountToken<R> {
     async fn credential(&self, request: &CredentialRequest<'_>) -> Result<Option<Credential>> {
         match request.service {
-            // A GitHub token authenticates `gh`, and (as the password) a git HTTPS
-            // operation against GitHub.
-            CredentialService::GitHub | CredentialService::Git => {}
-            // Not ours: a GitHub token must never be handed to `glab`/`tea`.
+            // `gh` itself — what this provider exists for. The consumer is a GitHub
+            // tool, and a host on the request came from the attached client's own
+            // validated `GitHubHost`, so it only selects which account token to ask
+            // for.
+            CredentialService::GitHub => {}
+            // A git HTTPS operation, where the token is the password — but only
+            // against this provider's own GitHub host. `serves_git_host` documents
+            // why a request naming another host, or naming none at all, must not be
+            // served.
+            CredentialService::Git if self.serves_git_host(request.host) => {}
+            // Not ours: a GitHub token must never be handed to `glab`/`tea`, nor to
+            // a git operation aimed anywhere but this provider's GitHub host.
             _ => return Ok(None),
         }
         let secret = self.token(request.host).await?;
@@ -5226,11 +5317,11 @@ mod account_token_tests {
         assert!(rec.calls().is_empty());
     }
 
-    // The provider serves `gh` and a GitHub git-HTTPS operation; it must NOT hand a
-    // GitHub token to another forge's CLI, so those requests get `Ok(None)` (their
-    // own ambient auth) and never spawn a probe.
+    // The provider serves `gh`; it must NOT hand a GitHub token to another forge's
+    // CLI, so those requests get `Ok(None)` (their own ambient auth) and never spawn
+    // a probe.
     #[tokio::test]
-    async fn only_github_and_git_requests_are_served() {
+    async fn a_foreign_forge_request_is_never_served() {
         let rec = RecordingRunner::replying(Reply::ok(format!("{ACCOUNT_TOKEN}\n")));
         let provider = GhAccountToken::with_runner(&rec, "octocat");
 
@@ -5248,32 +5339,82 @@ mod account_token_tests {
             rec.calls().is_empty(),
             "a foreign service must not spawn gh"
         );
-
-        // Git (an HTTPS push/fetch against GitHub) is served: the token is the
-        // password there.
-        let cred = provider
-            .credential(&CredentialRequest::new(CredentialService::Git).with_host("github.com"))
-            .await
-            .unwrap()
-            .expect("git HTTPS against GitHub is served");
-        assert_eq!(cred.secret().expose(), ACCOUNT_TOKEN);
     }
 
-    // A git HTTPS request carries git's own `host[:port]` (verbatim, port and case
-    // preserved — `vcs_cli_support::https_host`), while gh names hosts without a
-    // port. The probe must ask gh for the bare host instead of refusing a legitimate
-    // non-default-port remote.
+    /// A `CredentialService::Git` request for `host` (`None` = the request names no
+    /// host), as the git backend issues it.
+    fn git_request(host: Option<&str>) -> CredentialRequest<'_> {
+        let request = CredentialRequest::new(CredentialService::Git);
+        match host {
+            Some(host) => request.with_host(host),
+            None => request,
+        }
+    }
+
+    // A git HTTPS request is served only when it NAMES this provider's GitHub host.
+    // The two unserved shapes are what keep the token inside the boundary:
+    //   * ANOTHER host — a GitHub token is not gitlab.com's credential, and an
+    //     unbound provider cannot know that some `ghe.example.com` is GitHub at all;
+    //   * NO host — `git_credential_helper(cred, None)` leaves the helper UNGATED,
+    //     so the secret would be released to every HTTPS host the operation touches
+    //     (a second remote, a submodule, a cross-host redirect).
+    // Unserved means `Ok(None)` — ambient auth, no `gh` spawn — never an error: a
+    // provider attached to a `Git` client must not break a clone from a non-GitHub
+    // remote it was never meant to authenticate.
     #[tokio::test]
-    async fn a_git_request_host_with_a_port_asks_gh_for_the_bare_host() {
+    async fn a_git_request_is_served_only_for_this_providers_github_host() {
         let rec = RecordingRunner::replying(Reply::ok(format!("{ACCOUNT_TOKEN}\n")));
         let provider = GhAccountToken::with_runner(&rec, "octocat");
+
+        // github.com — the one host a name alone proves is GitHub — is served.
         let cred = provider
-            .credential(
-                &CredentialRequest::new(CredentialService::Git).with_host("GHE.Example.COM:8443"),
-            )
+            .credential(&git_request(Some("github.com")))
             .await
             .unwrap()
-            .expect("a ported git host resolves");
+            .expect("git HTTPS against the provider's GitHub host is served");
+        assert_eq!(cred.secret().expose(), ACCOUNT_TOKEN);
+        assert_eq!(rec.calls().len(), 1);
+
+        for host in [
+            Some("gitlab.com"),
+            Some("ghe.example.com"),
+            // An authority gh could never name is not this provider's host either —
+            // it defers, rather than failing the caller's git operation.
+            Some("-evil"),
+            None,
+        ] {
+            assert!(
+                provider
+                    .credential(&git_request(host))
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "a git request for {host:?} must defer to ambient auth"
+            );
+        }
+        assert_eq!(
+            rec.calls().len(),
+            1,
+            "an unserved git request must not spawn gh"
+        );
+    }
+
+    // `with_git_host` is what lets a GHES account serve git HTTPS: a hostname alone
+    // cannot prove a host is GitHub, so the binding is that statement. It is exact,
+    // not additive (github.com stops being served), it leaves the `gh` path alone,
+    // and git's verbatim `host[:port]` (original case, port kept — see
+    // `vcs_cli_support::https_host`) still resolves to the bare host gh names.
+    #[tokio::test]
+    async fn a_bound_git_host_serves_that_host_and_only_it() {
+        let rec = RecordingRunner::replying(Reply::ok(format!("{ACCOUNT_TOKEN}\n")));
+        let provider = GhAccountToken::with_runner(&rec, "octocat")
+            .with_git_host(GitHubHost::new("ghe.example.com").unwrap());
+
+        let cred = provider
+            .credential(&git_request(Some("GHE.Example.COM:8443")))
+            .await
+            .unwrap()
+            .expect("the bound host is served, port and case included");
         assert_eq!(cred.secret().expose(), ACCOUNT_TOKEN);
         assert_eq!(
             rec.only_call().args_str(),
@@ -5286,6 +5427,27 @@ mod account_token_tests {
                 "ghe.example.com"
             ]
         );
+
+        assert!(
+            provider
+                .credential(&git_request(Some("github.com")))
+                .await
+                .unwrap()
+                .is_none(),
+            "binding a host replaces github.com rather than adding to it"
+        );
+        assert_eq!(rec.calls().len(), 1, "and spawns no gh");
+
+        // The `gh` path is untouched by the binding: there the host comes from the
+        // client this provider is attached to, and `gh` is a GitHub tool either way.
+        provider
+            .credential(&CredentialRequest::new(CredentialService::GitHub).with_host("github.com"))
+            .await
+            .unwrap()
+            .expect("a gh request is served for the client's host");
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].args_str().contains(&"github.com".to_string()));
     }
 
     // End to end through the client: the account's token is injected into the env
