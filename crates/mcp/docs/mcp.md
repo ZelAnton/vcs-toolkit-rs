@@ -56,6 +56,20 @@ Allowing mutations and forcing a forge:
 }
 ```
 
+Serving GitHub under a specific `gh` account — for a machine that holds several
+logins, without `gh auth switch` rewriting which one is active globally:
+
+```json
+{
+  "mcpServers": {
+    "vcs": {
+      "command": "vcs-mcp",
+      "args": ["--repo", "/path/to/repo", "--gh-account", "work-acct"]
+    }
+  }
+}
+```
+
 Install it with `cargo install vcs-mcp` (or point `command` at a built binary).
 
 ### CLI flags
@@ -65,6 +79,7 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
         [--max-output-bytes <n>] [--log-commands]
         [--ssh-command <command>] [--trust-repo-ssh-command]
+        [--gh-account <login> | --gh-token-env <VAR>]
 ```
 
 | Flag | Effect |
@@ -78,7 +93,27 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--log-commands` | Log every git/jj/forge command the server runs — program, argv, working directory, exit code, and duration — to **stderr**, for diagnosing why the server behaves unexpectedly. Off by default. The log goes to stderr only, so the stdout JSON-RPC transport stays clean; argv values that could carry a secret (a token flag, a credentialed URL) are **redacted**, and long free text (a PR/issue body) is truncated. See the safety model below. |
 | `--ssh-command <command>` | Run git's SSH network operations with this command, delivered as `GIT_SSH_COMMAND`. Also lifts the hardened client's `core.sshCommand` refusal (safety model, point 3) — and, because `GIT_SSH_COMMAND` outranks the config key, whatever the repository configured never runs. An empty value is rejected at startup (git would take it as a program named `""` and fail every SSH operation). |
 | `--trust-repo-ssh-command` | Accept a `core.sshCommand` **the repository** configures, lifting the same refusal without pinning a command. It accepts whatever that repository says, including a value added later, so use it for a repository you own that deliberately carries its own ssh identity — overriding such a value would authenticate as somebody else. **`--ssh-command` wins when both are given**, whichever order they appear in: it is the narrower setting, and it keeps the repository's own value from running at all. |
+| `--gh-account <login>` | Run the **forge** tools as this `gh` account instead of the machine's active one — the machine can hold several logins for the same host, but only one is active, and switching it (`gh auth switch`) rewrites global state outside this process. The account's token is resolved per operation with `gh auth token --user <login>` and injected into the command's environment; only the login is ever an argument. GitHub only, and exclusive with `--gh-token-env` (see below). |
+| `--gh-token-env <VAR>` | Take the GitHub token from environment variable `VAR` (the CI case). The flag value is the variable's **name**, not a token; the value is read per operation and injected into the command's environment, never argv. A `VAR` that is unset or blank falls back to the ambient `gh` login — `EnvToken`'s documented "no credential ⇒ ambient auth" behaviour, and the one way this flag differs from `--gh-account`, which is fail-closed (safety model, point 11) — so a name that cannot exist, one containing `=` or whitespace, is rejected at startup instead of silently becoming that fallback. GitHub only, and exclusive with `--gh-account`. |
 | `-h`, `--help` | Print usage and exit. |
+
+Both GitHub identity flags fail at startup rather than being quietly ignored:
+
+- **Both at once** is an error. They name two *different* identities (a `gh`
+  account on this machine vs. a token in the environment), and neither is a
+  narrower form of the other, so there is no precedence rule that could be
+  applied without silently running every call as an identity you didn't pick —
+  the failure `--gh-account` exists to prevent. This is the one place the
+  resolution differs from `--ssh-command` / `--trust-repo-ssh-command`, where one
+  flag genuinely narrows the other and so wins. Repeating *one* of them is fine
+  (last wins, as for `--repo`).
+- **Either one on a non-GitHub forge** is an error naming the flag and the forge.
+  They reach the `gh` client only, so on a GitLab/Gitea forge — or none at all,
+  including an `origin` on an unrecognised host — they would otherwise be inert
+  and leave every call on the ambient login the operator just tried to replace.
+  The check runs after forge detection, so it covers a `--forge` that names
+  another forge *and* an auto-detected one. (Handing the token to `glab`/`tea`
+  instead is not an option: a GitHub token is not their credential.)
 
 ## Tool catalogue
 
@@ -355,6 +390,31 @@ The `vcs-mcp` binary applies, in order:
     text (a PR/issue body, a commit message) is truncated. This is defence in depth on
     top of guard (4) above — the "token never rides in argv" contract — not a
     replacement for it.
+11. **Forge identity is ambient by default, and explicit when it isn't.** With
+    neither GitHub identity flag the forge tools authenticate exactly as the forge
+    CLI would on its own — nothing is injected, and the machine's active `gh`
+    account is used and left alone. `--gh-account <login>` picks a *different* one
+    of the machine's logins **for this server only**: `vcs-github`'s
+    `GhAccountToken` resolves that account's token with `gh auth token --user`
+    (its own client, with the ambient token variables scrubbed from it, so an
+    unrelated `GH_TOKEN` in the environment can't be echoed back in place of the
+    account's) and injects it per operation, so `gh auth switch` — which rewrites
+    the user's global gh state — is never needed. It is **fail-closed**: a login
+    whose token can't be resolved fails the call naming the login, rather than
+    quietly proceeding as the active account, which is the silent identity swap
+    the flag exists to prevent. `--gh-token-env <VAR>` is the CI shape of the same
+    seam and is *not* fail-closed by design — an unset or blank `VAR` defers to
+    the ambient login, which is what the `CredentialProvider` contract says a
+    provider yielding no credential means (a name that could never be a variable
+    is refused at startup so that fallback isn't reached by a typo). Neither flag puts a secret in argv: the flag values are an
+    account **login** and a variable **name**, the tokens travel in the child's
+    environment, and guard (10) never logs the environment — so `--log-commands`
+    can print the identity in use but not the credential. The `gh auth token`
+    probe runs under the same `--timeout` deadline as the commands, since a
+    client's timeout bounds what the client spawns, not credential resolution.
+    Both flags are refused at startup on a non-GitHub (or absent) forge and refuse
+    each other; see "CLI flags" above. This all applies to the **binary**: a
+    library embedder attaches a `CredentialProvider` to the client it builds.
 
 > Note the hardening, timeout, and output budget are how the **binary** constructs
 > the `Repo`/`Forge`. A library embedder that builds a `VcsMcpServer` from

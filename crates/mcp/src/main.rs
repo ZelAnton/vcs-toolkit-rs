@@ -6,6 +6,7 @@
 //!         [--allow-tools <name,…>] [--timeout <seconds>]
 //!         [--max-output-bytes <n>] [--log-commands]
 //!         [--ssh-command <command>] [--trust-repo-ssh-command]
+//!         [--gh-account <login> | --gh-token-env <VAR>]
 //! ```
 //!
 //! Read tools are always available; `--allow-write` enables every mutating tool,
@@ -30,6 +31,14 @@
 //! spawn (program, redacted argv, working directory, exit code, duration) to
 //! **stderr** — the stdout JSON-RPC transport stays a clean transport, and argv
 //! values that could carry a secret are redacted.
+//! The forge tools authenticate through the forge CLI's own ambient login unless
+//! one of the two **GitHub** identity flags picks another: `--gh-account <login>`
+//! runs them as that `gh` account (its token is resolved per operation with
+//! `gh auth token --user`, leaving the machine's active account untouched) and
+//! `--gh-token-env <VAR>` takes the token from that environment variable. They
+//! are mutually exclusive, and either one is an error when the forge in play is
+//! not GitHub. Neither puts a token in argv: only the login, or the variable's
+//! *name*, is ever a command argument.
 //! Content-returning tools (`repo_show_file`, `repo_diff`, `forge_pr_diff`, and the
 //! two conflict tools' working-copy read) are bounded by an
 //! [`OutputBudget`](vcs_core::OutputBudget) so a giant blob or PR diff can't be
@@ -41,6 +50,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::ServiceExt;
@@ -52,7 +62,7 @@ use vcs_core::processkit::{JobRunner, ProcessRunner};
 use vcs_core::vcs_git::Git;
 use vcs_core::vcs_jj::Jj;
 use vcs_forge::vcs_gitea::Gitea;
-use vcs_forge::vcs_github::GitHub;
+use vcs_forge::vcs_github::{GhAccountToken, GitHub};
 use vcs_forge::vcs_gitlab::GitLab;
 use vcs_forge::{Forge, ForgeKind};
 use vcs_mcp::{VcsMcpServer, WriteGate};
@@ -138,6 +148,30 @@ OPTIONS:
                               whatever that repository says. --ssh-command wins
                               when both are given (whatever the order). Applies to
                               the git backend only (see below).
+    --gh-account <login>      Run the forge tools as this `gh` account instead of
+                              the machine's active one. Its token is resolved per
+                              operation with `gh auth token --user <login>` and
+                              injected into the command's environment; the active
+                              account is never switched. Only the login is ever an
+                              argument, so the token stays out of --log-commands.
+                              GITHUB ONLY, and exclusive with --gh-token-env (see
+                              the note under both flags).
+    --gh-token-env <VAR>      Take the GitHub token from environment variable VAR
+                              (for CI). Only the NAME is a flag value; the value
+                              is read per operation and injected into the
+                              command's environment, never argv. An unset or blank
+                              VAR falls back to the ambient `gh` login. GITHUB
+                              ONLY, and exclusive with --gh-account.
+
+                              Both GitHub identity flags fail loudly rather than
+                              being ignored: giving BOTH is a startup error (they
+                              name two different identities, and guessing which
+                              one you meant is exactly the silent identity swap
+                              they exist to prevent), and giving either one when
+                              the forge in play is not GitHub — a --forge naming
+                              another, or an `origin` that resolves to another or
+                              to no forge at all — is a startup error naming the
+                              flag and that forge.
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
@@ -167,6 +201,8 @@ struct Args {
     log_commands: bool,
     /// The resolved `--ssh-command` / `--trust-repo-ssh-command` choice.
     ssh: SshOptIn,
+    /// The resolved `--gh-account` / `--gh-token-env` choice.
+    gh: GhAuth,
 }
 
 /// What the server does about a `core.sshCommand` the served repository
@@ -193,6 +229,44 @@ enum SshOptIn {
     Command(String),
 }
 
+/// Which GitHub identity the forge tools authenticate as — the operator's
+/// `--gh-account` / `--gh-token-env` choice, resolved at parse time.
+///
+/// Unlike [`SshOptIn`], the two flags here are **mutually exclusive rather than
+/// ranked**: neither is a narrower form of the other (a `gh` account login and a
+/// token in an environment variable are two unrelated identities, potentially on
+/// two different GitHub users), so a precedence rule would silently run every
+/// forge call as whichever identity the rule happened to favour — the identity
+/// swap `--gh-account` exists to prevent. Giving both is therefore a parse error;
+/// repeating *one* of them is not (last wins, matching `--repo`/`--ssh-command`).
+///
+/// Both variants carry an identifier, never a secret: the account **login**, or
+/// the **name** of the environment variable. The token itself is resolved per
+/// operation inside the client's credential path and injected into the child's
+/// environment, so it reaches neither argv nor the `--log-commands` log.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+enum GhAuth {
+    /// No flag: the forge CLI's own ambient login, as before.
+    #[default]
+    Ambient,
+    /// `--gh-account <login>`: the token of that `gh` account.
+    Account(String),
+    /// `--gh-token-env <VAR>`: the token in that environment variable.
+    TokenEnv(String),
+}
+
+impl GhAuth {
+    /// The flag that selected this identity, for an error message naming it;
+    /// `None` for [`GhAuth::Ambient`], which no flag selected.
+    fn flag(&self) -> Option<&'static str> {
+        match self {
+            GhAuth::Ambient => None,
+            GhAuth::Account(_) => Some("--gh-account"),
+            GhAuth::TokenEnv(_) => Some("--gh-token-env"),
+        }
+    }
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let Some(args) = parse_args(std::env::args().skip(1))? else {
         // --help was requested; usage already printed.
@@ -207,7 +281,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         args.log_commands,
         &args.ssh,
     )?;
-    let forge = resolve_forge(&repo, args.forge, args.timeout, budget, args.log_commands).await;
+    let forge = resolve_forge(
+        &repo,
+        args.forge,
+        args.timeout,
+        budget,
+        args.log_commands,
+        &args.gh,
+    )
+    .await?;
     // The same ceiling goes to the server itself: the conflict tools read the
     // working copy directly (markers exist nowhere else), so they have no
     // subprocess whose OutputBudget they could inherit — without this the
@@ -334,6 +416,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut log_commands = false;
     let mut ssh_command: Option<String> = None;
     let mut trust_repo_ssh_command = false;
+    let mut gh_account: Option<String> = None;
+    let mut gh_token_env: Option<String> = None;
 
     let mut it = args;
     while let Some(arg) = it.next() {
@@ -362,6 +446,62 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
                 }
                 // Repeated occurrences: last wins, matching --repo/--timeout.
                 ssh_command = Some(value);
+            }
+            "--gh-account" => {
+                let value = it
+                    .next()
+                    .ok_or("--gh-account needs a `gh` account login (e.g. \"octocat\")")?;
+                // Trim here so the login the error messages, the `gh auth token
+                // --user` argument, and the token cache key all name the same
+                // account; a blank value would otherwise reach `gh` as an empty
+                // `--user`, which is not an identity at all.
+                let value = value.trim().to_string();
+                if value.is_empty() {
+                    return Err(
+                        "--gh-account needs a non-empty `gh` account login (e.g. \"octocat\"); \
+                         omit the flag to use gh's active account"
+                            .to_string(),
+                    );
+                }
+                // Repeated occurrences: last wins, matching --repo/--ssh-command.
+                gh_account = Some(value);
+            }
+            "--gh-token-env" => {
+                let value = it.next().ok_or(
+                    "--gh-token-env needs the NAME of an environment variable (e.g. \"GH_TOKEN\"), \
+                     not a token",
+                )?;
+                let value = value.trim().to_string();
+                // No error on this flag echoes its value: an operator who pastes
+                // the *token* where the variable NAME belongs would otherwise have
+                // the secret printed to stderr by the very diagnostic meant to
+                // help them.
+                if value.is_empty() {
+                    return Err(
+                        "--gh-token-env needs a non-empty environment variable NAME (e.g. \
+                         \"GH_TOKEN\"); omit the flag to use gh's ambient login"
+                            .to_string(),
+                    );
+                }
+                // A name no process could hold is rejected here rather than at the
+                // first forge call: `std::env::var` reports an unusable name as
+                // simply *not present*, and this provider treats "not present" as
+                // "fall back to the ambient login" — so a typo would silently run
+                // every forge call as the wrong identity. Only the two characters
+                // that can never appear in an environment variable name are
+                // refused (`=` separates name from value; whitespace survives no
+                // shell), which leaves the platform-specific oddities (Windows'
+                // `ProgramFiles(x86)`) usable.
+                if value.contains('=') || value.chars().any(char::is_whitespace) {
+                    return Err(
+                        "--gh-token-env takes the NAME of an environment variable (e.g. \
+                         \"GH_TOKEN\"); the value given contains `=` or whitespace, which no \
+                         environment variable name can hold"
+                            .to_string(),
+                    );
+                }
+                // Repeated occurrences: last wins, matching --repo/--ssh-command.
+                gh_token_env = Some(value);
             }
             "--allow-tools" => {
                 let value = it
@@ -438,6 +578,21 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         (None, true) => SshOptIn::TrustRepo,
         (None, false) => SshOptIn::Refuse,
     };
+    // The GitHub identity flags are exclusive, not ranked: see `GhAuth`. Neither
+    // value is echoed — `--gh-token-env`'s could be a mispasted token.
+    let gh = match (gh_account, gh_token_env) {
+        (Some(login), None) => GhAuth::Account(login),
+        (None, Some(var)) => GhAuth::TokenEnv(var),
+        (None, None) => GhAuth::Ambient,
+        (Some(_), Some(_)) => {
+            return Err(
+                "--gh-account and --gh-token-env both choose a GitHub identity, and they name \
+                 different ones; pass exactly one (--gh-account <login> for a `gh` account on \
+                 this machine, --gh-token-env <VAR> for a token in the environment)"
+                    .to_string(),
+            );
+        }
+    };
     Ok(Some(Args {
         repo,
         forge,
@@ -446,6 +601,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         max_output_bytes,
         log_commands,
         ssh,
+        gh,
     }))
 }
 
@@ -464,22 +620,29 @@ fn parse_forge(value: &str) -> Result<ForgeKind, String> {
 /// none (forge tools then report "no forge configured"). The forge CLI clients
 /// carry the same per-command `timeout` and content-output `budget` as the repo
 /// client, so `forge_pr_diff` is bounded the same way `repo_show_file` is.
+///
+/// Fails — rather than returning a forge — when a GitHub identity flag was given
+/// for a forge that isn't GitHub; see [`check_gh_auth_forge`]. That check runs
+/// **after** the detection above precisely so it covers the auto-detected case,
+/// not just an explicit `--forge`.
 async fn resolve_forge(
     repo: &Repo<Runner>,
     forced: Option<ForgeKind>,
     timeout: Option<Duration>,
     budget: OutputBudget,
     log_commands: bool,
-) -> Option<Forge<Runner>> {
+    gh: &GhAuth,
+) -> Result<Option<Forge<Runner>>, String> {
     let cwd = repo.root().to_path_buf();
     let kind = match forced {
         Some(k) => Some(k),
         None => detect_forge_kind(repo).await,
     };
+    check_gh_auth_forge(gh, kind, forced.is_some())?;
     // Each forge CLI client exposes the same `with_runner`/`default_timeout`/
     // `default_output_budget` builders, but they are distinct types with no
     // shared trait — so apply them inline per arm.
-    kind.and_then(|k| match k {
+    Ok(kind.and_then(|k| match k {
         ForgeKind::GitHub => {
             let c = GitHub::with_runner(make_runner(log_commands));
             let c = match timeout {
@@ -487,6 +650,11 @@ async fn resolve_forge(
                 None => c,
             };
             let c = c.default_output_budget(budget);
+            // The identity opt-in is applied last, so it composes with (rather
+            // than replaces) the timeout/budget the other flags set. `check_gh_auth_forge`
+            // above has already refused a non-GitHub forge, so this is the only
+            // arm that can carry one.
+            let c = apply_gh_auth(c, gh, || make_runner(log_commands), timeout);
             Some(Forge::from_github(&cwd, c))
         }
         ForgeKind::GitLab => {
@@ -509,7 +677,88 @@ async fn resolve_forge(
         }
         // `ForgeKind` is `#[non_exhaustive]`; a future kind has no constructor here.
         _ => None,
-    })
+    }))
+}
+
+/// Refuse a GitHub identity flag when the forge actually in play is not GitHub.
+///
+/// `--gh-account` / `--gh-token-env` reach exactly one client — the `gh` one — so
+/// on a GitLab/Gitea (or no) forge they would otherwise be **silently inert**: the
+/// server would keep running every forge call under the ambient login the operator
+/// just tried to override, with nothing said. An operator who names an identity is
+/// stating which account the calls must run as, so the honest outcome is a startup
+/// error naming the flag and the forge that displaced it. (Attaching the credential
+/// to `glab`/`tea` instead is not an alternative: a GitHub token is not their
+/// credential, and handing it over would ship the secret to the wrong service.)
+///
+/// `forced` distinguishes the two ways the forge was picked, so the message points
+/// at the thing to change: the `--forge` value, or the repository's `origin`.
+fn check_gh_auth_forge(gh: &GhAuth, kind: Option<ForgeKind>, forced: bool) -> Result<(), String> {
+    let Some(flag) = gh.flag() else {
+        return Ok(());
+    };
+    let source = if forced {
+        "named by --forge"
+    } else {
+        "detected from the repository's `origin` remote"
+    };
+    match kind {
+        Some(ForgeKind::GitHub) => Ok(()),
+        // `Unknown` means "a remote that classifies as no known forge", which is
+        // the same dead end as no forge at all: `resolve_forge` builds no client
+        // for it, so the flag would reach nothing.
+        Some(ForgeKind::Unknown) | None => Err(format!(
+            "{flag} selects a GitHub identity, but this server has no GitHub forge: none was \
+             {source}. Pass `--forge github` if the repository is on GitHub (a self-hosted or \
+             otherwise unrecognised host is never guessed), or drop {flag}."
+        )),
+        Some(other) => Err(format!(
+            "{flag} selects a GitHub identity, but the forge is {} ({source}). The flag reaches \
+             the `gh` client only, so it would change nothing here — drop it, or serve a GitHub \
+             repository.",
+            other.as_str()
+        )),
+    }
+}
+
+/// Attach the resolved [`GhAuth`] to the GitHub client. Split out (and generic
+/// over both runners) so a hermetic test can drive it with recording runners and
+/// check the choice really reaches the spawned `gh` command — `resolve_forge`
+/// itself always builds the real [`JobRunner`].
+///
+/// `probe` is called **only** for [`GhAuth::Account`]: that is the one variant
+/// that resolves its token by running `gh auth token --user <login>`, and it runs
+/// it on its own client (never the caller's, which would recurse back into this
+/// provider). `timeout` bounds that probe, because a client's `default_timeout`
+/// bounds the commands the client spawns, not credential resolution — without it
+/// `--timeout`'s promise that no single stalled call can hang a request would
+/// have a hole exactly the size of this new flag.
+///
+/// Where the provider is attached **is** the service boundary: this is the only
+/// call site, and it holds the `gh` client alone. `GhAccountToken` additionally
+/// refuses a request from another service (and a git request for another host) on
+/// its own, but `EnvToken` — what `with_env_token` installs — answers whatever it
+/// is asked, so keeping it off the git client and the `glab`/`tea` ones is what
+/// stops a GitHub token from reaching a foreign service. `check_gh_auth_forge`
+/// guarantees the non-GitHub arms are never reached with a flag set.
+fn apply_gh_auth<R: ProcessRunner, P: ProcessRunner + 'static>(
+    client: GitHub<R>,
+    gh: &GhAuth,
+    probe: impl FnOnce() -> P,
+    timeout: Option<Duration>,
+) -> GitHub<R> {
+    match gh {
+        GhAuth::Ambient => client,
+        GhAuth::TokenEnv(var) => client.with_env_token(var.as_str()),
+        GhAuth::Account(login) => {
+            let provider = GhAccountToken::with_runner(probe(), login.as_str());
+            let provider = match timeout {
+                Some(t) => provider.default_timeout(t),
+                None => provider,
+            };
+            client.with_credentials(Arc::new(provider))
+        }
+    }
 }
 
 /// Best-effort: read the `origin` remote URL through the backend-agnostic repo
@@ -533,6 +782,7 @@ mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
     use vcs_core::vcs_jj::Jj;
+    use vcs_forge::vcs_github::GitHubApi;
 
     /// Run `parse_args` over a borrowed slice of `&str` args, as if they were argv.
     fn parse(args: &[&str]) -> Result<Option<Args>, String> {
@@ -564,6 +814,11 @@ mod tests {
             args.ssh,
             SshOptIn::Refuse,
             "a repository-configured core.sshCommand is refused unless opted in"
+        );
+        assert_eq!(
+            args.gh,
+            GhAuth::Ambient,
+            "the forge tools use the CLI's ambient login unless a flag picks one"
         );
     }
 
@@ -640,6 +895,134 @@ mod tests {
             USAGE.contains("core.sshCommand"),
             "USAGE must name the key the hardened client refuses"
         );
+    }
+
+    // `--gh-account` carries its login through to the client builder; a missing or
+    // empty value is a startup error, not an empty `gh auth token --user`.
+    #[test]
+    fn gh_account_flag_takes_a_value() {
+        let args = parse(&["--gh-account", "octocat"]).unwrap().unwrap();
+        assert_eq!(args.gh, GhAuth::Account("octocat".to_string()));
+
+        assert!(parse(&["--gh-account"]).is_err(), "value is required");
+        let err = parse_err(&["--gh-account", "   "]);
+        assert!(err.contains("non-empty"), "got: {err}");
+
+        // Surrounding whitespace is trimmed, so the login in the error text, in
+        // the `gh --user` argument, and in the token cache key all agree.
+        let args = parse(&["--gh-account", "  octocat "]).unwrap().unwrap();
+        assert_eq!(args.gh, GhAuth::Account("octocat".to_string()));
+
+        // Repeated: last wins, like --repo/--ssh-command.
+        let args = parse(&["--gh-account", "one", "--gh-account", "two"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(args.gh, GhAuth::Account("two".to_string()));
+    }
+
+    // `--gh-token-env` takes the variable's NAME. A value that cannot be one is
+    // rejected at startup rather than silently resolving to "unset" (which the
+    // provider treats as "use the ambient login" — a silent identity swap), and no
+    // error echoes the value, which may be a mispasted token.
+    #[test]
+    fn gh_token_env_flag_takes_a_variable_name() {
+        let args = parse(&["--gh-token-env", "CI_GH_TOKEN"]).unwrap().unwrap();
+        assert_eq!(args.gh, GhAuth::TokenEnv("CI_GH_TOKEN".to_string()));
+
+        assert!(parse(&["--gh-token-env"]).is_err(), "value is required");
+        let err = parse_err(&["--gh-token-env", "   "]);
+        assert!(err.contains("non-empty"), "got: {err}");
+
+        for bad in ["GH TOKEN", "GH_TOKEN=ghp_secret"] {
+            let err = parse_err(&["--gh-token-env", bad]);
+            assert!(err.contains("NAME"), "got: {err}");
+            assert!(
+                !err.contains(bad),
+                "the rejected value must not be echoed (it may be a token): {err}"
+            );
+        }
+
+        // Repeated: last wins, like --repo/--ssh-command.
+        let args = parse(&["--gh-token-env", "A", "--gh-token-env", "B"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(args.gh, GhAuth::TokenEnv("B".to_string()));
+    }
+
+    // The documented conflict resolution, and the one place it differs from the
+    // SSH pair: two identities can't be ranked, so both flags together are an
+    // error rather than a silent precedence — in either order.
+    #[test]
+    fn gh_identity_flags_are_mutually_exclusive() {
+        for argv in [
+            ["--gh-account", "octocat", "--gh-token-env", "CI_GH_TOKEN"],
+            ["--gh-token-env", "CI_GH_TOKEN", "--gh-account", "octocat"],
+        ] {
+            let err = parse_err(&argv);
+            assert!(err.contains("--gh-account"), "for {argv:?}: {err}");
+            assert!(err.contains("--gh-token-env"), "for {argv:?}: {err}");
+        }
+    }
+
+    // Neither flag is set by default: the forge tools keep the ambient CLI login.
+    #[test]
+    fn gh_identity_is_ambient_by_default() {
+        assert_eq!(parse(&[]).unwrap().unwrap().gh, GhAuth::Ambient);
+        // And they compose with the other options rather than shadowing them.
+        let args = parse(&["--allow-write", "--timeout", "9", "--gh-account", "octocat"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(args.writes, WriteGate::All);
+        assert_eq!(args.timeout, Some(Duration::from_secs(9)));
+        assert_eq!(args.gh, GhAuth::Account("octocat".to_string()));
+    }
+
+    // Either identity flag reaches the `gh` client only, so anything but a GitHub
+    // forge must be a startup error naming the flag and the forge — never a
+    // silently ignored flag that leaves every call on the ambient login.
+    #[test]
+    fn gh_identity_flags_require_a_github_forge() {
+        let account = GhAuth::Account("octocat".to_string());
+        let token_env = GhAuth::TokenEnv("CI_GH_TOKEN".to_string());
+
+        // GitHub, however it was picked: fine.
+        for forced in [true, false] {
+            check_gh_auth_forge(&account, Some(ForgeKind::GitHub), forced).expect("github");
+            check_gh_auth_forge(&token_env, Some(ForgeKind::GitHub), forced).expect("github");
+        }
+
+        // Another forge: named, along with the flag and how the forge was picked.
+        let err = check_gh_auth_forge(&account, Some(ForgeKind::GitLab), true).unwrap_err();
+        assert!(err.contains("--gh-account"), "got: {err}");
+        assert!(err.contains("gitlab"), "names the actual forge: {err}");
+        assert!(err.contains("--forge"), "points at what chose it: {err}");
+
+        let err = check_gh_auth_forge(&token_env, Some(ForgeKind::Gitea), false).unwrap_err();
+        assert!(err.contains("--gh-token-env"), "got: {err}");
+        assert!(err.contains("gitea"), "names the actual forge: {err}");
+        assert!(err.contains("origin"), "points at what chose it: {err}");
+
+        // No forge at all (and the unclassified remote, which builds no client
+        // either): also an error, with the fix spelled out.
+        for kind in [None, Some(ForgeKind::Unknown)] {
+            let err = check_gh_auth_forge(&account, kind, false).unwrap_err();
+            assert!(err.contains("--gh-account"), "for {kind:?}: {err}");
+            assert!(err.contains("--forge github"), "for {kind:?}: {err}");
+        }
+
+        // Without a flag there is nothing to refuse, on any forge.
+        for kind in [None, Some(ForgeKind::GitLab), Some(ForgeKind::GitHub)] {
+            check_gh_auth_forge(&GhAuth::Ambient, kind, false).expect("no flag, no refusal");
+        }
+    }
+
+    // The `--help` text must name both flags: it is where an operator serving a
+    // machine with several `gh` logins learns the server can pick one.
+    #[test]
+    fn usage_documents_the_gh_identity_flags() {
+        for flag in ["--gh-account", "--gh-token-env"] {
+            assert!(USAGE.contains(flag), "USAGE must document {flag}");
+        }
     }
 
     #[test]
@@ -879,6 +1262,141 @@ mod tests {
             !calls[0].has_env("GIT_SSH_COMMAND"),
             "trusting the repository must not also pin a command: {:?}",
             calls[0].env("GIT_SSH_COMMAND")
+        );
+    }
+
+    // The token `--gh-account` resolves must reach `gh` the way every other
+    // credential in this workspace does — in the environment, never in argv, so
+    // `--log-commands` (which logs argv and deliberately never the environment)
+    // cannot print it. The provider is also the only new thing that *spawns*, so
+    // this pins what its own command line carries: the login, and nothing else.
+    #[tokio::test]
+    async fn gh_account_authenticates_gh_without_the_token_reaching_argv() {
+        const TOKEN: &str = "gho_t180_account_token";
+        // `Arc` the probe recorder: attaching the provider coerces it to
+        // `Arc<dyn CredentialProvider>`, which is `'static`, so the probe runner
+        // must be owned — and shared, so the test can still read its calls.
+        let probe = Arc::new(RecordingRunner::replying(Reply::ok(format!("{TOKEN}\n"))));
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let client = apply_gh_auth(
+            GitHub::with_runner(&rec),
+            &GhAuth::Account("octocat".to_string()),
+            || Arc::clone(&probe),
+            Some(Duration::from_secs(9)),
+        );
+
+        client.pr_list(Path::new("/r")).await.expect("pr list");
+
+        let call = rec.only_call();
+        assert!(
+            call.env_is("GH_TOKEN", TOKEN),
+            "the account's token must reach gh in the environment, got {:?}",
+            call.env("GH_TOKEN")
+        );
+        assert!(
+            !call.args_str().iter().any(|a| a.contains(TOKEN)),
+            "the token must never reach argv (that is what --log-commands prints)"
+        );
+        // The one command the provider itself runs names the login only.
+        assert_eq!(
+            probe.only_call().args_str(),
+            ["auth", "token", "--user", "octocat"]
+        );
+    }
+
+    // The env-token path, proved without mutating the process environment (which
+    // `std::env::set_var` makes unsafe precisely because it races every other
+    // test in this binary): point the flag at a variable the test process already
+    // has. What the flag carries is the variable's NAME; the value is read inside
+    // the credential path and injected into the child's environment, so — like the
+    // account path — it is absent from argv.
+    #[tokio::test]
+    async fn gh_token_env_authenticates_gh_from_the_named_variable() {
+        const VAR: &str = "PATH";
+        let expected = std::env::var(VAR).expect("PATH is set for a test process");
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let client = apply_gh_auth(
+            GitHub::with_runner(&rec),
+            &GhAuth::TokenEnv(VAR.to_string()),
+            // Never called for this variant: nothing is spawned to resolve an
+            // environment variable. (The return type is named only because a
+            // diverging closure has none of its own.)
+            || -> JobRunner { unreachable!("--gh-token-env must not spawn a credential probe") },
+            None,
+        );
+
+        client.pr_list(Path::new("/r")).await.expect("pr list");
+
+        let call = rec.only_call();
+        assert!(
+            call.env_is("GH_TOKEN", &expected),
+            "the named variable's value must reach gh in the environment"
+        );
+        assert!(
+            !call.args_str().iter().any(|a| a.contains(&expected)),
+            "the value must never reach argv"
+        );
+    }
+
+    // No flag: the client is handed to the forge exactly as before, with no
+    // credential attached, so the forge tools keep using gh's ambient login.
+    #[tokio::test]
+    async fn ambient_gh_auth_injects_no_token() {
+        let rec = RecordingRunner::replying(Reply::ok("[]"));
+        let client = apply_gh_auth(
+            GitHub::with_runner(&rec),
+            &GhAuth::Ambient,
+            || -> JobRunner { unreachable!("ambient auth must not spawn a credential probe") },
+            None,
+        );
+
+        client.pr_list(Path::new("/r")).await.expect("pr list");
+
+        assert!(
+            !rec.only_call().has_env("GH_TOKEN"),
+            "ambient auth must leave gh's own login in charge"
+        );
+    }
+
+    // The forge gate on the *detected* path — the case an explicit `--forge` check
+    // would miss. The refusal also precedes every client build, so no `gh` probe
+    // (and no GitHub client) is created for a repository that isn't on GitHub.
+    #[tokio::test]
+    async fn resolve_forge_refuses_a_gh_identity_flag_on_a_detected_non_github_forge() {
+        let rec = Arc::new(RecordingRunner::replying(Reply::ok(
+            "origin https://gitlab.com/example/repo.git\n",
+        )));
+        let runner: Runner = Box::new(Arc::clone(&rec));
+        let repo = Repo::from_jj("/r", "/r", Jj::with_runner(runner));
+
+        let err = resolve_forge(
+            &repo,
+            None,
+            None,
+            OutputBudget::unlimited(),
+            false,
+            &GhAuth::Account("octocat".to_string()),
+        )
+        .await
+        .expect_err("a detected GitLab forge must refuse --gh-account");
+        assert!(err.contains("--gh-account"), "got: {err}");
+        assert!(err.contains("gitlab"), "names the detected forge: {err}");
+        // Only the remote query ran — the refusal happens before any forge client.
+        assert_eq!(rec.calls().len(), 1);
+
+        // The same repository without the flag still resolves its GitLab forge.
+        assert!(
+            resolve_forge(
+                &repo,
+                None,
+                None,
+                OutputBudget::unlimited(),
+                false,
+                &GhAuth::Ambient
+            )
+            .await
+            .expect("no flag, no refusal")
+            .is_some()
         );
     }
 

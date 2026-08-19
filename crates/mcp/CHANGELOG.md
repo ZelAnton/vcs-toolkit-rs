@@ -28,6 +28,29 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `.jj` wins backend detection, so on a jj or colocated repository
   `repo_fetch`/`repo_push` run `jj git fetch`/`jj git push`, no check runs, the
   flags do nothing, and the repository's `core.sshCommand` still executes.
+- **`--gh-account <login>` and `--gh-token-env <VAR>`** — pick the GitHub identity
+  the `forge_*` tools run as, instead of always inheriting whichever `gh` account
+  is active on the machine (previously the only way to change it was
+  `gh auth switch`, which rewrites the user's global gh state for every tool, not
+  just this server). `--gh-account` attaches `vcs-github`'s `GhAccountToken`, which
+  resolves that account's token with `gh auth token --user <login>` per operation
+  and fails the call — naming the login — if it cannot, rather than quietly
+  running as the active account; `--gh-token-env` reads the token from the named
+  environment variable (`GitHub::with_env_token`, the CI case) and takes the
+  variable's **name**, refusing at startup a value that could not be one (`=` or
+  whitespace) so a typo can't silently degrade to the ambient login. Neither puts
+  a secret in argv — the tokens travel in the child process's environment, which
+  `--log-commands` never logs — so the log can show which identity is in use but
+  not the credential, and the `gh auth token` probe runs under the same
+  `--timeout` deadline as every other command. The two flags are **mutually
+  exclusive** (giving both is a startup error: they name two different identities,
+  and unlike `--ssh-command`/`--trust-repo-ssh-command` neither is a narrower form
+  of the other, so any precedence rule would silently pick an identity the
+  operator did not), and either one is a startup error when the forge in play is
+  not GitHub — a `--forge` naming another, or an `origin` that resolves to another
+  or to no forge — because they reach the `gh` client alone and would otherwise be
+  silently inert. With neither flag, behaviour is unchanged: ambient forge-CLI
+  auth.
 
 ### Changed
 - `repo_snapshot`'s tool description now documents the new
