@@ -5,6 +5,7 @@
 //! vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 //!         [--allow-tools <name,…>] [--timeout <seconds>]
 //!         [--max-output-bytes <n>] [--log-commands]
+//!         [--ssh-command <command>] [--trust-repo-ssh-command]
 //! ```
 //!
 //! Read tools are always available; `--allow-write` enables every mutating tool,
@@ -13,10 +14,13 @@
 //! overrides it. The git client is **hardened** (repo hooks and `core.fsmonitor`
 //! disabled, with the code-execution `GIT_*` variables scrubbed) so serving a
 //! repository you didn't create can't execute its hooks, and every command
-//! carries a `--timeout` so a stalled network call can't hang the server. That
-//! profile does *not* disable repo-local config wholesale — see "A hardened git
-//! client" in `crates/mcp/docs/mcp.md` for the residual vectors it leaves
-//! (`core.sshCommand`, `filter.*`, `diff.*.textconv`).
+//! carries a `--timeout` so a stalled network call can't hang the server. The
+//! hardened client also **refuses** a network operation when the repository
+//! overrides `core.sshCommand` (git would run that value through a shell);
+//! `--ssh-command` / `--trust-repo-ssh-command` are the two explicit ways to
+//! continue. That profile does *not* disable repo-local config wholesale — see
+//! "A hardened git client" in `crates/mcp/docs/mcp.md` for the residual vectors it
+//! leaves (`filter.*`, `diff.*.textconv`).
 //! `--log-commands` wraps the git/jj/forge clients in a command-logging
 //! [`ProcessRunner`](vcs_cli_support::logging::LoggingRunner) that reports every
 //! spawn (program, redacted argv, working directory, exit code, duration) to
@@ -119,13 +123,26 @@ OPTIONS:
                               for diagnostics. stdout stays a clean JSON-RPC
                               transport; argv values that could carry a secret
                               are redacted. Off by default.
+    --ssh-command <command>   Run SSH network operations with this command
+                              (delivered as GIT_SSH_COMMAND). Also lifts the
+                              refusal below, and outranks whatever the
+                              repository set, so its value never runs.
+    --trust-repo-ssh-command  Accept a `core.sshCommand` the REPOSITORY sets, and
+                              lift the refusal below. Use it for a repository you
+                              own that carries its own ssh identity — it accepts
+                              whatever that repository says. --ssh-command wins
+                              when both are given (whatever the order).
     -h, --help                Print this help
 
 The server speaks MCP over stdio; point an agent harness at it via a
 `mcpServers` config entry. The git client is hardened (repo hooks and
 `core.fsmonitor` disabled), so serving a repository you didn't create can't run
-its hooks; repo-local config is not disabled wholesale — see \"A hardened git
-client\" in the vcs-mcp guide for the vectors it leaves.";
+its hooks. It also refuses a git network operation (repo_fetch/repo_push) when
+the repository overrides `core.sshCommand` — git runs that value through a
+shell — naming the value and these two flags; a `core.sshCommand` that is only
+in your own global git config is not affected. Repo-local config is otherwise
+not disabled wholesale — see \"A hardened git client\" in the vcs-mcp guide for
+the vectors it leaves (`filter.*`, `diff.*.textconv`).";
 
 struct Args {
     repo: PathBuf,
@@ -138,6 +155,32 @@ struct Args {
     max_output_bytes: Option<usize>,
     /// Wrap the clients' runner in a command-logging decorator (`--log-commands`).
     log_commands: bool,
+    /// The resolved `--ssh-command` / `--trust-repo-ssh-command` choice.
+    ssh: SshOptIn,
+}
+
+/// What the server does about a `core.sshCommand` the served repository
+/// configures — the operator's half of the hardened client's SSH-transport
+/// refusal (`Git::harden`).
+///
+/// The two flags are resolved into one value **at parse time**, so the outcome
+/// does not depend on which one appeared last on the command line: `--ssh-command`
+/// wins. It is the narrower and safer of the two (it names exactly what will run,
+/// and `GIT_SSH_COMMAND` outranks the repository's key so that key never
+/// executes), whereas `--trust-repo-ssh-command` accepts whatever the repository
+/// says. When an operator asks for both, honouring the specific one can only
+/// narrow what runs. This mirrors how `--allow-write` / `--allow-tools` are
+/// resolved once, after the parse loop, rather than by flag order.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+enum SshOptIn {
+    /// No opt-in: a repository-configured `core.sshCommand` refuses the network
+    /// operation (naming both flags).
+    #[default]
+    Refuse,
+    /// `--trust-repo-ssh-command`.
+    TrustRepo,
+    /// `--ssh-command <command>`.
+    Command(String),
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -147,7 +190,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let budget = output_budget(args.max_output_bytes);
-    let repo = open_repo(&args.repo, args.timeout, budget, args.log_commands)?;
+    let repo = open_repo(
+        &args.repo,
+        args.timeout,
+        budget,
+        args.log_commands,
+        &args.ssh,
+    )?;
     let forge = resolve_forge(&repo, args.forge, args.timeout, budget, args.log_commands).await;
     // The same ceiling goes to the server itself: the conflict tools read the
     // working copy directly (markers exist nowhere else), so they have no
@@ -180,10 +229,11 @@ fn open_repo(
     timeout: Option<Duration>,
     budget: OutputBudget,
     log_commands: bool,
+    ssh: &SshOptIn,
 ) -> Result<Repo<Runner>, Box<dyn std::error::Error>> {
     let repo = Repo::discover_with(
         dir,
-        || hardened_git(timeout, budget, log_commands),
+        || hardened_git(timeout, budget, log_commands, ssh),
         || jj_client(timeout, budget, log_commands),
     )?;
     Ok(repo)
@@ -210,20 +260,39 @@ fn output_budget(max_bytes: Option<usize>) -> OutputBudget {
     }
 }
 
-/// A hardened git client carrying the optional per-command `timeout` and the
-/// content-output `budget`, driving the (optionally command-logging) runner.
-/// `Git::with_runner(...).harden()` is `Git::hardened()` with the injected runner.
+/// A hardened git client carrying the optional per-command `timeout`, the
+/// content-output `budget`, and the operator's SSH opt-in, driving the (optionally
+/// command-logging) runner. `Git::with_runner(...).harden()` is `Git::hardened()`
+/// with the injected runner.
+///
+/// The `ssh` opt-in is applied to the **client**, which is what the repo tools
+/// end up running through: `Repo::discover_with` takes this very client and every
+/// `repo_fetch`/`repo_push` dispatches to it, so the setting reaches the actual
+/// network calls without any facade-level plumbing.
 fn hardened_git(
     timeout: Option<Duration>,
     budget: OutputBudget,
     log_commands: bool,
+    ssh: &SshOptIn,
 ) -> Git<Runner> {
     let git = Git::with_runner(make_runner(log_commands)).harden();
     let git = match timeout {
         Some(t) => git.default_timeout(t),
         None => git,
     };
-    git.default_output_budget(budget)
+    apply_ssh_opt_in(git, ssh).default_output_budget(budget)
+}
+
+/// Map the resolved [`SshOptIn`] onto the git client's builders. Split out (and
+/// generic over the runner) so a hermetic test can drive it with a recording
+/// runner and check the choice really lands on the network command — `hardened_git`
+/// itself always builds the real `JobRunner`.
+fn apply_ssh_opt_in<R: ProcessRunner>(git: Git<R>, ssh: &SshOptIn) -> Git<R> {
+    match ssh {
+        SshOptIn::Refuse => git,
+        SshOptIn::TrustRepo => git.trust_repo_ssh_command(),
+        SshOptIn::Command(command) => git.with_ssh_command(command),
+    }
 }
 
 /// A jj client carrying the optional per-command `timeout` and the content-output
@@ -247,6 +316,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut timeout = Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
     let mut max_output_bytes = Some(DEFAULT_MAX_OUTPUT_BYTES);
     let mut log_commands = false;
+    let mut ssh_command: Option<String> = None;
+    let mut trust_repo_ssh_command = false;
 
     let mut it = args;
     while let Some(arg) = it.next() {
@@ -257,6 +328,25 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             }
             "--allow-write" => allow_write = true,
             "--log-commands" => log_commands = true,
+            "--trust-repo-ssh-command" => trust_repo_ssh_command = true,
+            "--ssh-command" => {
+                let value = it
+                    .next()
+                    .ok_or("--ssh-command needs a command (e.g. \"ssh -i /path/to/key\")")?;
+                // An empty value is rejected here rather than at the first network
+                // call: git treats `GIT_SSH_COMMAND` as *set* regardless of its
+                // value, so an empty one makes every SSH operation die with
+                // `cannot spawn` — a startup error is far clearer than that.
+                if value.trim().is_empty() {
+                    return Err(
+                        "--ssh-command needs a non-empty command (e.g. \"ssh -i /path/to/key\"); \
+                         omit the flag to use git's built-in ssh"
+                            .to_string(),
+                    );
+                }
+                // Repeated occurrences: last wins, matching --repo/--timeout.
+                ssh_command = Some(value);
+            }
             "--allow-tools" => {
                 let value = it
                     .next()
@@ -323,6 +413,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     } else {
         WriteGate::None
     };
+    // --ssh-command wins over --trust-repo-ssh-command, in either order: it names
+    // exactly what will run and (via GIT_SSH_COMMAND) keeps the repository's own
+    // value from executing, so it can only narrow what the broader flag allows.
+    // See `SshOptIn`.
+    let ssh = match (ssh_command, trust_repo_ssh_command) {
+        (Some(command), _) => SshOptIn::Command(command),
+        (None, true) => SshOptIn::TrustRepo,
+        (None, false) => SshOptIn::Refuse,
+    };
     Ok(Some(Args {
         repo,
         forge,
@@ -330,6 +429,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         timeout,
         max_output_bytes,
         log_commands,
+        ssh,
     }))
 }
 
@@ -415,7 +515,7 @@ async fn detect_forge_kind<R: vcs_core::processkit::ProcessRunner>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use processkit::testing::{RecordingRunner, Reply};
+    use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
     use vcs_core::vcs_jj::Jj;
 
     /// Run `parse_args` over a borrowed slice of `&str` args, as if they were argv.
@@ -444,6 +544,86 @@ mod tests {
         );
         assert_eq!(args.max_output_bytes, Some(DEFAULT_MAX_OUTPUT_BYTES));
         assert!(!args.log_commands, "command logging is off by default");
+        assert_eq!(
+            args.ssh,
+            SshOptIn::Refuse,
+            "a repository-configured core.sshCommand is refused unless opted in"
+        );
+    }
+
+    // `--ssh-command` carries its value through to the client builder; a missing
+    // or empty value is a startup error, not a network-time `cannot spawn`.
+    #[test]
+    fn ssh_command_flag_takes_a_value() {
+        let args = parse(&["--ssh-command", "ssh -i /keys/id_ed25519"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            args.ssh,
+            SshOptIn::Command("ssh -i /keys/id_ed25519".to_string())
+        );
+
+        assert!(parse(&["--ssh-command"]).is_err(), "value is required");
+        let err = parse_err(&["--ssh-command", "   "]);
+        assert!(err.contains("non-empty"), "got: {err}");
+
+        // Repeated: last wins, like --repo/--timeout.
+        let args = parse(&["--ssh-command", "ssh -1", "--ssh-command", "ssh -2"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(args.ssh, SshOptIn::Command("ssh -2".to_string()));
+    }
+
+    #[test]
+    fn trust_repo_ssh_command_flag_is_a_switch() {
+        let args = parse(&["--trust-repo-ssh-command"]).unwrap().unwrap();
+        assert_eq!(args.ssh, SshOptIn::TrustRepo);
+    }
+
+    // The documented conflict resolution: the specific command wins over "trust
+    // whatever the repository set", whichever order the two flags arrive in.
+    #[test]
+    fn ssh_command_wins_over_trust_repo_ssh_command() {
+        for argv in [
+            ["--trust-repo-ssh-command", "--ssh-command", "ssh -i k"],
+            ["--ssh-command", "ssh -i k", "--trust-repo-ssh-command"],
+        ] {
+            let args = parse(&argv).unwrap().unwrap();
+            assert_eq!(
+                args.ssh,
+                SshOptIn::Command("ssh -i k".to_string()),
+                "for {argv:?}"
+            );
+        }
+    }
+
+    // The two flags coexist with the other options rather than shadowing them.
+    #[test]
+    fn ssh_flags_compose_with_the_write_gate_and_timeout() {
+        let args = parse(&[
+            "--allow-write",
+            "--timeout",
+            "9",
+            "--trust-repo-ssh-command",
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(args.writes, WriteGate::All);
+        assert_eq!(args.timeout, Some(Duration::from_secs(9)));
+        assert_eq!(args.ssh, SshOptIn::TrustRepo);
+    }
+
+    // The `--help` text must name both flags: it is the only place an operator
+    // hitting the refusal learns how to continue (the error names them too).
+    #[test]
+    fn usage_documents_the_ssh_opt_ins() {
+        for flag in ["--ssh-command", "--trust-repo-ssh-command"] {
+            assert!(USAGE.contains(flag), "USAGE must document {flag}");
+        }
+        assert!(
+            USAGE.contains("core.sshCommand"),
+            "USAGE must name the key the hardened client refuses"
+        );
     }
 
     #[test]
@@ -606,6 +786,84 @@ mod tests {
     fn output_budget_conversion() {
         assert_eq!(output_budget(None), OutputBudget::unlimited());
         assert_eq!(output_budget(Some(4096)), OutputBudget::bytes(4096));
+    }
+
+    // The SSH opt-in is a *client* setting, and the repo tools run through the
+    // very client `open_repo` hands to `Repo::discover_with` — so a flag set here
+    // must be observable on the actual network command the facade spawns, not just
+    // on the `Git` value this binary built. Both opt-ins are checked end to end
+    // through `Repo::fetch` (what `repo_fetch` calls):
+    //
+    //   * `--ssh-command` must put its exact value in `GIT_SSH_COMMAND` on the
+    //     fetch (git gives that precedence over any repo `core.sshCommand`), and
+    //   * `--trust-repo-ssh-command` must let the fetch run against a repository
+    //     whose `core.sshCommand` differs from the global one — the case a
+    //     hardened client refuses without an opt-in.
+    //
+    // Both also prove the opt-in costs no config probe: exactly one command runs.
+    #[tokio::test]
+    async fn ssh_opt_in_reaches_the_network_call_through_the_facade() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = apply_ssh_opt_in(
+            Git::with_runner(&rec).harden(),
+            &SshOptIn::Command("ssh -i /keys/id_ed25519".to_string()),
+        );
+        Repo::from_git("/r", "/r", git)
+            .fetch()
+            .await
+            .expect("fetch with a pinned ssh command");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "opt-in must not spawn a config probe");
+        let call = &calls[0];
+        assert!(
+            call.args_str().contains(&"fetch".to_string()),
+            "expected the fetch, got {:?}",
+            call.args_str()
+        );
+        // `env_is` reads the EFFECTIVE override (last write wins), which is what
+        // the child will see: the hardened profile's scrub of this same variable
+        // is still in the list, ahead of the per-command pin that supersedes it.
+        assert!(
+            call.env_is("GIT_SSH_COMMAND", "ssh -i /keys/id_ed25519"),
+            "the flag's value must reach git as GIT_SSH_COMMAND, got {:?}",
+            call.env("GIT_SSH_COMMAND")
+        );
+    }
+
+    #[tokio::test]
+    async fn trust_repo_ssh_command_lets_a_repo_configured_value_through() {
+        // A repository that overrides the (absent) global `core.sshCommand`: the
+        // shape a hardened client refuses when nothing is opted in.
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "config", "--get", "core.sshCommand"],
+                    Reply::ok("/tmp/evil"),
+                )
+                .fallback(Reply::ok("")),
+        );
+        let git = apply_ssh_opt_in(Git::with_runner(&rec).harden(), &SshOptIn::TrustRepo);
+        Repo::from_git("/r", "/r", git)
+            .fetch()
+            .await
+            .expect("--trust-repo-ssh-command must lift the refusal");
+
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1, "trusting must not spawn a config probe");
+        assert!(
+            calls[0].args_str().contains(&"fetch".to_string()),
+            "expected the fetch, got {:?}",
+            calls[0].args_str()
+        );
+        // The hardened profile still *scrubs* an inherited GIT_SSH_COMMAND (a
+        // removal, which `has_env` reports as absent); what must not happen is a
+        // pinned value — trusting the repository means running ITS command.
+        assert!(
+            !calls[0].has_env("GIT_SSH_COMMAND"),
+            "trusting the repository must not also pin a command: {:?}",
+            calls[0].env("GIT_SSH_COMMAND")
+        );
     }
 
     // A `Repo` backed by jj has no need for a colocated `.git`: its remote list

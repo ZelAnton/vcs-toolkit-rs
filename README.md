@@ -399,10 +399,13 @@ Two layers, both on by default or one call away:
   disables hooks and `core.fsmonitor`, scrubs repo-redirecting `GIT_*` variables
   *and* the env-based command hooks that make git spawn an arbitrary program
   (`GIT_SSH_COMMAND`/`GIT_ASKPASS`/`GIT_EXTERNAL_DIFF`/…), skips system config,
-  and keeps prompts off — on every command the client runs. (It is hardening, not
-  a sandbox: repo-local `filter`/`textconv` and `core.sshCommand` keys survive, so
-  don't checkout, diff, or run SSH fetch/push against a *fully* untrusted repo
-  without an OS sandbox — see the security guide.) jj needs no equivalent
+  and keeps prompts off — on every command the client runs. Its network verbs also
+  **refuse** to run when the repository overrides `core.sshCommand` (git would run
+  that value through a shell); a value in your own global config is unaffected, and
+  `with_ssh_command(…)` / `trust_repo_ssh_command()` are the two explicit ways to
+  continue. (It is still hardening, not a sandbox: repo-local `filter`/`textconv`
+  keys survive, so don't checkout or diff a *fully* untrusted repo without an OS
+  sandbox — see the security guide.) jj needs no equivalent
   (no repo-local hooks); in a colocated repo, harden the `Git` client you point at it.
 
 A related opt-in is **supplying** a secret rather than guarding against one:

@@ -10,10 +10,61 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`Git::with_ssh_command` / `Git::trust_repo_ssh_command`** — the two explicit
+  opt-ins out of the new hardened `core.sshCommand` refusal below.
+  `with_ssh_command(<command>)` runs SSH network operations with that command,
+  delivered per call as `GIT_SSH_COMMAND` (which git gives precedence over any
+  `core.sshCommand`, so a repository's value never runs); it applies to a plain
+  client too, where it is simply "use this ssh command". `trust_repo_ssh_command()`
+  accepts whatever the repository configured. Both skip the detection entirely, so
+  they cost no extra spawn; both write the same slot, so the last call wins. An
+  empty/whitespace-only pinned command is refused before spawning (git would read
+  it as a program named `""`, the same failure mode the removed empty pin caused).
+  The hardened scrub of `GIT_SSH_COMMAND`/`GIT_SSH` is unchanged for every other
+  command and every client that does not opt in.
 
 ### Changed
--
+- **`harden()` now refuses a network operation when the repository overrides
+  `core.sshCommand`** (a security fix for the vector the removed empty pin left
+  open, below). git runs that key's value **through a shell** for the SSH
+  transport, and it cannot be pinned away — so before each network operation on an
+  existing working tree (`fetch`/`fetch --progress`/`fetch <remote>`/
+  `fetch origin <refspec>`, `push` and its progress twin, `ls-remote` behind
+  `remote_branches`/`remote_branch_exists`, and `submodule update`) a hardened
+  client reads the **effective** value (`git config --get core.sshCommand`) and
+  compares it with the **trusted** one (`git config --global --get
+  core.sshCommand`), both through the same client. They differ — including when the
+  repository has a value and the user has none — and the operation fails before
+  anything spawns with an `ErrorReason::Spawn` / `InvalidInput` error naming the
+  key, the value found (truncated and escaped), and both opt-ins. A
+  `core.sshCommand` that lives only in the **user's global config** reads the same
+  both ways and is never refused.
+
+  Comparing is what makes the detection complete: `git config --local --get` sees
+  neither a value pulled in by a repo-controlled `include.path` nor one written by
+  `git config --worktree` under `extensions.worktreeConfig` (both verified against
+  git 2.54, both covered by integration tests here). The two values are compared as
+  raw strings — no path normalization, no `--show-origin` parsing. Silently
+  overriding the key was rejected as a design: a repository that legitimately
+  carries its own ssh identity would then authenticate as somebody else.
+
+  Cost and scope: one `git config --get` per network operation, plus the global
+  read once per client (cached, and not reached at all when the effective value is
+  absent — the clean-repository case). `clone` is exempt (no working tree yet, so
+  no repo-local config to read) and spawns no probe. A plain `Git::new()` client is
+  **not** affected: it keeps exactly the commands and behaviour it had. This is a
+  behaviour change for hardened callers whose repositories set `core.sshCommand`
+  deliberately — such a call now fails with a message naming the two opt-ins,
+  rather than silently running the repository's command. The check reads the config
+  a moment before git does, so it does not close the (documented) window in which a
+  concurrently-rewritten repository could still slip a value past it: `harden()` is
+  hardening, not a sandbox.
+
+  One snapshot-visible side effect: caching the trusted value gives `Git<R>` a
+  `OnceLock`, so it no longer implements the compiler-internal `Freeze` auto-trait
+  (`public-api.txt` records `impl<R> !Freeze for Git<R>`). `Freeze` is unstable and
+  unnameable on stable Rust, so no consumer can bind on it; `Send`/`Sync`/`Unpin`
+  and every nameable impl are unchanged.
 
 ### Fixed
 - **`harden()` no longer breaks every SSH network operation.** The hardened
@@ -35,10 +86,12 @@ crates; tag releases as `vcs-git-v<version>`.
   through a shell while the built-in default is spawned directly, so pinning e.g.
   `ssh` would silently change which ssh binary — and which identity — is used on a
   host with more than one ssh install. Repo-local `core.sshCommand` is therefore
-  **not** neutralized by `harden()` any more, and the hardening docs now say so
-  next to the existing `filter.*` / `diff.*.textconv` residual vectors; treat SSH
-  network operations against a fully untrusted repository as needing an OS-level
-  sandbox until that vector is closed by a separate change. Covered by a unit test
+  **not** neutralized by `harden()` any more; it is **detected and refused**
+  instead, with two explicit opt-ins, by the `harden()` change under *Changed*
+  above — the two entries ship in this same release, so no published version has
+  the pin removed without that refusal in place. The hardening docs describe the
+  refusal next to the remaining `filter.*` / `diff.*.textconv` residual vectors.
+  Covered by a unit test
   asserting no `GIT_CONFIG_KEY_n` names `core.sshCommand` under any index, and by
   an integration test that puts a stub `ssh` first on `PATH` (the profile scrubs
   `GIT_SSH_COMMAND`, so `PATH` is the only injection point) and requires a real

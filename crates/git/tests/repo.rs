@@ -13,7 +13,9 @@ use vcs_git::{
     MergeCheck, MergeCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleState,
     SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
-use vcs_testkit::{BareRemote, GitSandbox, TempDir, configure_identity as configure};
+use vcs_testkit::{
+    BareRemote, GitSandbox, TempDir, configure_identity as configure, git as git_cli,
+};
 
 // Terse constructors for the validated newtypes in test call sites; the literals
 // here are always valid, so `unwrap` is fine in tests.
@@ -1865,6 +1867,234 @@ async fn clean_respects_gitignore_unless_told_to_include_or_only_ignored() {
     assert!(!dir.join("ignored.txt").exists());
     assert!(!dir.join("plain.txt").exists());
     assert!(dir.join(".gitignore").exists(), "tracked file must survive");
+}
+
+// T-177: the hardened `core.sshCommand` check, against the REAL git binary.
+//
+// The hermetic tests in `src/lib.rs` pin what the client does with a given
+// (effective, global) pair. What they cannot pin is the premise the whole design
+// rests on: that `git config --get core.sshCommand` really does see every level a
+// repository can poison, while `git config --global --get` sees only the user's
+// own. That premise is exactly where the original report was wrong — its
+// `--local --get` recipe misses BOTH an `include.path`-supplied value and a
+// `--worktree` one (verified on git 2.54) — so each poisoning shape is planted in
+// a real repository here and the refusal is required to fire.
+//
+// A hermetic global config (`GIT_CONFIG_GLOBAL`, re-registered after `harden()`
+// scrubs it — last registration wins) makes the comparison independent of the
+// developer's or runner's own `core.sshCommand`, which on this project's own
+// machines is legitimately set.
+//
+// No remote is configured in any of these repositories: a refusal happens before
+// git runs at all, and the negative controls only need git's own complaint, so
+// nothing here touches the network.
+
+/// Plant `value` as the repository's `core.sshCommand` in `shape`, then return
+/// what a hardened client bound to a hermetic (empty unless `global`) global
+/// config does with `fetch`.
+async fn hardened_fetch_with_repo_ssh_command(
+    tmp: &TempDir,
+    shape: &str,
+    value: &str,
+) -> vcs_git::Result<()> {
+    let dir = tmp.path();
+    // An EMPTY hermetic global config: the "the repository configures one and the
+    // user has none" case, which is a difference and must refuse.
+    let global_config = dir.join("hermetic-gitconfig");
+    std::fs::write(&global_config, "").expect("write the hermetic global config");
+
+    let git = Git::hardened().default_env("GIT_CONFIG_GLOBAL", &global_config);
+    git.init(dir).await.expect("init");
+    configure(dir);
+
+    match shape {
+        // Straight into `.git/config` — the obvious shape.
+        "local" => {
+            git.config_set(dir, "core.sshCommand", value)
+                .await
+                .expect("set the repo-local ssh command");
+        }
+        // Into a file `.git/config` includes. The repository controls both, and
+        // `git config --local --get` does NOT report it (only a full read does) —
+        // the regression the original detection recipe would have shipped.
+        "include" => {
+            let included = dir.join(".git").join("included.config");
+            std::fs::write(&included, format!("[core]\n\tsshCommand = {value}\n"))
+                .expect("write the included config");
+            git.config_set(
+                dir,
+                "include.path",
+                included.to_str().expect("utf-8 temp path"),
+            )
+            .await
+            .expect("set include.path");
+        }
+        // Into the per-worktree config. Also invisible to `--local --get`.
+        // Written through the testkit's dir-bound `git` helper on purpose: the
+        // typed client has no `--worktree` verb, and `GitApi::run` is DIRLESS —
+        // using it here would run `git config` in the test process' own cwd and
+        // write the poisoned key into whatever repository encloses the checkout.
+        _ => {
+            git.config_set(dir, "extensions.worktreeConfig", "true")
+                .await
+                .expect("enable worktree config");
+            git_cli(
+                dir,
+                &["config", "--worktree", "--", "core.sshCommand", value],
+            );
+        }
+    }
+
+    // The premise this whole design rests on, checked on the live binary: the
+    // `include`/`worktree` shapes are invisible to `git config --local --get`
+    // (the original report's recipe) while the effective read below sees them.
+    if shape != "local" {
+        let local = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["config", "--local", "--get", "core.sshCommand"])
+            .output()
+            .expect("run git config --local --get");
+        assert_ne!(
+            local.status.code(),
+            Some(0),
+            "`--local --get` must NOT see the {shape} shape (it is why the effective \
+             vs global comparison exists), got {:?}",
+            String::from_utf8_lossy(&local.stdout)
+        );
+    }
+
+    // Sanity: the shape really is one the *effective* read sees, so a passing
+    // test can't be a false pass from a config that was never written.
+    assert_eq!(
+        git.config_get(dir, "core.sshCommand")
+            .await
+            .expect("read back the effective value")
+            .as_deref(),
+        Some(value),
+        "the {shape} shape must be visible to `config --get`"
+    );
+
+    git.fetch(dir).await
+}
+
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn hardened_client_refuses_every_repo_configured_ssh_command_shape() {
+    for shape in ["local", "include", "worktree"] {
+        let tmp = TempDir::new(&format!("harden-ssh-{shape}"));
+        let value = "/tmp/evil-ssh --payload";
+        let err = match hardened_fetch_with_repo_ssh_command(&tmp, shape, value).await {
+            Err(err) => err,
+            Ok(()) => panic!("the {shape} shape must be refused"),
+        };
+
+        assert!(
+            matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "{shape}: refused before spawning, got {:?}",
+            err.reason()
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("core.sshCommand") && message.contains(value),
+            "{shape}: the error must name the key and the value: {message}"
+        );
+        assert!(
+            message.contains("with_ssh_command") && message.contains("trust_repo_ssh_command"),
+            "{shape}: the error must name both opt-ins: {message}"
+        );
+    }
+}
+
+// The false-positive control, on the real binary: a `core.sshCommand` that exists
+// only in the USER's global config is legitimate (this project's own machines set
+// one) and must not refuse anything. The repository below has no override, so the
+// two reads agree and the fetch proceeds to git — which then fails with its own
+// "no remote" complaint, never ours.
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn hardened_client_does_not_refuse_a_global_only_ssh_command() {
+    let tmp = TempDir::new("harden-ssh-global");
+    let dir = tmp.path();
+    let global_config = dir.join("hermetic-gitconfig");
+    std::fs::write(
+        &global_config,
+        "[core]\n\tsshCommand = \"C:/Windows/System32/OpenSSH/ssh.exe\" -F /home/me/.ssh/config\n",
+    )
+    .expect("write the hermetic global config");
+
+    let git = Git::hardened().default_env("GIT_CONFIG_GLOBAL", &global_config);
+    git.init(dir).await.expect("init");
+    configure(dir);
+    // The premise: the value IS effective here (it comes from the global level),
+    // so a naive "is this key set?" check would refuse — this is the case the
+    // comparison exists to let through.
+    assert!(
+        git.config_get(dir, "core.sshCommand")
+            .await
+            .expect("read the effective value")
+            .is_some(),
+        "the global value must be effective in the repository"
+    );
+
+    assert_not_refused(git.fetch(dir).await, "a global-only value");
+}
+
+/// Assert a network call was **not** stopped by the hardened `core.sshCommand`
+/// check. Whether git itself then succeeds is deliberately not asserted: these
+/// repositories have no remote, and what `git fetch` does with none (exit 0 on
+/// git 2.54) is git's business, not this check's. What matters is that the
+/// refusal — which happens before git runs at all — did not fire.
+fn assert_not_refused(outcome: vcs_git::Result<()>, what: &str) {
+    if let Err(err) = outcome {
+        let message = err.to_string();
+        assert!(
+            !message.contains("refusing a network operation")
+                && !message.contains("core.sshCommand"),
+            "{what} must not be refused, got: {message}"
+        );
+        assert!(
+            !matches!(err.reason(), ErrorReason::Spawn { .. }),
+            "{what}: git must have run (a pre-spawn refusal is what this rules out), \
+             got {:?}",
+            err.reason()
+        );
+    }
+}
+
+// Both opt-ins, on a really-poisoned repository: the operation must get past the
+// check and reach git (which then fails on the missing remote, not on us).
+#[tokio::test]
+#[ignore = "requires the git binary"]
+async fn the_ssh_opt_ins_lift_the_refusal_on_a_real_repository() {
+    for opt_in in ["pin", "trust"] {
+        let tmp = TempDir::new(&format!("harden-ssh-optin-{opt_in}"));
+        let dir = tmp.path();
+        let global_config = dir.join("hermetic-gitconfig");
+        std::fs::write(&global_config, "").expect("write the hermetic global config");
+
+        let base = Git::hardened().default_env("GIT_CONFIG_GLOBAL", &global_config);
+        base.init(dir).await.expect("init");
+        configure(dir);
+        base.config_set(dir, "core.sshCommand", "/tmp/evil-ssh")
+            .await
+            .expect("poison the repository");
+        // Without an opt-in this exact client refuses — the control that keeps the
+        // assertions below honest.
+        assert!(
+            base.fetch(dir)
+                .await
+                .expect_err("the poisoned repository must refuse without an opt-in")
+                .to_string()
+                .contains("core.sshCommand")
+        );
+
+        let git = Git::hardened().default_env("GIT_CONFIG_GLOBAL", &global_config);
+        let git = match opt_in {
+            "pin" => git.with_ssh_command("ssh -o BatchMode=yes"),
+            _ => git.trust_repo_ssh_command(),
+        };
+        assert_not_refused(git.fetch(dir).await, &format!("the {opt_in} opt-in"));
+    }
 }
 
 // T-176: an SSH network operation through a HARDENED client must actually reach

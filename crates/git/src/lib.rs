@@ -758,9 +758,12 @@ pub trait GitApi: Send + Sync {
     /// The `--` guard stops a `value` being *misparsed* as a flag; it does **not**
     /// sanitise a genuinely dangerous *key* you choose to write. Never wire
     /// untrusted input into it: [`harden()`](Git::harden) pins only `core.hooksPath`
-    /// and `core.fsmonitor`, so every other code-execution key written here — and
-    /// `core.sshCommand` in particular, whoever wrote it — still takes effect under a
-    /// hardened client (see that method's residual-vectors section).
+    /// and `core.fsmonitor`, so every other code-execution key written here still
+    /// takes effect under a hardened client (see that method's residual-vectors
+    /// section). `core.sshCommand` is the one exception, and only for the network
+    /// verbs: a hardened client compares it against your global value and *refuses*
+    /// the operation when the repository overrides it — writing one here therefore
+    /// makes that repository's own `fetch`/`push` refuse until an opt-in is chosen.
     async fn config_set(&self, dir: &Path, key: &str, value: &str) -> Result<()>;
     /// Add a remote (`remote add <name> <url>`).
     async fn remote_add(&self, dir: &Path, name: &str, url: &str) -> Result<()>;
@@ -854,7 +857,86 @@ vcs_cli_support::managed_client! {
         "GIT_OBJECT_DIRECTORY",
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",
         "GIT_NAMESPACE",
-    ]
+    ],
+    extra = {
+        /// SSH-transport policy for the network verbs: whether a hardened client
+        /// checks the repository's `core.sshCommand` before a network operation,
+        /// and the operator's opt-in out of that refusal. See [`SshTransport`].
+        ssh: SshTransport,
+    }
+}
+
+/// The config key a repository can use to make git run an arbitrary command for
+/// the SSH transport. Named in both halves of the hardened detector (the
+/// effective and the global read) and in the refusal message.
+const SSH_COMMAND_KEY: &str = "core.sshCommand";
+
+/// How many characters of a **repository-supplied** `core.sshCommand` the refusal
+/// echoes back. The value names the vector, so it must be shown — but it is
+/// attacker-controlled text, so it is truncated (and `{:?}`-escaped) rather than
+/// splatted verbatim into a caller's log.
+const SSH_COMMAND_ECHO_LIMIT: usize = 200;
+
+/// What a client does about a `core.sshCommand` the repository configures, for
+/// the SSH transport of `fetch`/`push`/`ls-remote`/`submodule update`.
+///
+/// Only [`Detect`](SshCommandPolicy::Detect) — the default — consults the
+/// repository at all, and only on a [`hardened`](Git::harden) client; both opt-ins
+/// short-circuit the probe entirely (an operator who has already decided doesn't
+/// need it) and so cost no extra spawn.
+#[derive(Clone, Debug, Default)]
+enum SshCommandPolicy {
+    /// Compare the effective `core.sshCommand` against the trusted (global) one
+    /// and refuse the network operation when they differ.
+    #[default]
+    Detect,
+    /// [`trust_repo_ssh_command`](Git::trust_repo_ssh_command): run whatever the
+    /// repository configured, no probe, no refusal.
+    Trusted,
+    /// [`with_ssh_command`](Git::with_ssh_command): run *this* command, delivered
+    /// to the network call as `GIT_SSH_COMMAND` (which git gives precedence over
+    /// any `core.sshCommand` the repository set).
+    Pinned(String),
+}
+
+/// A client's SSH-transport state: the policy above, whether the hardened
+/// detector is armed, and the once-per-client cache of the **trusted**
+/// `core.sshCommand` (the user's global one).
+#[derive(Default)]
+struct SshTransport {
+    /// Armed by [`harden`](Git::harden). A plain [`Git::new`] client never probes
+    /// — it makes no hardening promise, and adding a spawn to its network verbs
+    /// would change behaviour no caller asked for.
+    detect: bool,
+    policy: SshCommandPolicy,
+    /// `git config --global --get core.sshCommand`, read at most once per client
+    /// (the value is per-user, not per-repository, so re-reading it for every
+    /// network operation would be pure cost). `None` inside the `Option` means
+    /// "the user has no global value", which is a perfectly ordinary state — and
+    /// the one that makes *any* effective value a repository override.
+    trusted: std::sync::OnceLock<Option<String>>,
+}
+
+// Hand-written rather than derived, matching `ManagedClient`'s own redacting
+// `Debug`: `trusted` holds the operator's real global ssh command (a local path,
+// possibly naming the user) and `Pinned` holds one they chose. Neither is a
+// secret in the `Secret` sense, but neither belongs in whatever log a consumer
+// debug-prints a client into, so both render as presence, not content. The
+// repository-supplied value is never stored here at all — it is read, compared,
+// and echoed only into the refusal that names the vector.
+impl std::fmt::Debug for SshTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let policy = match self.policy {
+            SshCommandPolicy::Detect => "detect",
+            SshCommandPolicy::Trusted => "trust-repository",
+            SshCommandPolicy::Pinned(_) => "pinned",
+        };
+        f.debug_struct("SshTransport")
+            .field("detect", &self.detect)
+            .field("policy", &policy)
+            .field("trusted_cached", &self.trusted.get().is_some())
+            .finish()
+    }
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -941,6 +1023,247 @@ impl<R: ProcessRunner> Git<R> {
             None => Ok((Vec::new(), Vec::new())),
         }
     }
+
+    /// Run SSH network operations with `command` instead of git's built-in `ssh`,
+    /// delivered to each network call as `GIT_SSH_COMMAND` — and, on a
+    /// [`hardened`](Git::harden) client, **lift the repository-`core.sshCommand`
+    /// refusal** (see [`harden`](Git::harden)'s SSH section).
+    ///
+    /// This is the "use *my* ssh" opt-in. `GIT_SSH_COMMAND` outranks any
+    /// `core.sshCommand` the repository configured, so the repository's value
+    /// never runs — which is why the pin is enough to make the operation safe
+    /// again, without the library having to guess whether the repository's value
+    /// was legitimate. The variable is set on the network commands only
+    /// (`fetch`/`push`/`clone`/`ls-remote`/`submodule update`), per call: the
+    /// hardened profile's `GIT_SSH_COMMAND`/`GIT_SSH` **scrub stays in place** for
+    /// every other command, and for an *inherited* value on these ones (a
+    /// per-command `env` wins over a client-level removal, and only for the key it
+    /// names).
+    ///
+    /// It applies to a plain [`Git::new`] client too — there it is simply "use this
+    /// ssh command", with no refusal to lift.
+    ///
+    /// Ordering with [`trust_repo_ssh_command`](Git::trust_repo_ssh_command): both
+    /// set the same policy slot, so the **last call wins**. A consumer resolving
+    /// two user-facing flags should decide the winner itself rather than relying on
+    /// which one it happens to apply last (`vcs-mcp` gives `--ssh-command`
+    /// precedence, order-independently).
+    ///
+    /// A command that is empty or whitespace-only is refused when a network
+    /// operation runs (git reads an empty ssh command as a program named "" and
+    /// dies with `cannot spawn` — see [`harden`](Git::harden)); pass a real
+    /// command, or don't call this builder.
+    #[must_use]
+    pub fn with_ssh_command(mut self, command: impl Into<String>) -> Self {
+        self.ssh.policy = SshCommandPolicy::Pinned(command.into());
+        self
+    }
+
+    /// Accept a `core.sshCommand` **the repository configures** — on a
+    /// [`hardened`](Git::harden) client, the opt-in that lifts the refusal
+    /// described in [`harden`](Git::harden)'s SSH section without pinning a
+    /// command of your own.
+    ///
+    /// This is the "yes, I know this repository sets its own ssh command, and I
+    /// trust it" escape hatch: the legitimate case is a repository you *do* own
+    /// that carries a deliberate per-repo identity (its own key/account), where
+    /// overriding the value would silently authenticate as somebody else. It
+    /// accepts **whatever the repository says**, including a value added after the
+    /// client was built — so use it only for a repository you trust to the same
+    /// degree you trust running its hooks. For an untrusted repository, prefer
+    /// [`with_ssh_command`](Git::with_ssh_command), which pins your own.
+    ///
+    /// No effect on a plain (non-hardened) client, which never refuses in the
+    /// first place. See [`with_ssh_command`](Git::with_ssh_command) for how the two
+    /// opt-ins order against each other.
+    #[must_use]
+    pub fn trust_repo_ssh_command(mut self) -> Self {
+        self.ssh.policy = SshCommandPolicy::Trusted;
+        self
+    }
+
+    /// The ssh command this client pins on network operations, if any — the
+    /// validated half of [`with_ssh_command`](Git::with_ssh_command).
+    ///
+    /// Refuses an empty/whitespace-only pin before anything spawns: git branches
+    /// on `GIT_SSH_COMMAND` being *set*, not on it being non-empty, so an empty
+    /// value is taken as "the ssh command is the empty string" and every SSH
+    /// operation dies with `error: cannot spawn : No such file or directory` —
+    /// exactly the T-176 breakage, just moved from a config pin to the env.
+    fn pinned_ssh_command(&self) -> Result<Option<&str>> {
+        match &self.ssh.policy {
+            SshCommandPolicy::Pinned(command) if command.trim().is_empty() => Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "the ssh command pinned with `with_ssh_command` is empty — git would \
+                     take that as a program named \"\" and fail every SSH operation with \
+                     `cannot spawn`; pass a real command (e.g. \"ssh -i /path/to/key\") \
+                     or drop the pin to use git's built-in ssh",
+                ),
+            )),
+            SshCommandPolicy::Pinned(command) => Ok(Some(command.as_str())),
+            SshCommandPolicy::Detect | SshCommandPolicy::Trusted => Ok(None),
+        }
+    }
+
+    /// Set the pinned ssh command on a **network** `command` as `GIT_SSH_COMMAND`.
+    /// A no-op unless [`with_ssh_command`](Git::with_ssh_command) configured one,
+    /// so a client that never opts in keeps the hardened profile's scrub of that
+    /// variable on every command, exactly as before.
+    ///
+    /// A per-command `env` takes precedence over the client-level
+    /// `default_env_remove` from `harden()` (processkit only gap-fills client
+    /// defaults for keys the command hasn't set), so the pin reaches git while the
+    /// scrub still protects every other command and every other client.
+    fn apply_ssh_command(&self, command: Command) -> Command {
+        match &self.ssh.policy {
+            SshCommandPolicy::Pinned(pinned) => command.env("GIT_SSH_COMMAND", pinned),
+            SshCommandPolicy::Detect | SshCommandPolicy::Trusted => command,
+        }
+    }
+
+    /// Pre-flight for every network operation on an **existing** working tree:
+    /// refuse when a [`hardened`](Git::harden) client is about to run the SSH
+    /// transport of a repository that overrides `core.sshCommand`.
+    ///
+    /// The detection compares the **effective** value (`git config --get
+    /// core.sshCommand`, which sees `.git/config`, a repo-controlled
+    /// `include.path`, and a `--worktree` config under
+    /// `extensions.worktreeConfig`) with the **trusted** one (`git config --global
+    /// --get core.sshCommand`), read through this same client, so both see the same
+    /// environment. Any difference — including "the repository has one and the user
+    /// has none" — is a repository override and refuses. A value that is only in
+    /// the user's global config reads identically both ways and is *not* refused:
+    /// a global `core.sshCommand` is an ordinary, legitimate setting.
+    ///
+    /// Cost: one `git config --get` per network operation, plus the global read
+    /// once per client (cached, and skipped entirely when the effective value is
+    /// absent — the clean-repository case). Both opt-ins skip the probe entirely.
+    ///
+    /// Deliberately *not* here: any normalization of the two values. They are
+    /// compared as raw strings, because the safe answer to "these two spellings
+    /// might mean the same program" is to ask the operator, not to guess.
+    async fn ensure_ssh_transport_allowed(&self, dir: &Path) -> Result<()> {
+        // An explicit pin is validated even on a plain client (it would otherwise
+        // fail deep inside git's spawn layer), and both opt-ins answer the
+        // question before any probe runs.
+        if self.pinned_ssh_command()?.is_some() {
+            return Ok(());
+        }
+        if !self.ssh.detect || matches!(self.ssh.policy, SshCommandPolicy::Trusted) {
+            return Ok(());
+        }
+        let Some(effective) = self.ssh_command_config(dir, ConfigScope::Effective).await? else {
+            // Nothing configured at any level — the common case, and the only
+            // extra cost a clean repository pays for this check.
+            return Ok(());
+        };
+        if self.trusted_ssh_command(dir).await?.as_deref() == Some(effective.as_str()) {
+            return Ok(());
+        }
+        Err(repo_ssh_command_refused(&effective))
+    }
+
+    /// The user's **global** `core.sshCommand`, read at most once per client.
+    ///
+    /// A relaxed cache: two network operations racing their first probe can each
+    /// spawn the read, which is harmless (the value is the same, and one of them
+    /// wins the cache) — the point of the cache is not to read a per-user file on
+    /// every fetch, not to serialize concurrent callers behind a lock.
+    async fn trusted_ssh_command(&self, dir: &Path) -> Result<Option<String>> {
+        if let Some(cached) = self.ssh.trusted.get() {
+            return Ok(cached.clone());
+        }
+        let value = self.ssh_command_config(dir, ConfigScope::Global).await?;
+        let _ = self.ssh.trusted.set(value);
+        Ok(self
+            .ssh
+            .trusted
+            .get()
+            .expect("the cache is populated above or by the racing writer")
+            .clone())
+    }
+
+    /// One half of the comparison: `git config [--global] --get core.sshCommand`
+    /// run through this client (so it carries the same profile as the network
+    /// command it guards). `None` for git's exit 1 = "unset", exactly as
+    /// [`config_get`](GitApi::config_get) reads it; any other non-zero exit is a
+    /// real error and fails the operation rather than being read as "unset"
+    /// (fail-closed: an unreadable config must not silently pass the check).
+    async fn ssh_command_config(&self, dir: &Path, scope: ConfigScope) -> Result<Option<String>> {
+        let mut args: Vec<&str> = vec!["config"];
+        if scope == ConfigScope::Global {
+            args.push("--global");
+        }
+        args.extend(["--get", SSH_COMMAND_KEY]);
+        let res = self
+            .core
+            .output_string(self.core.command_in(dir, args))
+            .await?;
+        match res.code() {
+            Some(1) => Ok(None),
+            // Strip only the trailing line terminator, never trailing whitespace:
+            // a shell command can legitimately end in a space, and the two reads
+            // must be compared byte-for-byte (see `config_get`).
+            Some(0) => Ok(Some(
+                res.stdout().trim_end_matches(['\r', '\n']).to_string(),
+            )),
+            _ => {
+                let _ = res.ensure_success()?;
+                Ok(None) // unreachable: a non-zero exit always errors above.
+            }
+        }
+    }
+}
+
+/// Which config levels a [`Git::ssh_command_config`] read covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConfigScope {
+    /// Everything git would honour for a command in this repository — the value
+    /// that will actually run. Includes `.git/config`, whatever it `include.path`s,
+    /// and the `--worktree` config; excludes system config on a hardened client
+    /// (`GIT_CONFIG_NOSYSTEM=1`).
+    Effective,
+    /// The user's own `~/.gitconfig` only — the trusted baseline.
+    Global,
+}
+
+/// The refusal a hardened client returns instead of running an SSH network
+/// operation for a repository that overrides `core.sshCommand`.
+///
+/// Names the key, the value found (truncated and escaped — it is
+/// repository-supplied text, not necessarily one tidy line), and **both** ways
+/// out, at the library and at the `vcs-mcp` server level. Carries no secret: the
+/// value comes from the repository's own config, and neither the user's global
+/// value nor any credential is mentioned.
+///
+/// [`ErrorReason::Spawn`] with [`std::io::ErrorKind::InvalidInput`] is the shape
+/// this crate already uses for "refused before anything spawned"
+/// (`reject_flag_like`, the push-refspec metacharacter guard), so a consumer that
+/// classifies those keeps classifying this one — no new error category.
+fn repo_ssh_command_refused(effective: &str) -> Error {
+    let shown: String = effective.chars().take(SSH_COMMAND_ECHO_LIMIT).collect();
+    let ellipsis = if shown.chars().count() < effective.chars().count() {
+        "…"
+    } else {
+        ""
+    };
+    Error::spawn(
+        BINARY,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "refusing a network operation: this repository sets `{SSH_COMMAND_KEY}` to \
+                 {shown:?}{ellipsis}, which differs from your global \
+                 `git config --global --get {SSH_COMMAND_KEY}` — git runs that value through a \
+                 shell for the SSH transport, so a repository you did not write would execute \
+                 it. To continue, pin your own command with `Git::with_ssh_command(<command>)` \
+                 (vcs-mcp: `--ssh-command <command>`), or accept the repository's with \
+                 `Git::trust_repo_ssh_command()` (vcs-mcp: `--trust-repo-ssh-command`)"
+            ),
+        ),
+    )
 }
 
 impl<R: ProcessRunner> Git<R> {
@@ -1705,14 +2028,22 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // path components, so a bare `foo` would also match `refs/heads/bar/foo`.
         // `refs/heads/<name>` matches only the exact branch.
         let refname = format!("refs/heads/{name}");
+        // A hardened client refuses a repository-overridden `core.sshCommand`
+        // before this probe reaches the network. The refusal surfaces as an error
+        // rather than as a `false` answer: "the repository is poisoned" is not the
+        // same fact as "the branch is absent", and swallowing it would hide the
+        // vector behind a plausible-looking negative.
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["ls-remote", "origin", refname.as_str()].map(String::from));
         let cmd = apply_secret_env(
-            self.core
-                .command_in(dir, &args)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .timeout(Duration::from_secs(10)),
+            self.apply_ssh_command(
+                self.core
+                    .command_in(dir, &args)
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .timeout(Duration::from_secs(10)),
+            ),
             &envs,
         );
         let res = self.core.output_string(cmd).await?;
@@ -1776,13 +2107,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `GIT_TERMINAL_PROMPT=0`: a remote needing credentials must fail fast,
         // never block on an interactive auth prompt. A provider, if set, supplies
         // the credential via an inline helper (token kept out of argv).
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["ls-remote", "--heads", remote].map(String::from));
         let cmd = apply_secret_env(
-            self.core
-                .command_in(dir, &args)
-                .env("GIT_TERMINAL_PROMPT", "0"),
+            self.apply_ssh_command(
+                self.core
+                    .command_in(dir, &args)
+                    .env("GIT_TERMINAL_PROMPT", "0"),
+            ),
             &envs,
         );
         self.core.parse(cmd, parse::parse_ls_remote_heads).await
@@ -1989,6 +2323,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // (DNS/timeout/dropped connection); a non-transient error fails at once.
         // C locale: the retry decision classifies the failure's message.
         // Leading `-c` credential.helper (+ secret env) when a provider is set.
+        // A hardened client first refuses a repository-overridden `core.sshCommand`
+        // (see `harden`) — before the retry loop, so a refusal is not retried.
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet"].map(String::from));
@@ -1997,12 +2334,14 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // still classifies the tail-preserved message). Unbounded by default.
         let cmd = self.core.budget_diagnostics(apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                c_locale(self.core.command_in(dir, &args))
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    // Unix uses its graceful signal; Windows opts console git into
-                    // CTRL_BREAK when delivery is available, with the existing
-                    // hard-kill fallback for every other child.
-                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                self.apply_ssh_command(
+                    c_locale(self.core.command_in(dir, &args))
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        // Unix uses its graceful signal; Windows opts console git into
+                        // CTRL_BREAK when delivery is available, with the existing
+                        // hard-kill fallback for every other child.
+                        .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                ),
             ),
             &envs,
         ));
@@ -2014,15 +2353,16 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         dir: &Path,
         progress: &'a mut ProgressCallback<'a>,
     ) -> Result<()> {
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         // `--progress` forces git to emit transfer progress even though
         // processkit pipes stderr rather than attaching a terminal.
         args.extend(["fetch", "--progress"].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
-            vcs_cli_support::apply_fetch_completion_policy(
+            vcs_cli_support::apply_fetch_completion_policy(self.apply_ssh_command(
                 c_locale(self.core.command_in(dir, &args)).env("GIT_TERMINAL_PROMPT", "0"),
-            ),
+            )),
             &envs,
         ));
         self.core.run_with_progress(cmd, progress).await
@@ -2034,15 +2374,19 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // local/ext transport, so this guard is load-bearing for security.
         reject_flag_like("remote", remote)?;
         // Same containment as `fetch` (prompt off, C locale, transient retry,
-        // optional credential helper), with the remote named explicitly.
+        // optional credential helper, hardened SSH-transport check), with the
+        // remote named explicitly.
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", remote].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                c_locale(self.core.command_in(dir, &args))
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                self.apply_ssh_command(
+                    c_locale(self.core.command_in(dir, &args))
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                ),
             ),
             &envs,
         ));
@@ -2054,14 +2398,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // must exclude (a strict superset), so both interpolations below are safe.
         let branch = branch.as_str();
         let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["fetch", "--quiet", "origin", refspec.as_str()].map(String::from));
         let cmd = self.core.budget_diagnostics(apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                c_locale(self.core.command_in(dir, &args))
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                self.apply_ssh_command(
+                    c_locale(self.core.command_in(dir, &args))
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .retry(FETCH_ATTEMPTS, FETCH_BACKOFF, is_transient_fetch_error),
+                ),
             ),
             &envs,
         ));
@@ -2094,6 +2441,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 ),
             ));
         }
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.push("push".to_string());
@@ -2104,9 +2452,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         args.push(spec.refspec.clone());
         let cmd = apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                self.core
-                    .command_in(dir, &args)
-                    .env("GIT_TERMINAL_PROMPT", "0"),
+                self.apply_ssh_command(
+                    self.core
+                        .command_in(dir, &args)
+                        .env("GIT_TERMINAL_PROMPT", "0"),
+                ),
             ),
             &envs,
         );
@@ -2136,6 +2486,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 ),
             ));
         }
+        self.ensure_ssh_transport_allowed(dir).await?;
         let (pre, envs) = self.remote_credentials(None).await?;
         let mut args: Vec<String> = pre;
         args.extend(["push", "--progress"].map(String::from));
@@ -2146,9 +2497,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         args.push(spec.refspec);
         let cmd = apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                self.core
-                    .command_in(dir, &args)
-                    .env("GIT_TERMINAL_PROMPT", "0"),
+                self.apply_ssh_command(
+                    self.core
+                        .command_in(dir, &args)
+                        .env("GIT_TERMINAL_PROMPT", "0"),
+                ),
             ),
             &envs,
         );
@@ -2504,6 +2857,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         for path in &spec.paths {
             reject_flag_like("submodule path", path)?;
         }
+        // `update` fetches each submodule over the superproject's transport, so the
+        // hardened SSH-transport check applies here too — and it is read from the
+        // superproject, whose `.git/config` is exactly the file an untrusted
+        // checkout controls.
+        self.ensure_ssh_transport_allowed(dir).await?;
         let mut command = self.core.command_in(dir, ["submodule", "update"]);
         if spec.init {
             command = command.arg("--init");
@@ -2526,7 +2884,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // credential must fail fast rather than block on an interactive prompt —
         // matching `fetch`/`clone`.
         self.core
-            .run_unit(command.env("GIT_TERMINAL_PROMPT", "0"))
+            .run_unit(self.apply_ssh_command(command.env("GIT_TERMINAL_PROMPT", "0")))
             .await
     }
 
@@ -2536,6 +2894,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // so this guard has no false positives.
         reject_flag_like("url", url)?;
         validate_clone_spec(&spec)?;
+        // No hardened `core.sshCommand` check here, deliberately: the vector is a
+        // repo-local config file, and before a clone there is no repository to read
+        // one from — probing would cost a spawn to learn nothing (and, run in this
+        // process' cwd, could even answer about an unrelated repository). An
+        // explicit `with_ssh_command` pin still applies, and is validated here so a
+        // bad pin fails the same way it does on the other verbs.
+        self.pinned_ssh_command()?;
         // No working directory: clone creates `dest` itself, so `dest` should
         // be absolute (a relative path would resolve against this process' cwd).
         // Leading `-c` credential.helper (+ secret env) when a provider is set,
@@ -2552,7 +2917,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // classifiable `ErrorReason::Exit`). Unbounded by default.
         let command = self.core.budget_diagnostics(apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0"),
+                self.apply_ssh_command(command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0")),
             ),
             &envs,
         ));
@@ -2583,6 +2948,9 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     ) -> Result<()> {
         reject_flag_like("url", url)?;
         validate_clone_spec(&spec)?;
+        // Same reasoning as `clone_repo`: no repository yet, so nothing to probe;
+        // an explicit pin is validated and applied.
+        self.pinned_ssh_command()?;
         let (pre, envs) = self
             .remote_credentials(vcs_cli_support::https_host(url).as_deref())
             .await?;
@@ -2591,7 +2959,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         let command = self.core.command(&initial);
         let command = self.core.budget_diagnostics(apply_secret_env(
             vcs_cli_support::apply_fetch_completion_policy(
-                command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0"),
+                self.apply_ssh_command(command.arg(url).arg(dest).env("GIT_TERMINAL_PROMPT", "0")),
             ),
             &envs,
         ));
@@ -3301,34 +3669,67 @@ impl<R: ProcessRunner> Git<R> {
     /// - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal
     ///   prompts off everywhere (`GIT_TERMINAL_PROMPT=0`).
     ///
-    /// **Residual repo-local-config vectors (NOT neutralized).** `harden()` closes
-    /// the *hooks*, `fsmonitor`, and the env redirector/command-hook paths — but
-    /// several **repo-local `.git/config` / `.gitattributes`** keys still run an
-    /// arbitrary program and are not pinned:
+    /// - **Refuses a repository-configured `core.sshCommand`** (the config-key twin
+    ///   of the scrubbed `GIT_SSH_COMMAND`, which git runs **through a shell** for
+    ///   the SSH transport). Before each network operation on an existing working
+    ///   tree — `fetch`, `push`, `ls-remote`, `submodule update` — the client reads
+    ///   the **effective** value (`git config --get core.sshCommand`) and compares
+    ///   it with the **trusted** one (`git config --global --get core.sshCommand`).
+    ///   They differ — including when the repository has one and you have none —
+    ///   and the operation is refused before anything spawns, with an error naming
+    ///   the key and the value found. A value that lives only in your *global*
+    ///   config reads the same both ways and is **not** refused: that is an
+    ///   ordinary, legitimate setting.
     ///
-    /// - **`core.sshCommand`** — the config-key twin of the scrubbed
-    ///   `GIT_SSH_COMMAND`, run for the SSH transport on `fetch`/`push`/`clone`/
-    ///   `ls-remote`. This profile scrubs the *environment* vectors
-    ///   (`GIT_SSH_COMMAND`/`GIT_SSH`) but leaves the *config* key alone, so a
-    ///   `core.sshCommand` set by the repository still executes. It used to be
-    ///   pinned to the empty string, which did not work — git branches on the key
-    ///   being set rather than on a non-empty value, so the pin made **every** SSH
-    ///   operation fail to spawn (`cannot spawn` / `unable to fork`) instead of
-    ///   neutralizing anything, and no
-    ///   non-empty pin is correct either (a config `core.sshCommand` goes through a
-    ///   shell, silently changing which ssh binary and identity are used). Closing
-    ///   this vector needs a different mechanism and has not shipped yet; until it
-    ///   does, treat SSH network operations against an untrusted
-    ///   repository as unprotected by `harden()`.
+    ///   The comparison (rather than a pin) is what makes this correct: the key
+    ///   cannot be neutralized by env-config — an empty pin makes every SSH
+    ///   operation fail to spawn, because git branches on the key being *set*, and
+    ///   a non-empty pin silently re-resolves which ssh binary and identity are
+    ///   used (a config `core.sshCommand` goes through a shell; the built-in
+    ///   default does not). It also catches the values `--local --get` misses: one
+    ///   arriving through a repo-controlled `include.path`, and one set by
+    ///   `git config --worktree` under `extensions.worktreeConfig`.
+    ///
+    ///   Two explicit opt-ins lift the refusal (both skip the probe entirely):
+    ///   [`with_ssh_command`](Git::with_ssh_command) pins *your* command, delivered
+    ///   as `GIT_SSH_COMMAND` on the network call — which outranks the
+    ///   repository's key, so its value never runs — and
+    ///   [`trust_repo_ssh_command`](Git::trust_repo_ssh_command) accepts whatever
+    ///   the repository configured. There is deliberately no silent third way:
+    ///   overriding the key with a fixed string or with a mirror of your global
+    ///   value would quietly authenticate a repository that legitimately carries
+    ///   its own identity as somebody else.
+    ///
+    ///   **`clone` is exempt** — there is no working tree yet, so there is no
+    ///   repo-local config to read, and no probe is spawned. (A pinned
+    ///   `with_ssh_command` still applies to it.)
+    ///
+    /// **Residual repo-local-config vectors (NOT neutralized).** `harden()` closes
+    /// the *hooks*, `fsmonitor`, and the env redirector/command-hook paths, and
+    /// refuses the SSH-transport vector above — but several **repo-local
+    /// `.git/config` / `.gitattributes`** keys still run an arbitrary program and
+    /// are not pinned:
+    ///
     /// - **`filter.<drv>.clean`/`smudge`** — run on any working-tree
     ///   materialization (`checkout`, `stash pop`, `worktree add`).
     /// - **`diff.<drv>.textconv` / `diff.external`** — run when a diff is produced;
     ///   [`diff_text`](GitApi::diff_text) defends itself with `--no-ext-diff`, but
     ///   other diff/blame reads do not.
     ///
-    /// So for a **fully untrusted** repo, do not materialize its working tree, run
-    /// diffs, or drive SSH network operations through a hardened client without an
-    /// OS-level sandbox — `harden()` is hardening, not a sandbox.
+    /// So for a **fully untrusted** repo, do not materialize its working tree or
+    /// run diffs through a hardened client without an OS-level sandbox —
+    /// `harden()` is hardening, not a sandbox. That caveat covers the SSH check
+    /// too: it reads the config a moment before git does, so a repository whose
+    /// files change *between* the two reads (another process writing
+    /// `.git/config`) can still slip a value past it. Closing that window needs
+    /// the repository to be immutable for the duration, i.e. an OS-level sandbox
+    /// or a private copy — the check raises the bar for the ordinary poisoned
+    /// checkout, it does not make the tree safe to run arbitrary git against.
+    ///
+    /// The check also covers only the typed network verbs; the
+    /// [`run`](GitApi::run)/[`run_raw`](GitApi::run_raw) escape hatch builds its
+    /// own argv and is the caller's responsibility, as it is for every other guard
+    /// in this crate.
     ///
     /// What it does NOT do beyond that: sandbox the git binary itself, or stop the
     /// repo's *content* from being malicious. In a **colocated jj repo**, git hooks
@@ -3377,6 +3778,11 @@ impl<R: ProcessRunner> Git<R> {
             "GIT_ICASE_PATHSPECS",
         ];
         let mut hardened = self;
+        // Arm the SSH-transport check (see the `core.sshCommand` bullet above).
+        // It lives on the client rather than in the env profile because closing
+        // this vector needs a *decision* before the network command runs, which
+        // no `GIT_CONFIG_*` pin can express.
+        hardened.ssh.detect = true;
         for key in removed {
             hardened = hardened.default_env_remove(key);
         }
@@ -3411,8 +3817,10 @@ impl<R: ProcessRunner> Git<R> {
         // built-in default is spawned directly, so pinning e.g. `ssh` silently
         // re-resolves which ssh binary (and therefore which identity/agent) is used
         // on a host with several ssh installs. Neutralizing the key needs a
-        // mechanism that can express "unset", which env-config cannot — see the
-        // "Residual repo-local-config vectors" section of `harden`'s doc comment.
+        // mechanism that can express "unset", which env-config cannot — so the key
+        // is closed OUTSIDE the env profile instead, by `ssh.detect` above: the
+        // network verbs compare the effective value against the user's global one
+        // and refuse a repository override (T-177, `ensure_ssh_transport_allowed`).
     }
 
     /// Switch to `branch`, carrying uncommitted changes (tracked *and*
@@ -6736,6 +7144,435 @@ mod tests {
         assert!(
             !has_key("GIT_CONFIG_NOSYSTEM"),
             "config pins are harden()-only"
+        );
+    }
+
+    // ----- T-177: the hardened `core.sshCommand` check -------------------------
+    //
+    // The vector: a repository the caller did not write can set `core.sshCommand`
+    // (in `.git/config`, through a repo-controlled `include.path`, or in the
+    // `--worktree` config) and git will run that value THROUGH A SHELL on the
+    // first SSH network operation. It cannot be pinned away — see `harden`'s
+    // comment — so a hardened client compares the EFFECTIVE value with the
+    // TRUSTED (global) one and refuses when they differ.
+    //
+    // A runner that answers the two probes independently, so a test can model any
+    // (effective, global) pair. `None` = git's exit 1, "the key is unset".
+    fn ssh_probe_runner(
+        effective: Option<&str>,
+        global: Option<&str>,
+    ) -> RecordingRunner<ScriptedRunner> {
+        let reply = |value: Option<&str>| match value {
+            Some(v) => Reply::ok(format!("{v}\n")),
+            // git's "not set" is exit 1 with no output, not an error.
+            None => Reply::fail(1, ""),
+        };
+        RecordingRunner::new(
+            ScriptedRunner::new()
+                // The `--global` rule must come first: rules match on an argv
+                // PREFIX, and `config --get …` would otherwise also match it.
+                .on(["git", "config", "--global"], reply(global))
+                .on(["git", "config", "--get"], reply(effective))
+                .fallback(Reply::ok("")),
+        )
+    }
+
+    /// The probes a run spawned, as `["config --get core.sshCommand", …]`.
+    fn config_probes(rec: &RecordingRunner<ScriptedRunner>) -> Vec<Vec<String>> {
+        rec.calls()
+            .into_iter()
+            .map(|c| c.args_str())
+            .filter(|args| args.first().map(String::as_str) == Some("config"))
+            .collect()
+    }
+
+    // Every network verb of a hardened client refuses when the repository
+    // overrides `core.sshCommand` — and refuses BEFORE spawning the network
+    // command, so nothing reaches the remote (nor the attacker's ssh command).
+    #[tokio::test]
+    async fn hardened_network_verbs_refuse_a_repo_configured_ssh_command() {
+        let dir = Path::new("/repo");
+        // Every network verb of the hardened profile, so a newly added one is a
+        // one-line addition here rather than a silently unguarded path.
+        for verb in [
+            "fetch",
+            "fetch_with_progress",
+            "fetch_from",
+            "fetch_branch",
+            "push",
+            "push_with_progress",
+            "remote_branches",
+            "remote_branch_exists",
+            "submodule_update",
+        ] {
+            // The repository sets a value; the user's global config has none —
+            // the "no global value at all, but an effective one" case.
+            let rec = ssh_probe_runner(Some("/tmp/evil --payload"), None);
+            let git = Git::with_runner(&rec).harden();
+            let mut progress = |_event: ProcessEvent| {};
+            let outcome: Result<()> = match verb {
+                "fetch" => git.fetch(dir).await,
+                "fetch_with_progress" => git.fetch_with_progress(dir, &mut progress).await,
+                "fetch_from" => git.fetch_from(dir, "upstream").await,
+                "fetch_branch" => git.fetch_branch(dir, &rn("main")).await,
+                "push" => git.push(dir, GitPush::branch(rn("main"))).await,
+                "push_with_progress" => {
+                    git.push_with_progress(dir, GitPush::branch(rn("main")), &mut progress)
+                        .await
+                }
+                "remote_branches" => git.remote_branches(dir, "origin").await.map(|_| ()),
+                "remote_branch_exists" => {
+                    git.remote_branch_exists(dir, &rn("main")).await.map(|_| ())
+                }
+                _ => {
+                    git.submodule_update(dir, SubmoduleUpdate::new().init())
+                        .await
+                }
+            };
+
+            let err = outcome.expect_err(&format!("{verb} must refuse"));
+            let message = err.to_string();
+            assert!(
+                matches!(err.reason(), ErrorReason::Spawn { .. }),
+                "{verb}: refused before spawning, got {:?}",
+                err.reason()
+            );
+            assert!(
+                message.contains("core.sshCommand"),
+                "{verb}: the error must name the key: {message}"
+            );
+            assert!(
+                message.contains("/tmp/evil --payload"),
+                "{verb}: the error must name the value found: {message}"
+            );
+            for way_out in ["with_ssh_command", "trust_repo_ssh_command"] {
+                assert!(
+                    message.contains(way_out),
+                    "{verb}: the error must name the {way_out} opt-in: {message}"
+                );
+            }
+            // Only the two probes ran — the network command never spawned, so
+            // neither the remote nor the repository's ssh command was reached.
+            let calls: Vec<Vec<String>> = rec.calls().into_iter().map(|c| c.args_str()).collect();
+            assert_eq!(
+                calls,
+                vec![
+                    vec![
+                        "config".to_string(),
+                        "--get".to_string(),
+                        "core.sshCommand".to_string(),
+                    ],
+                    vec![
+                        "config".to_string(),
+                        "--global".to_string(),
+                        "--get".to_string(),
+                        "core.sshCommand".to_string(),
+                    ],
+                ],
+                "{verb}: expected exactly the effective-then-global probes"
+            );
+        }
+    }
+
+    // The false-positive guard, and the reason the check compares instead of
+    // simply asking "is it set": a `core.sshCommand` in the USER's global config
+    // is an ordinary, legitimate setting (on Windows it is typically an absolute
+    // path to System32's OpenSSH). It reads identically both ways, so it must not
+    // refuse anything.
+    #[tokio::test]
+    async fn hardened_client_allows_a_global_only_ssh_command() {
+        let value = "C:/Windows/System32/OpenSSH/ssh.exe -F C:/Users/me/.ssh/config";
+        let rec = ssh_probe_runner(Some(value), Some(value));
+        let git = Git::with_runner(&rec).harden();
+        git.fetch(Path::new("/repo"))
+            .await
+            .expect("a global-only ssh command must not refuse");
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|c| c.args_str().first().map(String::as_str) == Some("fetch")),
+            "the fetch must actually run"
+        );
+    }
+
+    // Two things at once: the values are compared as RAW STRINGS (no path
+    // normalization — two spellings of "the same" program are still a difference
+    // the operator must resolve), and a repository value that merely *differs*
+    // from the global one refuses even though a global value exists.
+    #[tokio::test]
+    async fn detection_does_not_normalize_paths() {
+        let rec = ssh_probe_runner(
+            Some("C:/Program Files/Git/usr/bin/ssh.exe"),
+            Some("C:\\Program Files\\Git\\usr\\bin\\ssh.exe"),
+        );
+        let git = Git::with_runner(&rec).harden();
+        let err = git
+            .fetch(Path::new("/repo"))
+            .await
+            .expect_err("a differing spelling is a difference, not a match");
+        assert!(err.to_string().contains("core.sshCommand"), "{err}");
+    }
+
+    // The clean-repository cost: ONE extra probe per network operation, and the
+    // global read is not even reached (there is nothing to compare it against).
+    #[tokio::test]
+    async fn a_clean_repository_costs_one_probe_and_no_global_read() {
+        let rec = ssh_probe_runner(None, None);
+        let git = Git::with_runner(&rec).harden();
+        git.fetch(Path::new("/repo")).await.expect("fetch");
+        let calls: Vec<Vec<String>> = rec.calls().into_iter().map(|c| c.args_str()).collect();
+        assert_eq!(
+            calls,
+            vec![
+                vec![
+                    "config".to_string(),
+                    "--get".to_string(),
+                    "core.sshCommand".to_string()
+                ],
+                vec!["fetch".to_string(), "--quiet".to_string()],
+            ],
+            "a clean repo pays exactly one probe, then fetches"
+        );
+    }
+
+    // The global value is read at most once per client, however many network
+    // operations run through it — the effective value must still be re-read every
+    // time (it is per-repository, and can change between calls).
+    #[tokio::test]
+    async fn the_trusted_global_value_is_cached_per_client() {
+        let value = "ssh -F /home/me/.ssh/config";
+        let rec = ssh_probe_runner(Some(value), Some(value));
+        let git = Git::with_runner(&rec).harden();
+        for _ in 0..3 {
+            git.fetch(Path::new("/repo")).await.expect("fetch");
+        }
+        let probes = config_probes(&rec);
+        let globals = probes
+            .iter()
+            .filter(|args| args.contains(&"--global".to_string()))
+            .count();
+        let effectives = probes.len() - globals;
+        assert_eq!(globals, 1, "the global read is cached: {probes:?}");
+        assert_eq!(effectives, 3, "the effective read is per call: {probes:?}");
+    }
+
+    // The check is `harden()`-only. A plain client makes no hardening promise, so
+    // adding a probe to its network verbs would be an unrequested behaviour (and
+    // cost) change — it must run exactly what it ran before.
+    #[tokio::test]
+    async fn a_plain_client_does_not_probe_or_refuse() {
+        let rec = ssh_probe_runner(Some("/tmp/evil"), None);
+        let git = Git::with_runner(&rec); // NOT hardened
+        git.fetch(Path::new("/repo")).await.expect("fetch");
+        assert_eq!(
+            rec.only_call().args_str(),
+            ["fetch", "--quiet"],
+            "an unhardened client runs the fetch and nothing else"
+        );
+    }
+
+    // Opt-in #1: pin your own command. It lifts the refusal, spawns no probe, and
+    // — the point of the test — the exact value reaches git as `GIT_SSH_COMMAND`,
+    // which git gives precedence over the repository's `core.sshCommand`.
+    #[tokio::test]
+    async fn with_ssh_command_pins_the_value_on_every_network_verb() {
+        let pinned = "ssh -i /keys/id_ed25519 -o IdentitiesOnly=yes";
+        for verb in ["fetch", "push", "ls-remote", "submodule", "clone"] {
+            let rec = ssh_probe_runner(Some("/tmp/evil"), None);
+            let git = Git::with_runner(&rec).harden().with_ssh_command(pinned);
+            let dir = Path::new("/repo");
+            match verb {
+                "fetch" => git.fetch(dir).await.expect("fetch"),
+                "push" => git
+                    .push(dir, GitPush::branch(rn("main")))
+                    .await
+                    .expect("push"),
+                "ls-remote" => {
+                    git.remote_branches(dir, "origin")
+                        .await
+                        .expect("remote_branches");
+                }
+                "submodule" => git
+                    .submodule_update(dir, SubmoduleUpdate::new())
+                    .await
+                    .expect("submodule update"),
+                // `clone` never probes (no repository yet), but an explicit pin
+                // still has to reach it.
+                _ => git
+                    .clone_repo("ssh://git@example.com/r.git", dir, CloneSpec::new())
+                    .await
+                    .expect("clone"),
+            }
+            assert!(
+                config_probes(&rec).is_empty(),
+                "{verb}: an explicit pin needs no probe: {:?}",
+                config_probes(&rec)
+            );
+            let call = rec.only_call();
+            assert!(
+                call.env_is("GIT_SSH_COMMAND", pinned),
+                "{verb}: the pinned command must reach git, got {:?}",
+                call.env("GIT_SSH_COMMAND")
+            );
+        }
+    }
+
+    // The pin is per-network-command: `harden()`'s scrub of `GIT_SSH_COMMAND`
+    // stays in force for every other command the same client runs, so an
+    // *inherited* value still cannot reach e.g. a `status`.
+    #[tokio::test]
+    async fn a_pinned_ssh_command_does_not_leak_to_other_commands() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).harden().with_ssh_command("ssh -v");
+        git.status(Path::new("/repo")).await.expect("status");
+        let call = rec.only_call();
+        assert_eq!(
+            call.env("GIT_SSH_COMMAND"),
+            Some(None),
+            "a non-network command keeps the hardened scrub, with no pin"
+        );
+    }
+
+    // An empty pin is the T-176 breakage moved to the environment: git would take
+    // it as a program named "" and fail to spawn. Refuse it up front instead,
+    // before anything runs — including on `clone`, which has no probe.
+    #[tokio::test]
+    async fn an_empty_pinned_ssh_command_is_refused_before_spawning() {
+        let rec = RecordingRunner::replying(Reply::ok(""));
+        let git = Git::with_runner(&rec).harden().with_ssh_command("   ");
+        let err = git
+            .fetch(Path::new("/repo"))
+            .await
+            .expect_err("an empty pin must be refused");
+        assert!(err.to_string().contains("empty"), "{err}");
+        let err = git
+            .clone_repo(
+                "ssh://git@example.com/r.git",
+                Path::new("/dest"),
+                CloneSpec::new(),
+            )
+            .await
+            .expect_err("clone validates the pin too");
+        assert!(err.to_string().contains("empty"), "{err}");
+        assert!(rec.calls().is_empty(), "nothing may spawn");
+    }
+
+    // Opt-in #2: trust the repository. No probe, no refusal, and no pin — the
+    // repository's own `core.sshCommand` is what runs, which is the whole point
+    // (the legitimate case is a repo carrying its own ssh identity, where
+    // overriding the value would authenticate as somebody else).
+    #[tokio::test]
+    async fn trust_repo_ssh_command_lifts_the_refusal_without_pinning() {
+        let rec = ssh_probe_runner(Some("/usr/bin/ssh -i /keys/work"), None);
+        let git = Git::with_runner(&rec).harden().trust_repo_ssh_command();
+        git.fetch(Path::new("/repo")).await.expect("fetch");
+        let call = rec.only_call();
+        assert_eq!(call.args_str(), ["fetch", "--quiet"]);
+        assert!(
+            !call.has_env("GIT_SSH_COMMAND"),
+            "trusting must not also pin a value: {:?}",
+            call.env("GIT_SSH_COMMAND")
+        );
+    }
+
+    // The two builders write the same slot, so the last call wins — the documented
+    // contract a consumer resolving two flags has to know about.
+    #[tokio::test]
+    async fn the_ssh_opt_in_builders_are_last_call_wins() {
+        let rec = ssh_probe_runner(Some("/tmp/evil"), None);
+        let git = Git::with_runner(&rec)
+            .harden()
+            .with_ssh_command("ssh -1")
+            .trust_repo_ssh_command();
+        git.fetch(Path::new("/repo")).await.expect("fetch");
+        assert!(
+            !rec.only_call().has_env("GIT_SSH_COMMAND"),
+            "the later `trust_repo_ssh_command` wins"
+        );
+
+        let rec = ssh_probe_runner(Some("/tmp/evil"), None);
+        let git = Git::with_runner(&rec)
+            .harden()
+            .trust_repo_ssh_command()
+            .with_ssh_command("ssh -2");
+        git.fetch(Path::new("/repo")).await.expect("fetch");
+        assert!(
+            rec.only_call().env_is("GIT_SSH_COMMAND", "ssh -2"),
+            "the later `with_ssh_command` wins"
+        );
+    }
+
+    // `clone` is exempt from the probe on purpose: there is no working tree yet,
+    // so there is no repo-local config to read — probing would spend a spawn to
+    // learn nothing, and (running in this process' cwd) could even answer about an
+    // unrelated repository.
+    #[tokio::test]
+    async fn clone_never_probes_for_a_repo_ssh_command() {
+        let rec = ssh_probe_runner(Some("/tmp/evil"), None);
+        let git = Git::with_runner(&rec).harden();
+        git.clone_repo(
+            "ssh://git@example.com/r.git",
+            Path::new("/dest"),
+            CloneSpec::new(),
+        )
+        .await
+        .expect("clone must not be refused by a check that cannot apply to it");
+        assert!(config_probes(&rec).is_empty(), "clone probes nothing");
+    }
+
+    // A probe that fails for a reason OTHER than "unset" (exit 1) must fail the
+    // operation, not be read as "nothing configured" — an unreadable config is
+    // exactly when a silent pass would be worst.
+    #[tokio::test]
+    async fn an_unreadable_config_probe_fails_closed() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(
+                    ["git", "config"],
+                    Reply::fail(128, "fatal: bad config line 1 in file .git/config"),
+                )
+                .fallback(Reply::ok("")),
+        );
+        let git = Git::with_runner(&rec).harden();
+        let err = git
+            .fetch(Path::new("/repo"))
+            .await
+            .expect_err("a broken config must not silently pass the check");
+        assert!(
+            !rec.calls()
+                .iter()
+                .any(|c| c.args_str().first().map(String::as_str) == Some("fetch")),
+            "the fetch must not have run"
+        );
+        assert!(
+            matches!(err.reason(), ErrorReason::Exit { .. }),
+            "git's own failure is surfaced, got {:?}",
+            err.reason()
+        );
+    }
+
+    // The refusal quotes a REPOSITORY-supplied value, so it must be bounded and
+    // escaped: an enormous or control-character-laden value can't be allowed to
+    // flood or mangle whatever log the error lands in.
+    #[tokio::test]
+    async fn the_refusal_bounds_the_repository_supplied_value() {
+        let huge = format!("/tmp/evil{}\nrm -rf /", "A".repeat(5_000));
+        let rec = ssh_probe_runner(Some(&huge), None);
+        let git = Git::with_runner(&rec).harden();
+        let message = git
+            .fetch(Path::new("/repo"))
+            .await
+            .expect_err("must refuse")
+            .to_string();
+        assert!(
+            message.len() < 1_000,
+            "the quoted value must be truncated, got {} chars",
+            message.len()
+        );
+        assert!(message.contains('…'), "truncation is marked: {message}");
+        assert!(
+            !message.contains('\n'),
+            "a control character must be escaped, not embedded: {message}"
         );
     }
 

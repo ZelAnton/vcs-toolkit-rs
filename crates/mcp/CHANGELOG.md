@@ -10,7 +10,20 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- **`--ssh-command <command>` and `--trust-repo-ssh-command`** — the operator's
+  two ways past the hardened client's new refusal (see the `vcs-git` changelog):
+  serving a repository that overrides `core.sshCommand` now fails `repo_fetch` /
+  `repo_push` with an error naming the key, the value found, and these flags,
+  because git would run that value through a shell. `--ssh-command` pins your own
+  command (delivered as `GIT_SSH_COMMAND`, which outranks the repository's key, so
+  its value never runs) and rejects an empty value at startup;
+  `--trust-repo-ssh-command` accepts whatever the repository configured.
+  `--ssh-command` **wins when both are given**, in either order — it is the
+  narrower setting, resolved once after the parse loop exactly as `--allow-write`
+  is resolved against `--allow-tools`. A `core.sshCommand` that lives only in the
+  operator's global git config is unaffected and needs neither flag. The setting is
+  applied to the client `Repo::discover_with` is given, so it reaches the actual
+  network commands the repo tools run.
 
 ### Changed
 - `repo_snapshot`'s tool description now documents the new

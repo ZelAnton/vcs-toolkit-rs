@@ -838,9 +838,11 @@ macro_rules! raw_run_forwarders {
 /// the `…At` view, …) hand-written in a separate `impl` block.
 ///
 /// The generated newtype is `struct $name<R: ProcessRunner = JobRunner>` with a
-/// single private `core: ManagedClient<R>` field — accessible to the rest of the
-/// wrapper crate (same module). All paths are fully qualified, so the expansion
-/// compiles regardless of what the caller has imported.
+/// private `core: ManagedClient<R>` field — accessible to the rest of the
+/// wrapper crate (same module) — plus any fields the optional `extra` clause
+/// below adds, which are private in exactly the same sense. All paths are fully
+/// qualified, so the expansion compiles regardless of what the caller has
+/// imported.
 ///
 /// - `$name` — the wrapper type (e.g. `Git`). The struct-level doc comment (and
 ///   any other attributes) written before `struct` are attached to it verbatim.
@@ -856,6 +858,15 @@ macro_rules! raw_run_forwarders {
 ///   (`vcs-git` uses it to scrub the repo-redirector vars — `GIT_DIR`, … — so a
 ///   value leaking from the parent process can't retarget commands). Must come
 ///   *after* `token_env` when both are present.
+/// - `extra = { $field: $type, … }` — *optional*, last. Additional **private**
+///   fields on the generated newtype, for wrapper state that is not a
+///   `ManagedClient` concern (`vcs-git` keeps its hardened-profile SSH policy and
+///   the cached trusted `core.sshCommand` there). Each type must implement
+///   [`Default`] (how `new`/`with_runner` initialize it) and [`Debug`] (the
+///   generated `Debug` renders it — so give a field that could hold sensitive
+///   text a `Debug` impl that redacts, exactly as `ManagedClient`'s own does).
+///   The fields are reachable from the module that invoked the macro, exactly as
+///   `core` is, so the wrapper crate sets them from its own hand-written builders.
 ///
 /// ```ignore
 /// vcs_cli_support::managed_client! {
@@ -864,7 +875,11 @@ macro_rules! raw_run_forwarders {
 /// }
 /// vcs_cli_support::managed_client! {
 ///     /// The real Git client — scrubs the repo-redirector env vars by default.
-///     pub struct Git => BINARY, scrub_env = ["GIT_DIR", "GIT_WORK_TREE"]
+///     pub struct Git => BINARY, scrub_env = ["GIT_DIR", "GIT_WORK_TREE"],
+///     extra = {
+///         /// Hardened-profile SSH transport policy.
+///         ssh: SshTransport,
+///     }
 /// }
 /// ```
 #[macro_export]
@@ -874,21 +889,26 @@ macro_rules! managed_client {
         $vis:vis struct $name:ident => $binary:expr
         $(, token_env = ($svc:expr, $var:expr) )?
         $(, scrub_env = [ $($scrub:expr),* $(,)? ] )?
+        $(, extra = { $( $(#[$fmeta:meta])* $fname:ident : $fty:ty ),* $(,)? } )?
         $(,)?
     ) => {
         $(#[$meta])*
         $vis struct $name<R: ::processkit::ProcessRunner = ::processkit::JobRunner> {
             core: $crate::ManagedClient<R>,
+            $($( $(#[$fmeta])* $fname: $fty, )*)?
         }
 
         // Manual Debug: no `R: Debug` bound (matches `ManagedClient`'s own impl),
         // delegating straight to `core` — `ManagedClient::fmt` already redacts any
         // configured credential provider / token-env binding, so nothing secret
-        // reaches `{:?}` here either.
+        // reaches `{:?}` here either. An `extra` field is rendered with its OWN
+        // `Debug`, so redacting one that can hold sensitive text is the wrapper
+        // crate's job (see the `extra` bullet on the macro's doc comment).
         impl<R: ::processkit::ProcessRunner> ::core::fmt::Debug for $name<R> {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 f.debug_struct(stringify!($name))
                     .field("core", &self.core)
+                    $($( .field(stringify!($fname), &self.$fname) )*)?
                     .finish()
             }
         }
@@ -896,9 +916,11 @@ macro_rules! managed_client {
         impl $name<::processkit::JobRunner> {
             /// Create a client driving the real job-backed runner.
             pub fn new() -> Self {
-                Self { core: $crate::ManagedClient::new($binary)
-                    $(.with_token_env($svc, $var))?
-                    $($(.default_env_remove($scrub))*)?
+                Self {
+                    core: $crate::ManagedClient::new($binary)
+                        $(.with_token_env($svc, $var))?
+                        $($(.default_env_remove($scrub))*)?,
+                    $($( $fname: ::core::default::Default::default(), )*)?
                 }
             }
         }
@@ -916,6 +938,7 @@ macro_rules! managed_client {
                     core: $crate::ManagedClient::with_runner($binary, runner)
                         $(.with_token_env($svc, $var))?
                         $($(.default_env_remove($scrub))*)?,
+                    $($( $fname: ::core::default::Default::default(), )*)?
                 }
             }
 
@@ -3508,6 +3531,90 @@ mod tests {
                     "the newest line {last:?} fits the cap but is not the tail of {text:?}"
                 );
             }
+        }
+    }
+
+    // ----- `managed_client!`'s optional `extra = { … }` clause ------------------
+    //
+    // The clause widens a **public** macro contract, and the wrapper crates only
+    // exercise part of it: `vcs-git` pairs it with `scrub_env`, nobody combines it
+    // with `token_env`. These two invocations pin the documented grammar (`extra`
+    // last — after either optional clause, or on its own) and the three promises
+    // the macro's doc comment makes about the fields it adds.
+    //
+    // `dead_code`-allowed as a whole: each invocation generates the client's full
+    // surface (`new`, `Default`, `default_timeout`, …) of which a grammar test
+    // uses only a slice.
+    #[allow(dead_code)]
+    mod extra_clause {
+        use super::*;
+        use processkit::testing::RecordingRunner;
+
+        /// A field whose `Debug` renders *presence, not content* — the shape the
+        /// macro's doc prescribes for state that could hold sensitive text (it is
+        /// rendered by the generated `Debug`, so redacting is the wrapper's job).
+        #[derive(Default)]
+        struct RedactingState(Option<String>);
+
+        impl std::fmt::Debug for RedactingState {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(if self.0.is_some() { "set" } else { "unset" })
+            }
+        }
+
+        managed_client! {
+            /// `extra` on its own, with neither optional clause before it.
+            struct ExtraOnly => "extra-only",
+            extra = {
+                /// A plain flag field.
+                armed: bool,
+                state: RedactingState,
+            }
+        }
+
+        managed_client! {
+            /// All three optional clauses at once — the combination no wrapper
+            /// crate uses today, so only this test keeps it parsing.
+            struct EveryClause => "every-clause",
+            token_env = (CredentialService::GitHub, "GH_TOKEN"),
+            scrub_env = ["SCRUBBED_VAR"],
+            extra = { armed: bool }
+        }
+
+        #[tokio::test]
+        async fn extra_fields_default_render_and_leave_core_intact() {
+            let client = ExtraOnly::with_runner(RecordingRunner::replying(Reply::ok("")));
+            // 1. Every extra field is initialized from `Default` — the wrapper's
+            //    hand-written builders start from a known state, not garbage.
+            assert!(!client.armed);
+            assert!(client.state.0.is_none());
+            // 2. The generated `Debug` names each field and renders it through the
+            //    field's OWN `Debug` (`state` redacts, so it prints "unset").
+            let rendered = format!("{client:?}");
+            for expected in ["ExtraOnly", "core", "armed: false", "state: unset"] {
+                assert!(
+                    rendered.contains(expected),
+                    "{expected:?} missing from {rendered}"
+                );
+            }
+
+            // 3. `core` is wired exactly as it is without the clause. `token_env`
+            //    in front of `extra` is covered by this compiling at all (its
+            //    effect needs a credential provider to observe); `scrub_env` is
+            //    checked directly — it must still reach every command built.
+            let rec = RecordingRunner::replying(Reply::ok(""));
+            let client = EveryClause::with_runner(&rec);
+            assert!(!client.armed);
+            let probe = client
+                .core
+                .output_string(client.core.command(["probe"]))
+                .await
+                .expect("the recorded reply");
+            assert!(probe.is_success(), "the client still runs a command at all");
+            assert!(
+                !rec.only_call().has_env("SCRUBBED_VAR"),
+                "the `scrub_env` clause must survive an `extra` clause after it"
+            );
         }
     }
 }

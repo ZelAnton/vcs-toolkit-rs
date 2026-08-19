@@ -128,6 +128,15 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 
 ### Fetch, push, merge, rebase, sequencer, stash
 
+On a **hardened** client (`Git::hardened()`) every network verb below — plus
+`remote_branches`/`remote_branch_exists` (`ls-remote`) and `submodule_update` —
+first spawns `config --get core.sshCommand` and, when that returns a value,
+`config --global --get core.sshCommand`, refusing the operation if the two differ
+(the second read is cached per client, and both are skipped by the
+`with_ssh_command` / `trust_repo_ssh_command` opt-ins). `clone_repo` is exempt. A
+plain `Git::new()` client spawns neither. See [Security &
+hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/).
+
 | Method | Runs | Notes |
 |---|---|---|
 | `fetch` | `fetch --quiet` | prompt-off, retried 3× |

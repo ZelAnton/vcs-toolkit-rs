@@ -150,8 +150,9 @@ Running `git` inside a repository you didn't create is **arbitrary code
 execution by default**: git fires that repo's hooks and honours its config on
 ordinary commands. The hardened profile closes the **hooks**, **`fsmonitor`**, and
 **environment** code-execution paths, applying the same settings to **every**
-command the client runs (see the residual-vectors note at the end of this section
-for what it does *not* cover — repo-local `core.sshCommand` among them):
+command the client runs, and **refuses a network operation** whose SSH transport
+the repository has redirected (see the residual-vectors note at the end of this
+section for what it does *not* cover):
 
 - **Disables hooks** — `core.hooksPath=/dev/null`, pinned through git's
   env-based config (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`;
@@ -179,6 +180,8 @@ for what it does *not* cover — repo-local `core.sshCommand` among them):
   inject it per-call instead of inheriting it.
 - **Skips system config** (`GIT_CONFIG_NOSYSTEM=1`) and keeps terminal prompts
   off everywhere (`GIT_TERMINAL_PROMPT=0`).
+- **Refuses a repository-configured `core.sshCommand`** on the network verbs —
+  see the next subsection.
 
 ```rust,ignore
 use vcs_git::Git;
@@ -191,34 +194,103 @@ It is chainable, so it composes with a runner in tests
 (`Git::with_runner(rec).harden()`) and with a deadline
 (`Git::hardened().default_timeout(…)`).
 
-**Residual repo-local-config vectors (NOT neutralized).** The profile pins the
-hooks and `fsmonitor` keys and scrubs the env vectors, but several **repo-local
-`.git/config` / `.gitattributes`** keys still run an arbitrary program and are
-*not* pinned (there is no git switch to ignore repo-local config wholesale, only
-a per-key override):
+### The SSH transport: `core.sshCommand` (detect and refuse, with an opt-in)
 
-- `core.sshCommand` — run for the SSH transport on `fetch`/`push`/`clone`/
-  `ls-remote`. The env twins `GIT_SSH_COMMAND`/`GIT_SSH` *are* scrubbed (below),
-  but the config key is not, so a `core.sshCommand` that the repository supplies
-  still executes. This profile did pin it — to the empty string — until that pin
-  was found to break SSH outright rather than neutralize anything: git treats the
-  key as set (an empty ssh command) instead of falling back to the built-in `ssh`,
-  so every SSH operation failed with `cannot spawn` / `unable to fork`. A
-  non-empty pin is not a fix either, because a config `core.sshCommand` runs
-  through a shell while the built-in default does not — pinning e.g. `ssh` would
-  silently change which ssh binary and which identity are used. Closing this
-  vector needs a different mechanism and is a separate, not-yet-shipped change;
-  until it lands, treat SSH network operations against an untrusted repository as
-  outside what `harden()` protects.
+`core.sshCommand` is the config-key twin of the scrubbed `GIT_SSH_COMMAND`, and
+git runs its value **through a shell** for the SSH transport. A repository can
+set it, so a poisoned checkout would execute an arbitrary command on the first
+`fetch`/`push`/`ls-remote`.
+
+The key **cannot be pinned away.** This profile did pin it — to the empty string —
+until that pin was found to break SSH outright rather than neutralize anything:
+git treats the key as *set* (an empty ssh command) instead of falling back to the
+built-in `ssh`, so every SSH operation failed with `cannot spawn` / `unable to
+fork`. A non-empty pin is not a fix either, because a config `core.sshCommand`
+runs through a shell while the built-in default does not — pinning e.g. `ssh`
+would silently change which ssh binary and which identity are used.
+
+So a hardened client **compares** instead. Before each network operation on an
+existing working tree — `fetch`, `push`, `ls-remote`, `submodule update` — it
+reads
+
+- the **effective** value, `git config --get core.sshCommand` (what will actually
+  run), and
+- the **trusted** value, `git config --global --get core.sshCommand` (yours),
+
+through the same client, so both see the same environment. If they differ — *and
+"the repository has one, you have none" is a difference* — the operation is
+refused before anything spawns, with an error naming the key, the value found,
+and both ways to continue. A `core.sshCommand` that lives only in **your global
+config** reads the same both ways and is never refused: it is an ordinary,
+legitimate setting (on Windows, typically an absolute path to System32's OpenSSH).
+
+Why a comparison and not "is the key set anywhere below global?" — because
+`git config --local --get` does **not** see two of the shapes a repository can
+use: a value pulled in by a repo-controlled `include.path`, and one written by
+`git config --worktree` under `extensions.worktreeConfig` (both verified on git
+2.54). The effective read sees all of them, and comparing it against the global
+read costs no path parsing, no `--show-origin` classification, and no guesswork
+about which file a value came from. The two values are compared as **raw
+strings** — two spellings of "the same" program (`C:/…/ssh.exe` vs `C:\…\ssh.exe`)
+are a difference the operator resolves, not one the library guesses away.
+
+Two explicit opt-ins lift the refusal (both skip the probe entirely, so they cost
+nothing):
+
+```rust,ignore
+use vcs_git::Git;
+
+// "Use MY ssh command": delivered as GIT_SSH_COMMAND on the network call, which
+// git gives precedence over the repository's key — so the repository's value
+// never runs. The hardened scrub of that variable stays in force everywhere else.
+let git = Git::hardened().with_ssh_command("ssh -i /keys/id_ed25519");
+
+// "I trust this repository's own ssh command" — for a repo you own that
+// deliberately carries its own key/account, where overriding the value would
+// authenticate as somebody else.
+let git = Git::hardened().trust_repo_ssh_command();
+```
+
+Both write the same slot, so the **last call wins**; a consumer resolving two
+user-facing flags should decide the winner itself (`vcs-mcp` gives
+`--ssh-command` precedence over `--trust-repo-ssh-command`, order-independently).
+Silently overriding the key — with a fixed string, or with a mirror of the global
+value — is deliberately **not** offered: it would quietly hand a repository that
+legitimately carries its own identity the wrong one, and answer a "Repository not
+found" instead of a clear refusal.
+
+`clone` is **exempt**: before a clone there is no working tree, so there is no
+repo-local config to read (a probe would spend a spawn to learn nothing, and, run
+in the process' cwd, could even answer about an unrelated repository). An explicit
+`with_ssh_command` still applies to it.
+
+**Cost:** one `git config --get` per network operation, plus the global read once
+per client (cached; skipped entirely when the effective value is absent — the
+clean-repository case). The check is `harden()`-only: a plain `Git::new()` client
+makes no hardening promise and runs exactly what it ran before.
+
+**Residual repo-local-config vectors (NOT neutralized).** The profile pins the
+hooks and `fsmonitor` keys, scrubs the env vectors, and refuses the SSH-transport
+vector above — but several **repo-local `.git/config` / `.gitattributes`** keys
+still run an arbitrary program and are *not* pinned (there is no git switch to
+ignore repo-local config wholesale, only a per-key override):
+
 - `filter.<drv>.clean` / `smudge` + `.gitattributes` — run on any working-tree
   materialization (`checkout`, `stash pop`, `switch_with_stash`, `worktree add`).
 - `diff.<drv>.textconv` / `diff.external` — run when a diff is produced.
   [`diff_text`](https://docs.rs/vcs-git/latest/vcs_git/trait.GitApi.html#tymethod.diff_text)
   defends itself with `--no-ext-diff`, but other diff/blame reads do not.
 
-So for a **fully untrusted** repo, do not materialize its working tree, run diffs,
-or drive SSH network operations through a hardened client without an OS-level
-sandbox. `harden()` is hardening, not a sandbox.
+So for a **fully untrusted** repo, do not materialize its working tree or run
+diffs through a hardened client without an OS-level sandbox. `harden()` is
+hardening, not a sandbox — and that caveat covers the SSH check too: it reads the
+repository's config a moment before git does, so a repository whose files change
+*between* those two reads can still slip a value past it. Closing that window
+needs the tree to be immutable for the duration (an OS-level sandbox, or a private
+copy); the check raises the bar for the ordinary poisoned checkout, it does not
+make an actively hostile, concurrently-written tree safe. The check likewise
+covers only the typed network verbs — the `run`/`run_raw` escape hatch builds its
+own argv and is the caller's responsibility, as it is for every other guard here.
 
 What it does **not** do beyond that: sandbox the git binary itself, or stop the
 repo's *content* from being malicious.
@@ -261,11 +333,14 @@ untrusted, so is every submodule it declares. The three submodule methods sit on
   `submodule update` spawns inherit the client's environment, so the env-based
   pins (`core.hooksPath=/dev/null`, `core.fsmonitor=false`, `GIT_CONFIG_NOSYSTEM`,
   `GIT_TERMINAL_PROMPT=0`, and the scrubbed `GIT_*` redirectors) apply to the
-  nested operations too. But those pins do not close the filter/textconv,
-  repo-local `core.sshCommand`, or `protocol.file.allow` vectors. So for a
-  **fully untrusted** superproject, run `submodule_update` only inside an OS-level
-  sandbox — or vet the declared submodules with `submodule_list` first and update
-  only the ones you trust.
+  nested operations too, and the SSH-transport check above runs on the
+  **superproject** before the update starts (its `.git/config` is exactly the file
+  an untrusted checkout controls). But none of that closes the filter/textconv or
+  `protocol.file.allow` vectors, nor does the SSH check read each *nested*
+  repository's own config — a submodule cloned during the update brings its own.
+  So for a **fully untrusted** superproject, run `submodule_update` only inside an
+  OS-level sandbox — or vet the declared submodules with `submodule_list` first and
+  update only the ones you trust.
 
 The positional submodule paths on `submodule_update` are flag-guarded and passed
 after a `--` terminator, so a caller-supplied path can never smuggle a flag — but

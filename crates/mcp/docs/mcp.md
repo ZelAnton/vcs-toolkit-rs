@@ -7,10 +7,12 @@ agent harness (Claude Code, an IDE assistant, any MCP client) drives a git/jj re
 Each tool wraps a [`vcs-core`](https://docs.rs/vcs-core/latest/vcs_core/guide/) (`Repo`) or [`vcs-forge`](https://docs.rs/vcs-forge/latest/vcs_forge/guide/)
 (`Forge`) operation and returns its DTO as JSON. The binary drives git through a
 **hardened** client (`Git::hardened()` — repo hooks and `core.fsmonitor` disabled,
-with the code-execution `GIT_*` variables scrubbed) and tool
+with the code-execution `GIT_*` variables scrubbed, and a network operation refused
+when the repository overrides `core.sshCommand`) and tool
 arguments are injection-guarded (the wrappers keep caller values out of flag
 position — flag-VALUE slots plus `reject_flag_like` on the few bare positionals), so
-serving a repository you didn't create can't run its hooks or smuggle a flag into argv.
+serving a repository you didn't create can't run its hooks, redirect its ssh
+transport, or smuggle a flag into argv.
 
 It's the workspace's **first binary crate** — a thin `vcs-mcp` binary over a
 hermetically-testable library (`VcsMcpServer`) — and its **second runtime-tokio**
@@ -58,6 +60,7 @@ Install it with `cargo install vcs-mcp` (or point `command` at a built binary).
 vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
         [--allow-tools <name,…>] [--timeout <seconds>]
         [--max-output-bytes <n>] [--log-commands]
+        [--ssh-command <command>] [--trust-repo-ssh-command]
 ```
 
 | Flag | Effect |
@@ -69,6 +72,8 @@ vcs-mcp [--repo <path>] [--forge github|gitlab|gitea] [--allow-write]
 | `--timeout <seconds>` | Per-command deadline so a stalled fetch/forge call can't hang a request (default: 120; `--timeout 0` disables it). |
 | `--max-output-bytes <n>` | Ceiling on content-tool output in bytes (`repo_show_file`, `repo_diff`, `forge_pr_diff`, and the working-copy read behind `repo_conflict_regions`/`repo_resolve_conflict`); default: 10485760 (10 MiB), `0` disables it. Exceeding it returns `OutputTooLarge` — or, for the direct filesystem read, the same refusal naming this ceiling — rather than a truncated result. |
 | `--log-commands` | Log every git/jj/forge command the server runs — program, argv, working directory, exit code, and duration — to **stderr**, for diagnosing why the server behaves unexpectedly. Off by default. The log goes to stderr only, so the stdout JSON-RPC transport stays clean; argv values that could carry a secret (a token flag, a credentialed URL) are **redacted**, and long free text (a PR/issue body) is truncated. See the safety model below. |
+| `--ssh-command <command>` | Run git's SSH network operations with this command, delivered as `GIT_SSH_COMMAND`. Also lifts the hardened client's `core.sshCommand` refusal (safety model, point 3) — and, because `GIT_SSH_COMMAND` outranks the config key, whatever the repository configured never runs. An empty value is rejected at startup (git would take it as a program named `""` and fail every SSH operation). |
+| `--trust-repo-ssh-command` | Accept a `core.sshCommand` **the repository** configures, lifting the same refusal without pinning a command. It accepts whatever that repository says, including a value added later, so use it for a repository you own that deliberately carries its own ssh identity — overriding such a value would authenticate as somebody else. **`--ssh-command` wins when both are given**, whichever order they appear in: it is the narrower setting, and it keeps the repository's own value from running at all. |
 | `-h`, `--help` | Print usage and exit. |
 
 ## Tool catalogue
@@ -209,12 +214,21 @@ The `vcs-mcp` binary applies, in order:
    content-materializing tools are write-gated, so the default read-only mode does
    not expose the smudge-filter path; a `textconv` driver can still run on a diff of
    a **fully untrusted** repo, so sandbox the process (OS-level) for that case.
-   A repo-local **`core.sshCommand`** is likewise *not* neutralized — the env twins
-   `GIT_SSH_COMMAND`/`GIT_SSH` are scrubbed, but the config key runs on any SSH
-   network operation (`repo_fetch`/`repo_push`, all write-gated). It was pinned
-   empty until that turned out to break SSH entirely rather than disable the key;
-   closing the vector is a separate, not-yet-shipped change, so until then serve a
-   fully untrusted repository either read-only or inside an OS-level sandbox.
+   A repo-local **`core.sshCommand`** is handled differently — it is neither
+   neutralized nor ignored, but **refused**. git runs that key's value through a
+   shell for the SSH transport, and it cannot be pinned away (an empty pin breaks
+   SSH outright; a non-empty one silently changes which ssh binary and identity
+   are used). So before each git network operation (`repo_fetch`, `repo_push`) the
+   hardened client compares the repository's *effective* `core.sshCommand` with
+   your *global* one and refuses when they differ — naming the key, the value
+   found, and the two flags that continue. A `core.sshCommand` that lives only in
+   your own global git config is **not** affected: it reads the same both ways.
+   `--ssh-command <command>` pins your own (delivered as `GIT_SSH_COMMAND`, which
+   outranks the repository's key) and `--trust-repo-ssh-command` accepts the
+   repository's; `--ssh-command` wins if both are given. The check is a
+   before-the-command read, not a sandbox — a repository rewritten *between* that
+   read and git's own can still slip a value through — so a fully untrusted
+   repository still belongs either read-only or inside an OS-level sandbox.
 4. **Argv injection guards.** A tool parameter can't smuggle a leading-`-` flag
    into argv: the `vcs-core`/`vcs-forge` wrappers keep caller values out of flag
    position — typed (`u64`/`Path`) or flag-VALUE arguments, with `reject_flag_like`
@@ -328,8 +342,12 @@ The `vcs-mcp` binary applies, in order:
 > `Repo::discover(".")` gets a plain, un-hardened client with no default timeout or
 > output budget — harden and bound the client yourself
 > (`Repo::from_git(root, cwd, Git::hardened().default_timeout(d).default_output_budget(b))`)
-> if you serve untrusted repositories. The conflict tools' direct working-copy read
-> takes its ceiling from the **server**, not the client, so bound it there too:
+> if you serve untrusted repositories — an un-hardened client also runs no
+> `core.sshCommand` check, and the two opt-ins behind `--ssh-command` /
+> `--trust-repo-ssh-command` are plain client builders
+> (`with_ssh_command` / `trust_repo_ssh_command`) you apply the same way. The
+> conflict tools' direct working-copy read takes its ceiling from the **server**,
+> not the client, so bound it there too:
 > `VcsMcpServer::new(...).with_output_budget(b)`.
 
 ## Embedding the server

@@ -10,7 +10,14 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 ## [Unreleased]
 
 ### Added
--
+- `managed_client!` accepts an optional trailing `extra = { field: Type, … }`
+  clause, adding private fields to the generated newtype for wrapper state that is
+  not a `ManagedClient` concern (`vcs-git` keeps its hardened-profile SSH policy
+  and the cached trusted `core.sshCommand` there). Each type must implement
+  `Default` — how the generated `new`/`with_runner` initialize it — and `Debug`,
+  which the generated `Debug` renders, so a field holding sensitive text needs a
+  redacting `Debug` of its own, as `ManagedClient`'s has. Purely additive: every
+  existing invocation expands exactly as before.
 
 ### Changed
 -

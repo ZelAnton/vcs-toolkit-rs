@@ -3372,9 +3372,11 @@ pub fn vcs_git::Git<R>::default_timeout(self, core::time::Duration) -> Self
 pub fn vcs_git::Git<R>::with_runner(R) -> Self
 impl<R: processkit::runner::ProcessRunner> vcs_git::Git<R>
 pub fn vcs_git::Git<R>::default_inactivity_timeout(self, core::time::Duration) -> Self
+pub fn vcs_git::Git<R>::trust_repo_ssh_command(self) -> Self
 pub fn vcs_git::Git<R>::with_credentials(self, alloc::sync::Arc<dyn vcs_cli_support::credentials::CredentialProvider>) -> Self
 pub fn vcs_git::Git<R>::with_env_token(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_git::Git<R>::with_retry(self, vcs_cli_support::RetryPolicy) -> Self
+pub fn vcs_git::Git<R>::with_ssh_command(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn vcs_git::Git<R>::with_token(self, impl core::convert::Into<vcs_cli_support::credentials::Secret>) -> Self
 impl<R: processkit::runner::ProcessRunner> vcs_git::Git<R>
 pub async fn vcs_git::Git<R>::diff_between_within(&self, &std::path::Path, &vcs_git::RevSpec, &vcs_git::RevSpec, vcs_cli_support::OutputBudget) -> processkit::error::Result<alloc::vec::Vec<vcs_diff::diff::FileDiff>>
@@ -3509,7 +3511,7 @@ pub fn vcs_git::Git<R>::worktree_list<'life0, 'life1, 'async_trait>(&'life0 self
 pub fn vcs_git::Git<R>::worktree_move<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 std::path::Path, &'life3 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
 pub fn vcs_git::Git<R>::worktree_prune<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::worktree_remove<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::WorktreeRemove) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
-impl<R> core::marker::Freeze for vcs_git::Git<R> where R: core::marker::Freeze
+impl<R> !core::marker::Freeze for vcs_git::Git<R>
 impl<R> core::marker::Send for vcs_git::Git<R>
 impl<R> core::marker::Sync for vcs_git::Git<R>
 impl<R> core::marker::Unpin for vcs_git::Git<R> where R: core::marker::Unpin
