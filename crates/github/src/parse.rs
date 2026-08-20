@@ -605,6 +605,13 @@ impl GitHubAuth {
 /// rejects is not reported as logged in.
 const LOGGED_IN: &str = "Logged in to ";
 
+/// The marker that opens a **failed** login entry (`X Failed to log in to
+/// github.com account work (keyring)`, `X Failed to log in to github.com using
+/// token (GH_TOKEN)`). Not an account — but gh prints the entry its own
+/// `- Active account:` detail line, which therefore describes an entry this
+/// parser skips and must not qualify a neighbouring one.
+const FAILED_LOGIN: &str = "Failed to log in to ";
+
 /// The per-account detail line (gh 2.40+) that names the active account.
 const ACTIVE_ACCOUNT: &str = "Active account:";
 
@@ -662,20 +669,47 @@ fn parse_account_line(rest: &str) -> Option<AuthAccount> {
 /// `- Active account: true|false` detail line — and feeds on stdout **and** stderr
 /// concatenated, because `gh` printed this report on stderr before it moved to
 /// stdout.
+///
+/// The report is a sequence of **entries**, each a header line plus its indented
+/// detail lines, and an entry this parser skips (a rejected login) still prints
+/// its own `Active account:` line. A detail line is therefore bound to the entry
+/// it sits under — not to "the last account parsed" — so a skipped entry's flag
+/// reaches neither the account above it nor the one below, whichever order gh
+/// prints them in.
 pub(crate) fn parse_auth_accounts(raw: &str) -> Vec<AuthAccount> {
     let mut accounts: Vec<AuthAccount> = Vec::new();
+    // The account the detail lines being read belong to: the index of the entry
+    // whose header was recognised as a login, or `None` while inside an entry
+    // that was not one.
+    let mut current: Option<usize> = None;
     for line in raw.lines() {
         if let Some(rest) = after_marker(line, LOGGED_IN) {
-            accounts.extend(parse_account_line(rest));
+            current = match parse_account_line(rest) {
+                Some(account) => {
+                    accounts.push(account);
+                    Some(accounts.len() - 1)
+                }
+                // A `Logged in to …` line in a shape this parser doesn't model:
+                // the entry opened, but no account was recorded for it, so its
+                // detail lines have nothing to qualify.
+                None => None,
+            };
             continue;
         }
-        // The active marker qualifies the account line above it. One that arrives
-        // before any account belongs to an entry this parser skipped — a *failed*
-        // login, which gh words differently — so it is dropped rather than
-        // misattributed to a later account. A value that isn't a plain bool is
-        // likewise left as "not said".
+        if after_marker(line, FAILED_LOGIN).is_some() {
+            // A rejected login opens an entry of its own — deliberately not an
+            // account (see `LOGGED_IN`). Detach, so the `Active account:` line
+            // gh prints under it stays with it.
+            current = None;
+            continue;
+        }
+        // gh prints `Active account:` once per entry, so the first value wins:
+        // a second one under the same account came from a header this parser
+        // didn't recognise, and overwriting would let it dictate the flag. A
+        // value that isn't a plain bool is likewise left as "not said".
         if let Some(value) = after_marker(line, ACTIVE_ACCOUNT)
-            && let Some(account) = accounts.last_mut()
+            && let Some(account) = current.and_then(|at| accounts.get_mut(at))
+            && account.active.is_none()
             && let Ok(active) = value.trim().parse::<bool>()
         {
             account.active = Some(active);
@@ -1196,6 +1230,68 @@ mod tests {
             auth.active().is_none(),
             "the only recognised login is explicitly not the active one — \
              naming it would point at the wrong identity"
+        );
+    }
+
+    // The mirror image of the regression above: the failed entry comes *after*
+    // the working one. gh prints an `Active account:` line under the entry it
+    // describes, so the failed entry's `false` must not overwrite the flag of the
+    // account above it — that would turn "this is the identity in use" into an
+    // explicit, and wrong, negative.
+    #[test]
+    fn failed_entry_after_a_login_does_not_clear_its_active_flag() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com account personal (keyring)\n  \
+                   - Active account: true\n  - Git operations protocol: ssh\n\n  \
+                   X Failed to log in to github.com account work (keyring)\n  \
+                   - Active account: false\n  - The token in keyring is invalid.\n";
+        let auth = GitHubAuth {
+            // gh exits non-zero when any configured entry fails.
+            authed: false,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts,
+            vec![AuthAccount {
+                host: "github.com".into(),
+                login: "personal".into(),
+                active: Some(true),
+            }],
+            "the failed entry's active marker stays with the failed entry"
+        );
+        assert_eq!(
+            auth.active().map(|a| a.login.as_str()),
+            Some("personal"),
+            "the account gh marks active is still the identity in use"
+        );
+    }
+
+    // The other order of the same pair: a failed entry marked ACTIVE arrives
+    // after a working login gh marked inactive. Inheriting that `true` would name
+    // the wrong identity — the surviving account is precisely the one gh is *not*
+    // running as.
+    #[test]
+    fn active_marker_of_a_failed_entry_below_is_not_inherited() {
+        let raw = "github.com\n  \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+                   - Active account: false\n  - Git operations protocol: ssh\n\n  \
+                   X Failed to log in to github.com using token (GH_TOKEN)\n  \
+                   - Active account: true\n  - The token in GH_TOKEN is invalid.\n";
+        let auth = GitHubAuth {
+            authed: false,
+            accounts: parse_auth_accounts(raw),
+        };
+        assert_eq!(
+            auth.accounts,
+            vec![AuthAccount {
+                host: "github.com".into(),
+                login: "work-acct".into(),
+                active: Some(false),
+            }],
+            "the surviving login keeps gh's own `false`"
+        );
+        assert!(
+            auth.active().is_none(),
+            "the active entry is one this parser skipped — naming the survivor \
+             would point at the wrong identity"
         );
     }
 

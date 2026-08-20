@@ -73,9 +73,12 @@ crates; tag releases as `vcs-mcp-v<version>`.
   `repo_visible: false` beside `authed: true` is precisely why an otherwise
   authenticated call fails with `Could not resolve to a Repository`. GitHub-only
   for now, with every field honestly optional (`null`/`[]` = unknown, never a
-  negative answer): GitLab/Gitea report unknown without spawning, an unrecognised
+  negative answer): GitLab/Gitea — and any other backend with no identity probe,
+  including an external `ForgeApi` implementation that inherits the trait's
+  defaulted `auth_info` — report unknown without spawning, an unrecognised
   `gh auth status` format degrades to unknown instead of failing the tool, and the
-  visibility probe spawns only when a session exists. The tool description now
+  visibility probe spawns only when a session exists. Only a real failure (a spawn
+  error, a timeout) still surfaces as a tool error. The tool description now
   lists the new fields — and the `pr_labels`/`issue_labels` capability flags it had
   been omitting.
   **`forge_auth_status` is deliberately unchanged**: it stays a bare boolean, so

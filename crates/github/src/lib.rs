@@ -1253,7 +1253,10 @@ pub trait GitHubApi: Send + Sync {
     ///
     /// One spawn, and no secret: without `--show-token` `gh` masks the token in
     /// this report, and neither the parsed value nor any error this method builds
-    /// carries captured stdout.
+    /// carries captured stdout — including the errors for a run killed by its
+    /// deadline, by the inactivity watchdog, or by a signal, which are classified
+    /// from a copy of the run whose stdout has been dropped (only a bounded
+    /// stderr hint reaches the message).
     ///
     /// **Defaulted** to `ErrorReason::Unsupported` so external implementers of the
     /// trait keep compiling when the crate bumps (only the `GitHub` concrete impl
@@ -2186,6 +2189,34 @@ fn stderr_hint(stderr: &str) -> String {
     collapsed.chars().take(200).collect()
 }
 
+/// The same run with its captured **stdout dropped** and its stderr reduced to
+/// [`stderr_hint`]'s bounded one-liner — what a caller hands
+/// [`ProcessResult::ensure_success`] when it wants that method's classification
+/// (an `Exit`, a `Signalled` carrying the signal number, or a `Timeout` that
+/// still distinguishes the deadline from the inactivity watchdog) without the
+/// captured output processkit copies into each of those errors.
+///
+/// Rebuilding rather than hand-writing the error is what keeps the two in step:
+/// an outcome processkit adds later is classified by `ensure_success` as usual,
+/// and stays stdout-free by construction. Only the classification is preserved —
+/// the run's telemetry (duration, truncation, totals, accepted codes) rides along
+/// unchanged, and `program` is reported as [`BINARY`], the name every other error
+/// in this crate names `gh` by.
+fn without_captured_output(result: ProcessResult<String>) -> ProcessResult<String> {
+    ProcessResult::from_parts(
+        BINARY,
+        String::new(),
+        stderr_hint(result.stderr()),
+        result.outcome(),
+        result.configured_timeout(),
+        result.duration(),
+        result.truncated(),
+        result.total_lines(),
+        result.total_bytes(),
+        result.ok_codes().to_vec(),
+    )
+}
+
 #[async_trait::async_trait]
 impl<R: ProcessRunner> GitHubApi for GitHub<R> {
     async fn run(&self, args: &[String]) -> Result<String> {
@@ -2244,21 +2275,17 @@ impl<R: ProcessRunner> GitHubApi for GitHub<R> {
         // passed (it never is here), and keeping stdout out of errors keeps the
         // guarantee independent of what a future gh decides to print.
         let result = self.core.output_string(["auth", "status"]).await?;
-        if result.timed_out() {
-            return Err(Error::timeout(
-                BINARY,
-                result.configured_timeout().unwrap_or_default(),
-                "",
-                stderr_hint(result.stderr()),
-            ));
-        }
-        // No exit code at all (signal-killed, cancelled) is a genuine failure, not
-        // "unauthenticated": `ensure_success` renders each of those faithfully. It
+        // No exit code at all — killed by the deadline, by the inactivity
+        // watchdog, or by a signal — is a genuine failure, not "unauthenticated",
+        // and `ensure_success` classifies each of those faithfully. It is handed a
+        // capture-free copy because it builds those errors *from* the captured
+        // streams: `stdout` is dropped there rather than reasoned about, so no
+        // outcome (present or future) can carry the report into an error. It
         // cannot return `Ok` for a result with no code, so the `Some` arm below is
         // the only one that carries on.
         let result = match result.code() {
             Some(_) => result,
-            None => result.ensure_success()?,
+            None => without_captured_output(result).ensure_success()?,
         };
         Ok(GitHubAuth {
             // Same exit-code-as-bool contract as `auth_status`: ANY non-zero exit
@@ -3336,6 +3363,78 @@ mod tests {
         assert!(!auth.authed);
         assert!(auth.accounts.is_empty());
         assert!(!auth.is_unknown(), "no session is not an unknown format");
+    }
+
+    // K-109's rule for every outcome this probe cannot read an exit code from.
+    // `ProcessResult::ensure_success` builds the `Signalled`/`Timeout` error from
+    // the *captured* streams, so routing a killed run through it would attach the
+    // report gh printed on stdout — exactly what `auth_info`'s rustdoc says no
+    // error it builds carries. Each case must surface with an empty stdout while
+    // keeping its own classification (the signal number, and which watchdog fired).
+    #[tokio::test]
+    async fn auth_info_errors_never_carry_the_captured_report() {
+        let report = "github.com\n  \u{2713} Logged in to github.com account octocat (keyring)\n";
+        for (reply, expected) in [
+            (
+                Reply::signalled(Some(9))
+                    .with_stdout(report)
+                    .with_stderr("terminated"),
+                "signalled",
+            ),
+            (
+                Reply::inactivity_timeout()
+                    .with_stdout(report)
+                    .with_stderr("no output"),
+                "inactivity",
+            ),
+            (
+                Reply::timeout()
+                    .with_stdout(report)
+                    .with_stderr("deadline elapsed"),
+                "timeout",
+            ),
+        ] {
+            let gh = GitHub::with_runner(ScriptedRunner::new().on(["gh", "auth"], reply));
+            let err = gh
+                .auth_info()
+                .await
+                .expect_err("a run with no exit code is a failure, not `unauthed`");
+            let stdout = match (err.reason(), expected) {
+                (
+                    ErrorReason::Signalled {
+                        stdout,
+                        signal: Some(9),
+                        ..
+                    },
+                    "signalled",
+                ) => stdout,
+                (
+                    ErrorReason::Timeout {
+                        stdout,
+                        inactivity: true,
+                        ..
+                    },
+                    "inactivity",
+                ) => stdout,
+                (
+                    ErrorReason::Timeout {
+                        stdout,
+                        inactivity: false,
+                        ..
+                    },
+                    "timeout",
+                ) => stdout,
+                (other, _) => panic!("{expected}: unexpected classification {other:?}"),
+            };
+            assert!(
+                stdout.is_empty(),
+                "{expected}: the captured report rode into the error: {stdout:?}"
+            );
+            assert!(
+                !format!("{err}").contains("octocat"),
+                "{expected}: the rendered error names an account from stdout: {err}"
+            );
+        }
     }
 
     // Same contract as `auth_status`: a timeout is a real failure, never a quiet

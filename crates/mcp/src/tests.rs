@@ -1727,6 +1727,41 @@ async fn forge_info_reports_active_account_and_invisible_repo() {
     );
 }
 
+// End to end, the misattribution guard: a *failed* entry (a broken `GH_TOKEN`)
+// printed AFTER the working login must not touch that login's active flag. gh
+// exits non-zero as soon as any entry fails — so `authed` is honestly `false`
+// while the report still names which account it does work as, and no visibility
+// probe is spawned. Getting this wrong reports `active_account: null` plus an
+// `active: false` account, i.e. a confident *negative* about the identity gh
+// actually uses.
+#[tokio::test]
+async fn forge_info_keeps_the_active_account_when_a_failed_entry_follows_it() {
+    let report = "github.com\n  \u{2713} Logged in to github.com account personal (keyring)\n  \
+                  - Active account: true\n  - Git operations protocol: ssh\n\n  \
+                  X Failed to log in to github.com account work (keyring)\n  \
+                  - Active account: false\n  - The token in keyring is invalid.\n";
+    let server = github_info_server(Reply::fail(1, report), Reply::ok(r#"{"name":"r"}"#));
+    let value = tool_json(&server.forge_info().await.expect("forge_info ok"));
+
+    assert_eq!(
+        value["auth"]["authed"], false,
+        "gh exits non-zero when any entry fails: {value}"
+    );
+    assert_eq!(value["auth"]["active_account"], "personal", "{value}");
+    assert_eq!(
+        value["auth"]["accounts"],
+        serde_json::json!([
+            { "host": "github.com", "login": "personal", "active": true },
+        ]),
+        "the rejected login is not a logged-in account, and its marker is its own: {value}"
+    );
+    assert_eq!(
+        value["auth"]["repo_visible"],
+        serde_json::Value::Null,
+        "no session, so nothing to probe visibility with: {value}"
+    );
+}
+
 // `forge_auth_status` keeps its fixed boolean shape — the richer data went into
 // `forge_info` instead, so no existing consumer of this tool has to change.
 #[tokio::test]
@@ -1751,6 +1786,113 @@ async fn forge_info_unknown_auth_format_reports_nulls_not_an_error() {
     assert_eq!(value["auth"]["active_account"], serde_json::Value::Null);
     assert_eq!(value["auth"]["accounts"], serde_json::json!([]), "{value}");
     assert_eq!(value["auth"]["repo_visible"], true, "{value}");
+}
+
+/// An **external** `ForgeApi` implementation — the public extension point
+/// (`VcsMcpServer::from_handles` takes `Arc<dyn ForgeApi>`) — that overrides
+/// nothing optional. It therefore inherits the trait's defaulted `capabilities`
+/// (all-`false`) *and* its defaulted `auth_info` (`Unsupported`), which is the
+/// shape `forge_info` has to keep answering for.
+struct BareForge;
+
+/// The answer every required method of [`BareForge`] gives: this stub exists to
+/// exercise the *defaulted* methods, not to model a forge.
+fn not_implemented(operation: &'static str) -> vcs_forge::Error {
+    vcs_forge::Error::unsupported(vcs_forge::ForgeKind::Unknown, operation)
+}
+
+#[async_trait::async_trait]
+impl ForgeApi for BareForge {
+    fn kind(&self) -> vcs_forge::ForgeKind {
+        vcs_forge::ForgeKind::Unknown
+    }
+    fn cwd(&self) -> &std::path::Path {
+        std::path::Path::new("/repo")
+    }
+    async fn auth_status(&self) -> vcs_forge::Result<bool> {
+        Ok(false)
+    }
+    async fn repo_view(&self) -> vcs_forge::Result<vcs_forge::ForgeRepo> {
+        Err(not_implemented("repo_view"))
+    }
+    async fn pr_list(&self) -> vcs_forge::Result<Vec<vcs_forge::ForgePr>> {
+        Err(not_implemented("pr_list"))
+    }
+    async fn pr_view(&self, _number: u64) -> vcs_forge::Result<vcs_forge::ForgePr> {
+        Err(not_implemented("pr_view"))
+    }
+    async fn pr_create(&self, _spec: vcs_forge::PrCreate) -> vcs_forge::Result<String> {
+        Err(not_implemented("pr_create"))
+    }
+    async fn pr_merge(&self, _number: u64, _merge: vcs_forge::PrMerge) -> vcs_forge::Result<()> {
+        Err(not_implemented("pr_merge"))
+    }
+    async fn pr_mark_ready(&self, _number: u64) -> vcs_forge::Result<()> {
+        Err(not_implemented("pr_mark_ready"))
+    }
+    async fn pr_close(&self, _spec: vcs_forge::PrClose) -> vcs_forge::Result<()> {
+        Err(not_implemented("pr_close"))
+    }
+    async fn pr_checks(&self, _number: u64) -> vcs_forge::Result<vcs_forge::CiStatus> {
+        Err(not_implemented("pr_checks"))
+    }
+    async fn pr_diff(&self, _number: u64) -> vcs_forge::Result<Vec<vcs_forge::FileDiff>> {
+        Err(not_implemented("pr_diff"))
+    }
+    async fn issue_list(&self) -> vcs_forge::Result<Vec<vcs_forge::ForgeIssue>> {
+        Err(not_implemented("issue_list"))
+    }
+    async fn issue_view(&self, _number: u64) -> vcs_forge::Result<vcs_forge::ForgeIssue> {
+        Err(not_implemented("issue_view"))
+    }
+    async fn issue_create(&self, _spec: vcs_forge::IssueCreate) -> vcs_forge::Result<String> {
+        Err(not_implemented("issue_create"))
+    }
+    async fn release_list(&self) -> vcs_forge::Result<Vec<vcs_forge::ForgeRelease>> {
+        Err(not_implemented("release_list"))
+    }
+    async fn release_view(&self, _tag: &str) -> vcs_forge::Result<vcs_forge::ForgeRelease> {
+        Err(not_implemented("release_view"))
+    }
+}
+
+// A read-only introspection tool must answer, not refuse. An external `ForgeApi`
+// inherits `auth_info`'s defaulted `Unsupported` — the very case the default
+// exists for — and that must read as "unknown" (the shape the tool documents for
+// a backend without an identity probe), exactly as the same trait's defaulted
+// `capabilities` degrades to all-`false` instead of erroring.
+#[tokio::test]
+async fn forge_info_reports_unknown_auth_for_a_backend_without_the_probe() {
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(BareForge);
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+    let value = tool_json(
+        &server
+            .forge_info()
+            .await
+            .expect("a defaulted `auth_info` must not fail the whole tool"),
+    );
+    // The pre-existing half still answers, from the trait's own defaults.
+    assert_eq!(value["kind"], "unknown", "{value}");
+    assert_eq!(value["capabilities"]["authed"], false, "{value}");
+    // …and the new block is honestly unknown rather than a negative answer.
+    assert_eq!(value["auth"]["authed"], serde_json::Value::Null, "{value}");
+    assert_eq!(
+        value["auth"]["active_account"],
+        serde_json::Value::Null,
+        "{value}"
+    );
+    assert_eq!(value["auth"]["accounts"], serde_json::json!([]), "{value}");
+    assert_eq!(
+        value["auth"]["repo_visible"],
+        serde_json::Value::Null,
+        "{value}"
+    );
 }
 
 // The `forge_info` tool is read-only — its annotation is `readOnlyHint`,
