@@ -1393,8 +1393,12 @@ pub trait ForgeApi: Send + Sync {
     async fn auth_status(&self) -> Result<bool>;
     /// See [`Forge::auth_info`](crate::Forge::auth_info). **Defaulted** to
     /// `Error::Unsupported` so external trait implementers keep compiling when the
-    /// crate bumps. (The concrete `Forge` overrides it and never errors: a backend
-    /// without an identity probe answers [`ForgeAuth::unknown`] instead.)
+    /// crate bumps; a caller may read that variant ([`Error::is_unsupported`]) as
+    /// "this backend has no identity probe" rather than as a failure. The concrete
+    /// `Forge` overrides the default — a backend without an identity probe answers
+    /// [`ForgeAuth::unknown`] instead of `Unsupported`, without spawning — but the
+    /// override is **not** infallible: on GitHub a real failure of the `gh` runs
+    /// behind the probe (a spawn error, a timeout) propagates as an error.
     async fn auth_info(&self) -> Result<ForgeAuth> {
         Err(Error::unsupported(self.kind(), "auth_info"))
     }
