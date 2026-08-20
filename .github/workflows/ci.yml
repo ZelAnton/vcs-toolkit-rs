@@ -241,6 +241,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # `runner.os` is only `Linux` for both images, so the action's default
+          # job-based key would let ubuntu-latest build artifacts restore on
+          # ubuntu-22.04 (and fail when they require a newer glibc).
+          key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Install jj ${{ matrix.jj }}
