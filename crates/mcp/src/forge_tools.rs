@@ -6,12 +6,14 @@
 //!
 //! Every facade call here is mapped through
 //! [`VcsMcpServer::forge_ok`](crate::VcsMcpServer) rather than `forge_err`
-//! directly: same mapping for every failure, plus — when the failure looks like
-//! *the repository is unavailable to the account `gh` runs as* — the identity
-//! probe and the account-selection hint (see `output.rs`). Uniform on purpose;
-//! any repo-scoped forge call can fail that way, so leaving a subset on the bare
-//! mapper would make the diagnostic depend on which tool the agent happened to
-//! call.
+//! directly, with one exception: `forge_info` stays on the bare mapper for the
+//! reason given at that call site below. `forge_ok` is the same mapping for
+//! every failure, plus — when the failure looks like *the repository is
+//! unavailable to the account `gh` runs as* — the identity probe and the
+//! account-selection hint (see `output.rs`). Uniform on purpose for the
+//! repo-scoped tools; any of them can fail that way, so leaving a subset on the
+//! bare mapper would make the diagnostic depend on which tool the agent happened
+//! to call.
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;

@@ -105,8 +105,13 @@ fn forge_err_with_hint(e: vcs_forge::Error, hint: Option<String>) -> ErrorData {
 }
 
 /// One login rendered for the hint — `` `login` (host) ``, or bare `` `login` ``
-/// when the report carried no host for it (which is what an unrecognised report
-/// leaves behind; inventing `github.com` there would be a guess).
+/// when the account list holds no entry for it.
+///
+/// The GitHub probe always lists the account it names as active (`vcs-forge`'s
+/// `auth_info` resolves `active_account` from an entry of the very `accounts` it
+/// then maps over), so the bare form is not that path — it is what a `ForgeApi`
+/// implementation reporting `kind() == GitHub` leaves behind if it names an
+/// active login it does not list. Inventing `github.com` there would be a guess.
 fn render_account(login: &str, host: Option<&str>) -> String {
     match host {
         Some(host) => format!("`{login}` ({host})"),
