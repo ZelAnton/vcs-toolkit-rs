@@ -52,6 +52,11 @@
 //!   repository". A session existing is not the same as the session you expect —
 //!   with several logins for one host, a repo the active account can't see fails
 //!   deep while every coarse probe stays green.
+//! - **[`is_repo_unavailable`]** — the classifier for that deep failure once it
+//!   has happened: whether a `gh` error is consistent with the repository being
+//!   unavailable to the account in use (gh's `Could not resolve to a Repository`,
+//!   an HTTP 404, or exit code 4). A hit is the cue to run the two probes above
+//!   and say *which* account was in use, not a verdict on its own.
 //! - **[`GhAccountToken`]** — a [`CredentialProvider`] that runs operations as one
 //!   **named `gh` account** on a machine with several logins, resolving its token
 //!   lazily with `gh auth token --user <login>` (cached per host) instead of
@@ -1182,6 +1187,110 @@ impl GitHubCapabilities {
             ),
         ))
     }
+}
+
+/// The exit code `gh` documents for **authentication required**
+/// (`gh help exit-codes`): **4**, as opposed to its generic failure `1` and its
+/// cancellation `2`. Several methods here already name it in their doc comments
+/// ([`workflow_dispatch`](GitHubApi::workflow_dispatch),
+/// [`run_rerun`](GitHubApi::run_rerun), [`run_cancel`](GitHubApi::run_cancel)).
+const GH_EXIT_UNAUTHENTICATED: i32 = 4;
+
+/// Lower-case substrings marking a `gh` failure consistent with a repository the
+/// account `gh` acts as cannot reach — scanned against a completed run's captured
+/// output by [`is_repo_unavailable`].
+const REPO_UNAVAILABLE_MARKERS: &[&str] = &[
+    // gh's GraphQL refusal for a repository it cannot resolve as this account
+    // (`GraphQL: Could not resolve to a Repository with the name 'acme/app'.`).
+    // Keyed on the full `… to a repository` phrase, never the shorter
+    // `could not resolve to a`: gh prints that same opening for a missing
+    // `PullRequest`/`Issue` *inside* a repository the account can see perfectly
+    // well, which is a different failure with a different fix.
+    "could not resolve to a repository",
+    // `gh api`'s HTTP 404 (`gh: Not Found (HTTP 404)`, or the
+    // `HTTP 404: Not Found (https://api.github.com/…)` long form). Both markers are
+    // status-qualified — a bare `404` would match a PR number, an id, or a SHA
+    // echoed in an unrelated message (the same precaution `vcs-forge`'s auth and
+    // rate-limit markers take with `http 401`/`http 429`).
+    "http 404",
+    "404 not found",
+];
+
+/// Whether a failed `gh` call is **consistent with the repository being
+/// unavailable to the account `gh` acts as** — the failure a machine with several
+/// logins produces when the *active* account cannot see the repository, while
+/// every coarse auth probe stays green.
+///
+/// Any one of three signals fires it, all read off a **completed non-zero exit**
+/// ([`ErrorReason::Exit`]):
+///
+/// - gh's GraphQL refusal `Could not resolve to a Repository`, in either captured
+///   stream;
+/// - an **HTTP 404** in that output — what `gh api` reports for a repository (or
+///   endpoint) the account cannot reach;
+/// - exit code **4**, the code `gh help exit-codes` documents for *authentication
+///   required*: there is no usable session, so nothing is visible.
+///
+/// A [`Timeout`](ErrorReason::Timeout), a [`Signalled`](ErrorReason::Signalled)
+/// kill, a spawn failure, and a missing binary are all `false` even when their
+/// partial output happens to carry a marker — a killed run's tail is not a verdict
+/// about the repository. This mirrors the marker classifiers in
+/// [`vcs_cli_support`] (`is_transient_fetch_error`, `is_merge_conflict`,
+/// `is_lock_contention`), which match the *reason* for the same purpose.
+///
+/// # What `true` does and does not prove
+///
+/// GitHub deliberately answers **404 for a repository the caller may not see**, so
+/// its own reply cannot separate "not yours" from "not there" — and neither can
+/// this classifier. A hit means *this failure belongs to the class a wrong or
+/// absent identity produces*; it is the cue to ask
+/// [`auth_info`](GitHubApi::auth_info) which account is in use and
+/// [`repo_visible`](GitHubApi::repo_visible) whether that account can see the
+/// repository, **not** a conclusion about the account on its own. The HTTP 404
+/// signal is the widest of the three: an endpoint that legitimately 404s inside a
+/// perfectly visible repository (`gh api repos/o/r/pulls/9999`) matches it too.
+/// Attach a diagnostic on a hit; do not assert one.
+///
+/// ```
+/// # use vcs_github::is_repo_unavailable;
+/// let err = processkit::Error::exit(
+///     "gh",
+///     1,
+///     "",
+///     "GraphQL: Could not resolve to a Repository with the name 'acme/app'.",
+/// );
+/// assert!(is_repo_unavailable(&err));
+///
+/// // A missing PR *inside* a visible repository is not this class.
+/// let missing_pr = processkit::Error::exit(
+///     "gh",
+///     1,
+///     "",
+///     "GraphQL: Could not resolve to a PullRequest with the number of 9999.",
+/// );
+/// assert!(!is_repo_unavailable(&missing_pr));
+/// ```
+pub fn is_repo_unavailable(err: &Error) -> bool {
+    // Matches the *reason* rather than reading `Error::stdout`/`Error::stderr`:
+    // those accessors also hand back the partial output of a `Timeout`/`Signalled`
+    // run, which this deliberately excludes (see the doc comment).
+    let ErrorReason::Exit {
+        code,
+        stdout,
+        stderr,
+        ..
+    } = err.reason()
+    else {
+        return false;
+    };
+    if *code == GH_EXIT_UNAUTHENTICATED {
+        return true;
+    }
+    let out = stdout.to_ascii_lowercase();
+    let errt = stderr.to_ascii_lowercase();
+    REPO_UNAVAILABLE_MARKERS
+        .iter()
+        .any(|marker| out.contains(marker) || errt.contains(marker))
 }
 
 /// The GitHub operations this crate exposes — the interface consumers code
@@ -3480,6 +3589,169 @@ mod tests {
             ScriptedRunner::new().on(["gh", "repo", "view"], Reply::fail(4, "boom")),
         );
         assert!(!weird.repo_visible(Path::new("/repo")).await.unwrap());
+    }
+
+    // --- `is_repo_unavailable` ------------------------------------------
+
+    /// A completed non-zero `gh` exit — the disposition every marker below
+    /// arrives in (`stdout`, then `stderr`, as gh has printed such messages on
+    /// both over its releases).
+    fn gh_exit(code: i32, stdout: &str, stderr: &str) -> Error {
+        Error::exit(BINARY, code, stdout, stderr)
+    }
+
+    // Signal 1 of 3: gh's GraphQL refusal, verbatim as gh prints it — on either
+    // stream, since gh has moved these messages between stdout and stderr.
+    #[test]
+    fn is_repo_unavailable_fires_on_the_graphql_refusal() {
+        let refusal = "GraphQL: Could not resolve to a Repository with the name \
+                       'acme/private-app'. (repository)";
+        assert!(is_repo_unavailable(&gh_exit(1, "", refusal)));
+        assert!(is_repo_unavailable(&gh_exit(1, refusal, "")));
+        // gh capitalises `Repository`; the scan is case-insensitive, so a future
+        // re-wording of the case can't silently drop the signal.
+        assert!(is_repo_unavailable(&gh_exit(
+            1,
+            "",
+            "graphql: could not resolve to a repository with the name 'acme/app'."
+        )));
+    }
+
+    // Signal 2 of 3: an HTTP 404 from `gh api`, in both the short form gh prints
+    // for a REST miss and the long form carrying the endpoint URL.
+    #[test]
+    fn is_repo_unavailable_fires_on_an_http_404() {
+        assert!(is_repo_unavailable(&gh_exit(
+            1,
+            "",
+            "gh: Not Found (HTTP 404)"
+        )));
+        assert!(is_repo_unavailable(&gh_exit(
+            1,
+            "",
+            "HTTP 404: Not Found (https://api.github.com/repos/acme/private-app/pulls)"
+        )));
+    }
+
+    // Signal 3 of 3: exit code 4 — gh's documented "authentication required"
+    // (`gh help exit-codes`). No session at all, so nothing is visible; the code
+    // decides it on its own, whatever the message says.
+    #[test]
+    fn is_repo_unavailable_fires_on_exit_code_four() {
+        let no_auth = "To get started with GitHub CLI, please run:  gh auth login\n\
+                       Alternatively, populate the GH_TOKEN environment variable with a \
+                       GitHub API authentication token.";
+        assert!(is_repo_unavailable(&gh_exit(4, "", no_auth)));
+        assert!(
+            is_repo_unavailable(&gh_exit(4, "", "")),
+            "the code alone is the signal"
+        );
+    }
+
+    // The negative half, and the point of the whole classifier: an ordinary `gh`
+    // failure — not this class — must not be reported as one, or every unrelated
+    // error would carry a "switch accounts" hint.
+    #[test]
+    fn is_repo_unavailable_ignores_unrelated_failures() {
+        for (code, stderr) in [
+            // The near-miss this classifier is keyed against: gh opens the SAME
+            // GraphQL sentence for a missing PR/issue *inside* a repository the
+            // account resolves perfectly well.
+            (
+                1,
+                "GraphQL: Could not resolve to a PullRequest with the number of 9999. \
+                 (repository.pullRequest)",
+            ),
+            (
+                1,
+                "GraphQL: Could not resolve to an Issue with the number of 404. \
+                 (repository.issue)",
+            ),
+            // A bare `404` echoed as data (a PR number, an id, a SHA) — the
+            // markers are status-qualified, so none of these match.
+            (1, "no pull requests found for branch 404-not-found"),
+            (1, "failed to fetch run 404: run is still in progress"),
+            // A permission refusal on a repository the account CAN see: 403, a
+            // different failure with a different fix (ask for access/scopes).
+            (
+                1,
+                "HTTP 403: Resource not accessible by integration \
+                 (https://api.github.com/repos/acme/app/merges)",
+            ),
+            // Rate limiting, transient network trouble, and a plain verb refusal.
+            (1, "API rate limit exceeded for user ID 1234. (HTTP 403)"),
+            (
+                1,
+                "error connecting to api.github.com: dial tcp: lookup api.github.com: \
+                 no such host",
+            ),
+            (1, "Pull request #7 is already merged"),
+            (1, ""),
+            // gh's cancellation code is 2, not 4 — only 4 is the auth code.
+            (2, "operation cancelled"),
+        ] {
+            assert!(
+                !is_repo_unavailable(&gh_exit(code, "", stderr)),
+                "exit {code} {stderr:?} must not classify as an unavailable repository"
+            );
+        }
+    }
+
+    // Only a *completed* non-zero exit carries a verdict. A run killed by its
+    // deadline, by the inactivity watchdog, or by a signal has a partial tail
+    // that may happen to contain a marker — that is not gh's answer about the
+    // repository. Same rule as `vcs_cli_support`'s marker classifiers.
+    #[test]
+    fn is_repo_unavailable_reads_only_a_completed_exit() {
+        let refusal = "GraphQL: Could not resolve to a Repository with the name 'acme/app'.";
+        assert!(!is_repo_unavailable(&Error::timeout(
+            BINARY,
+            Duration::from_secs(30),
+            "",
+            refusal
+        )));
+        assert!(!is_repo_unavailable(&Error::signalled(
+            BINARY,
+            Some(9),
+            "",
+            refusal
+        )));
+        assert!(!is_repo_unavailable(&Error::not_found(BINARY, None)));
+        assert!(!is_repo_unavailable(&Error::spawn(
+            BINARY,
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+        )));
+        assert!(!is_repo_unavailable(&Error::parse(BINARY, refusal)));
+    }
+
+    // End to end through the real client: a repo-scoped call whose `gh` fails the
+    // way an invisible repository actually fails is classified from the error the
+    // method returns, with no special-casing at the call site.
+    #[tokio::test]
+    async fn is_repo_unavailable_classifies_a_real_call_failure() {
+        let gh = GitHub::with_runner(ScriptedRunner::new().on(
+            ["gh", "pr", "list"],
+            Reply::fail(
+                1,
+                "GraphQL: Could not resolve to a Repository with the name 'acme/private-app'. \
+                 (repository)",
+            ),
+        ));
+        let err = gh
+            .pr_list(Path::new("/repo"))
+            .await
+            .expect_err("an invisible repository fails the call");
+        assert!(is_repo_unavailable(&err), "{err}");
+
+        // The same client, a failure of a different kind: not this class.
+        let other = GitHub::with_runner(
+            ScriptedRunner::new().on(["gh", "pr", "list"], Reply::fail(1, "unknown flag: --json")),
+        );
+        let err = other
+            .pr_list(Path::new("/repo"))
+            .await
+            .expect_err("a bad flag fails the call");
+        assert!(!is_repo_unavailable(&err), "{err}");
     }
 
     // Regression guard for the timeout fix: a timed-out auth check must error,

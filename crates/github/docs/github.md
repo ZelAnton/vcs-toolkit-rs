@@ -173,6 +173,68 @@ from "no permission" — neither does `gh`. Spawn it only when a session exists;
 with none, there is nothing for the repository to be visible *to* — `vcs-forge`'s
 `Forge::auth_info` pairs the two probes with exactly that gate.
 
+### After the fact — `is_repo_unavailable`
+
+The two probes above answer the question *before* a call. Once a call has already
+failed, [`is_repo_unavailable`] classifies the error it returned: is this failure
+**consistent with the repository being unavailable to the account `gh` acts as**?
+
+```rust,ignore
+# use std::path::Path;
+# use vcs_github::{is_repo_unavailable, GitHub, GitHubApi};
+# async fn demo() -> Result<(), processkit::Error> {
+let gh = GitHub::new();
+let dir = Path::new(".");
+match gh.pr_list(dir).await {
+    Ok(prs) => println!("{} open PRs", prs.len()),
+    Err(e) if is_repo_unavailable(&e) => {
+        // Only now spend the two probes — and say *which* identity was in use.
+        let auth = gh.auth_info().await?;
+        match (auth.active(), gh.repo_visible(dir).await?) {
+            (Some(account), false) => eprintln!(
+                "{} cannot see this repository; logins here: {}",
+                account.login,
+                auth.accounts.iter().map(|a| a.login.as_str())
+                    .collect::<Vec<_>>().join(", ")
+            ),
+            _ => eprintln!("{e}"),
+        }
+    }
+    Err(e) => eprintln!("{e}"),
+}
+# Ok(()) }
+```
+
+Three signals fire it, any one of them, all read off a **completed non-zero exit**:
+
+| Signal | Where it comes from |
+| --- | --- |
+| `Could not resolve to a Repository` | gh's GraphQL refusal, in either captured stream |
+| an HTTP 404 (`gh: Not Found (HTTP 404)`) | `gh api` against a repository/endpoint the account can't reach |
+| exit code **4** | gh's documented *authentication required* code (`gh help exit-codes`) |
+
+A timeout, a signal kill, a spawn failure, or a missing binary is `false` even if
+its partial output happens to carry a marker — a killed run's tail is not a
+verdict about the repository. This is the same "match the *reason*, not the
+accessor" rule `vcs-cli-support`'s `is_transient_fetch_error` /
+`is_merge_conflict` / `is_lock_contention` follow.
+
+**What a `true` proves.** GitHub deliberately answers 404 for a repository the
+caller may not see, so its reply cannot separate "not yours" from "not there" —
+and neither can this. A hit says the failure belongs to *the class a wrong or
+absent identity produces*; it is the cue to run `auth_info`/`repo_visible` and
+name the account, not a verdict on its own. The 404 signal is the widest of the
+three: an endpoint that legitimately 404s inside a perfectly visible repository
+(`gh api repos/o/r/pulls/9999`) matches it too. Precision comes from what you do
+next, which is why the example probes before it blames an account. The near miss
+it is keyed against is deliberate: gh opens the same GraphQL sentence for a
+missing `PullRequest`/`Issue` *inside* a repository the account sees fine, and
+that does **not** classify.
+
+`vcs-mcp` builds exactly this composition into its `forge_*` tools: a classified
+failure is answered with the account in use, the other logins on the machine, and
+the flags that pick one.
+
 ### Host selection — github.com vs GitHub Enterprise Server
 
 `gh` reads a **different** credential environment variable per host — `GH_TOKEN`

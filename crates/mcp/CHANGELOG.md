@@ -83,6 +83,33 @@ crates; tag releases as `vcs-mcp-v<version>`.
   been omitting.
   **`forge_auth_status` is deliberately unchanged**: it stays a bare boolean, so
   the richer answer is additive rather than a reshaped response.
+- **A `forge_*` failure that looks like "this account can't see the repository"
+  now says whose account it was.** Every `forge_*` tool's error goes through the
+  same mapper as before; when the failure is one `vcs-github`'s new
+  `is_repo_unavailable` classifies (gh's `Could not resolve to a Repository`, an
+  HTTP 404, or gh's exit code 4 for *authentication required*), the message gains
+  a clause naming the `gh` account the call ran as and its host, whether this
+  repository is visible to it, the other logins on the machine (each with its
+  host — the probe does not resolve which host this repository belongs to, so the
+  list is not filtered on a guess), and the two flags that pick an identity:
+  `--gh-account <login>` / `--gh-token-env <VAR>`. Previously the client saw only
+  gh's raw refusal, which cannot be told apart from a typo or a deleted
+  repository — and gave no hint that a *second, already logged-in* account can
+  see it.
+  The clause is composed from the identity probe's **parsed** answer (logins,
+  hosts) plus fixed text: no captured `stdout`/`stderr` — and no secret one might
+  carry — reaches the client through it, and the CLI's own bounded one-line
+  diagnostic is still there, appended to rather than replaced.
+  Cost and scope are deliberately narrow: nothing extra runs on a successful
+  call, or on a failure outside the class; the probe is the same
+  `Forge::auth_info` (`gh auth status`, plus one `gh repo view` when a session
+  exists) that `forge_info` already exposes, not a second implementation; a probe
+  that itself fails leaves the original error untouched; and because the
+  classifier is deliberately wide (an endpoint can 404 inside a repository the
+  account sees fine), a probe answering "visible" **suppresses** the hint rather
+  than sending the caller to switch accounts for nothing. GitHub only —
+  `glab`/`tea` failures are mapped exactly as before, since the classifier reads
+  gh's semantics and the flags are gh-specific.
 
 ### Fixed
 -

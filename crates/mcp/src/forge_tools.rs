@@ -3,6 +3,15 @@
 //! the repo router in `VcsMcpServer::from_handles`. The tool methods stay
 //! inherent `pub` methods on [`VcsMcpServer`], so their public paths
 //! (`VcsMcpServer::forge_pr_create`, …) are unchanged.
+//!
+//! Every facade call here is mapped through
+//! [`VcsMcpServer::forge_ok`](crate::VcsMcpServer) rather than `forge_err`
+//! directly: same mapping for every failure, plus — when the failure looks like
+//! *the repository is unavailable to the account `gh` runs as* — the identity
+//! probe and the account-selection hint (see `output.rs`). Uniform on purpose;
+//! any repo-scoped forge call can fail that way, so leaving a subset on the bare
+//! mapper would make the diagnostic depend on which tool the agent happened to
+//! call.
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -21,7 +30,7 @@ impl VcsMcpServer {
         annotations(read_only_hint = true)
     )]
     pub async fn forge_auth_status(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.auth_status().await.map_err(forge_err)?)
+        ok_json(&self.forge_ok(self.forge()?.auth_status().await).await?)
     }
 
     #[tool(
@@ -29,7 +38,7 @@ impl VcsMcpServer {
         annotations(read_only_hint = true)
     )]
     pub async fn forge_repo_view(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.repo_view().await.map_err(forge_err)?)
+        ok_json(&self.forge_ok(self.forge()?.repo_view().await).await?)
     }
 
     #[tool(
@@ -42,10 +51,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         ok_json(
             &self
-                .forge()?
-                .pr_list_with(p.into())
-                .await
-                .map_err(forge_err)?,
+                .forge_ok(self.forge()?.pr_list_with(p.into()).await)
+                .await?,
         )
     }
 
@@ -59,10 +66,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         ok_json(
             &self
-                .forge()?
-                .pr_for_branch(&p.source_branch)
-                .await
-                .map_err(forge_err)?,
+                .forge_ok(self.forge()?.pr_for_branch(&p.source_branch).await)
+                .await?,
         )
     }
 
@@ -74,7 +79,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrNumberParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.pr_view(p.number).await.map_err(forge_err)?)
+        ok_json(&self.forge_ok(self.forge()?.pr_view(p.number).await).await?)
     }
 
     #[tool(
@@ -85,7 +90,11 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrNumberParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.pr_checks(p.number).await.map_err(forge_err)?)
+        ok_json(
+            &self
+                .forge_ok(self.forge()?.pr_checks(p.number).await)
+                .await?,
+        )
     }
 
     #[tool(
@@ -96,7 +105,7 @@ impl VcsMcpServer {
         &self,
         Parameters(p): Parameters<PrNumberParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.pr_diff(p.number).await.map_err(forge_err)?)
+        ok_json(&self.forge_ok(self.forge()?.pr_diff(p.number).await).await?)
     }
 
     #[tool(
@@ -109,10 +118,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         ok_json(
             &self
-                .forge()?
-                .issue_list_with(p.into())
-                .await
-                .map_err(forge_err)?,
+                .forge_ok(self.forge()?.issue_list_with(p.into()).await)
+                .await?,
         )
     }
 
@@ -126,10 +133,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         ok_json(
             &self
-                .forge()?
-                .issue_view(p.number)
-                .await
-                .map_err(forge_err)?,
+                .forge_ok(self.forge()?.issue_view(p.number).await)
+                .await?,
         )
     }
 
@@ -138,7 +143,7 @@ impl VcsMcpServer {
         annotations(read_only_hint = true)
     )]
     pub async fn forge_release_list(&self) -> Result<CallToolResult, ErrorData> {
-        ok_json(&self.forge()?.release_list().await.map_err(forge_err)?)
+        ok_json(&self.forge_ok(self.forge()?.release_list().await).await?)
     }
 
     #[tool(
@@ -151,10 +156,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         ok_json(
             &self
-                .forge()?
-                .release_view(&p.tag)
-                .await
-                .map_err(forge_err)?,
+                .forge_ok(self.forge()?.release_view(&p.tag).await)
+                .await?,
         )
     }
 
@@ -174,10 +177,12 @@ impl VcsMcpServer {
         // is safe — uniform with `forge_pr_comment`/`forge_pr_edit` (T-013). Any
         // genuine bare-positional slot is guarded in its own wrapper.
         let out = self
-            .forge()?
-            .issue_create(vcs_forge::IssueCreate::new(p.title, p.body).labels(p.labels))
-            .await
-            .map_err(forge_err)?;
+            .forge_ok(
+                self.forge()?
+                    .issue_create(vcs_forge::IssueCreate::new(p.title, p.body).labels(p.labels))
+                    .await,
+            )
+            .await?;
         ok_json(&serde_json::json!({ "output": out }))
     }
 
@@ -193,10 +198,8 @@ impl VcsMcpServer {
         // A remote mutation (closes the issue on the forge), not a local
         // working-copy change, so `require_write` rather than the repo write lock —
         // uniform with `forge_issue_create`/`forge_pr_close`.
-        self.forge()?
-            .issue_close(p.number)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.issue_close(p.number).await)
+            .await?;
         ok_json(&serde_json::json!({ "closed": p.number }))
     }
 
@@ -210,10 +213,8 @@ impl VcsMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_issue_reopen")?;
         // A remote mutation, so `require_write` rather than the repo write lock.
-        self.forge()?
-            .issue_reopen(p.number)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.issue_reopen(p.number).await)
+            .await?;
         ok_json(&serde_json::json!({ "reopened": p.number }))
     }
 
@@ -233,10 +234,8 @@ impl VcsMcpServer {
         // wrapper already guards it with `reject_flag_like`. An empty body is rejected
         // by the facade itself, before any spawn.
         let out = self
-            .forge()?
-            .issue_comment(p.number, &p.body)
-            .await
-            .map_err(forge_err)?;
+            .forge_ok(self.forge()?.issue_comment(p.number, &p.body).await)
+            .await?;
         ok_json(&serde_json::json!({ "output": out }))
     }
 
@@ -249,10 +248,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<LabelsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_issue_add_labels")?;
-        self.forge()?
-            .issue_add_labels(p.number, &p.labels)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.issue_add_labels(p.number, &p.labels).await)
+            .await?;
         ok_json(&serde_json::json!({ "number": p.number, "labels_added": p.labels }))
     }
 
@@ -265,10 +262,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<LabelsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_issue_remove_labels")?;
-        self.forge()?
-            .issue_remove_labels(p.number, &p.labels)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.issue_remove_labels(p.number, &p.labels).await)
+            .await?;
         ok_json(&serde_json::json!({ "number": p.number, "labels_removed": p.labels }))
     }
 
@@ -292,7 +287,7 @@ impl VcsMcpServer {
             spec = spec.target(target);
         }
         spec = spec.labels(p.labels);
-        let out = self.forge()?.pr_create(spec).await.map_err(forge_err)?;
+        let out = self.forge_ok(self.forge()?.pr_create(spec).await).await?;
         ok_json(&serde_json::json!({ "output": out }))
     }
 
@@ -305,10 +300,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<LabelsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_add_labels")?;
-        self.forge()?
-            .pr_add_labels(p.number, &p.labels)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_add_labels(p.number, &p.labels).await)
+            .await?;
         ok_json(&serde_json::json!({ "number": p.number, "labels_added": p.labels }))
     }
 
@@ -321,10 +314,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<LabelsParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_remove_labels")?;
-        self.forge()?
-            .pr_remove_labels(p.number, &p.labels)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_remove_labels(p.number, &p.labels).await)
+            .await?;
         ok_json(&serde_json::json!({ "number": p.number, "labels_removed": p.labels }))
     }
 
@@ -350,10 +341,8 @@ impl VcsMcpServer {
         if p.delete_branch {
             merge = merge.delete_branch();
         }
-        self.forge()?
-            .pr_merge(p.number, merge)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_merge(p.number, merge).await)
+            .await?;
         ok_json(&serde_json::json!({ "merged": p.number }))
     }
 
@@ -373,7 +362,7 @@ impl VcsMcpServer {
         if p.delete_branch {
             spec = spec.delete_branch();
         }
-        self.forge()?.pr_close(spec).await.map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_close(spec).await).await?;
         ok_json(&serde_json::json!({ "closed": p.number }))
     }
 
@@ -386,10 +375,8 @@ impl VcsMcpServer {
         Parameters(p): Parameters<PrNumberParams>,
     ) -> Result<CallToolResult, ErrorData> {
         self.require_write("forge_pr_mark_ready")?;
-        self.forge()?
-            .pr_mark_ready(p.number)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_mark_ready(p.number).await)
+            .await?;
         ok_json(&serde_json::json!({ "ready": p.number }))
     }
 
@@ -413,10 +400,8 @@ impl VcsMcpServer {
         // GitHub/GitLab (T-013). (An empty body is still rejected by the facade
         // itself, before any spawn.)
         let out = self
-            .forge()?
-            .pr_comment(p.number, &p.body)
-            .await
-            .map_err(forge_err)?;
+            .forge_ok(self.forge()?.pr_comment(p.number, &p.body).await)
+            .await?;
         ok_json(&serde_json::json!({ "output": out }))
     }
 
@@ -443,10 +428,8 @@ impl VcsMcpServer {
         if let Some(body) = p.body {
             edit = edit.body(body);
         }
-        self.forge()?
-            .pr_edit(p.number, edit)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_edit(p.number, edit).await)
+            .await?;
         ok_json(&serde_json::json!({ "edited": p.number }))
     }
 
@@ -461,10 +444,8 @@ impl VcsMcpServer {
         self.require_write("forge_pr_approve")?;
         // A remote review action (no local working-copy mutation), so `require_write`
         // rather than the repo write lock — uniform with `forge_pr_comment`.
-        self.forge()?
-            .pr_approve(p.number)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_approve(p.number).await)
+            .await?;
         ok_json(&serde_json::json!({ "approved": p.number }))
     }
 
@@ -481,10 +462,8 @@ impl VcsMcpServer {
         // in a flag-VALUE slot (`--body`), and the Gitea wrapper guards its bare
         // positional itself. The facade also rejects an empty body — and reports
         // GitLab `Unsupported` — before any spawn, surfaced here as invalid params.
-        self.forge()?
-            .pr_request_changes(p.number, &p.body)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_request_changes(p.number, &p.body).await)
+            .await?;
         ok_json(&serde_json::json!({ "requested_changes": p.number }))
     }
 
@@ -501,10 +480,8 @@ impl VcsMcpServer {
         // mutations the same way they race each other — gate it through the same
         // per-repo write lock (see the `write_lock` field comment).
         let _write = self.begin_repo_write("forge_pr_checkout").await?;
-        self.forge()?
-            .pr_checkout(p.number)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.pr_checkout(p.number).await)
+            .await?;
         ok_json(&serde_json::json!({ "checked_out": p.number }))
     }
 
@@ -537,10 +514,8 @@ impl VcsMcpServer {
             spec = spec.prerelease();
         }
         let out = self
-            .forge()?
-            .release_create(spec)
-            .await
-            .map_err(forge_err)?;
+            .forge_ok(self.forge()?.release_create(spec).await)
+            .await?;
         ok_json(&serde_json::json!({ "output": out }))
     }
 
@@ -555,10 +530,8 @@ impl VcsMcpServer {
         self.require_write("forge_release_delete")?;
         // A remote mutation, so `require_write` rather than the repo write lock. The
         // bare-positional `<tag>` is guarded in each wrapper (`reject_flag_like`).
-        self.forge()?
-            .release_delete(&p.tag)
-            .await
-            .map_err(forge_err)?;
+        self.forge_ok(self.forge()?.release_delete(&p.tag).await)
+            .await?;
         ok_json(&serde_json::json!({ "deleted": p.tag }))
     }
 
@@ -569,6 +542,10 @@ impl VcsMcpServer {
     pub async fn forge_info(&self) -> Result<CallToolResult, ErrorData> {
         let forge = self.forge()?;
         let kind = forge.kind();
+        // The one tool deliberately left on the bare `forge_err`: this IS the
+        // identity report, so a failure here has nothing to enrich itself with —
+        // `forge_ok`'s hint would re-run the very probes below (and `gh --version`,
+        // which this line runs, can't fail the way the classifier looks for).
         let capabilities = forge.capabilities().await.map_err(forge_err)?;
         // Additive: `auth` sits beside `capabilities` rather than reshaping it, so
         // an existing consumer of this tool's JSON is unaffected. It is a separate

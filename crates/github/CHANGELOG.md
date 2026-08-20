@@ -68,6 +68,25 @@ crates; tag releases as `vcs-github-v<version>`.
   Both methods are **defaulted** on the trait (`ErrorReason::Unsupported`), so
   external `GitHubApi` implementers keep compiling, and both are available on the
   cwd-bound `GitHubAt` view.
+- **`is_repo_unavailable`** — the classifier for the failure the two probes above
+  predict, once it has already happened: whether a `gh` error is **consistent with
+  the repository being unavailable to the account `gh` acts as**. Any one of three
+  signals fires it, all read off a completed non-zero `ErrorReason::Exit`: gh's
+  GraphQL `Could not resolve to a Repository` in either captured stream, an HTTP
+  404 in that output (`gh: Not Found (HTTP 404)` — status-qualified, so a bare
+  `404` echoed as a PR number or id can't match), or exit code **4**, the code
+  `gh help exit-codes` documents for *authentication required*. A timeout, a
+  signal kill, a spawn failure, or a missing binary is `false` even when its
+  partial output carries a marker — the same "match the reason, not the accessor"
+  rule `vcs-cli-support`'s `is_transient_fetch_error`/`is_merge_conflict`/
+  `is_lock_contention` follow. Deliberately keyed on the full `… to a Repository`
+  phrase: gh opens the same GraphQL sentence for a missing `PullRequest`/`Issue`
+  *inside* a repository the account resolves fine, which does not classify. A hit
+  is a **cue, not a verdict**: GitHub answers 404 for a repository the caller may
+  not see, so neither its reply nor this classifier separates "not yours" from
+  "not there" — pair a hit with `auth_info`/`repo_visible` to name the account
+  before blaming it (the 404 signal is the widest of the three and also matches an
+  endpoint that legitimately 404s inside a visible repository).
 
 ### Changed
 -

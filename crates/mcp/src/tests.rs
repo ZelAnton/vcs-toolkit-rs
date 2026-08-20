@@ -1895,6 +1895,281 @@ async fn forge_info_reports_unknown_auth_for_a_backend_without_the_probe() {
     );
 }
 
+// --- the "repository unavailable to this account" diagnostic ------------
+
+/// `gh`'s GraphQL refusal for a repository the active account cannot resolve —
+/// the failure the diagnostic below explains.
+const REPO_REFUSAL: &str =
+    "GraphQL: Could not resolve to a Repository with the name 'acme/private-app'. (repository)";
+
+/// A token-shaped fixture (not a real credential) planted in the failing
+/// command's captured **stdout**, to pin that no captured stream reaches the
+/// client's message.
+const FIXTURE_SECRET: &str = "ghp_fixtureNotARealTokenJustAStandIn0123456";
+
+/// Two logins for one host, the second active — a machine with a personal and a
+/// work account. Carries the `Token:`/`Token scopes:`/`keyring` detail lines gh
+/// prints (masked, since `--show-token` is never passed) so a test can prove the
+/// hint is built from the *parsed* accounts, not from this report's text.
+const TWO_LOGIN_REPORT: &str = "github.com\n  \
+     \u{2713} Logged in to github.com account work-acct (keyring)\n  \
+     - Active account: false\n  - Git operations protocol: https\n  \
+     - Token: gho_************************************\n  \
+     - Token scopes: 'gist', 'read:org', 'repo'\n\n  \
+     \u{2713} Logged in to github.com account personal (keyring)\n  \
+     - Active account: true\n  \
+     - Token: gho_************************************\n";
+
+/// A GitHub-backed server over a recorded, scripted `gh`: `pr list` answers with
+/// `pr_list`, the identity probe (`auth status`) with `auth`, and the visibility
+/// probe (`repo view`) with `repo_view`. The recorder comes back so a test can
+/// assert which of them actually ran.
+fn github_forge_server(
+    pr_list: Reply,
+    auth: Reply,
+    repo_view: Reply,
+) -> (
+    VcsMcpServer,
+    Arc<processkit::testing::RecordingRunner<ScriptedRunner>>,
+) {
+    let runner = Arc::new(processkit::testing::RecordingRunner::new(
+        ScriptedRunner::new()
+            .on(["gh", "pr", "list"], pr_list)
+            .on(["gh", "auth", "status"], auth)
+            .on(["gh", "repo", "view"], repo_view),
+    ));
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let gh = vcs_forge::vcs_github::GitHub::with_runner(runner.clone());
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_github("/repo", gh));
+    (
+        VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None),
+        runner,
+    )
+}
+
+/// The message of the error `forge_pr_list` failed with.
+async fn pr_list_error(server: &VcsMcpServer) -> String {
+    server
+        .forge_pr_list(Parameters(PrListParams {
+            state: None,
+            limit: None,
+        }))
+        .await
+        .expect_err("the scripted `gh pr list` fails")
+        .message
+        .to_string()
+}
+
+// The failure this diagnostic exists for: two logins on one host, and the
+// **active** one cannot see the repository. Raw, the client only learns that
+// GitHub wouldn't resolve a name — which is indistinguishable from a typo or a
+// deleted repo. With the diagnostic it learns which identity ran the call, that
+// the repository is invisible to it, which other login is available, and the
+// flag that picks one.
+#[tokio::test]
+async fn an_invisible_repository_names_the_account_the_others_and_the_flags() {
+    let (server, runner) = github_forge_server(
+        Reply::fail(1, REPO_REFUSAL),
+        Reply::ok(TWO_LOGIN_REPORT),
+        // The visibility probe agrees with the classifier: not visible.
+        Reply::fail(1, REPO_REFUSAL),
+    );
+    let message = pr_list_error(&server).await;
+
+    // The CLI's own diagnostic still reaches the client — the hint is appended,
+    // never substituted.
+    assert!(
+        message.contains("Could not resolve to a Repository"),
+        "{message}"
+    );
+    // The whole composed clause, in order: who ran it (with its host, since a
+    // machine can hold logins on several), what the probe found, who else is
+    // available, and how to pick one. Pinned as one string so a reworded or
+    // reordered clause has to be looked at rather than silently drift.
+    assert!(
+        message.contains(
+            "the `gh` account in use is `personal` (github.com) and this repository is not \
+             visible to it; other logins here: `work-acct` (github.com); choose the identity \
+             explicitly by restarting the server with `--gh-account <login>` or \
+             `--gh-token-env <VAR>`"
+        ),
+        "{message}"
+    );
+
+    // Three spawns: the failing call, then the identity probe and its visibility
+    // half — `Forge::auth_info` reused, not a third probe invented here.
+    let spawned: Vec<Vec<String>> = runner.calls().iter().map(|c| c.args_str()).collect();
+    assert_eq!(spawned.len(), 3, "{spawned:?}");
+    assert_eq!(spawned[1][..2], ["auth", "status"], "{spawned:?}");
+    assert_eq!(spawned[2][..2], ["repo", "view"], "{spawned:?}");
+}
+
+// The secret-safety half. The hint is composed from the identity probe's parsed
+// fields (logins, hosts) plus fixed text — never from a captured stream — so a
+// failing command's stdout cannot ride out inside it, and neither can `gh auth
+// status`'s report text. The failing call's stdout here is both large and
+// secret-bearing: a message that dumped captures would carry the token, and
+// would also blow the size bound.
+#[tokio::test]
+async fn the_diagnostic_carries_no_captured_output_and_no_secret() {
+    let leaky_stdout = format!(
+        "{{\"token\":\"{FIXTURE_SECRET}\",\"padding\":\"{}\"}}",
+        "x".repeat(4096)
+    );
+    let (server, _runner) = github_forge_server(
+        Reply::fail(1, REPO_REFUSAL).with_stdout(leaky_stdout.clone()),
+        Reply::ok(TWO_LOGIN_REPORT),
+        Reply::fail(1, REPO_REFUSAL),
+    );
+    let message = pr_list_error(&server).await;
+
+    // The hint is there (so this is not vacuously passing)…
+    assert!(message.contains("--gh-account"), "{message}");
+    // …and none of the captured stdout came with it.
+    assert!(
+        !message.contains(FIXTURE_SECRET),
+        "a secret in the failing command's stdout must not reach the client: {message}"
+    );
+    assert!(!message.contains(&leaky_stdout), "{message}");
+    assert!(!message.contains("xxxxxxxx"), "{message}");
+    // Nor any text from the identity report — the accounts are read from parsed
+    // fields, so gh's own `Token:`/`keyring` lines have no path into the message.
+    for report_text in ["Token scopes", "keyring", "gho_", "Git operations protocol"] {
+        assert!(
+            !message.contains(report_text),
+            "{report_text:?} is report text, not a parsed field: {message}"
+        );
+    }
+    // Bounded: the CLI's own one-line diagnostic plus the composed clause, not a
+    // dump of either stream (4 KiB of stdout alone would blow this).
+    assert!(message.len() < 1_000, "{} bytes: {message}", message.len());
+}
+
+// The classifier is deliberately wide (an endpoint can 404 inside a repository
+// the account sees perfectly well), so the probe gets the last word: when it
+// answers "visible", no account-selection hint is attached — sending that caller
+// to switch accounts would be sending them the wrong way.
+#[tokio::test]
+async fn a_visible_repository_gets_no_account_hint() {
+    let (server, _runner) = github_forge_server(
+        Reply::fail(1, "gh: Not Found (HTTP 404)"),
+        Reply::ok(TWO_LOGIN_REPORT),
+        Reply::ok(r#"{"name":"private-app"}"#),
+    );
+    let message = pr_list_error(&server).await;
+    assert!(message.contains("Not Found"), "{message}");
+    assert!(
+        !message.contains("--gh-account"),
+        "the probe contradicts the guess: {message}"
+    );
+    assert!(!message.contains("`personal`"), "{message}");
+}
+
+// A failure outside the class is mapped exactly as before — and costs exactly
+// nothing extra: no identity probe is spawned at all. `Could not resolve to a
+// PullRequest` is the near miss the classifier is keyed against (gh opens the
+// same GraphQL sentence for a missing PR inside a repository the account sees).
+#[tokio::test]
+async fn an_unrelated_failure_is_mapped_as_before_without_probing() {
+    let (server, runner) = github_forge_server(
+        Reply::fail(
+            1,
+            "GraphQL: Could not resolve to a PullRequest with the number of 9999.",
+        ),
+        Reply::ok(TWO_LOGIN_REPORT),
+        Reply::ok(r#"{"name":"private-app"}"#),
+    );
+    let message = pr_list_error(&server).await;
+    assert!(message.contains("PullRequest"), "{message}");
+    assert!(!message.contains("--gh-account"), "{message}");
+    assert!(!message.contains("`personal`"), "{message}");
+    assert_eq!(
+        runner.calls().len(),
+        1,
+        "only the failing call itself: {:?}",
+        runner.calls()
+    );
+}
+
+// gh's exit code 4 is "authentication required": there is no session at all, so
+// the hint must say that rather than name an account it doesn't have — and still
+// point at the flags (plus the login the operator may actually want).
+#[tokio::test]
+async fn an_unauthenticated_gh_reports_no_session_and_how_to_choose_one() {
+    let (server, runner) = github_forge_server(
+        Reply::fail(
+            4,
+            "To get started with GitHub CLI, please run:  gh auth login",
+        ),
+        Reply::fail(
+            1,
+            "You are not logged into any GitHub hosts. To log in, run: gh auth login",
+        ),
+        Reply::ok(r#"{"name":"private-app"}"#),
+    );
+    let message = pr_list_error(&server).await;
+    assert!(
+        message.contains("no logged-in account"),
+        "the honest state: {message}"
+    );
+    assert!(
+        !message.contains("not visible to it"),
+        "nothing was probed for visibility, so nothing is claimed: {message}"
+    );
+    assert!(
+        message.contains("--gh-account") && message.contains("--gh-token-env"),
+        "{message}"
+    );
+    assert!(message.contains("or log in with"), "{message}");
+    // No session → the visibility half of the probe is skipped: two spawns, not
+    // three (the gate `Forge::auth_info` already applies).
+    assert_eq!(runner.calls().len(), 2, "{:?}", runner.calls());
+}
+
+// GitHub only. `glab` answers a hidden project with a plain `404 Not Found`,
+// which would match the classifier's marker — but the classifier reads gh's
+// semantics and the hint names gh-only flags, so a GitLab failure is mapped
+// plainly instead of being pointed at a flag that could not help it.
+#[tokio::test]
+async fn a_gitlab_failure_is_never_pointed_at_the_gh_flags() {
+    let glab = vcs_forge::vcs_gitlab::GitLab::with_runner(
+        ScriptedRunner::new().on(["glab", "mr", "list"], Reply::fail(1, "404 Not Found")),
+    );
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let forge: Arc<dyn ForgeApi> = Arc::new(Forge::from_gitlab("/repo", glab));
+    let server = VcsMcpServer::from_handles(repo, Some(forge), WriteGate::None);
+
+    let message = pr_list_error(&server).await;
+    assert!(message.contains("404"), "{message}");
+    assert!(!message.contains("--gh-account"), "{message}");
+    assert!(!message.contains("--gh-token-env"), "{message}");
+}
+
+// A diagnostic must never replace the failure it was trying to explain: when the
+// identity probe itself fails, the original error is returned unchanged.
+#[tokio::test]
+async fn a_failing_probe_leaves_the_original_error_untouched() {
+    let (server, _runner) = github_forge_server(
+        Reply::fail(1, REPO_REFUSAL),
+        Reply::timeout(),
+        Reply::ok(r#"{"name":"private-app"}"#),
+    );
+    let message = pr_list_error(&server).await;
+    assert!(
+        message.contains("Could not resolve to a Repository"),
+        "{message}"
+    );
+    assert!(!message.contains("--gh-account"), "{message}");
+}
+
 // The `forge_info` tool is read-only — its annotation is `readOnlyHint`,
 // not `destructiveHint`. Pinned here alongside the existing
 // `tool_annotations_mark_read_vs_destructive` test.
