@@ -376,17 +376,22 @@ const GIT_PASSWORD_VAR: &str = "VCS_TOOLKIT_GIT_PASSWORD";
 const GIT_HOST_VAR: &str = "VCS_TOOLKIT_GIT_HOST";
 
 /// Extract the `host[:port]` from an HTTPS git URL
-/// (`https://[user[:pass]@]host[:port]/…`), **verbatim** — original case and port
-/// preserved — to scope a credential helper to the host an operation targets. git
-/// carries the same `host[:port]` in its credential request and compares it
-/// byte-for-byte, so normalizing here would withhold a legitimate credential.
+/// (`https://[user[:pass]@]host[:port]/…`), matching the scheme ASCII
+/// case-insensitively and preserving the authority **verbatim** — including the
+/// original host case and port — to scope a credential helper to the host an
+/// operation targets. git carries the same `host[:port]` in its credential request
+/// and compares it byte-for-byte, so normalizing here would withhold a legitimate
+/// credential.
 /// Returns `None` for a non-HTTPS URL (an SSH remote never invokes the HTTPS
 /// credential helper, so gating it is moot), an IPv6-literal authority, or an
 /// unparseable one — in which case the helper stays **ungated**, no worse than
 /// before host scoping existed.
 #[must_use]
 pub fn https_host(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://")?;
+    let (scheme, rest) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
     // The authority ends at the first `/`, `?`, or `#`. Drop any `user:pass@`
     // userinfo, but keep the host **and its port**, with the **original case**:
     // git's credential request carries `host=` verbatim from the URL — it
@@ -495,7 +500,33 @@ pub fn git_credential_helper(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+    use std::process::{Command, Output, Stdio};
+
     use super::*;
+
+    fn credential_fill(helper: &GitCredentialHelper, request: &str) -> Output {
+        let mut command = Command::new("git");
+        command
+            .args(&helper.config_args)
+            .args(["credential", "fill"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, value) in &helper.env {
+            command.env(name, value.expose());
+        }
+
+        let mut child = command.spawn().expect("git must be available for tests");
+        child
+            .stdin
+            .take()
+            .expect("credential fill stdin")
+            .write_all(request.as_bytes())
+            .expect("write credential request");
+        child.wait_with_output().expect("wait for credential fill")
+    }
 
     #[test]
     fn secret_redacts_in_debug_and_display() {
@@ -836,31 +867,86 @@ mod tests {
     }
 
     #[test]
-    fn https_host_extracts_hostname() {
+    fn https_host_accepts_any_ascii_scheme_case_and_keeps_authority_verbatim() {
         assert_eq!(
             https_host("https://github.com/o/r.git").as_deref(),
             Some("github.com")
+        );
+        assert_eq!(
+            https_host("HTTPS://Git.Example.COM:8443/o/r.git").as_deref(),
+            Some("Git.Example.COM:8443"),
+            "the scheme is case-insensitive; the host and port are not normalized"
         );
         // Userinfo is stripped, but the port and case are PRESERVED — git's
         // `host=` request carries `host[:port]` verbatim from the URL and matches
         // it case-sensitively, so scoping to a normalized host would withhold the
         // credential and break auth for a non-default port / uppercase host.
         assert_eq!(
-            https_host("https://x-access-token:tok@Git.Example.COM:8443/g/p").as_deref(),
+            https_host(
+                "hTtPs://first@x-access-token:tok@Git.Example.COM:8443/g/file@rev?email=a@b#tail@x"
+            )
+            .as_deref(),
             Some("Git.Example.COM:8443"),
-            "userinfo dropped; port + case kept"
+            "last authority @ drops userinfo; later @ bytes do not affect the host"
         );
         assert_eq!(
-            https_host("https://host.io?x=1").as_deref(),
+            https_host("HtTpS://host.io?email=a@b#tail@x").as_deref(),
             Some("host.io"),
-            "authority ends at ? or #"
+            "authority ends before path, query, or fragment"
         );
+    }
+
+    #[test]
+    fn https_host_keeps_safe_none_outcomes_for_other_or_unusable_authorities() {
         // Non-HTTPS (SSH) never invokes the helper → no host to scope.
         assert_eq!(https_host("git@github.com:o/r.git"), None);
         assert_eq!(https_host("ssh://git@github.com/o/r"), None);
+        assert_eq!(https_host("httpSx://github.com/o/r"), None);
+        assert_eq!(https_host("https:github.com/o/r"), None);
         assert_eq!(https_host("https://"), None);
+        assert_eq!(https_host("HTTPS:///path"), None);
+        assert_eq!(https_host("hTtPs://?query"), None);
+        assert_eq!(https_host("HtTpS://#fragment"), None);
+        assert_eq!(https_host("HTTPS://user@/path"), None);
         // IPv6 literal → ungated (None) rather than a wrong match that breaks auth.
-        assert_eq!(https_host("https://[::1]:8443/x"), None);
+        assert_eq!(https_host("hTtPs://[::1]:8443/x"), None);
+    }
+
+    #[test]
+    fn mixed_case_https_host_gates_real_git_credential_requests() {
+        let target_url = "hTtPs://Git.Example.COM:8443/org/repo.git";
+        let expected_host = https_host(target_url).expect("mixed-case HTTPS host");
+        let helper = git_credential_helper(
+            &Credential::userpass("alice", "target-only-secret"),
+            Some(&expected_host),
+        )
+        .expect("valid credential");
+
+        let matched = credential_fill(&helper, &format!("url={target_url}\n\n"));
+        assert!(
+            matched.status.success(),
+            "matching host should receive the helper credential: {}",
+            String::from_utf8_lossy(&matched.stderr)
+        );
+        let matched_stdout = String::from_utf8_lossy(&matched.stdout);
+        assert!(matched_stdout.contains("username=alice\n"));
+        assert!(matched_stdout.contains("password=target-only-secret\n"));
+
+        let mismatched = credential_fill(
+            &helper,
+            "protocol=https\nhost=redirect.example\npath=org/repo.git\n\n",
+        );
+        let mismatched_stdout = String::from_utf8_lossy(&mismatched.stdout);
+        let mismatched_stderr = String::from_utf8_lossy(&mismatched.stderr);
+        assert!(
+            !mismatched_stdout.contains("target-only-secret")
+                && !mismatched_stderr.contains("target-only-secret"),
+            "a different host must never receive or expose the scoped secret"
+        );
+        assert!(
+            !mismatched_stdout.contains("username=alice"),
+            "a different host must receive no scoped username either"
+        );
     }
 
     #[test]
