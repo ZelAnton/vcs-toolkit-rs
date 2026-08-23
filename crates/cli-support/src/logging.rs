@@ -785,6 +785,18 @@ mod tests {
         ]));
         assert_eq!(out[1], "https://<redacted>@host:8443/dir/file@rev");
         assert!(!out[1].contains("secret"), "credential masked: {}", out[1]);
+
+        // Scheme casing does not move the shared authority boundary: credentials
+        // are still masked, while later `@` bytes remain part of the path/query.
+        let out = redact_args(&argv(&[
+            "clone",
+            "HtTpS://first@user:secret@Host.Example:8443/dir@rev?mail=a@b#tail@x",
+        ]));
+        assert_eq!(
+            out[1],
+            "HtTpS://<redacted>@Host.Example:8443/dir@rev?mail=a@b#tail@x"
+        );
+        assert!(!out[1].contains("secret"), "credential masked: {}", out[1]);
     }
 
     #[test]
