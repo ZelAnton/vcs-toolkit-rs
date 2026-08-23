@@ -186,13 +186,63 @@ pub use vcs_cli_support::{
 pub const BINARY: &str = "git";
 
 // `git worktree list --porcelain -z` was added in Git 2.36. Older supported
-// versions retain the newline-framed command, paired with the strict legacy
-// parser that refuses structurally ambiguous output instead of returning a
-// truncated filesystem path.
+// versions retain the newline-framed command, paired with strict parsing and an
+// independent count from Git's administrative worktree registry. The count is
+// what catches a literal-LF suffix that happens to form complete pseudo-records.
 const WORKTREE_LIST_Z_MIN_VERSION: (u64, u64) = (2, 36);
 
 fn supports_worktree_list_z(version: GitVersion) -> bool {
     (version.major, version.minor) >= WORKTREE_LIST_Z_MIN_VERSION
+}
+
+fn parse_worktree_registry_path(output: &[u8]) -> std::result::Result<PathBuf, String> {
+    let Some(path) = output.strip_suffix(b"\n") else {
+        return Err("git rev-parse --git-path worktrees returned no line terminator".to_string());
+    };
+    // Git for Windows may use CRLF for textual output. `worktrees` is a fixed
+    // suffix here, so this CR cannot be caller path data; on Unix preserve every
+    // byte before LF, including CR in an ancestor directory name.
+    #[cfg(windows)]
+    let path = path.strip_suffix(b"\r").unwrap_or(path);
+    if path.is_empty() {
+        return Err("git rev-parse --git-path worktrees returned an empty path".to_string());
+    }
+    Ok(vcs_diff::path_from_bytes(path))
+}
+
+fn legacy_worktree_record_count(registry: &Path) -> std::result::Result<usize, String> {
+    let entries = match std::fs::read_dir(registry) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(1),
+        Err(error) => {
+            return Err(format!(
+                "cannot validate legacy worktree porcelain against {registry:?}: {error}"
+            ));
+        }
+    };
+
+    let mut count = 1usize; // the main worktree (or the bare repository itself)
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!("cannot read an entry in worktree registry {registry:?}: {error}")
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "cannot inspect worktree registry entry {:?}: {error}",
+                entry.path()
+            )
+        })?;
+        if !file_type.is_dir() {
+            return Err(format!(
+                "cannot validate legacy worktree porcelain: registry entry {:?} is not a directory",
+                entry.path()
+            ));
+        }
+        count = count.checked_add(1).ok_or_else(|| {
+            "cannot validate legacy worktree porcelain: worktree count overflow".to_string()
+        })?;
+    }
+    Ok(count)
 }
 
 mod specs;
@@ -638,9 +688,10 @@ pub trait GitApi: Send + Sync {
 
     /// List worktrees (`worktree list --porcelain`). Git >= 2.36 uses NUL
     /// framing so paths containing LF remain byte-exact. Git 2.31–2.35 uses
-    /// newline framing with strict structural validation and returns an
-    /// [`ErrorReason::Parse`] rather than a potentially truncated path when the
-    /// stream is ambiguous.
+    /// newline framing, but cross-checks the parsed record count against Git's
+    /// administrative worktree registry. A malformed stream, an LF-created
+    /// pseudo-record, or a registry count change during the read returns
+    /// [`ErrorReason::Parse`] rather than a potentially truncated path.
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
     /// Add a worktree (`worktree add [-b <branch>] <path> [<commitish>]`).
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
@@ -2727,9 +2778,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
 
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
         // The capability probe is load-bearing: `-z` is unambiguous but Git
-        // 2.31–2.35 rejects it. Keep those supported versions functional for
-        // ordinary output through the strict newline parser, which fails rather
-        // than fabricating a path if record structure is ambiguous.
+        // 2.31–2.35 rejects it.
         let use_nul = supports_worktree_list_z(self.capabilities().await?.version);
         let mut command = self
             .core
@@ -2741,16 +2790,50 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `parse_bytes`: filesystem paths need not be valid UTF-8 on Unix. A
         // lossy String decode would corrupt them before either framing parser
         // can enforce its structural guarantees.
-        let parsed = self
-            .core
-            .parse_bytes(command, move |output| {
-                if use_nul {
-                    parse::parse_worktree_porcelain_z(output)
-                } else {
-                    parse::parse_worktree_porcelain(output)
-                }
-            })
-            .await?;
+        let parsed = if use_nul {
+            self.core
+                .parse_bytes(command, parse::parse_worktree_porcelain_z)
+                .await?
+        } else {
+            // Newline porcelain alone can never prove that LF came from framing
+            // rather than a path. Count the independent administrative registry
+            // before and after the command: a path suffix that synthesizes valid
+            // pseudo-records changes the parsed count, while a concurrent count
+            // change fails closed instead of validating against a torn view.
+            let registry = self
+                .core
+                .parse_bytes(
+                    self.core
+                        .command_in(dir, ["rev-parse", "--git-path", "worktrees"]),
+                    parse_worktree_registry_path,
+                )
+                .await?
+                .map_err(|detail| Error::parse(BINARY, detail))?;
+            let registry = if registry.is_absolute() {
+                registry
+            } else {
+                dir.join(registry)
+            };
+            let count_before = legacy_worktree_record_count(&registry)
+                .map_err(|detail| Error::parse(BINARY, detail))?;
+            let output = self
+                .core
+                .output_bytes(command)
+                .await?
+                .ensure_success()?
+                .into_stdout();
+            let count_after = legacy_worktree_record_count(&registry)
+                .map_err(|detail| Error::parse(BINARY, detail))?;
+            if count_before != count_after {
+                return Err(Error::parse(
+                    BINARY,
+                    format!(
+                        "worktree registry changed while reading legacy porcelain: {count_before} records before, {count_after} after"
+                    ),
+                ));
+            }
+            parse::parse_worktree_porcelain(&output, count_before)
+        };
         parsed.map_err(|detail| Error::parse(BINARY, detail))
     }
 
@@ -4674,9 +4757,17 @@ mod tests {
 
     #[tokio::test]
     async fn worktree_list_uses_strict_legacy_framing_on_git_2_31_to_2_35() {
+        use vcs_testkit::TempDir;
+
+        let registry = TempDir::new("wt-legacy-registry");
+        std::fs::create_dir(registry.path().join("linked")).expect("linked registry entry");
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
                 .on(["git", "--version"], Reply::ok("git version 2.31.0\n"))
+                .on(
+                    ["git", "rev-parse", "--git-path", "worktrees"],
+                    Reply::ok(format!("{}\n", registry.path().display())),
+                )
                 .on(
                     ["git", "worktree", "list", "--porcelain"],
                     Reply::ok("worktree /repo\nHEAD abc\ndetached\n\nworktree /bare\nbare\n"),
@@ -4687,17 +4778,25 @@ mod tests {
         assert_eq!(wts.len(), 2);
         assert!(wts[0].detached);
         assert!(wts[1].bare);
+        assert_eq!(rec.calls().len(), 3);
         assert_eq!(
-            rec.calls()[1].args_str(),
+            rec.calls()[2].args_str(),
             ["worktree", "list", "--porcelain"]
         );
     }
 
     #[tokio::test]
     async fn worktree_list_legacy_framing_fails_loudly_on_lf_path() {
+        use vcs_testkit::TempDir;
+
+        let registry = TempDir::new("wt-legacy-bad-path-registry");
         let git = Git::with_runner(
             ScriptedRunner::new()
                 .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
+                .on(
+                    ["git", "rev-parse", "--git-path", "worktrees"],
+                    Reply::ok(format!("{}\n", registry.path().display())),
+                )
                 .on(
                     ["git", "worktree", "list", "--porcelain"],
                     Reply::ok("worktree /repo/line\nfeed\nHEAD abc\nbranch refs/heads/main\n\n"),
@@ -4709,6 +4808,34 @@ mod tests {
             .expect_err("ambiguous legacy output must not return a truncated path");
         assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
         assert!(err.to_string().contains("ambiguous"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_framing_rejects_lf_created_valid_pseudo_records() {
+        use vcs_testkit::TempDir;
+
+        let registry = TempDir::new("wt-legacy-pseudo-registry");
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
+                .on(
+                    ["git", "rev-parse", "--git-path", "worktrees"],
+                    Reply::ok(format!("{}\n", registry.path().display())),
+                )
+                .on(
+                    ["git", "worktree", "list", "--porcelain"],
+                    Reply::ok(
+                        "worktree /repo/line\nHEAD 0000000000000000000000000000000000000000\n\
+                         detached\n\nworktree ghost\nHEAD real\nbranch refs/heads/main\n\n",
+                    ),
+                ),
+        );
+        let err = git
+            .worktree_list(Path::new("."))
+            .await
+            .expect_err("registry count must expose structurally valid pseudo-records");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+        assert!(err.to_string().contains("administrative registry"), "{err}");
     }
 
     // Real-git proof for the public path round-trip. Unix permits LF in a path;

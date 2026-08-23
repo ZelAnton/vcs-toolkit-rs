@@ -419,20 +419,39 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
 /// would substitute `U+FFFD` and make `Worktree.path` name a *different* directory,
 /// the same defect the status/diff surface already avoids. The labels and the
 /// text-typed values (`HEAD` sha, `branch` ref) are ASCII, so they still decode as
-/// `String`. A trailing `\r` is stripped from every field so CRLF-framed output
-/// is equivalent to LF-framed output.
+/// `String`. CR is stripped as framing only when every LF in the stream is
+/// preceded by CR (a consistently CRLF-framed transport). That keeps CRLF
+/// output equivalent to LF output without stripping a legitimate trailing CR
+/// from a Unix path in Git's normal LF-framed output.
 ///
 /// Git 2.31–2.35 have no `-z`, so a literal LF in a path is indistinguishable
-/// from a field boundary. The strict field-order checks below make that case
-/// fail loudly: every real record must put `HEAD` or `bare` immediately after
-/// its path, therefore any injected pseudo-field either is invalid there or
-/// makes the real identity field a duplicate/out-of-order field. Ordinary
-/// legacy output remains supported; an ambiguous record is never returned with
-/// a truncated [`Worktree::path`].
+/// from a field boundary. The caller supplies `expected_records`, independently
+/// derived from Git's administrative worktree registry. The strict field-order
+/// checks catch malformed fragments, while the count check catches an LF suffix
+/// that happens to synthesize one or more complete, structurally valid records.
+/// Ordinary legacy output remains supported; an ambiguous record is never
+/// returned with a truncated [`Worktree::path`].
 pub(crate) fn parse_worktree_porcelain(
     output: &[u8],
+    expected_records: usize,
 ) -> std::result::Result<Vec<Worktree>, String> {
-    parse_worktree_porcelain_framed(output, b'\n', true)
+    // A path ending in CR followed by Git's normal LF delimiter is legal on
+    // Unix. Treat CR as framing only when the complete transport consistently
+    // uses CRLF; mixed line endings are parsed literally and therefore fail
+    // closed unless every resulting field is valid.
+    let trim_cr = output
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'\n')
+        .all(|(index, _)| index > 0 && output[index - 1] == b'\r');
+    let parsed = parse_worktree_porcelain_framed(output, b'\n', trim_cr)?;
+    if parsed.len() != expected_records {
+        return Err(format!(
+            "malformed or ambiguous worktree porcelain: parsed {} records, but Git's administrative registry contains {expected_records}",
+            parsed.len()
+        ));
+    }
+    Ok(parsed)
 }
 
 /// Parse `git worktree list --porcelain -z` (Git >= 2.36). Fields and blank
@@ -1299,7 +1318,7 @@ mod tests {
         let input = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\
                      \nworktree /repo/wt\nHEAD def456\ndetached\n\
                      \nworktree /repo/bare\nbare\n";
-        let got = parse_worktree_porcelain(input.as_bytes()).expect("valid legacy porcelain");
+        let got = parse_worktree_porcelain(input.as_bytes(), 3).expect("valid legacy porcelain");
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].path, PathBuf::from("/repo"));
         assert_eq!(got[0].branch.as_deref(), Some("main"));
@@ -1314,6 +1333,7 @@ mod tests {
             b"worktree /repo/wt\r\nHEAD abc123\r\nbranch refs/heads/main\r\nlocked\r\n\r\n\
               worktree /repo/bare\r\nbare\r\n\r\n\
               worktree /repo/detached\r\nHEAD def456\r\ndetached\r\n",
+            3,
         )
         .expect("valid CRLF porcelain");
         assert_eq!(got.len(), 3);
@@ -1336,6 +1356,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         let got = parse_worktree_porcelain(
             b"worktree /repo/wt-caf\xff\nHEAD abc123\nbranch refs/heads/main\n",
+            1,
         )
         .expect("valid legacy porcelain");
         assert_eq!(got.len(), 1);
@@ -1346,7 +1367,7 @@ mod tests {
     #[test]
     fn worktrees_parse_last_record_without_trailing_blank() {
         // The final record may not be followed by a blank line.
-        let got = parse_worktree_porcelain(b"worktree /only\nHEAD aaa\nbranch refs/heads/x\n")
+        let got = parse_worktree_porcelain(b"worktree /only\nHEAD aaa\nbranch refs/heads/x\n", 1)
             .expect("valid final record");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].branch.as_deref(), Some("x"));
@@ -1382,6 +1403,7 @@ mod tests {
     fn worktrees_legacy_framing_rejects_literal_lf_path() {
         let err = parse_worktree_porcelain(
             b"worktree /repo/line\nfeed\nHEAD abc123\nbranch refs/heads/main\n\n",
+            1,
         )
         .expect_err("a newline-framed path must not be truncated silently");
         assert!(err.contains("ambiguous"), "unexpected error: {err}");
@@ -1390,9 +1412,34 @@ mod tests {
         // real mandatory field then becomes a duplicate/out-of-order field.
         let err = parse_worktree_porcelain(
             b"worktree /repo/line\nHEAD fake\nHEAD real\nbranch refs/heads/main\n\n",
+            1,
         )
         .expect_err("field-shaped path suffix must still be ambiguous");
         assert!(err.contains("ambiguous"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn worktrees_legacy_framing_rejects_lf_that_synthesizes_valid_records() {
+        let err = parse_worktree_porcelain(
+            b"worktree /repo/line\nHEAD 0000000000000000000000000000000000000000\n\
+              detached\n\nworktree ghost\nHEAD real\nbranch refs/heads/main\n\n",
+            1,
+        )
+        .expect_err("an LF-created pseudo-record must not pass structural validation");
+        assert!(
+            err.contains("administrative registry"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn worktrees_legacy_framing_preserves_trailing_cr_in_unix_path() {
+        let got = parse_worktree_porcelain(
+            b"worktree /repo/trailing\r\nHEAD abc123\nbranch refs/heads/main\n",
+            1,
+        )
+        .expect("LF framing must leave a preceding CR as path data");
+        assert_eq!(got[0].path, PathBuf::from("/repo/trailing\r"));
     }
 
     #[test]
@@ -1404,7 +1451,7 @@ mod tests {
             b"worktree /repo\nbare\nHEAD abc123\n".as_slice(),
         ] {
             assert!(
-                parse_worktree_porcelain(malformed).is_err(),
+                parse_worktree_porcelain(malformed, 1).is_err(),
                 "malformed input was accepted: {malformed:?}"
             );
         }
@@ -1736,7 +1783,7 @@ mod proptests {
             let _ = parse_porcelain_v2(&s);
             let _ = parse_log(&s);
             let _ = parse_branches(&s);
-            let _ = parse_worktree_porcelain(s.as_bytes());
+            let _ = parse_worktree_porcelain(s.as_bytes(), 0);
             let _ = parse_blame_porcelain(&s);
             let _ = parse_shortstat(&s);
             let _ = parse_ls_remote_heads(&s);
@@ -1754,7 +1801,7 @@ mod proptests {
         fn byte_parsers_never_panic_on_arbitrary_bytes(b in any::<Vec<u8>>()) {
             let _ = parse_porcelain(&b);
             let _ = parse_nul_paths(&b);
-            let _ = parse_worktree_porcelain(&b);
+            let _ = parse_worktree_porcelain(&b, 0);
         }
 
         // …and on structure-biased input that reaches the parsing branches.
