@@ -328,8 +328,8 @@ fn parse_hunk_range(range: &str) -> (usize, usize) {
 /// Fallback path extraction for sections with no `+++`/`---`/`rename` lines
 /// (e.g. binary files): the `b/<new>` of the `diff --git` header. Handles both the
 /// unquoted `a/<p> b/<p>` form and git's C-quoted `"a/<p>" "b/<p>"` form (a
-/// non-ASCII / special-byte path). The unquoted form is ambiguous only when a path
-/// contains the literal `" b/"`, which binary-with-spaces makes rare.
+/// non-ASCII / special-byte path). An unquoted header with more than one possible
+/// `" b/"` boundary is rejected instead of guessing inside either path.
 fn header_b_path(section: &str) -> Option<Vec<u8>> {
     let first = section.lines().next()?;
     let s = first.strip_prefix("diff --git ")?;
@@ -338,7 +338,11 @@ fn header_b_path(section: &str) -> Option<Vec<u8>> {
     let path = if let Some(q) = s.rfind("\"b/") {
         strip_side_prefix(unquote_c_style_path(&s[q..]), b"b/").unwrap_or_default()
     } else {
-        let idx = s.find(" b/")?;
+        let mut boundaries = s.match_indices(" b/");
+        let (idx, _) = boundaries.next()?;
+        if boundaries.next().is_some() {
+            return None;
+        }
         strip_side_prefix(unquote_c_style_path(&s[idx + 1..]), b"b/").unwrap_or_default()
     };
     // A `diff --git a/x b/` with no path after `b/` yields nothing, not an empty
@@ -448,6 +452,31 @@ mod tests {
         let files = parse_diff(full);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, std::path::Path::new("café.bin"));
+    }
+
+    #[test]
+    fn diff_rejects_ambiguous_unquoted_header_fallback() {
+        // Every literal ` b/` can be either a path fragment or the a/b boundary.
+        // With no +++/---/rename line to disambiguate, guessing would return a
+        // truncated or combined path. Exercise both fallback-only section shapes.
+        for body in [
+            "Binary files a/dir b/é.bin and b/dir b/é.bin differ\n",
+            "old mode 100644\nnew mode 100755\n",
+        ] {
+            let full = format!("diff --git a/dir b/é.bin b/dir b/é.bin\n{body}");
+            assert!(parse_diff(&full).is_empty());
+        }
+
+        // Quoting makes the token boundary explicit, so the same UTF-8 path is
+        // still accepted and the byte offsets remain on valid char boundaries.
+        let quoted = concat!(
+            "diff --git \"a/dir b/\\303\\251.bin\" \"b/dir b/\\303\\251.bin\"\n",
+            "old mode 100644\n",
+            "new mode 100755\n",
+        );
+        let files = parse_diff(quoted);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, std::path::Path::new("dir b/é.bin"));
     }
 
     // A path with a literal tab is also C-quoted (`\t`), independent of quotePath.
