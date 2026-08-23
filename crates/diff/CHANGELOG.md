@@ -16,7 +16,10 @@ crates; tag releases as `vcs-diff-v<version>`.
 -
 
 ### Fixed
--
+- `parse_diff` now rejects an ambiguous unquoted `diff --git` fallback header
+  instead of treating an internal ` b/` in a binary or mode-only path as the
+  a-side/b-side boundary. Quoted and unambiguous headers remain supported.
+  (T-184.)
 
 ## [0.8.0] - 2026-08-11
 
