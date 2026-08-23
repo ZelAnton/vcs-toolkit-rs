@@ -4050,7 +4050,10 @@ mod tests {
         use processkit::testing::RecordingRunner;
         let rec = RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["jj", "op", "log"], Reply::ok("op42\n"))
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("op42\n"), Reply::ok("op42\t1\n")],
+                )
                 .on(["jj", "op", "restore"], Reply::ok(""))
                 .on(["jj", "new"], Reply::ok(""))
                 .on(["jj", "log"], Reply::ok("1\n")) // is_conflicted → true
@@ -4073,7 +4076,10 @@ mod tests {
         // Conflict-free probe → Clean (no resolve call needed).
         let clean = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "op", "log"], Reply::ok("op42\n"))
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("op42\n"), Reply::ok("op42\t1\n")],
+                )
                 .on(["jj", "op", "restore"], Reply::ok(""))
                 .on(["jj", "new"], Reply::ok(""))
                 .on(["jj", "log"], Reply::ok("0\n")),
@@ -4083,7 +4089,10 @@ mod tests {
         // A failing op restore breaks the rollback guarantee → error, not Clean.
         let broken = jj_repo(
             ScriptedRunner::new()
-                .on(["jj", "op", "log"], Reply::ok("op42\n"))
+                .on_sequence(
+                    ["jj", "op", "log"],
+                    [Reply::ok("op42\n"), Reply::ok("op42\t1\n")],
+                )
                 .on(["jj", "op", "restore"], Reply::fail(1, "op not found"))
                 .on(["jj", "new"], Reply::ok(""))
                 .on(["jj", "log"], Reply::ok("0\n")),
