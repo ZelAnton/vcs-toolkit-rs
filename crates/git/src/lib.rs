@@ -186,63 +186,56 @@ pub use vcs_cli_support::{
 pub const BINARY: &str = "git";
 
 // `git worktree list --porcelain -z` was added in Git 2.36. Older supported
-// versions retain the newline-framed command, paired with strict parsing and an
-// independent count from Git's administrative worktree registry. The count is
-// what catches a literal-LF suffix that happens to form complete pseudo-records.
+// versions retain the newline-framed command, paired with strict parsing and
+// per-candidate Git probes. Those probes are what distinguish a real worktree
+// root from a literal-LF suffix that happens to form complete pseudo-records.
 const WORKTREE_LIST_Z_MIN_VERSION: (u64, u64) = (2, 36);
 
 fn supports_worktree_list_z(version: GitVersion) -> bool {
     (version.major, version.minor) >= WORKTREE_LIST_Z_MIN_VERSION
 }
 
-fn parse_worktree_registry_path(output: &[u8]) -> std::result::Result<PathBuf, String> {
+fn parse_legacy_probe_path(output: &[u8], probe: &str) -> std::result::Result<PathBuf, String> {
     let Some(path) = output.strip_suffix(b"\n") else {
-        return Err("git rev-parse --git-path worktrees returned no line terminator".to_string());
+        return Err(format!("git {probe} returned no line terminator"));
     };
-    // Git for Windows may use CRLF for textual output. `worktrees` is a fixed
-    // suffix here, so this CR cannot be caller path data; on Unix preserve every
-    // byte before LF, including CR in an ancestor directory name.
+    // Git for Windows may use CRLF for textual output. Windows cannot name a
+    // path component ending in CR; on Unix the CR remains caller path data.
     #[cfg(windows)]
     let path = path.strip_suffix(b"\r").unwrap_or(path);
     if path.is_empty() {
-        return Err("git rev-parse --git-path worktrees returned an empty path".to_string());
+        return Err(format!("git {probe} returned an empty path"));
     }
     Ok(vcs_diff::path_from_bytes(path))
 }
 
-fn legacy_worktree_record_count(registry: &Path) -> std::result::Result<usize, String> {
-    let entries = match std::fs::read_dir(registry) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(1),
-        Err(error) => {
-            return Err(format!(
-                "cannot validate legacy worktree porcelain against {registry:?}: {error}"
-            ));
-        }
-    };
-
-    let mut count = 1usize; // the main worktree (or the bare repository itself)
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            format!("cannot read an entry in worktree registry {registry:?}: {error}")
-        })?;
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "cannot inspect worktree registry entry {:?}: {error}",
-                entry.path()
-            )
-        })?;
-        if !file_type.is_dir() {
-            return Err(format!(
-                "cannot validate legacy worktree porcelain: registry entry {:?} is not a directory",
-                entry.path()
-            ));
-        }
-        count = count.checked_add(1).ok_or_else(|| {
-            "cannot validate legacy worktree porcelain: worktree count overflow".to_string()
-        })?;
+fn parse_legacy_probe_bool(output: &[u8], probe: &str) -> std::result::Result<bool, String> {
+    match output {
+        b"true\n" | b"true\r\n" => Ok(true),
+        b"false\n" | b"false\r\n" => Ok(false),
+        _ => Err(format!("git {probe} returned an invalid boolean")),
     }
-    Ok(count)
+}
+
+fn canonical_legacy_identity(
+    base: &Path,
+    reported: PathBuf,
+    probe: &str,
+) -> std::result::Result<PathBuf, String> {
+    let path = if reported.is_absolute() {
+        reported
+    } else {
+        base.join(reported)
+    };
+    std::fs::canonicalize(&path).map_err(|error| {
+        format!("cannot resolve git {probe} result {path:?} while validating legacy worktree porcelain: {error}")
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LegacyWorktreeIdentity {
+    git_dir: PathBuf,
+    common_dir: PathBuf,
 }
 
 mod specs;
@@ -688,10 +681,13 @@ pub trait GitApi: Send + Sync {
 
     /// List worktrees (`worktree list --porcelain`). Git >= 2.36 uses NUL
     /// framing so paths containing LF remain byte-exact. Git 2.31–2.35 uses
-    /// newline framing, but cross-checks the parsed record count against Git's
-    /// administrative worktree registry. A malformed stream, an LF-created
-    /// pseudo-record, or a registry count change during the read returns
-    /// [`ErrorReason::Parse`] rather than a potentially truncated path.
+    /// newline framing, then asks Git to prove every parsed path is its byte-exact
+    /// worktree root, that all records have unique administrative identities in
+    /// one common repository, and that two surrounding snapshots agree. A
+    /// malformed stream, an LF-created pseudo-record, an unreachable legacy
+    /// record, or a snapshot/identity change returns [`ErrorReason::Parse`]
+    /// rather than a potentially truncated path. Empty or partial admin
+    /// directories ignored by Git are not counted as records.
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
     /// Add a worktree (`worktree add [-b <branch>] <path> [<commitish>]`).
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
@@ -928,6 +924,175 @@ vcs_cli_support::managed_client! {
         /// checks the repository's `core.sshCommand` before a network operation,
         /// and the operator's opt-in out of that refusal. See [`SshTransport`].
         ssh: SshTransport,
+    }
+}
+
+impl<R: ProcessRunner> Git<R> {
+    async fn legacy_worktree_probe(&self, dir: &Path, option: &str) -> Result<Vec<u8>> {
+        let output = self
+            .core
+            .output_bytes(self.core.command_in(dir, ["rev-parse", option]))
+            .await
+            .map_err(|error| {
+                Error::parse(
+                    BINARY,
+                    format!(
+                        "cannot validate legacy worktree porcelain with git rev-parse {option}: {error}"
+                    ),
+                )
+            })?
+            .ensure_success()
+            .map_err(|error| {
+                Error::parse(
+                    BINARY,
+                    format!(
+                        "cannot validate legacy worktree porcelain with git rev-parse {option}: {error}"
+                    ),
+                )
+            })?;
+        Ok(output.into_stdout())
+    }
+
+    async fn legacy_worktree_identity(
+        &self,
+        worktree: &Worktree,
+    ) -> Result<LegacyWorktreeIdentity> {
+        if !worktree.path.is_absolute() {
+            return Err(Error::parse(
+                BINARY,
+                "legacy worktree porcelain returned a non-absolute path",
+            ));
+        }
+
+        let bare_output = self
+            .legacy_worktree_probe(&worktree.path, "--is-bare-repository")
+            .await?;
+        let is_bare = parse_legacy_probe_bool(&bare_output, "rev-parse --is-bare-repository")
+            .map_err(|detail| Error::parse(BINARY, detail))?;
+        if is_bare != worktree.bare {
+            return Err(Error::parse(
+                BINARY,
+                "legacy worktree porcelain disagrees with Git about whether a record is bare",
+            ));
+        }
+
+        let root_option = if is_bare {
+            "--absolute-git-dir"
+        } else {
+            "--show-toplevel"
+        };
+        let root_output = self
+            .legacy_worktree_probe(&worktree.path, root_option)
+            .await?;
+        let root = parse_legacy_probe_path(&root_output, &format!("rev-parse {root_option}"))
+            .map_err(|detail| Error::parse(BINARY, detail))?;
+        if root != worktree.path {
+            return Err(Error::parse(
+                BINARY,
+                "legacy worktree porcelain path is not the byte-exact root reported by Git",
+            ));
+        }
+
+        let git_dir_output = self
+            .legacy_worktree_probe(&worktree.path, "--absolute-git-dir")
+            .await?;
+        let git_dir = parse_legacy_probe_path(&git_dir_output, "rev-parse --absolute-git-dir")
+            .and_then(|path| {
+                canonical_legacy_identity(&worktree.path, path, "rev-parse --absolute-git-dir")
+            })
+            .map_err(|detail| Error::parse(BINARY, detail))?;
+
+        let common_dir_output = self
+            .legacy_worktree_probe(&worktree.path, "--git-common-dir")
+            .await?;
+        let common_dir = parse_legacy_probe_path(&common_dir_output, "rev-parse --git-common-dir")
+            .and_then(|path| {
+                canonical_legacy_identity(&worktree.path, path, "rev-parse --git-common-dir")
+            })
+            .map_err(|detail| Error::parse(BINARY, detail))?;
+
+        Ok(LegacyWorktreeIdentity {
+            git_dir,
+            common_dir,
+        })
+    }
+
+    async fn legacy_worktree_identities(
+        &self,
+        worktrees: &[Worktree],
+    ) -> Result<Vec<LegacyWorktreeIdentity>> {
+        if worktrees.is_empty() {
+            return Err(Error::parse(
+                BINARY,
+                "legacy worktree porcelain returned no records",
+            ));
+        }
+
+        let mut identities = Vec::with_capacity(worktrees.len());
+        let mut common_dir = None;
+        let mut git_dirs = std::collections::HashSet::with_capacity(worktrees.len());
+        for worktree in worktrees {
+            let identity = self.legacy_worktree_identity(worktree).await?;
+            if let Some(expected) = common_dir.as_ref()
+                && expected != &identity.common_dir
+            {
+                return Err(Error::parse(
+                    BINARY,
+                    "legacy worktree porcelain records do not belong to one Git common directory",
+                ));
+            }
+            if !git_dirs.insert(identity.git_dir.clone()) {
+                return Err(Error::parse(
+                    BINARY,
+                    "legacy worktree porcelain contains duplicate Git worktree identities",
+                ));
+            }
+            common_dir.get_or_insert_with(|| identity.common_dir.clone());
+            identities.push(identity);
+        }
+        Ok(identities)
+    }
+
+    async fn worktree_list_legacy(&self, dir: &Path) -> Result<Vec<Worktree>> {
+        let list = || {
+            self.core
+                .command_in(dir, ["worktree", "list", "--porcelain"])
+        };
+        let output_before = self
+            .core
+            .output_bytes(list())
+            .await?
+            .ensure_success()?
+            .into_stdout();
+        let parsed = parse::parse_worktree_porcelain(&output_before)
+            .map_err(|detail| Error::parse(BINARY, detail))?;
+        let identities_before = self.legacy_worktree_identities(&parsed).await?;
+
+        // A second Git-produced snapshot closes add/remove races around the
+        // candidate probes. Raw equality is intentional: it covers paths, HEAD,
+        // checkout state, and annotations without reintroducing LF parsing as an
+        // authority. Re-probing then catches an identity swap hidden behind an
+        // otherwise byte-identical porcelain stream.
+        let output_after = self
+            .core
+            .output_bytes(list())
+            .await?
+            .ensure_success()?
+            .into_stdout();
+        if output_before != output_after {
+            return Err(Error::parse(
+                BINARY,
+                "Git worktree snapshot changed while validating legacy porcelain",
+            ));
+        }
+        let identities_after = self.legacy_worktree_identities(&parsed).await?;
+        if identities_before != identities_after {
+            return Err(Error::parse(
+                BINARY,
+                "Git worktree identities changed while validating legacy porcelain",
+            ));
+        }
+        Ok(parsed)
     }
 }
 
@@ -2790,51 +2955,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         // `parse_bytes`: filesystem paths need not be valid UTF-8 on Unix. A
         // lossy String decode would corrupt them before either framing parser
         // can enforce its structural guarantees.
-        let parsed = if use_nul {
-            self.core
+        if use_nul {
+            let parsed = self
+                .core
                 .parse_bytes(command, parse::parse_worktree_porcelain_z)
-                .await?
+                .await?;
+            parsed.map_err(|detail| Error::parse(BINARY, detail))
         } else {
-            // Newline porcelain alone can never prove that LF came from framing
-            // rather than a path. Count the independent administrative registry
-            // before and after the command: a path suffix that synthesizes valid
-            // pseudo-records changes the parsed count, while a concurrent count
-            // change fails closed instead of validating against a torn view.
-            let registry = self
-                .core
-                .parse_bytes(
-                    self.core
-                        .command_in(dir, ["rev-parse", "--git-path", "worktrees"]),
-                    parse_worktree_registry_path,
-                )
-                .await?
-                .map_err(|detail| Error::parse(BINARY, detail))?;
-            let registry = if registry.is_absolute() {
-                registry
-            } else {
-                dir.join(registry)
-            };
-            let count_before = legacy_worktree_record_count(&registry)
-                .map_err(|detail| Error::parse(BINARY, detail))?;
-            let output = self
-                .core
-                .output_bytes(command)
-                .await?
-                .ensure_success()?
-                .into_stdout();
-            let count_after = legacy_worktree_record_count(&registry)
-                .map_err(|detail| Error::parse(BINARY, detail))?;
-            if count_before != count_after {
-                return Err(Error::parse(
-                    BINARY,
-                    format!(
-                        "worktree registry changed while reading legacy porcelain: {count_before} records before, {count_after} after"
-                    ),
-                ));
-            }
-            parse::parse_worktree_porcelain(&output, count_before)
-        };
-        parsed.map_err(|detail| Error::parse(BINARY, detail))
+            self.worktree_list_legacy(dir).await
+        }
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
@@ -4242,6 +4371,33 @@ mod tests {
     }
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
 
+    fn legacy_single_worktree_runner(
+        path: &Path,
+        git_dir: &Path,
+        common_dir: &Path,
+        snapshots: impl IntoIterator<Item = Reply>,
+    ) -> ScriptedRunner {
+        ScriptedRunner::new()
+            .on(["git", "--version"], Reply::ok("git version 2.31.0\n"))
+            .on_sequence(["git", "worktree", "list", "--porcelain"], snapshots)
+            .on(
+                ["git", "rev-parse", "--is-bare-repository"],
+                Reply::ok("false\n"),
+            )
+            .on(
+                ["git", "rev-parse", "--show-toplevel"],
+                Reply::ok(format!("{}\n", path.display())),
+            )
+            .on(
+                ["git", "rev-parse", "--absolute-git-dir"],
+                Reply::ok(format!("{}\n", git_dir.display())),
+            )
+            .on(
+                ["git", "rev-parse", "--git-common-dir"],
+                Reply::ok(format!("{}\n", common_dir.display())),
+            )
+    }
+
     #[test]
     fn binary_name_is_git() {
         assert_eq!(BINARY, "git");
@@ -4756,47 +4912,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worktree_list_uses_strict_legacy_framing_on_git_2_31_to_2_35() {
+    async fn worktree_list_legacy_uses_git_identity_probes_and_ignores_partial_admin_dirs() {
         use vcs_testkit::TempDir;
 
-        let registry = TempDir::new("wt-legacy-registry");
-        std::fs::create_dir(registry.path().join("linked")).expect("linked registry entry");
-        let rec = RecordingRunner::new(
-            ScriptedRunner::new()
-                .on(["git", "--version"], Reply::ok("git version 2.31.0\n"))
-                .on(
-                    ["git", "rev-parse", "--git-path", "worktrees"],
-                    Reply::ok(format!("{}\n", registry.path().display())),
-                )
-                .on(
-                    ["git", "worktree", "list", "--porcelain"],
-                    Reply::ok("worktree /repo\nHEAD abc\ndetached\n\nworktree /bare\nbare\n"),
-                ),
-        );
+        let fixture = TempDir::new("wt-legacy-identity");
+        let repo = fixture.path().join("repo");
+        let common = fixture.path().join("common");
+        let registry = common.join("worktrees");
+        std::fs::create_dir_all(registry.join("empty")).expect("empty admin entry");
+        std::fs::create_dir_all(registry.join("partial")).expect("partial admin entry");
+        std::fs::write(registry.join("partial").join("gitdir"), b"not-complete\n")
+            .expect("partial gitdir metadata");
+        std::fs::create_dir(&repo).expect("worktree root");
+        let porcelain = format!("worktree {}\nHEAD abc\ndetached\n\n", repo.display());
+        let rec = RecordingRunner::new(legacy_single_worktree_runner(
+            &repo,
+            &common,
+            &common,
+            [Reply::ok(porcelain)],
+        ));
         let git = Git::with_runner(&rec);
-        let wts = git.worktree_list(Path::new(".")).await.expect("list");
-        assert_eq!(wts.len(), 2);
+        let wts = git.worktree_list(&repo).await.expect("list");
+        assert_eq!(wts.len(), 1);
         assert!(wts[0].detached);
-        assert!(wts[1].bare);
-        assert_eq!(rec.calls().len(), 3);
+        assert_eq!(wts[0].path, repo);
+        let calls = rec.calls();
         assert_eq!(
-            rec.calls()[2].args_str(),
-            ["worktree", "list", "--porcelain"]
+            calls
+                .iter()
+                .filter(|call| call.args_str() == ["worktree", "list", "--porcelain"])
+                .count(),
+            2,
+            "legacy validation must bracket identity probes with stable Git snapshots"
+        );
+        assert!(
+            calls
+                .iter()
+                .all(|call| call.args_str() != ["rev-parse", "--git-path", "worktrees"]),
+            "raw admin-directory enumeration must not participate in validation"
         );
     }
 
     #[tokio::test]
-    async fn worktree_list_legacy_framing_fails_loudly_on_lf_path() {
+    #[ignore = "requires the git binary"]
+    async fn worktree_list_legacy_real_git_ignores_empty_and_partial_admin_dirs() {
         use vcs_testkit::TempDir;
 
-        let registry = TempDir::new("wt-legacy-bad-path-registry");
+        let repo = TempDir::new("wt-legacy-real-partial-admin");
+        let git = Git::new();
+        git.init(repo.path()).await.expect("init");
+        let registry = repo.path().join(".git").join("worktrees");
+        std::fs::create_dir_all(registry.join("empty")).expect("empty admin entry");
+        std::fs::create_dir_all(registry.join("partial")).expect("partial admin entry");
+        std::fs::write(
+            registry.join("partial").join("HEAD"),
+            b"0000000000000000000000000000000000000000\n",
+        )
+        .expect("partial HEAD metadata without gitdir");
+
+        let listed = git
+            .worktree_list_legacy(repo.path())
+            .await
+            .expect("Git-authoritative probes must ignore admin entries Git omits");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].path, repo.path());
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_validates_a_bare_repository() {
+        use vcs_testkit::TempDir;
+
+        let bare = TempDir::new("wt-legacy-bare");
+        let porcelain = format!("worktree {}\nbare\n\n", bare.path().display());
+        let runner = ScriptedRunner::new()
+            .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
+            .on(
+                ["git", "worktree", "list", "--porcelain"],
+                Reply::ok(porcelain),
+            )
+            .on(
+                ["git", "rev-parse", "--is-bare-repository"],
+                Reply::ok("true\n"),
+            )
+            .on(
+                ["git", "rev-parse", "--absolute-git-dir"],
+                Reply::ok(format!("{}\n", bare.path().display())),
+            )
+            .on(
+                ["git", "rev-parse", "--git-common-dir"],
+                Reply::ok(format!("{}\n", bare.path().display())),
+            );
+        let git = Git::with_runner(runner);
+        let listed = git
+            .worktree_list(bare.path())
+            .await
+            .expect("legacy bare list");
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].bare);
+        assert_eq!(listed[0].path, bare.path());
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_framing_fails_loudly_on_lf_path() {
         let git = Git::with_runner(
             ScriptedRunner::new()
                 .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
-                .on(
-                    ["git", "rev-parse", "--git-path", "worktrees"],
-                    Reply::ok(format!("{}\n", registry.path().display())),
-                )
                 .on(
                     ["git", "worktree", "list", "--porcelain"],
                     Reply::ok("worktree /repo/line\nfeed\nHEAD abc\nbranch refs/heads/main\n\n"),
@@ -4814,28 +5034,130 @@ mod tests {
     async fn worktree_list_legacy_framing_rejects_lf_created_valid_pseudo_records() {
         use vcs_testkit::TempDir;
 
-        let registry = TempDir::new("wt-legacy-pseudo-registry");
-        let git = Git::with_runner(
-            ScriptedRunner::new()
-                .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
-                .on(
-                    ["git", "rev-parse", "--git-path", "worktrees"],
-                    Reply::ok(format!("{}\n", registry.path().display())),
-                )
-                .on(
-                    ["git", "worktree", "list", "--porcelain"],
-                    Reply::ok(
-                        "worktree /repo/line\nHEAD 0000000000000000000000000000000000000000\n\
-                         detached\n\nworktree ghost\nHEAD real\nbranch refs/heads/main\n\n",
-                    ),
-                ),
+        let fixture = TempDir::new("wt-legacy-pseudo");
+        let repo = fixture.path().join("repo");
+        let common = fixture.path().join("common");
+        std::fs::create_dir(&repo).expect("candidate worktree root");
+        std::fs::create_dir_all(common.join("worktrees").join("empty"))
+            .expect("empty admin entry which used to compensate the pseudo-record");
+        let porcelain = format!(
+            "worktree {}\nHEAD 0000000000000000000000000000000000000000\n\
+             detached\n\nworktree {}\nHEAD real\nbranch refs/heads/main\n\n",
+            repo.display(),
+            repo.display()
         );
+        let git = Git::with_runner(legacy_single_worktree_runner(
+            &repo,
+            &common,
+            &common,
+            [Reply::ok(porcelain)],
+        ));
         let err = git
-            .worktree_list(Path::new("."))
+            .worktree_list(&repo)
             .await
-            .expect_err("registry count must expose structurally valid pseudo-records");
+            .expect_err("Git identities must expose structurally valid pseudo-records");
         assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
-        assert!(err.to_string().contains("administrative registry"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("duplicate Git worktree identities"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_rejects_a_changed_porcelain_snapshot() {
+        use vcs_testkit::TempDir;
+
+        let fixture = TempDir::new("wt-legacy-snapshot-race");
+        let repo = fixture.path().join("repo");
+        let common = fixture.path().join("common");
+        std::fs::create_dir(&repo).expect("worktree root");
+        std::fs::create_dir(&common).expect("common dir");
+        let before = format!("worktree {}\nHEAD abc\ndetached\n\n", repo.display());
+        let after = format!("worktree {}\nHEAD def\ndetached\n\n", repo.display());
+        let git = Git::with_runner(legacy_single_worktree_runner(
+            &repo,
+            &common,
+            &common,
+            [Reply::ok(before), Reply::ok(after)],
+        ));
+        let err = git
+            .worktree_list(&repo)
+            .await
+            .expect_err("a torn legacy snapshot must fail closed");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+        assert!(err.to_string().contains("snapshot changed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_rejects_an_identity_swap_behind_stable_porcelain() {
+        use vcs_testkit::TempDir;
+
+        let fixture = TempDir::new("wt-legacy-identity-race");
+        let repo = fixture.path().join("repo");
+        let common = fixture.path().join("common");
+        let git_dir_before = common.join("before");
+        let git_dir_after = common.join("after");
+        for path in [&repo, &common, &git_dir_before, &git_dir_after] {
+            std::fs::create_dir(path).expect("identity fixture directory");
+        }
+        let porcelain = format!("worktree {}\nHEAD abc\ndetached\n\n", repo.display());
+        let runner = ScriptedRunner::new()
+            .on(["git", "--version"], Reply::ok("git version 2.31.0\n"))
+            .on(
+                ["git", "worktree", "list", "--porcelain"],
+                Reply::ok(porcelain),
+            )
+            .on(
+                ["git", "rev-parse", "--is-bare-repository"],
+                Reply::ok("false\n"),
+            )
+            .on(
+                ["git", "rev-parse", "--show-toplevel"],
+                Reply::ok(format!("{}\n", repo.display())),
+            )
+            .on_sequence(
+                ["git", "rev-parse", "--absolute-git-dir"],
+                [
+                    Reply::ok(format!("{}\n", git_dir_before.display())),
+                    Reply::ok(format!("{}\n", git_dir_after.display())),
+                ],
+            )
+            .on(
+                ["git", "rev-parse", "--git-common-dir"],
+                Reply::ok(format!("{}\n", common.display())),
+            );
+        let git = Git::with_runner(runner);
+        let err = git
+            .worktree_list(&repo)
+            .await
+            .expect_err("an identity race must fail closed even when porcelain is stable");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+        assert!(err.to_string().contains("identities changed"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn worktree_list_legacy_preserves_a_trailing_cr_path_byte() {
+        use vcs_testkit::TempDir;
+
+        let fixture = TempDir::new("wt-legacy-trailing-cr");
+        let repo = fixture.path().join("trailing\r");
+        let common = fixture.path().join("common");
+        std::fs::create_dir(&repo).expect("CR worktree root");
+        std::fs::create_dir(&common).expect("common dir");
+        let porcelain = format!(
+            "worktree {}\nHEAD abc\nbranch refs/heads/main\n\n",
+            repo.display()
+        );
+        let git = Git::with_runner(legacy_single_worktree_runner(
+            &repo,
+            &common,
+            &common,
+            [Reply::ok(porcelain)],
+        ));
+        let listed = git.worktree_list(&repo).await.expect("legacy list");
+        assert_eq!(listed[0].path, repo);
     }
 
     // Real-git proof for the public path round-trip. Unix permits LF in a path;
@@ -4870,6 +5192,11 @@ mod tests {
             listed.iter().any(|worktree| worktree.path == linked),
             "linked path must survive byte-exact: {listed:?}"
         );
+        let legacy = git
+            .worktree_list_legacy(main.path())
+            .await
+            .expect_err("newline-framed validation must reject the real LF path");
+        assert!(matches!(legacy.reason(), ErrorReason::Parse { .. }));
     }
 
     // `submodule_list` builds the machine-unambiguous `config --file .gitmodules
