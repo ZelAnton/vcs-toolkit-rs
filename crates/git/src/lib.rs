@@ -185,6 +185,16 @@ pub use vcs_cli_support::{
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "git";
 
+// `git worktree list --porcelain -z` was added in Git 2.36. Older supported
+// versions retain the newline-framed command, paired with the strict legacy
+// parser that refuses structurally ambiguous output instead of returning a
+// truncated filesystem path.
+const WORKTREE_LIST_Z_MIN_VERSION: (u64, u64) = (2, 36);
+
+fn supports_worktree_list_z(version: GitVersion) -> bool {
+    (version.major, version.minor) >= WORKTREE_LIST_Z_MIN_VERSION
+}
+
 mod specs;
 pub use specs::{
     AnnotatedTag, BisectResult, BisectStep, BranchDelete, CheckoutTarget, Clean, CleanIgnored,
@@ -626,7 +636,11 @@ pub trait GitApi: Send + Sync {
 
     // --- Worktrees -----------------------------------------------------------
 
-    /// List worktrees (`worktree list --porcelain`).
+    /// List worktrees (`worktree list --porcelain`). Git >= 2.36 uses NUL
+    /// framing so paths containing LF remain byte-exact. Git 2.31–2.35 uses
+    /// newline framing with strict structural validation and returns an
+    /// [`ErrorReason::Parse`] rather than a potentially truncated path when the
+    /// stream is ambiguous.
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>>;
     /// Add a worktree (`worktree add [-b <branch>] <path> [<commitish>]`).
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()>;
@@ -2712,19 +2726,32 @@ impl<R: ProcessRunner> GitApi for Git<R> {
     }
 
     async fn worktree_list(&self, dir: &Path) -> Result<Vec<Worktree>> {
-        // `parse_bytes`: the porcelain `worktree <path>` value is a filesystem path
-        // that need not be valid UTF-8 on Unix, so parse from raw stdout bytes — a
-        // lossy `String` decode would corrupt a non-UTF-8 worktree name to `U+FFFD`
-        // and leak a wrong path into the facade's `WorktreeInfo.path`. (Deliberately
-        // no `-z`: `worktree list --porcelain -z` is git ≥ 2.36, above this crate's
-        // 2.31 support floor; newline framing already covers the non-UTF-8 case.)
-        self.core
-            .parse_bytes(
-                self.core
-                    .command_in(dir, ["worktree", "list", "--porcelain"]),
-                parse::parse_worktree_porcelain,
-            )
-            .await
+        // The capability probe is load-bearing: `-z` is unambiguous but Git
+        // 2.31–2.35 rejects it. Keep those supported versions functional for
+        // ordinary output through the strict newline parser, which fails rather
+        // than fabricating a path if record structure is ambiguous.
+        let use_nul = supports_worktree_list_z(self.capabilities().await?.version);
+        let mut command = self
+            .core
+            .command_in(dir, ["worktree", "list", "--porcelain"]);
+        if use_nul {
+            command = command.arg("-z");
+        }
+
+        // `parse_bytes`: filesystem paths need not be valid UTF-8 on Unix. A
+        // lossy String decode would corrupt them before either framing parser
+        // can enforce its structural guarantees.
+        let parsed = self
+            .core
+            .parse_bytes(command, move |output| {
+                if use_nul {
+                    parse::parse_worktree_porcelain_z(output)
+                } else {
+                    parse::parse_worktree_porcelain(output)
+                }
+            })
+            .await?;
+        parsed.map_err(|detail| Error::parse(BINARY, detail))
     }
 
     async fn worktree_add(&self, dir: &Path, spec: WorktreeAdd) -> Result<()> {
@@ -4623,15 +4650,99 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worktree_list_parses_porcelain() {
-        let git = Git::with_runner(ScriptedRunner::new().on(
-            ["git", "worktree", "list"],
-            Reply::ok("worktree /repo\nHEAD abc\nbranch refs/heads/main\n"),
-        ));
+    async fn worktree_list_uses_nul_framing_when_supported() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "--version"], Reply::ok("git version 2.36.0\n"))
+                .on(
+                    ["git", "worktree", "list", "--porcelain", "-z"],
+                    Reply::ok("worktree /repo/line\nfeed\0HEAD abc\0branch refs/heads/main\0\0"),
+                ),
+        );
+        let git = Git::with_runner(&rec);
         let wts = git.worktree_list(Path::new(".")).await.expect("list");
         assert_eq!(wts.len(), 1);
+        assert_eq!(wts[0].path, PathBuf::from("/repo/line\nfeed"));
         assert_eq!(wts[0].branch.as_deref(), Some("main"));
         assert_eq!(wts[0].head.as_deref(), Some("abc"));
+        assert_eq!(rec.calls().len(), 2);
+        assert_eq!(
+            rec.calls()[1].args_str(),
+            ["worktree", "list", "--porcelain", "-z"]
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_list_uses_strict_legacy_framing_on_git_2_31_to_2_35() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "--version"], Reply::ok("git version 2.31.0\n"))
+                .on(
+                    ["git", "worktree", "list", "--porcelain"],
+                    Reply::ok("worktree /repo\nHEAD abc\ndetached\n\nworktree /bare\nbare\n"),
+                ),
+        );
+        let git = Git::with_runner(&rec);
+        let wts = git.worktree_list(Path::new(".")).await.expect("list");
+        assert_eq!(wts.len(), 2);
+        assert!(wts[0].detached);
+        assert!(wts[1].bare);
+        assert_eq!(
+            rec.calls()[1].args_str(),
+            ["worktree", "list", "--porcelain"]
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_list_legacy_framing_fails_loudly_on_lf_path() {
+        let git = Git::with_runner(
+            ScriptedRunner::new()
+                .on(["git", "--version"], Reply::ok("git version 2.35.9\n"))
+                .on(
+                    ["git", "worktree", "list", "--porcelain"],
+                    Reply::ok("worktree /repo/line\nfeed\nHEAD abc\nbranch refs/heads/main\n\n"),
+                ),
+        );
+        let err = git
+            .worktree_list(Path::new("."))
+            .await
+            .expect_err("ambiguous legacy output must not return a truncated path");
+        assert!(matches!(err.reason(), ErrorReason::Parse { .. }));
+        assert!(err.to_string().contains("ambiguous"), "{err}");
+    }
+
+    // Real-git proof for the public path round-trip. Unix permits LF in a path;
+    // Git >=2.36's NUL mode must return the exact linked-worktree directory.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "requires git >= 2.36"]
+    async fn worktree_list_round_trips_real_lf_path() {
+        use vcs_testkit::{TempDir, configure_identity};
+
+        let main = TempDir::new("wt-lf-main");
+        let linked_parent = TempDir::new("wt-lf-linked");
+        let linked = linked_parent.path().join("line\nfeed");
+        let git = Git::new();
+
+        git.init(main.path()).await.expect("init");
+        configure_identity(main.path());
+        std::fs::write(main.path().join("f.txt"), b"x\n").expect("write fixture");
+        git.add(main.path(), &[PathBuf::from("f.txt")])
+            .await
+            .expect("add");
+        git.commit(main.path(), "init").await.expect("commit");
+        git.worktree_add(
+            main.path(),
+            WorktreeAdd::create_branch(linked.clone(), rn("lf-path"), rv("HEAD")),
+        )
+        .await
+        .expect("worktree add");
+
+        let listed = git.worktree_list(main.path()).await.expect("worktree list");
+        assert!(
+            listed.iter().any(|worktree| worktree.path == linked),
+            "linked path must survive byte-exact: {listed:?}"
+        );
     }
 
     // `submodule_list` builds the machine-unambiguous `config --file .gitmodules
