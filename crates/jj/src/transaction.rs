@@ -135,7 +135,9 @@ impl std::error::Error for TransactionError {
 /// "reconcile divergent operations" merge (foreign work) → refuse; reaching `pre`
 /// means the range is our own linear work → restore; not finding `pre` within the
 /// probed window means the range can't be confirmed safe → refuse (conservative:
-/// never blindly revert what we can't verify).
+/// never blindly revert what we can't verify). `rows` can only be constructed after
+/// the safety-probe parser has validated every id/count pair; malformed output fails
+/// before this decision can select `Restore`.
 enum RollbackPlan {
     Restore,
     SkipDiverged,
@@ -227,13 +229,17 @@ impl<R: ProcessRunner> Jj<R> {
             .timeout(ROLLBACK_TIMEOUT)
     }
 
-    /// The divergence probe: the recent operation log as `(id, parent-count)` pairs
-    /// (newest first), read on the detached cleanup context with
-    /// `--ignore-working-copy` so the *probe itself* records no snapshot operation.
+    /// The divergence probe: the recent operation log as validated
+    /// `(id, parent-count)` pairs (newest first), read on the detached cleanup
+    /// context with `--ignore-working-copy` so the *probe itself* records no snapshot
+    /// operation. Malformed rows are a parse error rather than a trusted zero count.
     async fn op_log_parents_probe(&self, dir: &Path) -> Result<Vec<(String, usize)>> {
+        // Capture the untrimmed ProcessResult: `CliClient::run` strips trailing
+        // whitespace and could normalize an extra final field into a valid-looking
+        // row before the fail-closed parser sees it.
         let out = self
             .core
-            .run(self.rollback_cmd_in(
+            .output_string(self.rollback_cmd_in(
                 dir,
                 [
                     "op",
@@ -246,8 +252,9 @@ impl<R: ProcessRunner> Jj<R> {
                     parse::OP_PARENTS_TEMPLATE,
                 ],
             ))
-            .await?;
-        Ok(parse::parse_op_parents(&out))
+            .await?
+            .ensure_success()?;
+        parse::parse_op_parents(out.stdout())
     }
 
     /// `op restore <op_id>` on the detached cleanup context (see
@@ -270,6 +277,9 @@ impl<R: ProcessRunner> Jj<R> {
     ///   `ROLLBACK_TIMEOUT` deadline, so a *cancelled or timed-out* mutation does
     ///   not also cancel the cleanup (a fired
     ///   [`default_cancel_on`](Jj::default_cancel_on) token is not inherited);
+    /// - **validates the complete divergence probe** before deciding to restore;
+    ///   malformed parent-count output is reported as [`Rollback::Failed`] and no
+    ///   restore is attempted;
     /// - **detects a concurrent op-log divergence** first — if another jj process
     ///   advanced the operation log between the capture and now (jj records a
     ///   "reconcile divergent operations" merge), reverting to `pre` would silently
