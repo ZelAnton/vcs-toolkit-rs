@@ -408,10 +408,10 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
         .collect()
 }
 
-/// Parse `git worktree list --porcelain`: records separated by a blank line,
-/// each a set of `label [value]` lines — `worktree <path>`, `HEAD <sha>`,
+/// Parse legacy `git worktree list --porcelain`: records separated by a blank
+/// line, each a set of `label [value]` lines — `worktree <path>`, `HEAD <sha>`,
 /// `branch refs/heads/<name>`, plus the valueless attributes `bare` / `detached`
-/// / `locked`. Unknown labels (e.g. `prunable`) are ignored.
+/// / `locked`.
 ///
 /// Consumes **raw bytes** (not a lossily-decoded `&str`): the `worktree <path>`
 /// value is a filesystem path that, on Unix, need not be valid UTF-8, so its bytes
@@ -419,28 +419,89 @@ pub(crate) fn parse_branches(output: &str) -> Vec<Branch> {
 /// would substitute `U+FFFD` and make `Worktree.path` name a *different* directory,
 /// the same defect the status/diff surface already avoids. The labels and the
 /// text-typed values (`HEAD` sha, `branch` ref) are ASCII, so they still decode as
-/// `String`. A trailing `\r` is stripped from every line so CRLF-framed output
-/// is equivalent to LF-framed output.
+/// `String`. CR is stripped as framing only when every LF in the stream is
+/// preceded by CR (a consistently CRLF-framed transport). That keeps CRLF
+/// output equivalent to LF output without stripping a legitimate trailing CR
+/// from a Unix path in Git's normal LF-framed output.
 ///
-/// This parses the **newline-framed** porcelain (no `-z`): git only grew
-/// `worktree list --porcelain -z` in 2.36, above this crate's git-support floor
-/// (2.31), and requesting `-z` there would hard-fail the listing. Newline framing
-/// already covers the non-UTF-8 case this task targets — a path byte is never `\n`
-/// — so only a worktree path containing a *literal newline* stays out of scope,
-/// exactly as before this change.
-pub(crate) fn parse_worktree_porcelain(output: &[u8]) -> Vec<Worktree> {
+/// Git 2.31–2.35 have no `-z`, so a literal LF in a path is indistinguishable
+/// from a field boundary. Strict field-order checks reject malformed fragments,
+/// but a suffix can synthesize complete records; the caller must therefore
+/// validate every parsed path against Git-authoritative worktree identities
+/// before exposing this result.
+pub(crate) fn parse_worktree_porcelain(
+    output: &[u8],
+) -> std::result::Result<Vec<Worktree>, String> {
+    // A path ending in CR followed by Git's normal LF delimiter is legal on
+    // Unix. Treat CR as framing only when the complete transport consistently
+    // uses CRLF; mixed line endings are parsed literally and therefore fail
+    // closed unless every resulting field is valid.
+    let trim_cr = output
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'\n')
+        .all(|(index, _)| index > 0 && output[index - 1] == b'\r');
+    parse_worktree_porcelain_framed(output, b'\n', trim_cr)
+}
+
+/// Parse `git worktree list --porcelain -z` (Git >= 2.36). Fields and blank
+/// record separators are NUL-framed, so a path may contain any non-NUL byte,
+/// including LF and invalid UTF-8, without becoming structure. Unlike the
+/// legacy parser, this must not strip `\r`: under NUL framing it is path data.
+pub(crate) fn parse_worktree_porcelain_z(
+    output: &[u8],
+) -> std::result::Result<Vec<Worktree>, String> {
+    parse_worktree_porcelain_framed(output, 0, false)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorktreeRecordPhase {
+    /// A path was read; Git must identify the entry as bare or provide HEAD.
+    Identity,
+    /// HEAD was read; Git must identify a branch or detached checkout.
+    Checkout,
+    /// The identity is complete; optional annotations may follow.
+    Attributes,
+}
+
+fn parse_worktree_porcelain_framed(
+    output: &[u8],
+    terminator: u8,
+    trim_cr: bool,
+) -> std::result::Result<Vec<Worktree>, String> {
     let mut worktrees = Vec::new();
-    let mut current: Option<Worktree> = None;
-    let flush = |current: &mut Option<Worktree>, out: &mut Vec<Worktree>| {
-        if let Some(wt) = current.take() {
-            out.push(wt);
+    let mut current: Option<(Worktree, WorktreeRecordPhase)> = None;
+    let flush = |current: &mut Option<(Worktree, WorktreeRecordPhase)>,
+                 out: &mut Vec<Worktree>|
+     -> std::result::Result<(), String> {
+        let Some((wt, phase)) = current.take() else {
+            return Ok(());
+        };
+        match phase {
+            WorktreeRecordPhase::Identity => Err(
+                "malformed or ambiguous worktree porcelain: record ended before HEAD/bare"
+                    .to_string(),
+            ),
+            WorktreeRecordPhase::Checkout => Err(
+                "malformed or ambiguous worktree porcelain: record ended before branch/detached"
+                    .to_string(),
+            ),
+            WorktreeRecordPhase::Attributes => {
+                out.push(wt);
+                Ok(())
+            }
         }
     };
-    for line in output.split(|&b| b == b'\n') {
-        // Trim a trailing CR so CRLF-framed output (Windows) parses identically.
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
+    for field in output.split(|&b| b == terminator) {
+        // Only newline framing treats CR as part of CRLF structure. In `-z`
+        // output a trailing CR is legitimate path/reason data and stays exact.
+        let line = if trim_cr {
+            field.strip_suffix(b"\r").unwrap_or(field)
+        } else {
+            field
+        };
         if line.is_empty() {
-            flush(&mut current, &mut worktrees);
+            flush(&mut current, &mut worktrees)?;
             continue;
         }
         // `label value`, split on the FIRST ASCII space (the path itself may hold
@@ -450,55 +511,123 @@ pub(crate) fn parse_worktree_porcelain(output: &[u8]) -> Vec<Worktree> {
             None => (line, None),
         };
         match label {
-            // A new record begins; flush any record not closed by a blank line.
             b"worktree" => {
-                flush(&mut current, &mut worktrees);
-                current = Some(Worktree {
-                    // Raw path bytes → `PathBuf`, lossless on Unix.
-                    path: value.map(vcs_diff::path_from_bytes).unwrap_or_default(),
-                    branch: None,
-                    head: None,
-                    bare: false,
-                    detached: false,
-                    locked: false,
-                });
+                if current.is_some() {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: new worktree before record separator"
+                            .to_string(),
+                    );
+                }
+                let Some(path) = value.filter(|path| !path.is_empty()) else {
+                    return Err(
+                        "malformed worktree porcelain: worktree field has no path".to_string()
+                    );
+                };
+                current = Some((
+                    Worktree {
+                        // Raw path bytes → `PathBuf`, lossless on Unix.
+                        path: vcs_diff::path_from_bytes(path),
+                        branch: None,
+                        head: None,
+                        bare: false,
+                        detached: false,
+                        locked: false,
+                    },
+                    WorktreeRecordPhase::Identity,
+                ));
             }
             b"HEAD" => {
-                if let Some(wt) = current.as_mut() {
-                    wt.head = value.map(|v| String::from_utf8_lossy(v).into_owned());
-                }
+                let Some((wt, phase @ WorktreeRecordPhase::Identity)) = current.as_mut() else {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: HEAD is missing or out of order"
+                            .to_string(),
+                    );
+                };
+                let Some(head) = value.filter(|head| !head.is_empty()) else {
+                    return Err("malformed worktree porcelain: HEAD has no value".to_string());
+                };
+                wt.head = Some(String::from_utf8_lossy(head).into_owned());
+                *phase = WorktreeRecordPhase::Checkout;
             }
             b"branch" => {
-                if let Some(wt) = current.as_mut() {
-                    // Value is a full ref (`refs/heads/main`); expose the short name.
-                    wt.branch = value.map(|v| {
-                        let full = String::from_utf8_lossy(v);
-                        full.strip_prefix("refs/heads/")
-                            .unwrap_or(&full)
-                            .to_string()
-                    });
-                }
+                let Some((wt, phase @ WorktreeRecordPhase::Checkout)) = current.as_mut() else {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: branch is missing or out of order"
+                            .to_string(),
+                    );
+                };
+                let Some(branch) = value.filter(|branch| !branch.is_empty()) else {
+                    return Err("malformed worktree porcelain: branch has no value".to_string());
+                };
+                // Value is a full ref (`refs/heads/main`); expose the short name.
+                let full = String::from_utf8_lossy(branch);
+                wt.branch = Some(
+                    full.strip_prefix("refs/heads/")
+                        .unwrap_or(&full)
+                        .to_string(),
+                );
+                *phase = WorktreeRecordPhase::Attributes;
             }
             b"bare" => {
-                if let Some(wt) = current.as_mut() {
-                    wt.bare = true;
+                let Some((wt, phase @ WorktreeRecordPhase::Identity)) = current.as_mut() else {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: bare is missing or out of order"
+                            .to_string(),
+                    );
+                };
+                if value.is_some() {
+                    return Err("malformed worktree porcelain: bare has a value".to_string());
                 }
+                wt.bare = true;
+                *phase = WorktreeRecordPhase::Attributes;
             }
             b"detached" => {
-                if let Some(wt) = current.as_mut() {
-                    wt.detached = true;
+                let Some((wt, phase @ WorktreeRecordPhase::Checkout)) = current.as_mut() else {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: detached is missing or out of order"
+                            .to_string(),
+                    );
+                };
+                if value.is_some() {
+                    return Err("malformed worktree porcelain: detached has a value".to_string());
                 }
+                wt.detached = true;
+                *phase = WorktreeRecordPhase::Attributes;
             }
             b"locked" => {
-                if let Some(wt) = current.as_mut() {
-                    wt.locked = true;
+                let Some((wt, WorktreeRecordPhase::Attributes)) = current.as_mut() else {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: locked is out of order"
+                            .to_string(),
+                    );
+                };
+                wt.locked = true;
+            }
+            // These are annotations the public model does not currently expose.
+            // They are valid only after the mandatory identity fields. Unknown
+            // future annotations are ignored there too, preserving porcelain's
+            // forward-compatible contract without accepting a path fragment in
+            // the load-bearing Identity/Checkout positions.
+            b"prunable" | b"sparse" => {
+                if !matches!(current.as_ref(), Some((_, WorktreeRecordPhase::Attributes))) {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: annotation is out of order"
+                            .to_string(),
+                    );
                 }
             }
-            _ => {}
+            _ => {
+                if !matches!(current.as_ref(), Some((_, WorktreeRecordPhase::Attributes))) {
+                    return Err(
+                        "malformed or ambiguous worktree porcelain: unexpected field before record identity"
+                            .to_string(),
+                    );
+                }
+            }
         }
     }
-    flush(&mut current, &mut worktrees);
-    worktrees
+    flush(&mut current, &mut worktrees)?;
+    Ok(worktrees)
 }
 
 /// One path `git clean` would remove (`-n`, dry run) or removed (`-f`,
@@ -1179,7 +1308,7 @@ mod tests {
         let input = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\
                      \nworktree /repo/wt\nHEAD def456\ndetached\n\
                      \nworktree /repo/bare\nbare\n";
-        let got = parse_worktree_porcelain(input.as_bytes());
+        let got = parse_worktree_porcelain(input.as_bytes()).expect("valid legacy porcelain");
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].path, PathBuf::from("/repo"));
         assert_eq!(got[0].branch.as_deref(), Some("main"));
@@ -1194,7 +1323,8 @@ mod tests {
             b"worktree /repo/wt\r\nHEAD abc123\r\nbranch refs/heads/main\r\nlocked\r\n\r\n\
               worktree /repo/bare\r\nbare\r\n\r\n\
               worktree /repo/detached\r\nHEAD def456\r\ndetached\r\n",
-        );
+        )
+        .expect("valid CRLF porcelain");
         assert_eq!(got.len(), 3);
         assert_eq!(got[0].path, PathBuf::from("/repo/wt"));
         assert_eq!(got[0].head.as_deref(), Some("abc123"));
@@ -1213,7 +1343,10 @@ mod tests {
     #[test]
     fn worktrees_preserve_non_utf8_path_bytes() {
         use std::os::unix::ffi::OsStrExt;
-        let got = parse_worktree_porcelain(b"worktree /repo/wt-caf\xff\nHEAD abc123\n");
+        let got = parse_worktree_porcelain(
+            b"worktree /repo/wt-caf\xff\nHEAD abc123\nbranch refs/heads/main\n",
+        )
+        .expect("valid legacy porcelain");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].path.as_os_str().as_bytes(), b"/repo/wt-caf\xff");
         assert_eq!(got[0].head.as_deref(), Some("abc123"));
@@ -1222,9 +1355,89 @@ mod tests {
     #[test]
     fn worktrees_parse_last_record_without_trailing_blank() {
         // The final record may not be followed by a blank line.
-        let got = parse_worktree_porcelain(b"worktree /only\nHEAD aaa\nbranch refs/heads/x\n");
+        let got = parse_worktree_porcelain(b"worktree /only\nHEAD aaa\nbranch refs/heads/x\n")
+            .expect("valid final record");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].branch.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn worktrees_nul_framing_preserves_literal_lf_in_path() {
+        let got = parse_worktree_porcelain_z(
+            b"worktree /repo/line\nfeed\0HEAD abc123\0detached\0\0\
+              worktree /repo/bare\0bare\0\0",
+        )
+        .expect("valid NUL-framed porcelain");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].path, PathBuf::from("/repo/line\nfeed"));
+        assert!(got[0].detached);
+        assert!(got[1].bare);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktrees_nul_framing_preserves_non_utf8_and_cr_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let got = parse_worktree_porcelain_z(
+            b"worktree /repo/wt-caf\xff\r\0HEAD abc123\0branch refs/heads/main\0\0",
+        )
+        .expect("valid NUL-framed porcelain");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path.as_os_str().as_bytes(), b"/repo/wt-caf\xff\r");
+    }
+
+    #[test]
+    fn worktrees_legacy_framing_rejects_literal_lf_path() {
+        let err = parse_worktree_porcelain(
+            b"worktree /repo/line\nfeed\nHEAD abc123\nbranch refs/heads/main\n\n",
+        )
+        .expect_err("a newline-framed path must not be truncated silently");
+        assert!(err.contains("ambiguous"), "unexpected error: {err}");
+
+        // Even a suffix that looks exactly like a valid field is caught: the
+        // real mandatory field then becomes a duplicate/out-of-order field.
+        let err = parse_worktree_porcelain(
+            b"worktree /repo/line\nHEAD fake\nHEAD real\nbranch refs/heads/main\n\n",
+        )
+        .expect_err("field-shaped path suffix must still be ambiguous");
+        assert!(err.contains("ambiguous"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn worktrees_legacy_framing_leaves_valid_pseudo_records_for_git_validation() {
+        let parsed = parse_worktree_porcelain(
+            b"worktree /repo/line\nHEAD 0000000000000000000000000000000000000000\n\
+              detached\n\nworktree ghost\nHEAD real\nbranch refs/heads/main\n\n",
+        )
+        .expect("the pseudo-records are deliberately structurally valid");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].path, PathBuf::from("/repo/line"));
+        assert_eq!(parsed[1].path, PathBuf::from("ghost"));
+    }
+
+    #[test]
+    fn worktrees_legacy_framing_preserves_trailing_cr_in_unix_path() {
+        let got = parse_worktree_porcelain(
+            b"worktree /repo/trailing\r\nHEAD abc123\nbranch refs/heads/main\n",
+        )
+        .expect("LF framing must leave a preceding CR as path data");
+        assert_eq!(got[0].path, PathBuf::from("/repo/trailing\r"));
+    }
+
+    #[test]
+    fn worktrees_reject_malformed_or_incomplete_records() {
+        for malformed in [
+            b"HEAD abc123\nbranch refs/heads/main\n".as_slice(),
+            b"worktree /repo\nbranch refs/heads/main\n".as_slice(),
+            b"worktree /repo\nHEAD abc123\n\n".as_slice(),
+            b"worktree /repo\nbare\nHEAD abc123\n".as_slice(),
+        ] {
+            assert!(
+                parse_worktree_porcelain(malformed).is_err(),
+                "malformed input was accepted: {malformed:?}"
+            );
+        }
     }
 
     #[test]

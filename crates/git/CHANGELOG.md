@@ -67,6 +67,23 @@ crates; tag releases as `vcs-git-v<version>`.
   and every nameable impl are unchanged.
 
 ### Fixed
+- **`GitApi::worktree_list` no longer returns a truncated path when a Unix
+  worktree name contains LF.** The method probes `git --version`; Git >=2.36 is
+  invoked as `worktree list --porcelain -z`, preserving LF and non-UTF-8 path
+  bytes, while supported Git 2.31–2.35 keeps newline porcelain and asks Git to
+  prove each parsed path is its byte-exact worktree root. The legacy check also
+  requires unique administrative identities in one common repository and repeats
+  both the porcelain snapshot and identity probes. This catches even LF suffixes
+  that form complete valid pseudo-records; empty or partial admin directories
+  ignored by Git cannot compensate one by count. Malformed or unverifiable legacy
+  output, including stale/unreachable records and a concurrent snapshot or identity
+  change, returns `ErrorReason::Parse` instead of a `Worktree` naming a different
+  directory. Consistently CRLF-framed output remains supported, while a legitimate
+  trailing CR in a Unix path remains byte-exact under Git's normal LF framing.
+  Parser and scripted-runner tests cover both argv branches, detached and bare
+  records, partial admin entries, adversarial legacy input, snapshot races, and
+  byte-exact NUL-framed paths; an ignored Unix integration test exercises a real
+  LF-named linked worktree. (T-185.)
 - **`harden()` no longer breaks every SSH network operation.** The hardened
   profile pinned `core.sshCommand` to the empty string (`GIT_CONFIG_KEY_2` /
   `GIT_CONFIG_VALUE_2`, `GIT_CONFIG_COUNT=3`) as a kill-switch for a repo-local
