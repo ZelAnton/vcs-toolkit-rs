@@ -16,7 +16,10 @@ crates; tag releases as `vcs-jj-v<version>`.
 -
 
 ### Fixed
--
+- Make transaction rollback fail closed when jj's operation-log safety probe has
+  a missing, extra, or non-numeric parent count. The invalid probe is reported as
+  `Rollback::Failed`, and `op restore` is not run; validated zero-, one-, and
+  multi-parent rows retain their existing behavior.
 
 ## [0.12.0] - 2026-08-11
 

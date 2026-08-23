@@ -4370,6 +4370,66 @@ mod tests {
         );
     }
 
+    // Missing, non-numeric, or structurally damaged parent-count data makes the
+    // divergence probe untrustworthy. It must fail closed as a parse failure and
+    // must never reach `op restore`, even when the damaged row could have been the
+    // multi-parent reconcile marker before the captured operation.
+    #[tokio::test]
+    async fn rollback_to_fails_closed_on_malformed_parent_probe() {
+        for (case, probe) in [
+            ("missing parent-count", "merge\nmine\t1\npre\t1\n"),
+            ("non-numeric parent-count", "merge\tmany\nmine\t1\npre\t1\n"),
+            ("damaged reconcile row", "merge\t2\t\nmine\t1\npre\t1\n"),
+            ("extra final field", "mine\t1\npre\t1\t\n"),
+        ] {
+            let rec = RecordingRunner::new(
+                ScriptedRunner::new()
+                    .on(["jj", "op", "log"], Reply::ok(probe))
+                    .on(["jj", "op", "restore"], Reply::ok("")),
+            );
+            let jj = Jj::with_runner(&rec);
+            let outcome = jj.rollback_to(Path::new("/r"), "pre").await;
+            match outcome {
+                Rollback::Failed(err) => assert!(
+                    matches!(err.reason(), ErrorReason::Parse { .. }),
+                    "{case}: {err:?}"
+                ),
+                other => panic!("{case}: expected a fail-closed parse failure, got {other:?}"),
+            }
+            assert!(
+                rec.calls()
+                    .iter()
+                    .all(|call| call.args_str()[..2] != ["op", "restore"]),
+                "{case}: restore must not run for an untrusted probe: {:?}",
+                rec.calls()
+            );
+        }
+    }
+
+    // A real zero-parent row (the operation-log root) is still valid. If that row
+    // is the captured savepoint, the fully validated probe permits the restore.
+    #[tokio::test]
+    async fn rollback_to_restores_valid_zero_parent_savepoint() {
+        let rec = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["jj", "op", "log"], Reply::ok("pre\t0\n"))
+                .on(["jj", "op", "restore"], Reply::ok("")),
+        );
+        let jj = Jj::with_runner(&rec);
+        let outcome = jj.rollback_to(Path::new("/r"), "pre").await;
+        assert!(
+            matches!(outcome, Rollback::Restored),
+            "valid zero-parent savepoint should restore: {outcome:?}"
+        );
+        assert!(
+            rec.calls()
+                .iter()
+                .any(|call| call.args_str()[..2] == ["op", "restore"]),
+            "the validated restore must run: {:?}",
+            rec.calls()
+        );
+    }
+
     // If the captured savepoint is not within the probed window, the range can't be
     // confirmed safe to revert — the rollback is refused (conservative), not blindly
     // applied.

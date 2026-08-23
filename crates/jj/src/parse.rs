@@ -11,6 +11,8 @@ use std::path::PathBuf;
 
 use vcs_diff::{DiffStat, path_from_bytes};
 
+use crate::{BINARY, Error, Result};
+
 /// A jj change, parsed from a `\t`-delimited template row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -356,23 +358,46 @@ pub(crate) fn parse_operations(output: &str) -> Vec<Operation> {
 }
 
 /// Parse rows produced by [`OP_PARENTS_TEMPLATE`] into `(op-id, parent-count)`
-/// pairs, newest first — the input to the rollback divergence walk. A row whose
-/// parent-count is missing or unparsable is read as `0` parents (it cannot be the
-/// divergence merge the probe looks for, so a malformed row never spuriously trips
-/// the "foreign concurrency" signal); the id is always kept so the walk can still
-/// locate the captured pre-operation.
-pub(crate) fn parse_op_parents(output: &str) -> Vec<(String, usize)> {
+/// pairs, newest first — the input to the rollback divergence walk.
+///
+/// Unlike display-oriented parsers, this safety probe is fail-closed: every row
+/// must contain a non-empty operation id and exactly one numeric parent-count
+/// column. Missing, extra, or non-numeric data is a
+/// [`crate::ErrorReason::Parse`], never a count of zero that could make rollback
+/// appear safe.
+pub(crate) fn parse_op_parents(output: &str) -> Result<Vec<(String, usize)>> {
     output
         .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut fields = line.splitn(2, '\t');
-            let id = fields.next().unwrap_or("").to_string();
-            let parents = fields
-                .next()
-                .and_then(|s| s.trim().parse::<usize>().ok())
-                .unwrap_or(0);
-            (id, parents)
+        .enumerate()
+        .map(|(index, line)| {
+            let (id, parent_count) = line.split_once('\t').ok_or_else(|| {
+                Error::parse(
+                    BINARY,
+                    format!(
+                        "malformed rollback safety-probe row {}: missing parent-count column",
+                        index + 1
+                    ),
+                )
+            })?;
+            if id.is_empty() || parent_count.is_empty() || parent_count.contains('\t') {
+                return Err(Error::parse(
+                    BINARY,
+                    format!(
+                        "malformed rollback safety-probe row {}: expected exactly one non-empty id and parent-count column",
+                        index + 1
+                    ),
+                ));
+            }
+            let parents = parent_count.parse::<usize>().map_err(|_| {
+                Error::parse(
+                    BINARY,
+                    format!(
+                        "malformed rollback safety-probe row {}: parent-count is not numeric",
+                        index + 1
+                    ),
+                )
+            })?;
+            Ok((id.to_string(), parents))
         })
         .collect()
 }
@@ -786,23 +811,40 @@ mod tests {
     }
 
     #[test]
-    fn op_parents_reads_id_and_parent_count() {
-        // Newest first: a 2-parent reconcile merge, then two single-parent ops.
-        let out = "merge9\t2\nmine01\t1\npre000\t1\n";
-        let rows = parse_op_parents(out);
+    fn op_parents_preserves_valid_zero_one_and_many_counts() {
+        // Newest first: a 2-parent reconcile merge, a single-parent op, and the
+        // zero-parent root operation. Zero remains a valid value; it is no longer
+        // also the fallback representation for malformed data.
+        let out = "merge9\t2\nmine01\t1\nroot00\t0\n";
+        let rows = parse_op_parents(out).expect("valid safety probe");
         assert_eq!(
             rows,
             vec![
                 ("merge9".to_string(), 2),
                 ("mine01".to_string(), 1),
-                ("pre000".to_string(), 1),
+                ("root00".to_string(), 0),
             ]
         );
-        // A short/malformed row (no parent-count column) keeps its id and reads as
-        // 0 parents, so it can never spuriously look like the divergence merge.
-        let short = parse_op_parents("abc123\n");
-        assert_eq!(short, vec![("abc123".to_string(), 0)]);
-        assert!(parse_op_parents("").is_empty());
+        assert!(parse_op_parents("").expect("empty probe").is_empty());
+    }
+
+    #[test]
+    fn op_parents_rejects_untrusted_rows() {
+        for (case, output) in [
+            ("missing parent-count", "abc123\n"),
+            ("empty parent-count", "abc123\t\n"),
+            ("non-numeric parent-count", "abc123\tmany\n"),
+            (
+                "damaged reconcile row",
+                "merge9\t2\t\nmine01\t1\npre000\t1\n",
+            ),
+        ] {
+            let err = parse_op_parents(output).expect_err(case);
+            assert!(
+                matches!(err.reason(), crate::ErrorReason::Parse { .. }),
+                "{case}: {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -1325,6 +1367,7 @@ mod proptests {
         fn parsers_never_panic_on_arbitrary_text(s in any::<String>()) {
             let _ = parse_changes(&s);
             let _ = parse_operations(&s);
+            let _ = parse_op_parents(&s);
             let _ = parse_annotate(&s);
             let _ = parse_bookmarks(&s);
             let _ = parse_bookmarks_all(&s);
