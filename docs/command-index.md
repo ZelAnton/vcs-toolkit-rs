@@ -165,7 +165,7 @@ hardening](https://docs.rs/vcs-git/latest/vcs_git/guide/security/).
 | `bisect_reset` | `bisect reset` | ends a bisect session; no `--continue` |
 | `stash_push` | `stash push [--include-untracked]` | via `StashPush` |
 | `stash_pop` | `stash pop` | |
-| `stash_list` | `stash list -z --format=%gd%x1f%H%x1f%gs` | parsed `Vec<StashEntry>`, most-recent first |
+| `stash_list` | `stash list -z --format=%gd%x0a%H%x0a%gs` | parsed `Vec<StashEntry>`, most-recent first |
 | `stash_apply` | `stash apply stash@{<index>}` | applies without dropping |
 | `stash_drop` | `stash drop stash@{<index>}` | drops without applying |
 | `clean` | `clean -n\|-f [-d] [-x\|-X]` | via `Clean`; refused before spawning unless `dry_run`/`force` is set, `dry_run` wins if both are |
