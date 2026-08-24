@@ -313,10 +313,12 @@ authors = ["Anton Zhelezniakou"]
 #     cannot confirm a terminal child/tree. Every local checking verb already
 #     propagates its `processkit::Error`; the fetch classifier remains fail-closed
 #     because `Error::is_transient()` rejects teardown. The shared logging projection
-#     now preserves the new kind as `"teardown failed"` instead of its generic
-#     catch-all. `run_with_progress_within` still joins `events()` with `finish()`, so
-#     its explicit inactivity/deadline tests cover the consuming path whose failure
-#     may now be Teardown when terminal confirmation itself fails.
+#     preserves the new kind as `"teardown failed"` through `ErrorKind::name()`'s
+#     stable `"teardown"` identifier, without naming the 3.3.4-only enum variant;
+#     `name()` is already public in 3.2.0. `run_with_progress_within` still joins
+#     `events()` with `finish()`, so its explicit inactivity/deadline tests cover the
+#     consuming path whose failure may now be Teardown when terminal confirmation
+#     itself fails.
 #   * The Windows ordinary spawn path still uses the default piped JobRunner. Its
 #     ToolHelp resume fallback now captures `GetLastError()` immediately after a
 #     FALSE cursor result and accepts only `ERROR_NO_MORE_FILES` as exhaustion; other
@@ -328,7 +330,8 @@ authors = ["Anton Zhelezniakou"]
 #     pipeline either. Long-lived `vcs-watch` and MCP operations continue through the
 #     same ordinary wrapper/JobRunner paths, including drop-based teardown of an
 #     overrun watch query and MCP's per-command timeout/error projection.
-# The floor therefore stays `"3.2"`: no 3.3.4-only API is used by production code.
+# The floor therefore stays `"3.2"`: production code uses only the 3.2-era stable
+# machine-identifier API, not a 3.3.4-only Rust item.
 # `Cargo.lock` advances only processkit 3.3.3 → 3.3.4; the checksum is the published
 # sparse-index value and SHA-256 of the cached `.crate` archive.
 processkit = "3.2"
