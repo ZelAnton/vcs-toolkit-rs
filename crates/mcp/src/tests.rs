@@ -84,7 +84,7 @@ async fn repo_log_returns_commit_json() {
     let server = git_server(
         ScriptedRunner::new().on(
             ["git", "log"],
-            Reply::ok("deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0"),
+            Reply::ok("deadbeef\ndead\nJane\n2026-05-31T10:00:00+00:00\nFix bug\0"),
         ),
         WriteGate::None,
     );
