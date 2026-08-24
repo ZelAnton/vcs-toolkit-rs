@@ -343,7 +343,17 @@ fn status_of<T>(result: &Result<ProcessResult<T>>) -> CommandStatus {
 /// `limits`-feature-gated `ResourceLimit` kind, which this workspace does not
 /// enable) safe.
 fn error_category(err: &Error) -> &'static str {
-    match err.kind() {
+    if err.output_overflow().is_some() {
+        return "output too large";
+    }
+    error_kind_category(err.kind())
+}
+
+fn error_kind_category(kind: ErrorKind) -> &'static str {
+    if let Some(category) = additive_error_kind_category(kind.name()) {
+        return category;
+    }
+    match kind {
         ErrorKind::NotFound => "program not found",
         ErrorKind::Spawn => "spawn failed",
         ErrorKind::PermissionDenied => "permission denied",
@@ -353,8 +363,16 @@ fn error_category(err: &Error) -> &'static str {
         ErrorKind::Exit => "non-zero exit",
         ErrorKind::Signalled => "signalled",
         ErrorKind::Predicate => "predicate rejected",
-        _ if err.output_overflow().is_some() => "output too large",
         _ => "error",
+    }
+}
+
+/// Categories added by a newer compatible ProcessKit without making that newer
+/// enum variant part of this crate's minimum compile-time API requirement.
+fn additive_error_kind_category(name: &str) -> Option<&'static str> {
+    match name {
+        "teardown" => Some("teardown failed"),
+        _ => None,
     }
 }
 
@@ -645,6 +663,16 @@ mod tests {
         for (err, expected) in cases {
             assert_eq!(error_category(&err), expected, "for {err:?}");
         }
+
+        // ProcessKit 3.3.4's fail-closed terminal-reaping reason is both
+        // `#[non_exhaustive]` and new after this crate's 3.2 dependency floor.
+        // Route its stable machine identifier instead of naming the additive enum
+        // variant, so the same source still compiles against 3.2.0.
+        assert_eq!(
+            additive_error_kind_category("teardown"),
+            Some("teardown failed")
+        );
+        assert_eq!(additive_error_kind_category("future_kind"), None);
 
         // `OutputTooLarge` is `#[non_exhaustive]`, so it can only be produced by
         // actually tripping a byte ceiling — which is also the honest check that the
