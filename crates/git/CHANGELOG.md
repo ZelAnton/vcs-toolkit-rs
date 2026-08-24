@@ -67,6 +67,11 @@ crates; tag releases as `vcs-git-v<version>`.
   and every nameable impl are unchanged.
 
 ### Fixed
+- `GitApi::log`, `log_paths`, and `stash_list` now use NUL-terminated records
+  with LF-delimited single-line fields instead of treating the valid user byte
+  `0x1F` as a field separator. Author names, commit subjects, and stash messages
+  containing `U+001F` round-trip without shifting or truncating fields; malformed
+  and truncated records are skipped independently. (T-188.)
 - `GitApi::submodule_status` now preserves the full path of an uninitialized
   submodule when that path ends in a parenthesized component such as ` (old)`,
   instead of mistaking the component for a `git describe` suffix. Initialized
@@ -175,7 +180,7 @@ crates; tag releases as `vcs-git-v<version>`.
   skipped without discarding valid remotes. (T-108.)
 - feat: working-tree management round-out — `GitApi::stash_list`, `stash_apply`,
   `stash_drop`, and `clean` (mirrored on the `GitAt` cwd-bound view). `stash_list`
-  machine-parses `stash list -z --format=%gd%x1f%H%x1f%gs` into typed `StashEntry`
+  machine-parses NUL-terminated, LF-field-framed `stash list` output into typed `StashEntry`
   records (index / hash / branch / message); `stash_apply`/`stash_drop` act on a
   stash by its `stash@{<index>}` position without applying-and-dropping in one step.
   `clean` is a `Clean` builder (`directories`/`-d`, `include_ignored`/`-x`,

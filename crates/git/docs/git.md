@@ -622,7 +622,7 @@ async fn clean(&self, dir: &Path, spec: Clean) -> Result<Vec<CleanEntry>>;
   state before a copy-on-write restore.
 - **`stash_pop`** — restore the most recent stash and drop it (`stash pop`).
 - **`stash_list`** — the stash list, most-recent first (`stash@{0}`), machine-parsed
-  via `stash list -z --format=%gd%x1f%H%x1f%gs` into `Vec<StashEntry>` (index / hash /
+  via `stash list -z --format=%gd%x0a%H%x0a%gs` into `Vec<StashEntry>` (index / hash /
   branch / message).
 - **`stash_apply`** — apply the stash at `index` **without** dropping it
   (`stash apply stash@{<index>}`).
@@ -921,7 +921,9 @@ The combined snapshot from `branch_status` (`status --porcelain=v2 --branch -z`)
 
 ### `Commit`
 
-A commit parsed from a `\x1f`-delimited `git log` line.
+A commit parsed from a NUL-terminated `git log` record with five LF-delimited,
+single-line fields. This framing preserves control bytes such as `U+001F` in
+author names and subjects.
 
 | field | type | meaning |
 |-------|------|---------|
@@ -951,7 +953,9 @@ A commit parsed from a `\x1f`-delimited `git log` line.
 
 ### `StashEntry`
 
-One entry from `stash_list`, parsed via `stash list -z --format=%gd%x1f%H%x1f%gs`.
+One entry from `stash_list`, parsed via
+`stash list -z --format=%gd%x0a%H%x0a%gs`. NUL terminates each record and LF
+separates the three single-line fields, so `U+001F` remains message data.
 
 | field | type | meaning |
 |-------|------|---------|

@@ -64,7 +64,8 @@ impl BranchStatus {
     }
 }
 
-/// A commit, parsed from a `\x1f`-delimited `git log` line.
+/// A commit parsed from one NUL-terminated `git log` record whose five
+/// single-line fields are LF-delimited.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Commit {
@@ -91,7 +92,7 @@ pub struct Branch {
 }
 
 /// One entry from `git stash list`, parsed via
-/// `--format=%gd%x1f%H%x1f%gs -z`: the stash's position, the stashed commit's
+/// `--format=%gd%x0a%H%x0a%gs -z`: the stash's position, the stashed commit's
 /// hash, and its label split into an optional branch and the rest of the
 /// message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -315,40 +316,39 @@ pub(crate) fn parse_nul_paths(output: &[u8]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Parse `git log -z --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s` output: commits are
-/// NUL-separated (robust to multi-line fields), fields split on the ASCII unit
-/// separator.
+/// Parse `git log -z --format=%H%x0a%h%x0a%an%x0a%aI%x0a%s` output.
+///
+/// Each record is NUL-terminated and has exactly five LF-delimited fields. Git
+/// defines `%an`, `%aI`, and `%s` as single-line values (and the hash spellings
+/// are single-line too), so LF is structural while every other non-NUL payload
+/// byte, including ASCII unit separator (`0x1f`), remains data. Only terminated,
+/// exact-arity records are accepted; malformed and truncated records are skipped
+/// without borrowing fields from the next record.
 pub(crate) fn parse_log(output: &str) -> Vec<Commit> {
-    output
-        .split('\0')
+    terminated_nul_records(output)
         .filter(|rec| !rec.is_empty())
         .filter_map(|rec| {
-            let mut fields = rec.split('\u{1f}');
+            let [hash, short_hash, author, date, subject] = exact_lf_fields(rec)?;
             Some(Commit {
-                hash: fields.next()?.to_string(),
-                short_hash: fields.next()?.to_string(),
-                author: fields.next()?.to_string(),
-                date: fields.next()?.to_string(),
-                subject: fields.next().unwrap_or("").to_string(),
+                hash: hash.to_string(),
+                short_hash: short_hash.to_string(),
+                author: author.to_string(),
+                date: date.to_string(),
+                subject: subject.to_string(),
             })
         })
         .collect()
 }
 
-/// Parse `git stash list -z --format=%gd%x1f%H%x1f%gs` output into
-/// [`StashEntry`] records: NUL-separated entries (robust to a multi-line
-/// message), `\x1f`-separated fields — the same framing [`parse_log`] uses. A
-/// record whose selector isn't the expected `stash@{<n>}` shape (unexpected
-/// git output) is skipped rather than turned into a garbage entry.
+/// Parse `git stash list -z --format=%gd%x0a%H%x0a%gs` output into
+/// [`StashEntry`] records. Reflog subjects (`%gs`) are single-line values, so
+/// the same NUL-record/LF-field framing as [`parse_log`] preserves `0x1f` in a
+/// stash message. A malformed, truncated, or unexpected record is skipped.
 pub(crate) fn parse_stash_list(output: &str) -> Vec<StashEntry> {
-    output
-        .split('\0')
+    terminated_nul_records(output)
         .filter(|rec| !rec.is_empty())
         .filter_map(|rec| {
-            let mut fields = rec.split('\u{1f}');
-            let selector = fields.next()?;
-            let hash = fields.next()?.to_string();
-            let subject = fields.next().unwrap_or("");
+            let [selector, hash, subject] = exact_lf_fields(rec)?;
             let index: usize = selector
                 .strip_prefix("stash@{")?
                 .strip_suffix('}')?
@@ -357,12 +357,32 @@ pub(crate) fn parse_stash_list(output: &str) -> Vec<StashEntry> {
             let (branch, message) = parse_stash_subject(subject);
             Some(StashEntry {
                 index,
-                hash,
+                hash: hash.to_string(),
                 branch,
                 message,
             })
         })
         .collect()
+}
+
+/// Yield only records with an observed NUL terminator. Keeping framing here,
+/// instead of using `str::split`, makes a final truncated record fail closed.
+fn terminated_nul_records(mut output: &str) -> impl Iterator<Item = &str> {
+    std::iter::from_fn(move || {
+        let (record, remaining) = output.split_once('\0')?;
+        output = remaining;
+        Some(record)
+    })
+}
+
+/// Split an LF-framed record only when it has exactly `N` fields.
+fn exact_lf_fields<const N: usize>(record: &str) -> Option<[&str; N]> {
+    let mut fields = record.split('\n');
+    let mut result = [""; N];
+    for field in &mut result {
+        *field = fields.next()?;
+    }
+    fields.next().is_none().then_some(result)
 }
 
 /// Split a `git stash` reflog subject (`%gs`) into the branch it names and the
@@ -1268,9 +1288,9 @@ mod tests {
     }
 
     #[test]
-    fn log_splits_unit_separated_fields() {
-        let input = "abc123\u{1f}abc\u{1f}Ada\u{1f}2026-05-31T10:00:00+00:00\u{1f}Add feature\0\
-                     def456\u{1f}def\u{1f}Linus\u{1f}2026-05-30T09:00:00+00:00\u{1f}Fix bug\0";
+    fn log_parses_multiple_lf_framed_records_and_preserves_unit_separator() {
+        let input = "abc123\nabc\nAda\u{1f}Lovelace\n2026-05-31T10:00:00+00:00\nAdd\u{1f}feature\0\
+                     def456\ndef\nLinus\n2026-05-30T09:00:00+00:00\nFix bug\0";
         let got = parse_log(input);
         assert_eq!(got.len(), 2);
         assert_eq!(
@@ -1278,9 +1298,9 @@ mod tests {
             Commit {
                 hash: "abc123".into(),
                 short_hash: "abc".into(),
-                author: "Ada".into(),
+                author: "Ada\u{1f}Lovelace".into(),
                 date: "2026-05-31T10:00:00+00:00".into(),
-                subject: "Add feature".into(),
+                subject: "Add\u{1f}feature".into(),
             }
         );
         assert_eq!(got[1].subject, "Fix bug");
@@ -1288,8 +1308,23 @@ mod tests {
 
     #[test]
     fn log_tolerates_empty_subject() {
-        let got = parse_log("h\u{1f}h\u{1f}A\u{1f}2026-05-31T10:00:00+00:00\u{1f}\0");
+        let got = parse_log("h\nh\nA\n2026-05-31T10:00:00+00:00\n\0");
         assert_eq!(got[0].subject, "");
+    }
+
+    #[test]
+    fn log_skips_malformed_and_truncated_records_without_shifting_fields() {
+        let input = concat!(
+            "too\nfew\nfields\0",
+            "too\nmany\nfields\nhere\nfor\nlog\0",
+            "good\ng\nAuthor\n2026-05-31T10:00:00+00:00\nsubject\0",
+            "truncated\nt\nAuthor\n2026-05-31T10:00:00+00:00\nsubject",
+        );
+        let got = parse_log(input);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].hash, "good");
+        assert_eq!(got[0].subject, "subject");
+        assert!(parse_log("").is_empty());
     }
 
     #[test]
@@ -1655,9 +1690,9 @@ mod tests {
         // `stash push` (no `-m`), whose default label embeds the abbrev sha +
         // subject of the commit stashed on top of.
         let out = concat!(
-            "stash@{0}\u{1f}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}",
-            "On feature: my label\0",
-            "stash@{1}\u{1f}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u{1f}",
+            "stash@{0}\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "On feature: my\u{1f}label\0",
+            "stash@{1}\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
             "WIP on feature: f1c02c2 init\0",
         );
         let got = parse_stash_list(out);
@@ -1665,7 +1700,7 @@ mod tests {
         assert_eq!(got[0].index, 0);
         assert_eq!(got[0].hash, "a".repeat(40));
         assert_eq!(got[0].branch.as_deref(), Some("feature"));
-        assert_eq!(got[0].message, "my label");
+        assert_eq!(got[0].message, "my\u{1f}label");
         assert_eq!(got[1].index, 1);
         assert_eq!(got[1].branch.as_deref(), Some("feature"));
         assert_eq!(got[1].message, "f1c02c2 init");
@@ -1673,7 +1708,7 @@ mod tests {
 
     #[test]
     fn stash_list_detached_head_has_no_branch() {
-        let out = "stash@{0}\u{1f}cccccccccccccccccccccccccccccccccccccccc\u{1f}\
+        let out = "stash@{0}\ncccccccccccccccccccccccccccccccccccccccc\n\
                     On (no branch): detached label\0";
         let got = parse_stash_list(out);
         assert_eq!(got.len(), 1);
@@ -1690,8 +1725,22 @@ mod tests {
     fn stash_list_skips_a_record_with_an_unrecognized_selector() {
         // A malformed/foreign selector (not `stash@{<n>}`) must be skipped, not
         // turned into a garbage entry with index 0.
-        let out = "not-a-selector\u{1f}deadbeef\u{1f}subject\0";
+        let out = "not-a-selector\ndeadbeef\nsubject\0";
         assert!(parse_stash_list(out).is_empty());
+    }
+
+    #[test]
+    fn stash_list_skips_malformed_and_truncated_records_independently() {
+        let out = concat!(
+            "stash@{0}\nmissing-subject\0",
+            "stash@{1}\nhash\nOn main: good\0",
+            "stash@{2}\nhash\nOn main: too\nmany\0",
+            "stash@{3}\nhash\nOn main: truncated",
+        );
+        let got = parse_stash_list(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].index, 1);
+        assert_eq!(got[0].message, "good");
     }
 
     #[test]
