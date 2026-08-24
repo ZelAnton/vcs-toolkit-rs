@@ -16,6 +16,18 @@ def _ratio(numerator: int, denominator: int) -> dict[str, int]:
     return {"numerator": numerator, "denominator": denominator}
 
 
+def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
+    """Keep the standard route channels explicit, including zeroes."""
+    recorded = {
+        "preferred_interface": calls["preferred_interface"],
+        "fallback_interface": calls.get("fallback_interface", 0),
+        "raw_cli": calls["raw_cli"],
+        "total": calls["total"],
+    }
+    recorded.update({key: value for key, value in calls.items() if key not in recorded})
+    return recorded
+
+
 def make_recording(corpus: Any, results: Any, baseline: Any | None = None) -> dict[str, Any]:
     corpus_by_id = validate_corpus(corpus)
     checked = validate_results(corpus_by_id, results)
@@ -37,15 +49,25 @@ def make_recording(corpus: Any, results: Any, baseline: Any | None = None) -> di
         "cases": [
             {
                 "case_id": result["case_id"],
+                "outcome_status": result["outcome"]["status"],
                 "selected_interface": result["selection"]["selected_interface"],
                 "fallback_reason": result["selection"]["fallback_reason"],
                 "preferred_interface_selected": result["selection"]["preferred_interface_selected"],
                 "false_activation": result["selection"]["false_activation"],
                 "raw_cli_bypass": result["selection"]["raw_cli_bypass"],
-                "calls": result["calls"]["total"],
+                "calls": _recorded_calls(result["calls"]),
                 "unrelated_changes_preserved": result["workspace"]["unrelated_changes_preserved"],
-                "exact_revision_verified": result["revision"]["exact_revision_verified"],
-                "terminal_ci_verified": result["revision"]["terminal_ci"]["verified"],
+                "revision": {
+                    "before": result["revision"].get("before"),
+                    "after": result["revision"].get("after"),
+                    "published": result["revision"].get("published"),
+                    "exact_revision_verified": result["revision"]["exact_revision_verified"],
+                    "terminal_ci": {
+                        "verified": result["revision"]["terminal_ci"]["verified"],
+                        "revision": result["revision"]["terminal_ci"].get("revision"),
+                        "conclusion": result["revision"]["terminal_ci"].get("conclusion"),
+                    },
+                },
             }
             for result in ordered
         ],

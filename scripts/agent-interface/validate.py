@@ -193,6 +193,43 @@ def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> l
         selection = result["selection"]
         calls = result["calls"]
         expected_selection = expected["selection"]
+
+        # These flags are evidence derived from the actual route, not free-form
+        # annotations.  Keep the relationship explicit so a recording cannot
+        # claim a false activation or raw-CLI bypass that its calls do not show.
+        fallback_calls = calls.get("fallback_interface", 0)
+        selected_interface = selection["selected_interface"]
+        if selected_interface == "vcs-agent":
+            if not selection["preferred_interface_selected"]:
+                raise ValidationError(f"{case_id}: vcs-agent selection must set preferred_interface_selected")
+            if selection["false_activation"] or selection["raw_cli_bypass"]:
+                raise ValidationError(f"{case_id}: preferred selection cannot claim false activation or raw CLI bypass")
+            if selection["fallback_reason"] is not None or calls["raw_cli"] or fallback_calls:
+                raise ValidationError(f"{case_id}: preferred selection has fallback or raw CLI call evidence")
+            if result["outcome"]["status"] != "success":
+                raise ValidationError(f"{case_id}: preferred selection must have a success outcome")
+        elif selected_interface == "mcp":
+            if selection["preferred_interface_selected"] or selection["false_activation"]:
+                raise ValidationError(f"{case_id}: MCP fallback cannot claim preferred selection or false activation")
+            if selection["raw_cli_bypass"] or calls["raw_cli"] or fallback_calls < 1:
+                raise ValidationError(f"{case_id}: MCP fallback must have fallback calls and no raw CLI bypass")
+            if selection["fallback_reason"] is None or result["outcome"]["status"] != "fallback":
+                raise ValidationError(f"{case_id}: MCP fallback requires a classified fallback outcome")
+        elif selected_interface == "raw-cli":
+            if selection["preferred_interface_selected"] or selection["false_activation"]:
+                raise ValidationError(f"{case_id}: raw CLI fallback cannot claim preferred selection or false activation")
+            if not selection["raw_cli_bypass"] or calls["raw_cli"] < 1 or selection["fallback_reason"] is None:
+                raise ValidationError(f"{case_id}: raw CLI fallback must have classified raw CLI evidence")
+            if result["outcome"]["status"] != "fallback":
+                raise ValidationError(f"{case_id}: raw CLI fallback must have a fallback outcome")
+        else:
+            if selection["preferred_interface_selected"] or selection["false_activation"] or selection["raw_cli_bypass"]:
+                raise ValidationError(f"{case_id}: none selection cannot claim activation or bypass evidence")
+            if selection["fallback_reason"] is not None or calls["total"] != 0:
+                raise ValidationError(f"{case_id}: none selection must have no fallback reason or calls")
+            if result["outcome"]["status"] != "ignored":
+                raise ValidationError(f"{case_id}: none selection must have an ignored outcome")
+
         if expected_selection == "preferred":
             if selection["selected_interface"] != "vcs-agent" or not selection["preferred_interface_selected"]:
                 raise ValidationError(f"{case_id}: preferred interface was not selected")
@@ -237,6 +274,9 @@ def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> l
             if terminal_ci.get("revision") != expected_revision:
                 raise ValidationError(f"{case_id}: terminal CI must reference the exact published revision")
         checked.append(result)
+    missing = sorted(set(corpus_by_id) - seen)
+    if missing:
+        raise ValidationError(f"results missing case IDs: {', '.join(missing)}")
     return checked
 
 

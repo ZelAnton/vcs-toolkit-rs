@@ -41,6 +41,12 @@ python scripts/agent-interface/record.py \
   --output docs/agent-interface/fixtures/recording.v1.json
 ```
 
+The output envelope is defined by [`recording-schema.v1.json`](recording-schema.v1.json).
+Every case retains its outcome status, complete calls breakdown (including
+preferred/fallback/raw/total channels), unrelated-state evidence, and the full
+before/after/published revision block with terminal-CI revision and conclusion.
+The recorder refuses to write any output when even one corpus case is missing.
+
 The validator rejects duplicate or unknown case IDs, unclassified fallbacks,
 negative prompts that activate an interface, mismatched call totals, missing
 unrelated-state evidence, and mutation/publication results without exact

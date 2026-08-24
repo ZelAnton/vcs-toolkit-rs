@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcs-toolkit-rs.dev/schemas/agent-interface-recording-v1.json",
+  "title": "Agent interface evaluation recording v1",
+  "type": "object",
+  "required": ["schema_version", "corpus_version", "source", "cases", "metrics"],
+  "properties": {
+    "schema_version": {"const": "agent-interface.recording.v1"},
+    "corpus_version": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "outcome_status", "selected_interface", "fallback_reason", "preferred_interface_selected", "false_activation", "raw_cli_bypass", "calls", "unrelated_changes_preserved", "revision"],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "outcome_status": {"type": "string", "minLength": 1},
+          "selected_interface": {"enum": ["vcs-agent", "mcp", "raw-cli", "none"]},
+          "fallback_reason": {"type": ["string", "null"]},
+          "preferred_interface_selected": {"type": "boolean"},
+          "false_activation": {"type": "boolean"},
+          "raw_cli_bypass": {"type": "boolean"},
+          "calls": {
+            "type": "object",
+            "required": ["preferred_interface", "raw_cli", "total"],
+            "additionalProperties": {"type": "integer", "minimum": 0}
+          },
+          "unrelated_changes_preserved": {"type": "boolean"},
+          "revision": {
+            "type": "object",
+            "required": ["before", "after", "published", "exact_revision_verified", "terminal_ci"],
+            "properties": {
+              "before": {"type": ["string", "null"]},
+              "after": {"type": ["string", "null"]},
+              "published": {"type": ["string", "null"]},
+              "exact_revision_verified": {"type": "boolean"},
+              "terminal_ci": {
+                "type": "object",
+                "required": ["verified", "revision", "conclusion"],
+                "properties": {
+                  "verified": {"type": "boolean"},
+                  "revision": {"type": ["string", "null"]},
+                  "conclusion": {"type": ["string", "null"]}
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {"type": "object"},
+    "baseline": {"type": "object"}
+  },
+  "additionalProperties": false
+}
