@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vcs-toolkit-rs.dev/schemas/agent-interface-result-v1.json",
+  "title": "Agent interface evaluation result v1",
+  "type": "object",
+  "required": ["schema_version", "case_id", "outcome", "selection", "calls", "workspace", "revision"],
+  "properties": {
+    "schema_version": {"const": "agent-interface.result.v1"},
+    "case_id": {"type": "string", "minLength": 1},
+    "outcome": {"type": "object", "required": ["status"], "properties": {"status": {"type": "string"}}, "additionalProperties": true},
+    "selection": {
+      "type": "object",
+      "required": ["selected_interface", "preferred_interface_selected", "false_activation", "raw_cli_bypass", "fallback_reason"],
+      "properties": {
+        "selected_interface": {"enum": ["vcs-agent", "mcp", "raw-cli", "none"]},
+        "preferred_interface_selected": {"type": "boolean"},
+        "false_activation": {"type": "boolean"},
+        "raw_cli_bypass": {"type": "boolean"},
+        "fallback_reason": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "calls": {"type": "object", "required": ["preferred_interface", "raw_cli", "total"], "additionalProperties": {"type": "integer", "minimum": 0}},
+    "workspace": {"type": "object", "required": ["unrelated_changes_preserved"], "properties": {"unrelated_changes_preserved": {"type": "boolean"}}, "additionalProperties": true},
+    "revision": {
+      "type": "object",
+      "required": ["exact_revision_verified", "terminal_ci"],
+      "properties": {
+        "before": {"type": ["string", "null"]},
+        "after": {"type": ["string", "null"]},
+        "published": {"type": ["string", "null"]},
+        "exact_revision_verified": {"type": "boolean"},
+        "terminal_ci": {"type": "object", "required": ["verified"], "properties": {"verified": {"type": "boolean"}, "conclusion": {"type": ["string", "null"]}, "revision": {"type": ["string", "null"]}}, "additionalProperties": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
