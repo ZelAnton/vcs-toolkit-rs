@@ -4975,7 +4975,12 @@ mod tests {
             .await
             .expect("Git-authoritative probes must ignore admin entries Git omits");
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].path, repo.path());
+        let listed_path = std::fs::canonicalize(&listed[0].path).expect("listed worktree path");
+        let repo_path = std::fs::canonicalize(repo.path()).expect("temporary repository path");
+        assert_eq!(
+            listed_path, repo_path,
+            "Git and the temporary-directory provider may spell the same Windows path differently"
+        );
     }
 
     #[tokio::test]
