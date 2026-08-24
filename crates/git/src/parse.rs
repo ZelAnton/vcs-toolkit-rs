@@ -966,12 +966,13 @@ pub(crate) fn parse_gitmodules_config(output: &[u8]) -> Vec<Submodule> {
 ///
 /// Each line is `<prefix><sha> <path>[ (<describe>)]`, where `<prefix>` is a
 /// single status character (a space, `-`, `+`, or `U`; see [`SubmoduleState`]).
-/// `git submodule status` has no `-z`/NUL framing, so the path is separated
-/// from the optional trailing ` (<describe>)` heuristically: when the line ends
-/// in `)`, the last ` (` opens the describe suffix and everything before it is
-/// the path; otherwise the whole remainder after the sha is the path. A line
-/// whose leading byte is not one of the four known status characters is skipped
-/// as unrecognized rather than mis-parsed.
+/// `git submodule status` has no `-z`/NUL framing, so initialized entries
+/// separate the optional trailing ` (<describe>)` heuristically: when the line
+/// ends in `)`, the last ` (` opens the describe suffix and everything before it
+/// is the path. Uninitialized entries never carry a describe suffix, so their
+/// whole remainder after the sha is kept as the path. A line whose leading byte
+/// is not one of the four known status characters is skipped as unrecognized
+/// rather than mis-parsed.
 pub(crate) fn parse_submodule_status(output: &[u8]) -> Vec<SubmoduleStatus> {
     let mut entries = Vec::new();
     for line in output.split(|&b| b == b'\n') {
@@ -996,20 +997,26 @@ pub(crate) fn parse_submodule_status(output: &[u8]) -> Vec<SubmoduleStatus> {
         };
         let sha = String::from_utf8_lossy(&rest[..sp]).into_owned();
         let tail = &rest[sp + 1..];
-        // Split off a trailing ` (<describe>)` suffix, if present.
-        let (path_bytes, describe) = match tail.last() {
-            Some(b')') => match tail
-                .windows(2)
-                .rposition(|w| w == b" (")
-                .filter(|&i| i + 2 < tail.len())
-            {
-                Some(i) => (
-                    &tail[..i],
-                    Some(String::from_utf8_lossy(&tail[i + 2..tail.len() - 1]).into_owned()),
-                ),
-                None => (tail, None),
-            },
-            _ => (tail, None),
+        // An uninitialized submodule has no checked-out HEAD for git to
+        // describe. Its entire tail is therefore the path, even when the path
+        // itself ends in a parenthesized component.
+        let (path_bytes, describe) = if state == SubmoduleState::Uninitialized {
+            (tail, None)
+        } else {
+            match tail.last() {
+                Some(b')') => match tail
+                    .windows(2)
+                    .rposition(|w| w == b" (")
+                    .filter(|&i| i + 2 < tail.len())
+                {
+                    Some(i) => (
+                        &tail[..i],
+                        Some(String::from_utf8_lossy(&tail[i + 2..tail.len() - 1]).into_owned()),
+                    ),
+                    None => (tail, None),
+                },
+                _ => (tail, None),
+            }
         };
         entries.push(SubmoduleStatus {
             path: vcs_diff::path_from_bytes(path_bytes),
@@ -1584,11 +1591,14 @@ mod tests {
         assert_eq!(got[0].describe.as_deref(), Some("heads/main"));
 
         assert_eq!(got[1].state, SubmoduleState::RevisionMismatch);
+        assert_eq!(got[1].sha, "530fd06");
         assert_eq!(got[1].path, PathBuf::from("plus/mod"));
         assert_eq!(got[1].describe.as_deref(), Some("530fd06"));
 
         assert_eq!(got[2].state, SubmoduleState::Conflict);
+        assert_eq!(got[2].sha, "000aaaa");
         assert_eq!(got[2].path, PathBuf::from("conf/mod"));
+        assert_eq!(got[2].describe.as_deref(), Some("heads/topic"));
 
         assert_eq!(got[3].state, SubmoduleState::Uninitialized);
         assert_eq!(got[3].sha, "deadbee");
@@ -1615,6 +1625,23 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].path, PathBuf::from("libs/no-describe"));
         assert_eq!(got[0].describe, None);
+    }
+
+    #[test]
+    fn submodule_status_uninitialized_keeps_parenthesized_path_suffix() {
+        let out = b"-deadbee vendor/lib (old)\n";
+        let got = parse_submodule_status(out);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].state, SubmoduleState::Uninitialized);
+        assert_eq!(got[0].sha, "deadbee");
+        assert_eq!(got[0].path, PathBuf::from("vendor/lib (old)"));
+        assert_eq!(got[0].describe, None);
+    }
+
+    #[test]
+    fn submodule_status_malformed_lines_are_ignored() {
+        let got = parse_submodule_status(b"?deadbee invalid\n-deadbee\n");
+        assert!(got.is_empty());
     }
 
     #[test]

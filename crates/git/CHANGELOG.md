@@ -67,6 +67,10 @@ crates; tag releases as `vcs-git-v<version>`.
   and every nameable impl are unchanged.
 
 ### Fixed
+- `GitApi::submodule_status` now preserves the full path of an uninitialized
+  submodule when that path ends in a parenthesized component such as ` (old)`,
+  instead of mistaking the component for a `git describe` suffix. Initialized
+  entries continue to split their real trailing describe suffix. (T-186.)
 - **`GitApi::worktree_list` no longer returns a truncated path when a Unix
   worktree name contains LF.** The method probes `git --version`; Git >=2.36 is
   invoked as `worktree list --porcelain -z`, preserving LF and non-UTF-8 path
