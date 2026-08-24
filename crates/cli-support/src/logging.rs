@@ -343,17 +343,24 @@ fn status_of<T>(result: &Result<ProcessResult<T>>) -> CommandStatus {
 /// `limits`-feature-gated `ResourceLimit` kind, which this workspace does not
 /// enable) safe.
 fn error_category(err: &Error) -> &'static str {
-    match err.kind() {
+    if err.output_overflow().is_some() {
+        return "output too large";
+    }
+    error_kind_category(err.kind())
+}
+
+fn error_kind_category(kind: ErrorKind) -> &'static str {
+    match kind {
         ErrorKind::NotFound => "program not found",
         ErrorKind::Spawn => "spawn failed",
         ErrorKind::PermissionDenied => "permission denied",
         ErrorKind::Timeout => "timed out",
         ErrorKind::Cancelled => "cancelled",
+        ErrorKind::Teardown => "teardown failed",
         ErrorKind::Unsupported => "unsupported",
         ErrorKind::Exit => "non-zero exit",
         ErrorKind::Signalled => "signalled",
         ErrorKind::Predicate => "predicate rejected",
-        _ if err.output_overflow().is_some() => "output too large",
         _ => "error",
     }
 }
@@ -645,6 +652,14 @@ mod tests {
         for (err, expected) in cases {
             assert_eq!(error_category(&err), expected, "for {err:?}");
         }
+
+        // ProcessKit 3.3.4's fail-closed terminal-reaping result cannot be
+        // constructed by downstream crates (the reason variant is
+        // `#[non_exhaustive]` and its constructor is crate-private), but its flat
+        // kind is public and is exactly what this projection consumes. Pin it
+        // directly so an unconfirmed process tree is never collapsed into the
+        // generic catch-all category.
+        assert_eq!(error_kind_category(ErrorKind::Teardown), "teardown failed");
 
         // `OutputTooLarge` is `#[non_exhaustive]`, so it can only be produced by
         // actually tripping a byte ceiling — which is also the honest check that the
