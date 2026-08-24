@@ -150,7 +150,7 @@ def _validate_result_shape(result: Any, label: str) -> dict[str, Any]:
     calls = _object(result.get("calls"), f"{label}.calls")
     for key, value in calls.items():
         _integer(value, f"{label}.calls.{key}")
-    for key in ("preferred_interface", "raw_cli", "total"):
+    for key in ("preferred_interface", "fallback_interface", "raw_cli", "total"):
         if key not in calls:
             raise ValidationError(f"{label}.calls.{key} is required")
     total = sum(value for key, value in calls.items() if key != "total")

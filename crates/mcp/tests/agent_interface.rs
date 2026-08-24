@@ -318,6 +318,52 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
     write_json(&raw_bypass_path, &raw_bypass);
     assert_validator_rejects(validator, corpus, &raw_bypass_path, baseline);
 
+    let mut missing_fallback = original.clone();
+    missing_fallback["results"][0]["calls"]
+        .as_object_mut()
+        .expect("calls object")
+        .remove("fallback_interface")
+        .expect("fallback call count");
+    let missing_fallback_path = temp.join("missing-fallback.json");
+    write_json(&missing_fallback_path, &missing_fallback);
+    let missing_fallback_output = run_python(&[
+        validator,
+        "--corpus",
+        corpus,
+        "--results",
+        missing_fallback_path.to_str().expect("missing fallback result path"),
+        "--baseline",
+        baseline,
+    ]);
+    assert!(!missing_fallback_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_fallback_output.stderr)
+            .contains("calls.fallback_interface is required"),
+        "missing fallback diagnostic: {}",
+        String::from_utf8_lossy(&missing_fallback_output.stderr)
+    );
+
+    let missing_fallback_recording_path = temp.join("missing-fallback-recording.json");
+    let recorder = repo.join("scripts/agent-interface/record.py");
+    let missing_fallback_recorded = run_python(&[
+        recorder.to_str().expect("recorder path"),
+        "--corpus",
+        corpus,
+        "--results",
+        missing_fallback_path.to_str().expect("missing fallback result path"),
+        "--baseline",
+        baseline,
+        "--output",
+        missing_fallback_recording_path
+            .to_str()
+            .expect("missing fallback recording path"),
+    ]);
+    assert!(!missing_fallback_recorded.status.success());
+    assert!(
+        !missing_fallback_recording_path.exists(),
+        "recorder wrote a schema-invalid recording"
+    );
+
     let mut partial = original;
     partial["results"].as_array_mut().unwrap().pop();
     let partial_path = temp.join("partial.json");
