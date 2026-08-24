@@ -4803,7 +4803,7 @@ mod tests {
     async fn git_log_maps_commit_fields() {
         let repo = git_repo(ScriptedRunner::new().on(
             ["git", "log"],
-            Reply::ok("deadbeef\u{1f}dead\u{1f}Jane\u{1f}2026-05-31T10:00:00+00:00\u{1f}Fix bug\0"),
+            Reply::ok("deadbeef\ndead\nJane\n2026-05-31T10:00:00+00:00\nFix bug\0"),
         ));
         let commits = repo.log("HEAD", 10).await.unwrap();
         assert_eq!(commits.len(), 1);
