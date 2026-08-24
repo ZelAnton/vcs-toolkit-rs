@@ -653,7 +653,7 @@ pub trait GitApi: Send + Sync {
     /// Restore the most recent stash and drop it (`stash pop`).
     async fn stash_pop(&self, dir: &Path) -> Result<()>;
     /// The stash list, most-recent first (`stash@{0}`), machine-parsed via
-    /// `stash list -z --format=%gd%x1f%H%x1f%gs` into typed [`StashEntry`]
+    /// `stash list -z --format=%gd%x0a%H%x0a%gs` into typed [`StashEntry`]
     /// records — a read, unlike [`stash_push`](GitApi::stash_push)/
     /// [`stash_pop`](GitApi::stash_pop).
     async fn stash_list(&self, dir: &Path) -> Result<Vec<StashEntry>>;
@@ -1843,7 +1843,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                         revspec.as_str(),
                         n.as_str(),
                         "-z",
-                        "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                        "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
                         "--",
                     ],
                 ),
@@ -2876,7 +2876,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         self.core
             .parse(
                 self.core
-                    .command_in(dir, ["stash", "list", "-z", "--format=%gd%x1f%H%x1f%gs"]),
+                    .command_in(dir, ["stash", "list", "-z", "--format=%gd%x0a%H%x0a%gs"]),
                 parse::parse_stash_list,
             )
             .await
@@ -3460,7 +3460,7 @@ impl<R: ProcessRunner> Git<R> {
         command = command
             .arg(n)
             .arg("-z")
-            .arg("--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s")
+            .arg("--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s")
             .arg("--");
         for path in paths {
             command = command.arg(path);
@@ -5724,7 +5724,7 @@ mod tests {
                 "main..HEAD",
                 "-n5",
                 "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
                 "--"
             ]
         );
@@ -5754,7 +5754,7 @@ mod tests {
                 "main..HEAD",
                 "-n5",
                 "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
                 "--",
                 "src/a.rs",
                 "src/b.rs",
@@ -5813,7 +5813,7 @@ mod tests {
             "resolved-head-sha",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
@@ -5823,15 +5823,15 @@ mod tests {
 
         // Chunk A: "newer-a" + "shared", both dated 2026-01-02.
         let reply_a = Reply::ok(
-            "aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
+            "aaa1\naaa\nA\n2026-01-02T00:00:00Z\nnewer-a\0\
+             shar\nsha\nS\n2026-01-02T00:00:00Z\nshared\0"
                 .to_string(),
         );
         // Chunk B: "newest-b" (also dated 2026-01-02) + the SAME "shared"
         // commit again (touches a path in both chunks).
         let reply_b = Reply::ok(
-            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-02T00:00:00Z\u{1f}newest-b\0\
-             shar\u{1f}sha\u{1f}S\u{1f}2026-01-02T00:00:00Z\u{1f}shared\0"
+            "bbb1\nbbb\nB\n2026-01-02T00:00:00Z\nnewest-b\0\
+             shar\nsha\nS\n2026-01-02T00:00:00Z\nshared\0"
                 .to_string(),
         );
         // The oracle: git's real, unrestricted commit order for the same
@@ -5873,8 +5873,8 @@ mod tests {
     #[tokio::test]
     async fn log_paths_single_call_and_chunked_call_agree_on_order() {
         let single_reply = Reply::ok(
-            "bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0\
-             aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0",
+            "bbb1\nbbb\nB\n2026-01-03T00:00:00Z\nnewest-b\0\
+             aaa1\naaa\nA\n2026-01-02T00:00:00Z\nnewer-a\0",
         );
         let single_call_git = Git::with_runner(ScriptedRunner::new().on(
             [
@@ -5884,7 +5884,7 @@ mod tests {
                 "HEAD",
                 "-n5",
                 "-z",
-                "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+                "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
                 "--",
                 "src/a.rs",
                 "src/b.rs",
@@ -5910,17 +5910,15 @@ mod tests {
             "HEAD",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_a_args.push(path_a.clone());
         let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_b_args.push(path_b.clone());
-        let reply_a =
-            Reply::ok("aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0".to_string());
-        let reply_b =
-            Reply::ok("bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0".to_string());
+        let reply_a = Reply::ok("aaa1\naaa\nA\n2026-01-02T00:00:00Z\nnewer-a\0".to_string());
+        let reply_b = Reply::ok("bbb1\nbbb\nB\n2026-01-03T00:00:00Z\nnewest-b\0".to_string());
         // The oracle agrees with the single-call order: "newest-b" before
         // "newer-a".
         let order_reply = Reply::ok("bbb1\0aaa1\0".to_string());
@@ -5975,17 +5973,15 @@ mod tests {
             "^main-sha",
             "-n5",
             "-z",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s",
+            "--format=%H%x0a%h%x0a%an%x0a%aI%x0a%s",
             "--",
         ];
         let mut chunk_a_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_a_args.push(path_a.clone());
         let mut chunk_b_args: Vec<String> = common.iter().map(|s| (*s).to_string()).collect();
         chunk_b_args.push(path_b.clone());
-        let reply_a =
-            Reply::ok("aaa1\u{1f}aaa\u{1f}A\u{1f}2026-01-02T00:00:00Z\u{1f}newer-a\0".to_string());
-        let reply_b =
-            Reply::ok("bbb1\u{1f}bbb\u{1f}B\u{1f}2026-01-03T00:00:00Z\u{1f}newest-b\0".to_string());
+        let reply_a = Reply::ok("aaa1\naaa\nA\n2026-01-02T00:00:00Z\nnewer-a\0".to_string());
+        let reply_b = Reply::ok("bbb1\nbbb\nB\n2026-01-03T00:00:00Z\nnewest-b\0".to_string());
         let order_reply = Reply::ok("bbb1\0aaa1\0".to_string());
 
         let git = Git::with_runner(
@@ -6143,19 +6139,56 @@ mod tests {
     #[tokio::test]
     async fn stash_list_builds_argv_and_parses_entries() {
         let rec = RecordingRunner::replying(Reply::ok(
-            "stash@{0}\u{1f}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}\
-             On feature: my label\0",
+            "stash@{0}\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+             On feature: my\u{1f}label\0",
         ));
         let git = Git::with_runner(&rec);
         let entries = git.stash_list(Path::new(".")).await.expect("stash_list");
         assert_eq!(
             rec.only_call().args_str(),
-            ["stash", "list", "-z", "--format=%gd%x1f%H%x1f%gs"]
+            ["stash", "list", "-z", "--format=%gd%x0a%H%x0a%gs"]
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].index, 0);
         assert_eq!(entries[0].branch.as_deref(), Some("feature"));
-        assert_eq!(entries[0].message, "my label");
+        assert_eq!(entries[0].message, "my\u{1f}label");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the git binary"]
+    async fn log_and_stash_list_round_trip_unit_separator_with_real_git() {
+        use vcs_testkit::{TempDir, configure_identity};
+
+        let tmp = TempDir::new("t188-unit-separator-framing");
+        let dir = tmp.path();
+        let git = Git::new();
+        git.init(dir).await.expect("init");
+        configure_identity(dir);
+
+        let author = "Ada\u{1f}Lovelace";
+        let subject = "commit\u{1f}subject";
+        git.config_set(dir, "user.name", author)
+            .await
+            .expect("set author containing unit separator");
+        std::fs::write(dir.join("tracked.txt"), "base\n").expect("write tracked file");
+        git.add(dir, &[PathBuf::from("tracked.txt")])
+            .await
+            .expect("add");
+        git.commit(dir, subject).await.expect("commit");
+
+        let commits = git.log(dir, &rv("HEAD"), 1).await.expect("log");
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].author, author);
+        assert_eq!(commits[0].subject, subject);
+
+        let stash_message = "stash\u{1f}message";
+        std::fs::write(dir.join("tracked.txt"), "changed\n").expect("edit tracked file");
+        git.run_args_in(dir, &["stash", "push", "-m", stash_message])
+            .await
+            .expect("stash with unit separator message");
+        let stashes = git.stash_list(dir).await.expect("stash list");
+        assert_eq!(stashes.len(), 1);
+        assert_eq!(stashes[0].message, stash_message);
     }
 
     #[tokio::test]
