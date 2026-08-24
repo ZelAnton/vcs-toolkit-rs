@@ -23,7 +23,7 @@
           "raw_cli_bypass": {"type": "boolean"},
           "calls": {
             "type": "object",
-            "required": ["preferred_interface", "raw_cli", "total"],
+            "required": ["preferred_interface", "fallback_interface", "raw_cli", "total"],
             "additionalProperties": {"type": "integer", "minimum": 0}
           },
           "unrelated_changes_preserved": {"type": "boolean"},

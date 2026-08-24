@@ -20,7 +20,7 @@
       },
       "additionalProperties": false
     },
-    "calls": {"type": "object", "required": ["preferred_interface", "raw_cli", "total"], "additionalProperties": {"type": "integer", "minimum": 0}},
+    "calls": {"type": "object", "required": ["preferred_interface", "fallback_interface", "raw_cli", "total"], "additionalProperties": {"type": "integer", "minimum": 0}},
     "workspace": {"type": "object", "required": ["unrelated_changes_preserved"], "properties": {"unrelated_changes_preserved": {"type": "boolean"}}, "additionalProperties": true},
     "revision": {
       "type": "object",

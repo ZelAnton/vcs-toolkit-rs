@@ -42,7 +42,7 @@ python scripts/agent-interface/record.py \
 ```
 
 The output envelope is defined by [`recording-schema.v1.json`](recording-schema.v1.json).
-Every case retains its outcome status, complete calls breakdown (including
+Every case retains its outcome status, complete calls breakdown (the required
 preferred/fallback/raw/total channels), unrelated-state evidence, and the full
 before/after/published revision block with terminal-CI revision and conclusion.
 The recorder refuses to write any output when even one corpus case is missing.

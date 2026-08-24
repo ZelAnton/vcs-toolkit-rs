@@ -20,7 +20,7 @@ def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
     """Keep the standard route channels explicit, including zeroes."""
     recorded = {
         "preferred_interface": calls["preferred_interface"],
-        "fallback_interface": calls.get("fallback_interface", 0),
+        "fallback_interface": calls["fallback_interface"],
         "raw_cli": calls["raw_cli"],
         "total": calls["total"],
     }

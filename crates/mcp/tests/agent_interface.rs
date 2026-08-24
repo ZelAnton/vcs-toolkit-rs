@@ -13,6 +13,8 @@ use serde_json::Value;
 
 const CORPUS: &str = include_str!("../../../docs/agent-interface/corpus.v1.json");
 const RESULT_SCHEMA: &str = include_str!("../../../docs/agent-interface/result-schema.v1.json");
+const RESULTS_FIXTURE: &str =
+    include_str!("../../../docs/agent-interface/fixtures/results.v1.json");
 const RECORDING_SCHEMA: &str =
     include_str!("../../../docs/agent-interface/recording-schema.v1.json");
 const RECORDING_FIXTURE: &str =
@@ -85,6 +87,29 @@ fn result_schema_and_no_data_baseline_are_explicit() {
                 .any(|item| item == field)
         );
     }
+    for field in [
+        "preferred_interface",
+        "fallback_interface",
+        "raw_cli",
+        "total",
+    ] {
+        assert!(
+            schema["properties"]["calls"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == field),
+            "result schema must require {field} call channel"
+        );
+    }
+    let results: Value = serde_json::from_str(RESULTS_FIXTURE).expect("valid results fixture");
+    let mcp_fallback = results["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["case_id"] == "mcp-unavailable-fallback")
+        .expect("MCP fallback result fixture");
+    assert_eq!(mcp_fallback["calls"]["fallback_interface"], 1);
     let recording_schema: Value =
         serde_json::from_str(RECORDING_SCHEMA).expect("valid recording schema");
     assert_eq!(
@@ -98,6 +123,21 @@ fn result_schema_and_no_data_baseline_are_explicit() {
                 .unwrap()
                 .iter()
                 .any(|item| item == field)
+        );
+    }
+    for field in [
+        "preferred_interface",
+        "fallback_interface",
+        "raw_cli",
+        "total",
+    ] {
+        assert!(
+            recording_schema["properties"]["cases"]["items"]["properties"]["calls"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == field),
+            "recording schema must require {field} call channel"
         );
     }
 
