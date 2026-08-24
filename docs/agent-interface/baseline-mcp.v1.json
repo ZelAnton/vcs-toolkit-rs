@@ -1,0 +1,13 @@
+{
+  "schema_version": "agent-interface.baseline.v1",
+  "interface": "mcp",
+  "harness": {
+    "kind": "local",
+    "availability": "unavailable",
+    "reason": "No live MCP evaluation harness or ambient credentials are configured in this repository checkout."
+  },
+  "status": "no_data",
+  "metrics": null,
+  "evidence": [],
+  "recording_policy": "Do not represent unavailable live data as zero-valued metrics; replace this file only with a separately reviewed local-harness recording."
+}

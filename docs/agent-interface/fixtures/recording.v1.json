@@ -1,0 +1,165 @@
+{
+  "baseline": {
+    "interface": "mcp",
+    "metrics": null,
+    "status": "no_data"
+  },
+  "cases": [
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "inspect-status-git",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": "a1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "inspect-status-jj",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": "jj1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "changes-diff-jj",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": "jj1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "commit-exact-path-git",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": "abc123", "before": "a1", "exact_revision_verified": true, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 2, "raw_cli": 0, "total": 2},
+      "case_id": "publish-pr-github",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": "abc123", "before": "a1", "exact_revision_verified": true, "published": "abc123", "terminal_ci": {"conclusion": "success", "revision": "abc123", "verified": true}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 2, "raw_cli": 0, "total": 2},
+      "case_id": "publish-pr-gitlab",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": "abc123", "before": "a1", "exact_revision_verified": true, "published": "abc123", "terminal_ci": {"conclusion": "success", "revision": "abc123", "verified": true}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 2, "raw_cli": 0, "total": 2},
+      "case_id": "publish-pr-gitea",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": "abc123", "before": "a1", "exact_revision_verified": true, "published": "abc123", "terminal_ci": {"conclusion": "success", "revision": "abc123", "verified": true}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "wait-ci-exact-revision",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": "abc123", "before": null, "exact_revision_verified": true, "published": null, "terminal_ci": {"conclusion": "success", "revision": "abc123", "verified": true}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 1, "raw_cli": 0, "total": 1},
+      "case_id": "conflict-report",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "success",
+      "preferred_interface_selected": true,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": "a1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "vcs-agent",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 0, "raw_cli": 0, "total": 0},
+      "case_id": "ordinary-file-search-negative",
+      "fallback_reason": null,
+      "false_activation": false,
+      "outcome_status": "ignored",
+      "preferred_interface_selected": false,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": null, "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "none",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 0, "preferred_interface": 0, "raw_cli": 1, "total": 1},
+      "case_id": "unsupported-low-level-command",
+      "fallback_reason": "unsupported_operation",
+      "false_activation": false,
+      "outcome_status": "fallback",
+      "preferred_interface_selected": false,
+      "raw_cli_bypass": true,
+      "revision": {"after": null, "before": "a1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "raw-cli",
+      "unrelated_changes_preserved": true
+    },
+    {
+      "calls": {"fallback_interface": 1, "preferred_interface": 0, "raw_cli": 0, "total": 1},
+      "case_id": "mcp-unavailable-fallback",
+      "fallback_reason": "preferred_unavailable",
+      "false_activation": false,
+      "outcome_status": "fallback",
+      "preferred_interface_selected": false,
+      "raw_cli_bypass": false,
+      "revision": {"after": null, "before": "a1", "exact_revision_verified": false, "published": null, "terminal_ci": {"conclusion": null, "revision": null, "verified": false}},
+      "selected_interface": "mcp",
+      "unrelated_changes_preserved": true
+    }
+  ],
+  "corpus_version": "1.0.0",
+  "metrics": {
+    "exact_revision_verified": 5,
+    "false_activation_rate": {"denominator": 1, "numerator": 0},
+    "preferred_interface_selection_rate": {"denominator": 9, "numerator": 9},
+    "raw_cli_bypass_rate": {"denominator": 12, "numerator": 1},
+    "terminal_ci_verified": 4,
+    "total_calls": 14,
+    "unrelated_state_preserved": 12
+  },
+  "schema_version": "agent-interface.recording.v1",
+  "source": "offline-fixture"
+}

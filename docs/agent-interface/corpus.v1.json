@@ -1,0 +1,286 @@
+{
+  "schema_version": "agent-interface.corpus.v1",
+  "corpus_version": "1.0.0",
+  "selection_policy": {
+    "preferred_interface": "vcs-agent",
+    "fallback_interfaces": ["mcp", "raw-cli"],
+    "selection_outcomes": ["preferred", "fallback", "none"]
+  },
+  "cases": [
+    {
+      "case_id": "inspect-status-git",
+      "scenario": "inspect_status",
+      "request": {
+        "prompt": "Inspect the Git repository and report status, remotes, and capabilities.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "inspect",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 1},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "inspect-status-jj",
+      "scenario": "inspect_status",
+      "request": {
+        "prompt": "Inspect this Jujutsu working copy, including its Git colocated state.",
+        "backend": "jj",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "inspect",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 1},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "changes-diff-jj",
+      "scenario": "changes_diff",
+      "request": {
+        "prompt": "Show a bounded structured diff for the current Jujutsu changes.",
+        "backend": "jj",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "changes",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 1},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "commit-exact-path-git",
+      "scenario": "exact_path_commit",
+      "request": {
+        "prompt": "Commit only src/lib.rs with message 'Fix parser'; leave all unrelated changes untouched.",
+        "backend": "git",
+        "forge": "none",
+        "paths": ["src/lib.rs"]
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "commit",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 2},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "publish-pr-github",
+      "scenario": "publish_pr",
+      "request": {
+        "prompt": "Publish the prepared Git change and open a GitHub pull request, then report the exact revision.",
+        "backend": "git",
+        "forge": "github"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "publish",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 3},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "required",
+          "terminal_ci": "required"
+        }
+      }
+    },
+    {
+      "case_id": "publish-pr-gitlab",
+      "scenario": "publish_pr",
+      "request": {
+        "prompt": "Push this Git branch and open a GitLab merge request with exact revision evidence.",
+        "backend": "git",
+        "forge": "gitlab"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "publish",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 3},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "required",
+          "terminal_ci": "required"
+        }
+      }
+    },
+    {
+      "case_id": "publish-pr-gitea",
+      "scenario": "publish_pr",
+      "request": {
+        "prompt": "Publish the prepared change to Gitea and create a pull request, preserving unrelated files.",
+        "backend": "git",
+        "forge": "gitea"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "publish",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 3},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "required",
+          "terminal_ci": "required"
+        }
+      }
+    },
+    {
+      "case_id": "wait-ci-exact-revision",
+      "scenario": "wait_ci",
+      "request": {
+        "prompt": "Wait for terminal CI for revision abc123 and accept only a success attached to that revision.",
+        "backend": "git",
+        "forge": "github",
+        "revision": "abc123"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "ci_wait",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 2},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "required",
+          "terminal_ci": "required"
+        }
+      }
+    },
+    {
+      "case_id": "conflict-report",
+      "scenario": "conflict",
+      "request": {
+        "prompt": "Report the structured merge conflict and explain which files need resolution.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "preferred",
+        "operation": "conflict",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "success",
+        "invariants": {
+          "preferred_calls": {"min": 1, "max": 2},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "ordinary-file-search-negative",
+      "scenario": "ordinary_file_search",
+      "request": {
+        "prompt": "Search the source files for every use of the word timeout.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "none",
+        "operation": "none",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "ignored",
+        "invariants": {
+          "preferred_calls": {"min": 0, "max": 0},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "unsupported-low-level-command",
+      "scenario": "unsupported_low_level",
+      "request": {
+        "prompt": "Run git update-index --cacheinfo for this low-level index experiment.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "fallback",
+        "operation": "unsupported",
+        "fallback": {
+          "allowed": true,
+          "interfaces": ["raw-cli"],
+          "reasons": ["unsupported_operation"]
+        },
+        "outcome": "fallback",
+        "invariants": {
+          "preferred_calls": {"min": 0, "max": 1},
+          "raw_cli_calls": 1,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "mcp-unavailable-fallback",
+      "scenario": "preferred_unavailable",
+      "request": {
+        "prompt": "Inspect repository status through the preferred interface.",
+        "backend": "git",
+        "forge": "none",
+        "harness": "mcp-unavailable"
+      },
+      "expected": {
+        "selection": "fallback",
+        "operation": "inspect",
+        "fallback": {
+          "allowed": true,
+          "interfaces": ["mcp"],
+          "reasons": ["preferred_unavailable"]
+        },
+        "outcome": "fallback",
+        "invariants": {
+          "preferred_calls": {"min": 0, "max": 1},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    }
+  ]
+}
