@@ -156,8 +156,13 @@ fn redact_machine_paths(input: &str) -> String {
 
 fn machine_path_start(value: &str) -> Option<usize> {
     let bytes = value.as_bytes();
-    let windows = bytes.windows(3).position(|window| {
-        window[0].is_ascii_alphabetic() && window[1] == b':' && matches!(window[2], b'\\' | b'/')
+    let file_uri = file_uri_start(value);
+    let windows = bytes.windows(3).enumerate().find_map(|(index, window)| {
+        (window[0].is_ascii_alphabetic()
+            && window[1] == b':'
+            && matches!(window[2], b'\\' | b'/')
+            && is_path_boundary(value, index))
+        .then_some(index)
     });
     let unc = value.find(r"\\");
     let unix = value.char_indices().find_map(|(index, ch)| {
@@ -168,14 +173,38 @@ fn machine_path_start(value: &str) -> Option<usize> {
             .as_bytes()
             .get(index.saturating_sub(1)..index + 2)
             .is_some_and(|window| window == b"://");
-        let boundary = index == 0
-            || value[..index]
+        (is_path_boundary(value, index) && !is_url_separator).then_some(index)
+    });
+    file_uri
+        .into_iter()
+        .chain(windows)
+        .chain(unc)
+        .chain(unix)
+        .min()
+}
+
+fn is_path_boundary(value: &str, index: usize) -> bool {
+    index == 0
+        || value[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| matches!(ch, '=' | ':' | '(' | '[' | '{' | '\'' | '"' | '`'))
+}
+
+fn file_uri_start(value: &str) -> Option<usize> {
+    let mut offset = 0;
+    while let Some(start) = find_ascii_case_insensitive(value, "file://", offset) {
+        let scheme_boundary = start == 0
+            || value[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| matches!(ch, '=' | ':' | '(' | '[' | '{' | '\'' | '"' | '`'));
-        (boundary && !is_url_separator).then_some(index)
-    });
-    windows.into_iter().chain(unc).chain(unix).min()
+                .is_some_and(|ch| !ch.is_ascii_alphanumeric() && !matches!(ch, '+' | '-' | '.'));
+        if scheme_boundary {
+            return Some(start);
+        }
+        offset = start + "file://".len();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -214,6 +243,22 @@ mod tests {
                 "[REDACTED_PATH]"
             );
         }
+    }
+
+    #[test]
+    fn redacts_file_uris_without_touching_network_remotes() {
+        let value = redact_text(
+            "local=file:///workspaces/alice/repo windows=FILE:///C:/Users/alice/repo unc=file://server/share/repo https=https://example.invalid/owner/repo ssh=ssh://git@example.invalid/owner/repo scp=git@example.invalid:owner/repo",
+            RedactionPolicy {
+                include_machine_paths: false,
+            },
+        );
+        assert!(!value.contains("alice"));
+        assert!(!value.contains("server"));
+        assert_eq!(value.matches("[REDACTED_PATH]").count(), 3);
+        assert!(value.contains("https=https://example.invalid/owner/repo"));
+        assert!(value.contains("ssh=ssh://git@example.invalid/owner/repo"));
+        assert!(value.contains("scp=git@example.invalid:owner/repo"));
     }
 
     #[test]

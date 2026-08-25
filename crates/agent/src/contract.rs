@@ -383,6 +383,12 @@ impl AgentError {
     }
 
     #[cfg(test)]
+    fn with_message(mut self, message: &'static str) -> Self {
+        self.message = message;
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> ErrorKind {
         self.kind
     }
@@ -550,6 +556,32 @@ mod tests {
         let visible = String::from_utf8(render(visible, 4096).stdout).expect("UTF-8");
         assert!(!hidden.contains("alice"));
         assert!(visible.contains(path));
+    }
+
+    #[test]
+    fn file_uris_are_redacted_from_message_details_and_warnings() {
+        let error = AgentError::new("probe", ErrorKind::Backend, "test", false)
+            .with_message("failed at file:///workspaces/message-secret/repo")
+            .with_detail(
+                DetailKey::RemoteUrl,
+                "file:///workspaces/remote-secret/repository-secret",
+            )
+            .with_warning("retry avoided for FILE://server-secret/share-secret/warning")
+            .include_machine_paths(false);
+        let text = String::from_utf8(render(error, crate::cli::DEFAULT_MAX_OUTPUT_BYTES).stdout)
+            .expect("UTF-8");
+
+        for leaked in [
+            "workspaces",
+            "message-secret",
+            "remote-secret",
+            "repository-secret",
+            "server-secret",
+            "share-secret",
+        ] {
+            assert!(!text.contains(leaked), "stdout leaked {leaked}: {text}");
+        }
+        assert_eq!(text.matches("[REDACTED_PATH]").count(), 3);
     }
 
     #[test]
