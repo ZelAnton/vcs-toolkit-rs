@@ -519,53 +519,81 @@ fn contains_secret_shape(lower: &str) -> bool {
     SECRET_PREFIXES.iter().any(|p| lower.contains(p)) || lower.contains("x-access-token:")
 }
 
-/// If `value` is a URL of the form `scheme://userinfo@host/…`, return it with the
-/// userinfo masked (`scheme://<redacted>@host/…`). The conventional
-/// `ssh://git@host/…` transport identity is the sole allowlisted exception. Keeps
-/// the host/path visible for diagnostics while never printing a token used as a
-/// username (or any other unexpected userinfo).
+/// Mask the userinfo in every `scheme://userinfo@host/…` URI found in `value`.
+/// The conventional `ssh://git@host/…` transport identity is the sole allowlisted
+/// exception. Keeps each host/path visible for diagnostics while never printing a
+/// token used as a username (or any other unexpected userinfo).
 fn mask_url_userinfo(value: &str) -> Option<String> {
-    let scheme_end = value.find("://")?;
-    // `redact_value` is also used on structured text fragments such as
-    // `remote=ssh://git@host/repo`. Isolate the actual URI scheme from any
-    // field/flag prefix so the safe `ssh://git@` exception and fail-closed
-    // handling of every other userinfo form do not depend on the URL starting
-    // at byte zero.
-    let scheme_start = value[..scheme_end]
-        .char_indices()
-        .rev()
-        .find_map(|(index, ch)| {
-            (!ch.is_ascii_alphanumeric() && !matches!(ch, '+' | '-' | '.'))
-                .then_some(index + ch.len_utf8())
-        })
-        .unwrap_or(0);
-    let scheme = &value[scheme_start..scheme_end];
-    if scheme.is_empty() {
-        return None;
+    let mut output = String::with_capacity(value.len());
+    let mut copy_from = 0;
+    let mut scan_from = 0;
+    let mut masked_any = false;
+
+    while let Some(relative_scheme_end) = value[scan_from..].find("://") {
+        let scheme_end = scan_from + relative_scheme_end;
+        let authority_start = scheme_end + "://".len();
+
+        // `redact_value` is also used on structured text fragments such as
+        // `remote=ssh://git@host/repo`. Isolate the actual URI scheme from any
+        // field/flag prefix so the safe `ssh://git@` exception and fail-closed
+        // handling of every other userinfo form do not depend on the URL starting
+        // at byte zero.
+        let scheme_start = value[..scheme_end]
+            .char_indices()
+            .rev()
+            .find_map(|(index, ch)| {
+                (!ch.is_ascii_alphanumeric() && !matches!(ch, '+' | '-' | '.'))
+                    .then_some(index + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        let scheme = &value[scheme_start..scheme_end];
+
+        // Bound userinfo to the authority. In addition to normal URI delimiters,
+        // comma/semicolon/quotes/brackets terminate an embedded field in JSON or a
+        // diagnostic list; without these, a following adjacent URI could be folded
+        // into the first authority and skipped.
+        let authority_end = value[authority_start..]
+            .find(|ch: char| {
+                ch.is_ascii_whitespace()
+                    || matches!(
+                        ch,
+                        '/' | '?' | '#' | ',' | ';' | '"' | '\'' | '`' | ')' | ']' | '}'
+                    )
+            })
+            .map_or(value.len(), |relative| authority_start + relative);
+        let authority = &value[authority_start..authority_end];
+
+        if !scheme.is_empty()
+            && let Some(relative_at) = authority.rfind('@')
+        {
+            let userinfo = &authority[..relative_at];
+            // `git@` in an SSH URL is the standard, non-secret transport identity.
+            // Any other userinfo is fail-closed: PATs are commonly supplied as the
+            // username without a colon (e.g. `https://ghp_…@github.com/o/r.git`).
+            if !(scheme.eq_ignore_ascii_case("ssh") && userinfo == "git") {
+                let at = authority_start + relative_at;
+                output.push_str(&value[copy_from..authority_start]);
+                output.push_str(REDACTED);
+                copy_from = at;
+                masked_any = true;
+            }
+        }
+
+        // Always move beyond this `://`, including for an empty authority, a URI
+        // without userinfo, and the allowlisted SSH identity. Scanning the original
+        // input (rather than the replacement) also prevents the placeholder from
+        // being rediscovered and guarantees linear progress.
+        let next_scan = authority_end.max(authority_start);
+        debug_assert!(next_scan > scheme_end);
+        scan_from = next_scan;
     }
-    let after = &value[scheme_end + 3..];
-    // Search for `userinfo@` only within the **authority** component — the span
-    // from just past `://` up to the first `/`, `?`, or `#`. An `@` in the path or
-    // query (e.g. `…/dir/file@rev`) is not a credential, so it must not drag the
-    // host/port/path into the mask. This is the same authority boundary
-    // `credentials::https_host` applies; take the **last** `@` in it (as
-    // `https_host`'s `rsplit_once('@')` does) so the userinfo is split off at the
-    // host, not at an earlier `@`. `authority` is a prefix of `after`, so the byte
-    // offset of the `@` is the same in both.
-    let authority = after.split(['/', '?', '#']).next().unwrap_or(after);
-    let at = authority.rfind('@')?;
-    let userinfo = &authority[..at];
-    // `git@` in an SSH URL is the standard, non-secret transport identity. Any
-    // other userinfo is fail-closed: PATs are commonly supplied as the username
-    // without a colon (e.g. `https://ghp_…@github.com/o/r.git`).
-    if scheme.eq_ignore_ascii_case("ssh") && userinfo == "git" {
-        return None;
+
+    if masked_any {
+        output.push_str(&value[copy_from..]);
+        Some(output)
+    } else {
+        None
     }
-    Some(format!(
-        "{}://{REDACTED}@{}",
-        &value[..scheme_end],
-        &after[at + 1..]
-    ))
 }
 
 /// Truncate `value` to [`MAX_VALUE_LEN`] characters plus a `…(<n> chars)` marker,
@@ -735,6 +763,20 @@ mod tests {
             redact_value("remote=ssh://user:password@example.test/repo"),
             "remote=ssh://<redacted>@example.test/repo"
         );
+    }
+
+    #[test]
+    fn single_value_redaction_masks_every_adjacent_uri() {
+        for value in [
+            "primary=https://alice:first@one.test/repo,mirror=ssh://git@three.test/repo,backup=custom+ssh://bob:second@two.test/repo",
+            r#"{"primary":"https://alice:first@one.test","mirror":"ssh://git@three.test","backup":"custom://bob:second@two.test"}"#,
+        ] {
+            let redacted = redact_value(value);
+            assert!(!redacted.contains("alice:first"), "{redacted}");
+            assert!(!redacted.contains("bob:second"), "{redacted}");
+            assert_eq!(redacted.matches(REDACTED).count(), 2, "{redacted}");
+            assert!(redacted.contains("ssh://git@three.test"), "{redacted}");
+        }
     }
 
     #[test]

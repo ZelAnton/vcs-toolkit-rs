@@ -582,11 +582,11 @@ mod tests {
         let error = || {
             AgentError::new("inspect", ErrorKind::Backend, "test", false)
                 .with_message(
-                    r"failed ssh://alice:stderr-uri-secret@example.invalid/repo --token stderr-flag-secret github_pat_STDERR_PAT at C:\Users\stderr-user\repo",
+                    r"failed primary=https://alice:stderr-first@example.invalid/repo,mirror=ssh://git@mirror.invalid/repo,backup=custom+ssh://bob:stderr-second@backup.invalid/repo --token stderr-flag-secret github_pat_STDERR_PAT at C:\Users\stderr-user\repo",
                 )
                 .with_detail(
                     DetailKey::RemoteUrl,
-                    "custom+ssh://bob:stdout-uri-secret@example.invalid/repo",
+                    r#"{"primary":"https://carol:stdout-first@example.invalid","mirror":"ssh://git@mirror.invalid","backup":"custom://dave:stdout-second@backup.invalid"}"#,
                 )
                 .with_warning(
                     "--password=stdout-password-secret glpat-STDOUT_PAT /workspaces/stdout-user/repo",
@@ -603,10 +603,12 @@ mod tests {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let diagnostic = output.diagnostic.as_deref().expect("error diagnostic");
             for leaked in [
-                "stderr-uri-secret",
+                "alice:stderr-first",
+                "bob:stderr-second",
                 "stderr-flag-secret",
                 "github_pat_STDERR_PAT",
-                "stdout-uri-secret",
+                "carol:stdout-first",
+                "dave:stdout-second",
                 "stdout-password-secret",
                 "glpat-STDOUT_PAT",
             ] {
@@ -616,6 +618,11 @@ mod tests {
                     "diagnostic leaked {leaked}: {diagnostic}"
                 );
             }
+            assert!(stdout.contains("ssh://git@mirror.invalid"), "{stdout}");
+            assert!(
+                diagnostic.contains("ssh://git@mirror.invalid"),
+                "{diagnostic}"
+            );
         }
 
         let hidden_stdout = String::from_utf8_lossy(&hidden.stdout);
