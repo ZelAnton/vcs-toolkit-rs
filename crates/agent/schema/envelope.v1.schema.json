@@ -372,7 +372,7 @@
       "required": ["selection", "backend_selection", "refs_advanced", "index_may_change_for_selected_paths", "unrelated_index_preserved", "working_copy_content_mutated", "push_performed", "switch_performed", "conflict_repair_performed"],
       "properties": {
         "selection": {"const": "exact-repo-relative-paths"},
-        "backend_selection": {"enum": ["git-commit-only", "jujutsu-exact-filesets"]},
+        "backend_selection": {"const": "git-atomic-ref-cas"},
         "refs_advanced": {"const": true},
         "index_may_change_for_selected_paths": {"type": "boolean"},
         "unrelated_index_preserved": {"const": true},
@@ -387,7 +387,7 @@
       "additionalProperties": true,
       "required": ["repository", "before", "after", "included_paths", "unrelated_changes_preserved", "semantics"],
       "properties": {
-        "repository": {"$ref": "#/$defs/repository"},
+        "repository": {"allOf": [{"$ref": "#/$defs/repository"}, {"properties": {"backend": {"const": "git"}}}]},
         "before": {"$ref": "#/$defs/commitIdentity"},
         "after": {"$ref": "#/$defs/commitIdentity"},
         "included_paths": {
@@ -406,17 +406,7 @@
             "properties": {
               "before": {"properties": {"change_id": {"type": "null"}}},
               "after": {"properties": {"change_id": {"type": "null"}}},
-              "semantics": {"properties": {"backend_selection": {"const": "git-commit-only"}, "index_may_change_for_selected_paths": {"const": true}}}
-            }
-          }
-        },
-        {
-          "if": {"properties": {"repository": {"properties": {"backend": {"const": "jujutsu"}}, "required": ["backend"]}}, "required": ["repository"]},
-          "then": {
-            "properties": {
-              "before": {"properties": {"change_id": {"type": "string", "minLength": 1}}},
-              "after": {"properties": {"change_id": {"type": "string", "minLength": 1}}},
-              "semantics": {"properties": {"backend_selection": {"const": "jujutsu-exact-filesets"}, "index_may_change_for_selected_paths": {"const": false}}}
+              "semantics": {"properties": {"backend_selection": {"const": "git-atomic-ref-cas"}, "index_may_change_for_selected_paths": {"const": true}}}
             }
           }
         }

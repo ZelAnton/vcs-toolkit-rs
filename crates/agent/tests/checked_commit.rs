@@ -314,7 +314,7 @@ fn git_checked_commit_proves_a_symlink_leaf() {
 
 #[test]
 #[ignore = "requires the git binary"]
-fn git_checked_commit_reports_unknown_when_hook_adds_an_unselected_path() {
+fn git_checked_commit_refuses_before_cas_when_hook_adds_an_unselected_path() {
     let sandbox = GitSandbox::init("agent-checked-git-hook-proof");
     sandbox.commit_file("selected.txt", "before\n", "seed selected");
     sandbox.write("selected.txt", "after\n");
@@ -342,37 +342,76 @@ fn git_checked_commit_reports_unknown_when_hook_adds_an_unselected_path() {
         "--path",
         "selected.txt",
     ]));
-    assert_eq!(output.status.code(), Some(43));
-    assert_eq!(json(&output)["error"]["kind"], "outcome_unknown");
-    assert_ne!(
+    assert_eq!(output.status.code(), Some(10));
+    assert_eq!(json(&output)["error"]["kind"], "unsupported");
+    assert_eq!(
         sandbox.rev_parse("HEAD"),
         before,
-        "the hook-mutated commit exists"
-    );
-    let committed = capture(
-        "git",
-        sandbox.path(),
-        &["show", "--format=", "--name-only", "HEAD"],
-    );
-    assert!(
-        committed.lines().any(|line| line == "selected.txt"),
-        "{committed}"
-    );
-    assert!(
-        committed.lines().any(|line| line == "extra.txt"),
-        "{committed}"
+        "path proof must fail before the prepared commit is installed"
     );
 }
 
 #[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_cas_rejects_a_commit_msg_hook_identity_race() {
+    let sandbox = GitSandbox::init("agent-checked-git-cas-race");
+    sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.write("selected.txt", "after\n");
+    let hook = sandbox.path().join(".git/hooks/commit-msg");
+    std::fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nold=$(git rev-parse HEAD) || exit 1\n\
+         tree=$(git write-tree) || exit 1\n\
+         race=$(printf 'racer\\n' | git commit-tree \"$tree\" -p \"$old\") || exit 1\n\
+         git update-ref HEAD \"$race\" \"$old\" || exit 1\n",
+    )
+    .expect("write commit-msg hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+            .expect("make hook executable");
+    }
+
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "T-193 atomic",
+        "--path",
+        "selected.txt",
+    ]));
+
+    assert_eq!(output.status.code(), Some(20));
+    assert_eq!(json(&output)["error"]["code"], "stale_expected_revision");
+    assert_eq!(
+        capture(
+            "git",
+            sandbox.path(),
+            &["show", "-s", "--format=%s", "HEAD"]
+        ),
+        "racer",
+        "the competing identity wins; the requested prepared commit must not be installed"
+    );
+    assert_ne!(sandbox.rev_parse("HEAD"), before);
+}
+
+#[test]
 #[ignore = "requires the jj and git binaries"]
-fn jj_checked_commit_uses_exact_filesets_and_preserves_unselected_change_without_bookmark() {
+fn jj_checked_commit_is_unsupported_without_snapshot_or_commit_mutation() {
     let sandbox = JjSandbox::init_non_colocated("agent-checked-jj");
     sandbox.write("selected.txt", "selected\n");
     sandbox.write("unrelated.txt", "unrelated\n");
-    sandbox.jj(&["status"]);
     let before = sandbox.at_commit();
-    let invocation = args(&[
+    let before_op = sandbox.op_head();
+    let output = agent(args(&[
         "commit",
         "--repo",
         sandbox.path().to_str().expect("UTF-8 sandbox path"),
@@ -385,38 +424,18 @@ fn jj_checked_commit_uses_exact_filesets_and_preserves_unselected_change_without
         "--path",
         "selected.txt",
         "--include-machine-paths",
-    ]);
+    ]));
 
-    let output = agent(invocation.clone());
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(10));
     let result = json(&output);
-    assert_eq!(result["data"]["repository"]["backend"], "jujutsu");
-    assert_eq!(result["data"]["before"]["revision"], before);
-    assert!(result["data"]["before"]["change_id"].is_string());
-    assert!(result["data"]["after"]["change_id"].is_string());
+    assert_eq!(result["error"]["kind"], "unsupported");
+    assert_eq!(result["error"]["code"], "jujutsu_atomic_commit_unsupported");
     assert_eq!(
-        result["data"]["semantics"]["backend_selection"],
-        "jujutsu-exact-filesets"
+        sandbox.op_head(),
+        before_op,
+        "agent must not create a jj operation"
     );
-    let remaining = sandbox.jj_capture(&["diff", "-r", "@", "--summary"]);
-    assert!(remaining.contains("unrelated.txt"), "{remaining}");
-    assert!(!remaining.contains("selected.txt"), "{remaining}");
-    assert_eq!(
-        sandbox.jj_capture(&["log", "-r", "@-", "--no-graph", "-T", "description"]),
-        "commit selected"
-    );
-
-    let after = sandbox.at_commit();
-    assert_eq!(result["data"]["after"]["revision"], after);
-    assert_ne!(after, before);
-    let retry = agent(invocation);
-    assert_eq!(retry.status.code(), Some(20));
-    assert_eq!(json(&retry)["error"]["code"], "stale_expected_revision");
-    assert_eq!(sandbox.at_commit(), after);
+    assert_eq!(sandbox.at_commit(), before, "agent must not rewrite @");
 }
 
 #[cfg(unix)]

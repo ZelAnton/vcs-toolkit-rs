@@ -1267,13 +1267,14 @@ impl<R: ProcessRunner> Repo<R> {
     /// Commit `paths` only when the revision still equals `expected_revision`,
     /// and return evidence from the commit/change actually created.
     ///
-    /// The expected identity is checked again at the backend mutation boundary.
-    /// Git porcelain has no atomic expected-HEAD option, so its equivalent is an
-    /// immediate boundary check followed by proof that the created commit's
-    /// parent is exactly `expected_revision`; Jujutsu additionally proves the
-    /// working-copy rewrite retained the pre-commit tree. A mismatch before the
-    /// process starts is [`Error::StaleRevision`]. Any identity/path-proof failure
-    /// after the process may have written is [`Error::OutcomeUnknown`].
+    /// Git prepares an exact commit through a temporary index, verifies its path
+    /// diff, then installs it with native `update-ref HEAD <new> <expected-old>`:
+    /// the expected identity and ref mutation are one atomic compare-and-swap.
+    /// A CAS mismatch is [`Error::StaleRevision`]; uncertainty only after a
+    /// successful ref update is [`Error::OutcomeUnknown`]. Git 2.31-2.35 are
+    /// refused because hook-preserving preparation requires `git hook run`
+    /// (2.36+). Jujutsu currently exposes no equivalent expected-operation/change
+    /// guard, so this method returns [`Error::Unsupported`] before mutation.
     ///
     /// [`CheckedCommit::included_paths`] is observed from the created revision's
     /// diff (including both sides of renames), never copied from the request.
@@ -3500,93 +3501,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn git_checked_commit_rejects_identity_advanced_after_outer_preflight_without_commit() {
-        let runner = RecordingRunner::new(ScriptedRunner::new().on_sequence(
-            ["git", "rev-parse"],
-            [Reply::ok("/repo\n"), Reply::ok("advanced\n")],
-        ));
-        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&runner));
-        let error = repo
-            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
-            .await
-            .expect_err("boundary identity must reject the stale outer preflight");
-        assert!(matches!(error, Error::StaleRevision { .. }));
-        assert!(
-            runner
-                .calls()
-                .iter()
-                .all(|call| !call.args_str().iter().any(|arg| arg == "commit")),
-            "the checked primitive must not start its own mutation after stale identity"
-        );
-    }
-
-    #[tokio::test]
-    async fn jj_checked_commit_rejects_identity_advanced_after_outer_preflight_without_commit() {
-        let runner = RecordingRunner::new(ScriptedRunner::new().on_sequence(
-            ["jj", "log"],
-            [
-                Reply::ok("change\texpect\tfalse\t\"work\"\n"),
-                Reply::ok("parent\n"),
-                Reply::ok("advanced\n"),
-            ],
-        ));
+    async fn jj_checked_commit_is_unsupported_without_spawning_or_mutating() {
+        let runner = RecordingRunner::new(ScriptedRunner::new());
         let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&runner));
         let error = repo
             .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
             .await
-            .expect_err("boundary identity must reject the stale outer preflight");
-        assert!(matches!(error, Error::StaleRevision { .. }));
+            .expect_err("jj has no atomic expected-identity mutation primitive");
+        assert!(matches!(error, Error::Unsupported(_)));
         assert!(
-            runner
-                .calls()
-                .iter()
-                .all(|call| !call.args_str().iter().any(|arg| arg == "commit")),
-            "the checked primitive must not start its own mutation after stale identity"
+            runner.calls().is_empty(),
+            "unsupported must be returned before even a snapshot-producing jj command"
         );
-    }
-
-    #[tokio::test]
-    async fn git_checked_commit_process_failure_is_outcome_unknown_after_boundary() {
-        let repo = git_repo(
-            ScriptedRunner::new()
-                .on_sequence(
-                    ["git", "rev-parse"],
-                    [Reply::ok("/repo\n"), Reply::ok("expected\n")],
-                )
-                .on(
-                    ["git", "--literal-pathspecs", "commit"],
-                    Reply::fail(1, "commit failed"),
-                ),
-        );
-        let error = repo
-            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
-            .await
-            .expect_err("an unverified mutation call cannot be a safe backend retry");
-        assert!(
-            matches!(error, Error::OutcomeUnknown(_)),
-            "unexpected error: {error:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn jj_checked_commit_process_failure_is_outcome_unknown_after_boundary() {
-        let repo = jj_repo(
-            ScriptedRunner::new()
-                .on_sequence(
-                    ["jj", "log"],
-                    [
-                        Reply::ok("change\texpect\tfalse\t\"work\"\n"),
-                        Reply::ok("parent\n"),
-                        Reply::ok("expected\n"),
-                    ],
-                )
-                .on(["jj", "commit"], Reply::fail(1, "commit failed")),
-        );
-        let error = repo
-            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
-            .await
-            .expect_err("an unverified mutation call cannot be a safe backend retry");
-        assert!(matches!(error, Error::OutcomeUnknown(_)));
     }
 
     // `create_branch` dispatches to `git branch <name>` (no checkout) on git and to

@@ -17,7 +17,7 @@
     "unrelated_changes_preserved": true,
     "semantics": {
       "selection": "exact-repo-relative-paths",
-      "backend_selection": "git-commit-only",
+      "backend_selection": "git-atomic-ref-cas",
       "refs_advanced": true,
       "index_may_change_for_selected_paths": true,
       "unrelated_index_preserved": true,

@@ -533,19 +533,13 @@ async fn commit_repo<R: ProcessRunner>(
             include_paths,
         )));
     }
-    if matches!(repo.kind(), BackendKind::Jj)
-        && invocation
-            .commit_paths
-            .iter()
-            .any(|path| path.to_str().is_none())
-    {
+    if matches!(repo.kind(), BackendKind::Jj) {
         return Err(Box::new(commit_gate_error(
             ErrorKind::Unsupported,
-            "jujutsu_non_utf8_path_unsupported",
+            "jujutsu_atomic_commit_unsupported",
             include_paths,
         )));
     }
-
     let before_snapshot = repo
         .snapshot()
         .await
@@ -691,15 +685,12 @@ fn same_path_set(left: &[PathBuf], right: &[PathBuf]) -> bool {
 }
 
 fn commit_semantics(kind: BackendKind) -> CommitSemantics {
+    debug_assert!(matches!(kind, BackendKind::Git));
     CommitSemantics {
         selection: "exact-repo-relative-paths",
-        backend_selection: if matches!(kind, BackendKind::Git) {
-            "git-commit-only"
-        } else {
-            "jujutsu-exact-filesets"
-        },
+        backend_selection: "git-atomic-ref-cas",
         refs_advanced: true,
-        index_may_change_for_selected_paths: matches!(kind, BackendKind::Git),
+        index_may_change_for_selected_paths: true,
         unrelated_index_preserved: true,
         working_copy_content_mutated: false,
         push_performed: false,

@@ -6,7 +6,6 @@
 //! copy-on-write / op-log-rollback creation flow stays in the consumer; the
 //! facade only does the plain `jj workspace add` path.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
@@ -425,142 +424,16 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
 }
 
 pub(crate) async fn commit_paths_checked<R: ProcessRunner>(
-    jj: &Jj<R>,
-    dir: &Path,
-    paths: &[PathBuf],
-    message: &str,
-    expected_revision: &str,
+    _jj: &Jj<R>,
+    _dir: &Path,
+    _paths: &[PathBuf],
+    _message: &str,
+    _expected_revision: &str,
 ) -> Result<CheckedCommit> {
-    // Queries that may snapshot the working copy happen before the final `@`
-    // identity comparison. The comparison is the last process before `jj
-    // commit`; the postflight then proves the rewrite shape and exact path diff.
-    let before_change = jj.current_change(dir).await?;
-    let before_parent = full_commit_id(jj, dir, "@-").await?;
-    let boundary_revision = full_commit_id(jj, dir, "@").await?;
-    if boundary_revision != expected_revision
-        || !boundary_revision.starts_with(&before_change.commit_id)
-    {
-        return Err(Error::StaleRevision {
-            expected: expected_revision.to_owned(),
-            actual: boundary_revision,
-        });
-    }
-
-    let filesets = commit_filesets(paths);
-    jj.commit_paths(dir, &filesets, message)
-        .await
-        .map_err(|_| {
-            Error::OutcomeUnknown("jujutsu checked commit process did not prove success".into())
-        })?;
-
-    // All failures from here on may follow a successful rewrite and must be
-    // outcome-unknown rather than a safe retry signal.
-    let after_change = jj
-        .current_change(dir)
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu postflight change unavailable".into()))?;
-    let after_revision = full_commit_id(jj, dir, "@")
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu postflight revision unavailable".into()))?;
-    if !after_revision.starts_with(&after_change.commit_id) {
-        return Err(Error::OutcomeUnknown(
-            "jujutsu postflight revision/change identity mismatch".into(),
-        ));
-    }
-    let committed_revision = full_commit_id(jj, dir, "@-")
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu committed revision unavailable".into()))?;
-    let committed_parent = full_commit_id(jj, dir, &format!("{committed_revision}-"))
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu committed parent unavailable".into()))?;
-    if committed_parent != before_parent {
-        return Err(Error::OutcomeUnknown(
-            "jujutsu committed revision has an unexpected parent".into(),
-        ));
-    }
-
-    let diffs = jj
-        .diff_between(
-            dir,
-            &rev(&before_parent).map_err(|_| {
-                Error::OutcomeUnknown("jujutsu postflight base identity invalid".into())
-            })?,
-            &rev(&committed_revision).map_err(|_| {
-                Error::OutcomeUnknown("jujutsu postflight commit identity invalid".into())
-            })?,
-        )
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu committed path proof unavailable".into()))?;
-    let continuity = jj
-        .diff_between(
-            dir,
-            &rev(expected_revision).map_err(|_| {
-                Error::OutcomeUnknown("jujutsu expected tree identity invalid".into())
-            })?,
-            &rev(&after_revision).map_err(|_| {
-                Error::OutcomeUnknown("jujutsu postflight tree identity invalid".into())
-            })?,
-        )
-        .await
-        .map_err(|_| Error::OutcomeUnknown("jujutsu tree continuity proof unavailable".into()))?;
-    if !continuity.is_empty() {
-        return Err(Error::OutcomeUnknown(
-            "jujutsu working-copy tree changed across checked commit".into(),
-        ));
-    }
-    let final_revision = full_commit_id(jj, dir, "@").await.map_err(|_| {
-        Error::OutcomeUnknown("jujutsu final working-copy revision unavailable".into())
-    })?;
-    if final_revision != after_revision {
-        return Err(Error::OutcomeUnknown(
-            "jujutsu working-copy revision changed during postflight proof".into(),
-        ));
-    }
-
-    Ok(CheckedCommit::new(
-        expected_revision.to_owned(),
-        after_revision,
-        committed_revision,
-        Some(before_change.change_id),
-        Some(after_change.change_id),
-        paths_from_diffs(diffs),
+    Err(Error::Unsupported(
+        "Jujutsu exposes no atomic expected-operation/change guard for checked commit; refusing before mutation"
+            .into(),
     ))
-}
-
-fn commit_filesets(paths: &[PathBuf]) -> Vec<JjFileset> {
-    paths
-        .iter()
-        .map(|p| JjFileset::path(p.to_string_lossy()))
-        .collect()
-}
-
-async fn full_commit_id<R: ProcessRunner>(
-    jj: &Jj<R>,
-    dir: &Path,
-    revision: &str,
-) -> Result<String> {
-    let output = jj
-        .template_query(dir, &rev(revision)?, "commit_id", Some(1))
-        .await?;
-    let commit_id = output.trim();
-    if commit_id.is_empty() {
-        return Err(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "jujutsu commit identity query returned no revision",
-        )));
-    }
-    Ok(commit_id.to_owned())
-}
-
-fn paths_from_diffs(diffs: Vec<FileDiff>) -> Vec<PathBuf> {
-    let mut paths = BTreeSet::new();
-    for diff in diffs {
-        if let Some(old_path) = diff.old_path {
-            paths.insert(old_path);
-        }
-        paths.insert(diff.path);
-    }
-    paths.into_iter().collect()
 }
 
 pub(crate) async fn fetch<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<()> {

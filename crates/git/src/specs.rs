@@ -240,6 +240,42 @@ pub struct CommitPaths {
     pub amend: bool,
 }
 
+/// Result of [`GitApi::commit_paths_cas`](crate::GitApi::commit_paths_cas).
+/// The prepared commit object is installed only by Git's atomic
+/// `update-ref HEAD <new> <expected-old>` compare-and-swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CommitPathsCas {
+    /// The exact prepared commit was atomically installed.
+    Installed {
+        /// Full object id of the installed commit.
+        revision: String,
+        /// Paths observed from the prepared commit's diff.
+        included_paths: Vec<PathBuf>,
+    },
+    /// `HEAD` no longer matched the expected old object at the atomic update.
+    Stale {
+        /// Full revision observed after the failed compare-and-swap, when it
+        /// could still be resolved.
+        actual_revision: Option<String>,
+    },
+    /// Hooks or another preparation-side effect widened/narrowed the prepared
+    /// tree, so no ref was updated.
+    PathMismatch {
+        /// Paths observed in the uninstalled prepared commit object.
+        included_paths: Vec<PathBuf>,
+    },
+    /// The atomic ref may have been installed, but a later selected-index or
+    /// post-commit-hook step could not be proven.
+    OutcomeUnknown {
+        /// Best-effort full `HEAD` revision after the uncertain step.
+        actual_revision: Option<String>,
+    },
+    /// This installed Git is too old to run hooks through `git hook run`; the
+    /// operation was refused before preparing an index or commit object.
+    Unsupported,
+}
+
 impl CommitPaths {
     /// Commit exactly `paths`' working-tree content with `message`
     /// (`git commit -m <message> --only -- <paths>`).

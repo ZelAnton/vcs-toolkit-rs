@@ -1,7 +1,6 @@
 //! Git-backed implementations of the facade operations: thin calls to the
 //! `vcs-git` client plus pure mappers from its types into the facade DTOs.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use processkit::ProcessRunner;
@@ -345,72 +344,51 @@ pub(crate) async fn commit_paths_checked<R: ProcessRunner>(
     message: &str,
     expected_revision: &str,
 ) -> Result<CheckedCommit> {
-    // Resolve the worktree root before the mutation-boundary identity read. No
-    // query is allowed between that read and `git commit`: Git has no native
-    // expected-HEAD flag for porcelain commit, so the immediate comparison plus
-    // the created commit's parent/diff proof is the strongest safe equivalent.
     let top_level = worktree_top_level(git, dir).await?;
-    let head = RevSpec::new("HEAD")?;
-    let boundary_revision = git.resolve_commit(&top_level, &head).await?;
-    if boundary_revision != expected_revision {
-        return Err(Error::StaleRevision {
+    match git
+        .commit_paths_cas(
+            &top_level,
+            vcs_git::CommitPaths::new(paths.iter().cloned(), message),
+            &RevSpec::new(expected_revision)?,
+        )
+        .await?
+    {
+        vcs_git::CommitPathsCas::Installed {
+            revision,
+            included_paths,
+        } => Ok(CheckedCommit::new(
+            expected_revision.to_owned(),
+            revision.clone(),
+            revision,
+            None,
+            None,
+            included_paths,
+        )),
+        vcs_git::CommitPathsCas::Stale {
+            actual_revision: Some(actual),
+        } => Err(Error::StaleRevision {
             expected: expected_revision.to_owned(),
-            actual: boundary_revision,
-        });
+            actual,
+        }),
+        vcs_git::CommitPathsCas::Stale {
+            actual_revision: None,
+        } => Err(Error::OutcomeUnknown(
+            "git atomic update rejected but current HEAD is unavailable".into(),
+        )),
+        vcs_git::CommitPathsCas::PathMismatch { .. } => Err(Error::Unsupported(
+            "a Git commit hook changed the prepared exact path set; no ref was updated".into(),
+        )),
+        vcs_git::CommitPathsCas::OutcomeUnknown { .. } => Err(Error::OutcomeUnknown(
+            "git atomic commit or selected-index post-step is unverified".into(),
+        )),
+        vcs_git::CommitPathsCas::Unsupported => Err(Error::Unsupported(
+            "atomic checked commit requires Git 2.36 or newer for hook-preserving preparation"
+                .into(),
+        )),
+        _ => Err(Error::Unsupported(
+            "the Git backend returned an unknown atomic checked-commit outcome".into(),
+        )),
     }
-
-    git.commit_paths(
-        &top_level,
-        vcs_git::CommitPaths::new(paths.iter().cloned(), message),
-    )
-    .await
-    .map_err(|_| {
-        Error::OutcomeUnknown("git checked commit process did not prove success".into())
-    })?;
-
-    // Every failure after the commit process may hide a successful mutation and
-    // is therefore deliberately classified as outcome-unknown.
-    let after_revision = git
-        .resolve_commit(&top_level, &head)
-        .await
-        .map_err(|_| Error::OutcomeUnknown("git postflight HEAD unavailable".into()))?;
-    let parent_spec = RevSpec::new(format!("{after_revision}^"))
-        .map_err(|_| Error::OutcomeUnknown("git postflight parent identity invalid".into()))?;
-    let parent = git
-        .resolve_commit(&top_level, &parent_spec)
-        .await
-        .map_err(|_| Error::OutcomeUnknown("git postflight parent unavailable".into()))?;
-    if parent != expected_revision {
-        return Err(Error::OutcomeUnknown(
-            "git created revision is not based on the expected revision".into(),
-        ));
-    }
-    let from = RevSpec::new(expected_revision)
-        .map_err(|_| Error::OutcomeUnknown("git postflight base identity invalid".into()))?;
-    let to = RevSpec::new(&after_revision)
-        .map_err(|_| Error::OutcomeUnknown("git postflight revision identity invalid".into()))?;
-    let diffs = git
-        .diff_between(&top_level, &from, &to)
-        .await
-        .map_err(|_| Error::OutcomeUnknown("git committed path proof unavailable".into()))?;
-    let final_head = git
-        .resolve_commit(&top_level, &head)
-        .await
-        .map_err(|_| Error::OutcomeUnknown("git final HEAD unavailable".into()))?;
-    if final_head != after_revision {
-        return Err(Error::OutcomeUnknown(
-            "git HEAD changed during postflight proof".into(),
-        ));
-    }
-
-    Ok(CheckedCommit::new(
-        expected_revision.to_owned(),
-        after_revision.clone(),
-        after_revision,
-        None,
-        None,
-        paths_from_diffs(diffs),
-    ))
 }
 
 async fn worktree_top_level<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<PathBuf> {
@@ -418,17 +396,6 @@ async fn worktree_top_level<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Resul
         git.run_args_in(dir, &["rev-parse", "--show-toplevel"])
             .await?,
     ))
-}
-
-fn paths_from_diffs(diffs: Vec<FileDiff>) -> Vec<PathBuf> {
-    let mut paths = BTreeSet::new();
-    for diff in diffs {
-        if let Some(old_path) = diff.old_path {
-            paths.insert(old_path);
-        }
-        paths.insert(diff.path);
-    }
-    paths.into_iter().collect()
 }
 
 pub(crate) async fn fetch<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<()> {

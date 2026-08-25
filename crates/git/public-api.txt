@@ -631,6 +631,32 @@ impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__commit_paths::
 impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__commit_paths::Expectation
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__commit_paths::Expectation
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__commit_paths::Expectation
+pub mod vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas
+pub struct vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::in_sequence(&mut self, &mut mockall::Sequence) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::never(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::new() -> Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::once(&mut self) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::return_const<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::return_const_st<MockallOutput>(&mut self, MockallOutput) -> &mut Self where MockallOutput: core::clone::Clone + core::convert::Into<processkit::error::Result<vcs_git::CommitPathsCas>> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::return_once<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_git::CommitPaths, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::CommitPathsCas> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::return_once_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnOnce(&std::path::Path, vcs_git::CommitPaths, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::CommitPathsCas> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::returning<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_git::CommitPaths, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::CommitPathsCas> + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::returning_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::FnMut(&std::path::Path, vcs_git::CommitPaths, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::CommitPathsCas> + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::times<MockallR>(&mut self, MockallR) -> &mut Self where MockallR: core::convert::Into<mockall::TimesRange>
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::with<MockallMatcher0: predicates_core::core::Predicate<std::path::Path> + core::marker::Send + 'static, MockallMatcher1: predicates_core::core::Predicate<vcs_git::CommitPaths> + core::marker::Send + 'static, MockallMatcher2: predicates_core::core::Predicate<vcs_git::RevSpec> + core::marker::Send + 'static>(&mut self, MockallMatcher0, MockallMatcher1, MockallMatcher2) -> &mut Self
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::withf<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::CommitPaths, &vcs_git::RevSpec) -> bool + core::marker::Send + 'static
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::withf_st<MockallF>(&mut self, MockallF) -> &mut Self where MockallF: core::ops::function::Fn(&std::path::Path, &vcs_git::CommitPaths, &vcs_git::RevSpec) -> bool + 'static
+impl core::default::Default for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+pub fn vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation::default() -> Self
+impl !core::marker::Freeze for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::marker::Send for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::marker::Sync for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::marker::Unpin for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::marker::UnsafeUnpin for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
 pub mod vcs_git::__mock_MockGitApi_GitApi::__common_dir
 pub struct vcs_git::__mock_MockGitApi_GitApi::__common_dir::Expectation
 impl vcs_git::__mock_MockGitApi_GitApi::__common_dir::Expectation
@@ -3135,6 +3161,32 @@ impl core::marker::Unpin for vcs_git::CloneFilter
 impl core::marker::UnsafeUnpin for vcs_git::CloneFilter
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::CloneFilter
 impl core::panic::unwind_safe::UnwindSafe for vcs_git::CloneFilter
+#[non_exhaustive] pub enum vcs_git::CommitPathsCas
+pub vcs_git::CommitPathsCas::Installed
+pub vcs_git::CommitPathsCas::Installed::included_paths: alloc::vec::Vec<std::path::PathBuf>
+pub vcs_git::CommitPathsCas::Installed::revision: alloc::string::String
+pub vcs_git::CommitPathsCas::OutcomeUnknown
+pub vcs_git::CommitPathsCas::OutcomeUnknown::actual_revision: core::option::Option<alloc::string::String>
+pub vcs_git::CommitPathsCas::PathMismatch
+pub vcs_git::CommitPathsCas::PathMismatch::included_paths: alloc::vec::Vec<std::path::PathBuf>
+pub vcs_git::CommitPathsCas::Stale
+pub vcs_git::CommitPathsCas::Stale::actual_revision: core::option::Option<alloc::string::String>
+pub vcs_git::CommitPathsCas::Unsupported
+impl core::clone::Clone for vcs_git::CommitPathsCas
+pub fn vcs_git::CommitPathsCas::clone(&self) -> vcs_git::CommitPathsCas
+impl core::cmp::Eq for vcs_git::CommitPathsCas
+impl core::cmp::PartialEq for vcs_git::CommitPathsCas
+pub fn vcs_git::CommitPathsCas::eq(&self, &vcs_git::CommitPathsCas) -> bool
+impl core::fmt::Debug for vcs_git::CommitPathsCas
+pub fn vcs_git::CommitPathsCas::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for vcs_git::CommitPathsCas
+impl core::marker::Freeze for vcs_git::CommitPathsCas
+impl core::marker::Send for vcs_git::CommitPathsCas
+impl core::marker::Sync for vcs_git::CommitPathsCas
+impl core::marker::Unpin for vcs_git::CommitPathsCas
+impl core::marker::UnsafeUnpin for vcs_git::CommitPathsCas
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_git::CommitPathsCas
+impl core::panic::unwind_safe::UnwindSafe for vcs_git::CommitPathsCas
 #[non_exhaustive] pub enum vcs_git::SubmoduleState
 pub vcs_git::SubmoduleState::Conflict
 pub vcs_git::SubmoduleState::Current
@@ -3448,6 +3500,7 @@ pub fn vcs_git::Git<R>::clone_repo<'life0, 'life1, 'life2, 'async_trait>(&'life0
 pub fn vcs_git::Git<R>::clone_repo_with_progress<'a, 'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 std::path::Path, vcs_git::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::commit<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::commit_paths<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::commit_paths_cas<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths, &'life2 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::common_dir<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<std::path::PathBuf>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::config_get<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::config_set<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -3569,6 +3622,7 @@ pub async fn vcs_git::GitAt<'a, R>::clean(&self, vcs_git::Clean) -> processkit::
 pub async fn vcs_git::GitAt<'a, R>::clone_repo(&self, &str, &std::path::Path, vcs_git::CloneSpec) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::commit(&self, &str) -> processkit::error::Result<()>
 pub async fn vcs_git::GitAt<'a, R>::commit_paths(&self, vcs_git::CommitPaths) -> processkit::error::Result<()>
+pub async fn vcs_git::GitAt<'a, R>::commit_paths_cas(&self, vcs_git::CommitPaths, &vcs_git::RevSpec) -> processkit::error::Result<vcs_git::CommitPathsCas>
 pub async fn vcs_git::GitAt<'a, R>::common_dir(&self) -> processkit::error::Result<std::path::PathBuf>
 pub async fn vcs_git::GitAt<'a, R>::config_get(&self, &str) -> processkit::error::Result<core::option::Option<alloc::string::String>>
 pub async fn vcs_git::GitAt<'a, R>::config_set(&self, &str, &str) -> processkit::error::Result<()>
@@ -3813,6 +3867,7 @@ pub fn vcs_git::MockGitApi::expect_clone_repo(&mut self) -> &mut vcs_git::__mock
 pub fn vcs_git::MockGitApi::expect_clone_repo_with_progress(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__clone_repo_with_progress::Expectation
 pub fn vcs_git::MockGitApi::expect_commit(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__commit::Expectation
 pub fn vcs_git::MockGitApi::expect_commit_paths(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__commit_paths::Expectation
+pub fn vcs_git::MockGitApi::expect_commit_paths_cas(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__commit_paths_cas::Expectation
 pub fn vcs_git::MockGitApi::expect_common_dir(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__common_dir::Expectation
 pub fn vcs_git::MockGitApi::expect_config_get(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__config_get::Expectation
 pub fn vcs_git::MockGitApi::expect_config_set(&mut self) -> &mut vcs_git::__mock_MockGitApi_GitApi::__config_set::Expectation
@@ -3931,6 +3986,7 @@ pub fn vcs_git::MockGitApi::clone_repo<'life0, 'life1, 'life2, 'async_trait>(&'l
 pub fn vcs_git::MockGitApi::clone_repo_with_progress<'a, 'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 std::path::Path, vcs_git::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::commit<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::commit_paths<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::commit_paths_cas<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths, &'life2 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::common_dir<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<std::path::PathBuf>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::config_get<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::config_set<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -4340,6 +4396,7 @@ pub fn vcs_git::GitApi::clone_repo<'life0, 'life1, 'life2, 'async_trait>(&'life0
 pub fn vcs_git::GitApi::clone_repo_with_progress<'a, 'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 std::path::Path, vcs_git::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::commit<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::commit_paths<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::GitApi::commit_paths_cas<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths, &'life2 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::common_dir<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<std::path::PathBuf>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::GitApi::config_get<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::GitApi::config_set<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -4454,6 +4511,7 @@ pub fn vcs_git::MockGitApi::clone_repo<'life0, 'life1, 'life2, 'async_trait>(&'l
 pub fn vcs_git::MockGitApi::clone_repo_with_progress<'a, 'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 std::path::Path, vcs_git::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::commit<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::commit_paths<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::MockGitApi::commit_paths_cas<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths, &'life2 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::common_dir<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<std::path::PathBuf>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::MockGitApi::config_get<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::MockGitApi::config_set<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
@@ -4568,6 +4626,7 @@ pub fn vcs_git::Git<R>::clone_repo<'life0, 'life1, 'life2, 'async_trait>(&'life0
 pub fn vcs_git::Git<R>::clone_repo_with_progress<'a, 'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 std::path::Path, vcs_git::CloneSpec, &'a mut vcs_cli_support::ProgressCallback<'a>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'a: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::commit<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::commit_paths<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub fn vcs_git::Git<R>::commit_paths_cas<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, vcs_git::CommitPaths, &'life2 vcs_git::RevSpec) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<vcs_git::CommitPathsCas>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::common_dir<'life0, 'life1, 'async_trait>(&'life0 self, &'life1 std::path::Path) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<std::path::PathBuf>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn vcs_git::Git<R>::config_get<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<core::option::Option<alloc::string::String>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn vcs_git::Git<R>::config_set<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, &'life1 std::path::Path, &'life2 str, &'life3 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = processkit::error::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait

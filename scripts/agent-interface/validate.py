@@ -528,7 +528,7 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
         _require_fields(semantics, semantic_fields, semantics_label)
         if semantics["selection"] != "exact-repo-relative-paths":
             raise ValidationError(f"{semantics_label}.selection is invalid")
-        if semantics["backend_selection"] not in {"git-commit-only", "jujutsu-exact-filesets"}:
+        if semantics["backend_selection"] != "git-atomic-ref-cas":
             raise ValidationError(f"{semantics_label}.backend_selection is invalid")
         if semantics["refs_advanced"] is not True or semantics["unrelated_index_preserved"] is not True:
             raise ValidationError(f"{semantics_label} must prove revision advance and unrelated-index preservation")
@@ -545,20 +545,12 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
             if semantics[field] is not False:
                 raise ValidationError(f"{semantics_label}.{field} must be false")
 
-        if repository["backend"] == "git":
-            if any(identity["change_id"] is not None for identity in identities):
-                raise ValidationError(f"{label}: Git commit identities cannot claim jj change IDs")
-            if semantics["backend_selection"] != "git-commit-only":
-                raise ValidationError(f"{label}: Git commit must disclose commit-only semantics")
-            if semantics["index_may_change_for_selected_paths"] is not True:
-                raise ValidationError(f"{label}: Git commit must disclose selected-index mutation")
-        elif repository["backend"] == "jujutsu":
-            if any(not isinstance(identity["change_id"], str) or not identity["change_id"] for identity in identities):
-                raise ValidationError(f"{label}: Jujutsu commit identities require change IDs")
-            if semantics["backend_selection"] != "jujutsu-exact-filesets":
-                raise ValidationError(f"{label}: Jujutsu commit must disclose exact filesets")
-            if semantics["index_may_change_for_selected_paths"] is not False:
-                raise ValidationError(f"{label}: Jujutsu has no Git index mutation")
+        if repository["backend"] != "git":
+            raise ValidationError(f"{label}: checked commit success is supported only for Git")
+        if any(identity["change_id"] is not None for identity in identities):
+            raise ValidationError(f"{label}: Git commit identities cannot claim jj change IDs")
+        if semantics["index_may_change_for_selected_paths"] is not True:
+            raise ValidationError(f"{label}: Git commit must disclose selected-index mutation")
     return envelope
 
 

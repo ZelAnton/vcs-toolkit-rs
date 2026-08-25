@@ -53,34 +53,41 @@ unchanged path is refused rather than reported later as included.
 
 Preflight takes a live typed snapshot and fails with `denied` while conflicts or
 an in-progress operation exist, when the current revision is unavailable, or
-when it does not equal `--expected-revision`. This is the stale-preflight guard:
-repeating a request after a success cannot create another commit because its
-expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths;
-Jujutsu's fileset language is text, so a non-UTF-8 selection returns structured
-`unsupported` before mutation.
+when it does not equal `--expected-revision`. Git also carries that identity into
+the atomic ref update, so the preflight is not the write authority by itself.
+Repeating a request after a success cannot create another commit because its
+expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths.
+Jujutsu checked commit is structured `unsupported` before any snapshot/commit
+mutation because its typed CLI surface has no atomic expected-operation/change
+guard equivalent to Git's expected-old ref update.
 
 The only mutation call is the typed `Repo::commit_paths_checked`, which carries
-the expected identity to the backend boundary. Git uses literal commit-only
-pathspecs; because porcelain commit has no atomic expected-HEAD option, success
-also requires proof that the created commit's parent is the expected revision.
-Jujutsu uses exact root-file filesets and proves the rewrite retained the
-pre-commit working-copy tree. A boundary mismatch before either mutation starts
-is a safe stale refusal; an identity-proof failure after a process may have
-written is `outcome_unknown`. Postflight also requires an advanced revision,
+the expected identity to the backend boundary. On Git 2.36+, it prepares the
+commit from the expected tree through a temporary index, runs `pre-commit`,
+`prepare-commit-msg`, and `commit-msg`, verifies the prepared object's exact path
+diff, and installs it with native atomic
+`update-ref HEAD <new> <expected-old>`. A concurrent HEAD advance makes that CAS
+fail stale and leaves the prepared object unreachable; no T-193 commit is
+installed. After a successful CAS, only selected index entries are reset and
+`post-commit` runs, preserving unrelated staged/unstaged/untracked state. Git
+2.31-2.35 and Jujutsu are refused as unsupported before preparation rather than
+claiming a weaker stale guard. Postflight also requires an advanced revision,
 clear repository state, no selected paths left in the working-copy change set,
 and every unrelated status entry still present. Only then does success report
-the repository, before/after revision identity, Jujutsu change IDs when
-applicable, and included paths observed from the created commit/change diff
+the repository, before/after revision identity and included paths observed from
+the created commit diff
 (both old and new sides for renames), plus
 `unrelated_changes_preserved: true`. Its semantics explicitly state that no
 push, switch, conflict repair, or working-copy content edit occurred. Git may
 update index entries for selected paths but preserves unrelated staged,
-unstaged, and untracked state; Jujutsu has no Git index.
+unstaged, and untracked state. No Jujutsu commit-success envelope is valid until
+that backend gains an atomic expected-identity mutation primitive.
 
 Timeout and cancellation remain their ProcessKit lifecycle kinds during
-preflight. Once the checked backend mutation call is reached, any process or
-postflight failure is `outcome_unknown` (exit 43), because the backend may have
-written before the failure became observable; it is never a false success. A caller recovers by
+preflight and Git preparation. A CAS rejection is a safe stale refusal because
+the ref was not updated. Only a failure after the CAS may be `outcome_unknown`
+(exit 43), because the commit may already be installed; it is never a false
+success. A caller recovers by
 inspecting current state and retrying with the original expected revision: a
 commit that actually advanced is then rejected as stale, while an unchanged
 revision permits a fresh checked attempt.

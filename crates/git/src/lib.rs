@@ -138,8 +138,10 @@
 //! [`security`](crate::guide::security) / [`conflicts`](crate::guide::conflicts)
 //! sub-guides).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use processkit::Command;
@@ -241,9 +243,9 @@ struct LegacyWorktreeIdentity {
 mod specs;
 pub use specs::{
     AnnotatedTag, BisectResult, BisectStep, BranchDelete, CheckoutTarget, Clean, CleanIgnored,
-    CloneFilter, CloneSpec, CommitPaths, GitCapabilities, GitPush, MergeCheck, MergeCheckPartial,
-    MergeCommit, MergeNoCommit, RefName, RevSpec, SparseCheckoutSet, StashPush, SubmoduleUpdate,
-    WorktreeAdd, WorktreeRemove,
+    CloneFilter, CloneSpec, CommitPaths, CommitPathsCas, GitCapabilities, GitPush, MergeCheck,
+    MergeCheckPartial, MergeCommit, MergeNoCommit, RefName, RevSpec, SparseCheckoutSet, StashPush,
+    SubmoduleUpdate, WorktreeAdd, WorktreeRemove,
 };
 
 /// The Git operations this crate exposes — the interface consumers code against
@@ -421,6 +423,17 @@ pub trait GitApi: Send + Sync {
     /// **single** `git commit` invocation either way, so the one-atomic-commit
     /// contract is unaffected by the path set's size (T-052).
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
+    /// Prepare an exact-path commit through a temporary index, run the ordinary
+    /// commit hooks, and atomically install it only if `HEAD` still equals
+    /// `expected` (`git update-ref HEAD <new> <expected-old>`). Git 2.31-2.35
+    /// return [`CommitPathsCas::Unsupported`] before preparation because they do
+    /// not provide `git hook run`; Git 2.36+ is supported.
+    async fn commit_paths_cas(
+        &self,
+        dir: &Path,
+        spec: CommitPaths,
+        expected: &RevSpec,
+    ) -> Result<CommitPathsCas>;
     /// The last commit's full message (`git log -1 --format=%B`) — e.g. to
     /// pre-fill an amend.
     async fn last_commit_message(&self, dir: &Path) -> Result<String>;
@@ -933,6 +946,44 @@ vcs_cli_support::managed_client! {
 }
 
 impl<R: ProcessRunner> Git<R> {
+    async fn run_commit_hook(
+        &self,
+        dir: &Path,
+        index: &Path,
+        hook: &str,
+        args: &[&std::ffi::OsStr],
+    ) -> Result<()> {
+        let mut command = self
+            .core
+            .command_in(dir, ["hook", "run", "--ignore-missing", hook])
+            .env("GIT_INDEX_FILE", index);
+        if !args.is_empty() {
+            command = command.arg("--");
+            for arg in args {
+                command = command.arg(arg);
+            }
+        }
+        self.core.run_unit(command).await
+    }
+
+    async fn run_commit_hook_raw(
+        &self,
+        dir: &Path,
+        hook: &str,
+        args: &[&std::ffi::OsStr],
+    ) -> Result<ProcessResult<String>> {
+        let mut command = self
+            .core
+            .command_in(dir, ["hook", "run", "--ignore-missing", hook]);
+        if !args.is_empty() {
+            command = command.arg("--");
+            for arg in args {
+                command = command.arg(arg);
+            }
+        }
+        self.core.output_string(command).await
+    }
+
     async fn legacy_worktree_probe(&self, dir: &Path, option: &str) -> Result<Vec<u8>> {
         let output = self
             .core
@@ -1099,6 +1150,65 @@ impl<R: ProcessRunner> Git<R> {
         }
         Ok(parsed)
     }
+}
+
+static COMMIT_CAS_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct CommitCasTemp {
+    dir: PathBuf,
+    index: PathBuf,
+    message: PathBuf,
+}
+
+impl CommitCasTemp {
+    fn new() -> Result<Self> {
+        let base = std::env::temp_dir();
+        for _ in 0..32 {
+            let sequence = COMMIT_CAS_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let dir = base.join(format!(
+                "vcs-git-commit-cas-{}-{sequence}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => {
+                    return Ok(Self {
+                        index: dir.join("index"),
+                        message: dir.join("message"),
+                        dir,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(Error::spawn(BINARY, error)),
+            }
+        }
+        Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "could not allocate a unique checked-commit temporary directory",
+            ),
+        ))
+    }
+}
+
+impl Drop for CommitCasTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.index.with_extension("lock"));
+        let _ = std::fs::remove_file(&self.index);
+        let _ = std::fs::remove_file(&self.message);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+fn paths_from_file_diffs(diffs: &[FileDiff]) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for diff in diffs {
+        if let Some(old_path) = &diff.old_path {
+            paths.insert(old_path.clone());
+        }
+        paths.insert(diff.path.clone());
+    }
+    paths.into_iter().collect()
 }
 
 /// The config key a repository can use to make git run an arbitrary command for
@@ -2161,6 +2271,198 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             command = command.arg(path);
         }
         self.core.run_unit(command).await
+    }
+
+    async fn commit_paths_cas(
+        &self,
+        dir: &Path,
+        spec: CommitPaths,
+        expected: &RevSpec,
+    ) -> Result<CommitPathsCas> {
+        let capabilities = self.capabilities().await?;
+        if (capabilities.version.major, capabilities.version.minor) < (2, 36) {
+            return Ok(CommitPathsCas::Unsupported);
+        }
+        if spec.amend || spec.paths.is_empty() || spec.message.trim().is_empty() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "commit_paths_cas requires non-amend, non-empty paths and message",
+                ),
+            ));
+        }
+
+        let expected_revision = self.resolve_commit(dir, expected).await?;
+        let temp = CommitCasTemp::new()?;
+        std::fs::write(&temp.message, spec.message.as_bytes())
+            .map_err(|error| Error::spawn(BINARY, error))?;
+
+        self.core
+            .run_unit(
+                self.core
+                    .command_in(dir, ["read-tree", expected_revision.as_str()])
+                    .env("GIT_INDEX_FILE", &temp.index),
+            )
+            .await?;
+
+        let pathspec = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+            spec.paths.iter().map(|path| path.as_os_str()),
+        )?);
+        self.core
+            .run_unit(
+                self.core
+                    .command_in(
+                        dir,
+                        [
+                            "--literal-pathspecs",
+                            "add",
+                            "-A",
+                            "--pathspec-from-file=-",
+                            "--pathspec-file-nul",
+                        ],
+                    )
+                    .env("GIT_INDEX_FILE", &temp.index)
+                    .stdin(pathspec),
+            )
+            .await?;
+
+        self.run_commit_hook(dir, &temp.index, "pre-commit", &[])
+            .await?;
+        self.run_commit_hook(
+            dir,
+            &temp.index,
+            "prepare-commit-msg",
+            &[temp.message.as_os_str(), std::ffi::OsStr::new("message")],
+        )
+        .await?;
+        self.run_commit_hook(dir, &temp.index, "commit-msg", &[temp.message.as_os_str()])
+            .await?;
+
+        let final_message =
+            std::fs::read(&temp.message).map_err(|error| Error::spawn(BINARY, error))?;
+        if final_message.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "commit hook produced an empty commit message",
+                ),
+            ));
+        }
+
+        let tree = self
+            .core
+            .run(
+                self.core
+                    .command_in(dir, ["write-tree"])
+                    .env("GIT_INDEX_FILE", &temp.index),
+            )
+            .await?;
+        let mut commit_tree = self.core.command_in(
+            dir,
+            ["commit-tree", tree.as_str(), "-p", &expected_revision],
+        );
+        if self
+            .config_get(dir, "commit.gpgSign")
+            .await?
+            .is_some_and(|value| matches!(value.as_str(), "true" | "yes" | "on" | "1"))
+        {
+            commit_tree = commit_tree.arg("-S");
+        }
+        let prepared_revision = self
+            .core
+            .run(commit_tree.arg("-F").arg(&temp.message))
+            .await?;
+        let prepared = RevSpec::new(&prepared_revision)?;
+        let diffs = self.diff_between(dir, expected, &prepared).await?;
+        let included_paths = paths_from_file_diffs(&diffs);
+        let requested_paths = spec.paths.iter().cloned().collect::<BTreeSet<_>>();
+        if included_paths.iter().cloned().collect::<BTreeSet<_>>() != requested_paths {
+            return Ok(CommitPathsCas::PathMismatch { included_paths });
+        }
+
+        let subject = String::from_utf8_lossy(&final_message)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let reflog = format!("commit: {subject}");
+        let cas = self
+            .core
+            .output_string(c_locale(self.core.command_in(
+                dir,
+                [
+                    "update-ref",
+                    "--create-reflog",
+                    "-m",
+                    reflog.as_str(),
+                    "HEAD",
+                    prepared_revision.as_str(),
+                    expected_revision.as_str(),
+                ],
+            )))
+            .await;
+        match cas {
+            Ok(result) if result.code() == Some(0) => {}
+            Ok(result) => {
+                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                if actual_revision.as_deref() != Some(expected_revision.as_str()) {
+                    return Ok(CommitPathsCas::Stale { actual_revision });
+                }
+                let _ = result.ensure_success()?;
+                unreachable!("a non-zero update-ref result cannot ensure success")
+            }
+            Err(error) => {
+                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                if actual_revision.as_deref() == Some(prepared_revision.as_str()) {
+                    return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
+                }
+                if actual_revision.as_deref() != Some(expected_revision.as_str()) {
+                    return Ok(CommitPathsCas::Stale { actual_revision });
+                }
+                return Err(error);
+            }
+        }
+
+        let reset_pathspec = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+            spec.paths.iter().map(|path| path.as_os_str()),
+        )?);
+        if self
+            .core
+            .run_unit(
+                self.core
+                    .command_in(
+                        dir,
+                        [
+                            "--literal-pathspecs",
+                            "reset",
+                            "-q",
+                            prepared_revision.as_str(),
+                            "--pathspec-from-file=-",
+                            "--pathspec-file-nul",
+                        ],
+                    )
+                    .stdin(reset_pathspec),
+            )
+            .await
+            .is_err()
+        {
+            let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+            return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
+        }
+
+        let post_commit = self.run_commit_hook_raw(dir, "post-commit", &[]).await;
+        if post_commit.is_err() {
+            let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+            return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
+        }
+
+        Ok(CommitPathsCas::Installed {
+            revision: prepared_revision,
+            included_paths,
+        })
     }
 
     async fn last_commit_message(&self, dir: &Path) -> Result<String> {
@@ -4249,6 +4551,7 @@ vcs_cli_support::at_forwarders! {
         fn checkout(target: &CheckoutTarget) -> Result<()>;
         fn checkout_detach(commit: &RevSpec) -> Result<()>;
         fn commit_paths(spec: CommitPaths) -> Result<()>;
+        fn commit_paths_cas(spec: CommitPaths, expected: &RevSpec) -> Result<CommitPathsCas>;
         fn last_commit_message() -> Result<String>;
         fn is_unborn() -> Result<bool>;
         fn diff_is_empty() -> Result<bool>;
@@ -4924,6 +5227,77 @@ mod tests {
             ]
         );
         assert!(call.has_stdin, "paths must travel over stdin, not argv");
+    }
+
+    #[tokio::test]
+    async fn commit_paths_cas_rejects_identity_advanced_at_atomic_ref_update() {
+        let diff = "diff --git a/selected.txt b/selected.txt\n\
+                    index 1111111..2222222 100644\n\
+                    --- a/selected.txt\n\
+                    +++ b/selected.txt\n\
+                    @@ -1 +1 @@\n\
+                    -before\n\
+                    +after\n";
+        let runner = RecordingRunner::new(
+            ScriptedRunner::new()
+                .on(["git", "--version"], Reply::ok("git version 2.54.0\n"))
+                .on_sequence(
+                    ["git", "rev-parse", "--verify"],
+                    [Reply::ok("expected\n"), Reply::ok("advanced\n")],
+                )
+                .on(["git", "read-tree"], Reply::ok(""))
+                .on(["git", "--literal-pathspecs", "add"], Reply::ok(""))
+                .on(["git", "hook", "run"], Reply::ok(""))
+                .on(["git", "write-tree"], Reply::ok("tree\n"))
+                .on(["git", "config", "--get"], Reply::fail(1, ""))
+                .on(["git", "commit-tree"], Reply::ok("prepared\n"))
+                .on(["git", "diff"], Reply::ok(diff))
+                .on(
+                    ["git", "update-ref"],
+                    Reply::fail(1, "cannot lock ref: is at advanced but expected expected"),
+                ),
+        );
+        let git = Git::with_runner(&runner);
+
+        let outcome = git
+            .commit_paths_cas(
+                Path::new("/repo"),
+                CommitPaths::new([PathBuf::from("selected.txt")], "T-193 atomic"),
+                &rv("expected"),
+            )
+            .await
+            .expect("CAS rejection is a structured stale outcome");
+        assert_eq!(
+            outcome,
+            CommitPathsCas::Stale {
+                actual_revision: Some("advanced".into())
+            }
+        );
+
+        let calls = runner.calls();
+        let update = calls
+            .iter()
+            .find(|call| {
+                call.args_str()
+                    .first()
+                    .is_some_and(|arg| arg == "update-ref")
+            })
+            .expect("atomic ref update attempted");
+        let update_args = update.args_str();
+        assert_eq!(
+            &update_args[update_args.len() - 3..],
+            ["HEAD", "prepared", "expected"],
+            "the expected old identity must be carried into the mutation primitive"
+        );
+        assert!(
+            calls.iter().all(|call| {
+                let args = call.args_str();
+                args.first().is_none_or(|arg| arg != "reset")
+                    && !(args.starts_with(&["hook".into(), "run".into()])
+                        && args.iter().any(|arg| arg == "post-commit"))
+            }),
+            "a rejected CAS must not perform installed-commit index or post-commit steps"
+        );
     }
 
     #[tokio::test]
