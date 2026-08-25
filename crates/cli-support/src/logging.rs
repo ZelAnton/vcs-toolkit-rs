@@ -526,6 +526,23 @@ fn contains_secret_shape(lower: &str) -> bool {
 /// username (or any other unexpected userinfo).
 fn mask_url_userinfo(value: &str) -> Option<String> {
     let scheme_end = value.find("://")?;
+    // `redact_value` is also used on structured text fragments such as
+    // `remote=ssh://git@host/repo`. Isolate the actual URI scheme from any
+    // field/flag prefix so the safe `ssh://git@` exception and fail-closed
+    // handling of every other userinfo form do not depend on the URL starting
+    // at byte zero.
+    let scheme_start = value[..scheme_end]
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| {
+            (!ch.is_ascii_alphanumeric() && !matches!(ch, '+' | '-' | '.'))
+                .then_some(index + ch.len_utf8())
+        })
+        .unwrap_or(0);
+    let scheme = &value[scheme_start..scheme_end];
+    if scheme.is_empty() {
+        return None;
+    }
     let after = &value[scheme_end + 3..];
     // Search for `userinfo@` only within the **authority** component — the span
     // from just past `://` up to the first `/`, `?`, or `#`. An `@` in the path or
@@ -541,7 +558,7 @@ fn mask_url_userinfo(value: &str) -> Option<String> {
     // `git@` in an SSH URL is the standard, non-secret transport identity. Any
     // other userinfo is fail-closed: PATs are commonly supplied as the username
     // without a colon (e.g. `https://ghp_…@github.com/o/r.git`).
-    if value[..scheme_end].eq_ignore_ascii_case("ssh") && userinfo == "git" {
+    if scheme.eq_ignore_ascii_case("ssh") && userinfo == "git" {
         return None;
     }
     Some(format!(
@@ -710,6 +727,14 @@ mod tests {
         let output = "ordinary-json-value ".repeat(32);
         assert_eq!(redact_value(&output), output);
         assert_eq!(redact_value("status"), "status");
+        assert_eq!(
+            redact_value("remote=ssh://git@example.test/repo"),
+            "remote=ssh://git@example.test/repo"
+        );
+        assert_eq!(
+            redact_value("remote=ssh://user:password@example.test/repo"),
+            "remote=ssh://<redacted>@example.test/repo"
+        );
     }
 
     #[test]

@@ -578,6 +578,67 @@ mod tests {
     }
 
     #[test]
+    fn shared_redaction_protects_mixed_machine_stdout_and_stderr() {
+        let error = || {
+            AgentError::new("inspect", ErrorKind::Backend, "test", false)
+                .with_message(
+                    r"failed ssh://alice:stderr-uri-secret@example.invalid/repo --token stderr-flag-secret github_pat_STDERR_PAT at C:\Users\stderr-user\repo",
+                )
+                .with_detail(
+                    DetailKey::RemoteUrl,
+                    "custom+ssh://bob:stdout-uri-secret@example.invalid/repo",
+                )
+                .with_warning(
+                    "--password=stdout-password-secret glpat-STDOUT_PAT /workspaces/stdout-user/repo",
+                )
+        };
+
+        let hidden = render(error(), crate::cli::DEFAULT_MAX_OUTPUT_BYTES);
+        let visible = render(
+            error().include_machine_paths(true),
+            crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
+        );
+
+        for output in [&hidden, &visible] {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let diagnostic = output.diagnostic.as_deref().expect("error diagnostic");
+            for leaked in [
+                "stderr-uri-secret",
+                "stderr-flag-secret",
+                "github_pat_STDERR_PAT",
+                "stdout-uri-secret",
+                "stdout-password-secret",
+                "glpat-STDOUT_PAT",
+            ] {
+                assert!(!stdout.contains(leaked), "stdout leaked {leaked}: {stdout}");
+                assert!(
+                    !diagnostic.contains(leaked),
+                    "diagnostic leaked {leaked}: {diagnostic}"
+                );
+            }
+        }
+
+        let hidden_stdout = String::from_utf8_lossy(&hidden.stdout);
+        let hidden_diagnostic = hidden.diagnostic.as_deref().expect("error diagnostic");
+        assert!(!hidden_stdout.contains("stderr-user"));
+        assert!(!hidden_stdout.contains("stdout-user"));
+        assert!(!hidden_diagnostic.contains("stderr-user"));
+
+        let visible_json: Value =
+            serde_json::from_slice(&visible.stdout).expect("visible envelope is JSON");
+        let visible_message = visible_json["error"]["message"]
+            .as_str()
+            .expect("message is a string");
+        let visible_warning = visible_json["warnings"][0]
+            .as_str()
+            .expect("warning is a string");
+        let visible_diagnostic = visible.diagnostic.as_deref().expect("error diagnostic");
+        assert!(visible_message.contains(r"C:\Users\stderr-user\repo"));
+        assert!(visible_warning.contains("/workspaces/stdout-user/repo"));
+        assert!(visible_diagnostic.contains(r"C:\Users\stderr-user\repo"));
+    }
+
+    #[test]
     fn file_uris_are_redacted_from_message_details_and_warnings() {
         let error = AgentError::new("probe", ErrorKind::Backend, "test", false)
             .with_message(

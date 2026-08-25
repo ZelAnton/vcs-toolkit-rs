@@ -1,11 +1,16 @@
+use std::ffi::OsString;
+
+use vcs_cli_support::logging::redact_args;
+
 #[derive(Clone, Copy)]
 pub(crate) struct RedactionPolicy {
     pub(crate) include_machine_paths: bool,
 }
 
 pub(crate) fn redact_text(input: &str, policy: RedactionPolicy) -> String {
-    let credential_safe = redact_credentialed_urls(input);
-    let secret_safe = redact_secret_assignments(&credential_safe);
+    let bearer_safe = redact_bearer(input);
+    let assignment_safe = redact_secret_assignments(&bearer_safe);
+    let secret_safe = redact_cli_values(&assignment_safe);
     if policy.include_machine_paths {
         secret_safe
     } else {
@@ -13,24 +18,32 @@ pub(crate) fn redact_text(input: &str, policy: RedactionPolicy) -> String {
     }
 }
 
-fn redact_credentialed_urls(input: &str) -> String {
-    let mut result = input.to_owned();
-    for scheme in ["https://", "http://"] {
-        let mut offset = 0;
-        while let Some(scheme_start) = find_ascii_case_insensitive(&result, scheme, offset) {
-            let authority_start = scheme_start + scheme.len();
-            let authority_end = result[authority_start..]
-                .find(['/', '?', '#', ' ', '\t', '\r', '\n'])
-                .map_or(result.len(), |relative| authority_start + relative);
-            let Some(relative_at) = result[authority_start..authority_end].rfind('@') else {
-                offset = authority_end;
-                continue;
-            };
-            let at = authority_start + relative_at;
-            result.replace_range(authority_start..at, "[REDACTED]");
-            offset = authority_start + "[REDACTED]@".len();
-        }
+/// Apply the workspace's shared fail-closed argv/value policy while retaining
+/// the whitespace of a diagnostic. Agent diagnostics are free text rather than
+/// an argv, but splitting only on whitespace lets the shared sequence-aware
+/// primitive cover sensitive flags without inventing a second URL/token parser.
+fn redact_cli_values(input: &str) -> String {
+    let words: Vec<&str> = input.split_whitespace().collect();
+    if words.is_empty() {
+        return input.to_owned();
     }
+
+    let args: Vec<OsString> = words.iter().map(OsString::from).collect();
+    let redacted = redact_args(&args);
+    debug_assert_eq!(words.len(), redacted.len());
+
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+    for (word, safe) in words.into_iter().zip(redacted) {
+        let relative = input[cursor..]
+            .find(word)
+            .expect("split word remains in the source text");
+        let start = cursor + relative;
+        result.push_str(&input[cursor..start]);
+        result.push_str(&safe.replace("<redacted>", "[REDACTED]"));
+        cursor = start + word.len();
+    }
+    result.push_str(&input[cursor..]);
     result
 }
 
@@ -58,7 +71,8 @@ fn redact_secret_assignments(input: &str) -> String {
                     separator_end += 1;
                 }
                 output.push_str(&input[index..separator_end]);
-                if is_secret_key(key) {
+                let normalized_key = key.trim_start_matches('-');
+                if is_secret_key(normalized_key) {
                     let mut value_end = separator_end;
                     if bytes
                         .get(separator_end)
@@ -72,7 +86,7 @@ fn redact_secret_assignments(input: &str) -> String {
                         if value_end < bytes.len() {
                             value_end += 1;
                         }
-                    } else if key.eq_ignore_ascii_case("authorization") {
+                    } else if normalized_key.eq_ignore_ascii_case("authorization") {
                         while value_end < bytes.len()
                             && !matches!(bytes[value_end], b'\r' | b'\n' | b',' | b';')
                         {
@@ -104,17 +118,27 @@ fn redact_secret_assignments(input: &str) -> String {
         output.push(ch);
         index += ch.len_utf8();
     }
-    redact_bearer(&output)
+    output
 }
 
 fn is_secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     matches!(
         key.as_str(),
-        "token" | "password" | "passwd" | "secret" | "authorization" | "api_key" | "apikey"
+        "token"
+            | "password"
+            | "passwd"
+            | "secret"
+            | "authorization"
+            | "api_key"
+            | "api-key"
+            | "apikey"
     ) || key.ends_with("_token")
         || key.ends_with("_password")
         || key.ends_with("_secret")
+        || key.ends_with("-token")
+        || key.ends_with("-password")
+        || key.ends_with("-secret")
 }
 
 fn redact_bearer(input: &str) -> String {
@@ -223,6 +247,33 @@ mod tests {
             value,
             "remote=HTTPS://[REDACTED]@example.invalid/owner/repo token=[REDACTED]"
         );
+    }
+
+    #[test]
+    fn shared_fail_closed_policy_covers_uri_flags_and_pat_shapes() {
+        let value = redact_text(
+            "ssh://alice:uri-secret@example.invalid/repo --token flag-secret --password=password-secret --api-key=api-secret github_pat_PAT_SECRET",
+            RedactionPolicy {
+                include_machine_paths: true,
+            },
+        );
+
+        for leaked in [
+            "alice:uri-secret",
+            "flag-secret",
+            "password-secret",
+            "api-secret",
+            "github_pat_PAT_SECRET",
+        ] {
+            assert!(
+                !value.contains(leaked),
+                "redaction leaked {leaked}: {value}"
+            );
+        }
+        assert!(value.contains("ssh://[REDACTED]@example.invalid/repo"));
+        assert!(value.contains("--token [REDACTED]"));
+        assert!(value.contains("--password=[REDACTED]"));
+        assert!(value.contains("--api-key=[REDACTED]"));
     }
 
     #[test]

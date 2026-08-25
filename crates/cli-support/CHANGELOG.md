@@ -26,6 +26,9 @@ crates; tag releases as `vcs-cli-support-v<version>`.
 - Recognize the HTTPS URL scheme ASCII case-insensitively when binding an inline
   Git credential helper to its verbatim `host[:port]`, so uppercase and
   mixed-case HTTPS URLs retain the same cross-host credential gate.
+- Apply single-value URL redaction to `scheme://` values embedded after a field
+  or flag prefix while preserving only the conventional non-secret
+  `ssh://git@host` transport identity.
 
 ## [0.8.0] - 2026-08-11
 

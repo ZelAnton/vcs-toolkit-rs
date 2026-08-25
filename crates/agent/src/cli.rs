@@ -117,12 +117,6 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
         ));
     };
     if !operation.implemented() {
-        if args.len() != command_len {
-            return Err(Box::new(AgentError::invalid_input_for(
-                operation.name(),
-                "unsupported_outcome_has_arguments",
-            )));
-        }
         return Err(Box::new(
             AgentError::new(
                 operation.name(),

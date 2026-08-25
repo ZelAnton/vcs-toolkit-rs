@@ -146,14 +146,32 @@ mod tests {
     }
 
     #[test]
-    fn known_but_unimplemented_command_is_structurally_unsupported() {
-        let (exit, stdout, stderr) = call(&["inspect"]);
-        assert_eq!(exit, ExitCode::from(10));
-        let value: Value = serde_json::from_str(&stdout).expect("valid error JSON");
-        assert_eq!(value["operation"], "inspect");
-        assert_eq!(value["error"]["kind"], "unsupported");
-        assert_eq!(value["fallback"]["reason"], "outcome_not_implemented");
-        assert_eq!(stderr, "vcs-agent: unsupported outcome\n");
+    fn reserved_commands_with_arguments_are_structurally_unsupported() {
+        for (operation, args) in [
+            (
+                "inspect",
+                &["inspect", "--repository", r"C:\agent-secret\repo"][..],
+            ),
+            ("changes", &["changes", "base..agent-secret"]),
+            ("commit", &["commit", "--message=agent-secret"]),
+            ("publish", &["publish", "origin", "agent-secret"]),
+            ("ci_status", &["ci", "status", "--provider=agent-secret"]),
+            ("ci_wait", &["ci", "wait", "agent-secret"]),
+        ] {
+            let (exit, stdout, stderr) = call(args);
+            assert_eq!(exit, ExitCode::from(10), "{operation}");
+            assert!(!stdout.contains("agent-secret"), "{operation}: {stdout}");
+            let value: Value = serde_json::from_str(&stdout).expect("valid error JSON");
+            assert_eq!(value["operation"], operation);
+            assert_eq!(value["error"]["kind"], "unsupported");
+            assert_eq!(value["error"]["exit_code"], 10);
+            assert_eq!(value["error"]["code"], "outcome_not_implemented");
+            assert_eq!(value["fallback"]["allowed"], true);
+            assert_eq!(value["fallback"]["interface"], "raw-cli");
+            assert_eq!(value["fallback"]["reason"], "outcome_not_implemented");
+            assert_eq!(stderr, "vcs-agent: unsupported outcome\n");
+            assert!(!stderr.contains("agent-secret"));
+        }
     }
 
     #[test]
