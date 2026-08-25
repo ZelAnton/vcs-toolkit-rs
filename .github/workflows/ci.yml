@@ -426,12 +426,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       # Only crates with no *unpublished* workspace dependency can be packaged here:
-      # vcs-diff (no deps), vcs-cli-support (only the published `processkit`), and
-      # vcs-testkit (no deps). They package and verify-build fully — catching missing
+      # vcs-diff (no deps), vcs-cli-support (only the published `processkit`),
+      # vcs-agent (published vcs-cli-support + registry deps), and vcs-testkit (no
+      # deps). They package and verify-build fully — catching missing
       # files or bad metadata before publish. `--locked` asserts the packaged build
       # resolves against the committed Cargo.lock (the same guarantee the release
       # workflow's package/publish steps rely on), so a stale lock is caught here.
-      - run: cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit --locked
+      - run: cargo package -p vcs-diff -p vcs-cli-support -p vcs-agent -p vcs-testkit --locked
       # vcs-git/vcs-jj/vcs-github/vcs-core depend (by version) on in-workspace crates
       # not yet on crates.io — vcs-diff/vcs-cli-support, and vcs-core also on
       # vcs-git/vcs-jj. `cargo package` (even `--no-verify`) refuses to prepare a
@@ -446,8 +447,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      # `license-file = "LICENSE"` makes Cargo include each crate-local
-      # LICENSE in the package. Check every publishable crate explicitly: the
+      # Each tracked crate-local LICENSE is included because manifests carry no
+      # restrictive `include` list. Check every publishable crate explicitly: the
       # local file must remain byte-identical to the root MIT text, and Cargo's
       # final package list must contain it.
       - name: Verify every published package carries the root MIT license
@@ -455,7 +456,7 @@ jobs:
         run: |
           set -euo pipefail
           crates=(
-            vcs-cli-support vcs-core vcs-diff vcs-forge vcs-git vcs-gitea
+            vcs-agent vcs-cli-support vcs-core vcs-diff vcs-forge vcs-git vcs-gitea
             vcs-github vcs-gitlab vcs-jj vcs-mcp vcs-testkit vcs-watch
           )
           for crate in "${crates[@]}"; do

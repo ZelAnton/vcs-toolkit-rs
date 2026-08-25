@@ -1,0 +1,60 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "probe",
+  "status": "success",
+  "data": {
+    "contract": {
+      "schema": "https://zelanton.github.io/vcs-toolkit-rs/vcs-agent/v1/envelope.schema.json",
+      "minimum_client_contract": "vcs-agent/v1",
+      "maximum_client_contract": "vcs-agent/v1",
+      "compatibility": "same-contract-version"
+    },
+    "commands": {
+      "supported": ["probe"],
+      "reserved": ["inspect", "changes", "commit", "publish", "ci status", "ci wait"]
+    },
+    "execution": {
+      "vcs_backends": ["git", "jujutsu"],
+      "forges": ["github", "gitlab", "gitea"],
+      "subprocess_route": "vcs-toolkit-typed-clients",
+      "process_tree_containment": "processkit-rs",
+      "cancellation": "processkit-cancellation-token",
+      "deadlines": "per-operation",
+      "deadline_default_seconds": 120,
+      "processkit_cli_composition": "external-executable",
+      "raw_command_escape_hatch": false
+    },
+    "limits": {
+      "machine_output_default_bytes": 65536,
+      "machine_output_max_bytes": 1048576,
+      "content_overflow": "fail-loud-no-truncation",
+      "machine_paths_included": false
+    },
+    "exit_bands": [
+      { "name": "success", "first": 0, "last": 0 },
+      { "name": "caller", "first": 2, "last": 19 },
+      { "name": "policy", "first": 20, "last": 29 },
+      { "name": "domain", "first": 30, "last": 39 },
+      { "name": "lifecycle", "first": 40, "last": 49 },
+      { "name": "external_command", "first": 50, "last": 59 },
+      { "name": "internal", "first": 70, "last": 79 }
+    ],
+    "error_kinds": [
+      { "kind": "unsupported", "exit_code": 10 },
+      { "kind": "denied", "exit_code": 20 },
+      { "kind": "invalid_input", "exit_code": 2 },
+      { "kind": "backend", "exit_code": 30 },
+      { "kind": "forge", "exit_code": 31 },
+      { "kind": "authentication", "exit_code": 32 },
+      { "kind": "timeout", "exit_code": 40 },
+      { "kind": "cancelled", "exit_code": 41 },
+      { "kind": "output_limit", "exit_code": 42 },
+      { "kind": "external_command", "exit_code": 50 },
+      { "kind": "internal", "exit_code": 70 }
+    ]
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

@@ -5,6 +5,10 @@ This directory is the Phase 0 evidence contract described by
 versioned and reviewable: the corpus describes routing expectations, while a
 result recording supplies evidence from one harness run.
 
+The implemented executable contract is specified separately in
+[`contract-v1.md`](contract-v1.md). Its committed schema and golden machine
+results live with the [`vcs-agent` crate](../../crates/agent).
+
 ## Offline v1 corpus
 
 [`corpus.v1.json`](corpus.v1.json) is the golden prompt corpus.  Each case has a

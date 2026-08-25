@@ -1,0 +1,17 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "probe",
+  "status": "error",
+  "data": null,
+  "error": {
+    "kind": "invalid_input",
+    "exit_code": 2,
+    "code": "max_output_bytes_must_be_integer",
+    "message": "invalid input",
+    "retryable": false,
+    "details": {}
+  },
+  "warnings": [],
+  "fallback": null
+}

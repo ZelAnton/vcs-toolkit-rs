@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zelanton.github.io/vcs-toolkit-rs/vcs-agent/v1/envelope.schema.json",
+  "title": "vcs-agent v1 machine envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "contract_version",
+    "binary_version",
+    "operation",
+    "status",
+    "data",
+    "error",
+    "warnings",
+    "fallback"
+  ],
+  "properties": {
+    "contract_version": { "const": "vcs-agent/v1" },
+    "binary_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "operation": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "status": { "type": "string", "enum": ["success", "error"] },
+    "data": { "type": ["object", "array", "string", "number", "boolean", "null"] },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["kind", "exit_code", "code", "message", "retryable", "details"],
+          "properties": {
+            "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+            "exit_code": { "type": "integer", "minimum": 2, "maximum": 79 },
+            "code": { "type": "string", "minLength": 1 },
+            "message": { "type": "string" },
+            "retryable": { "type": "boolean" },
+            "details": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      ]
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "fallback": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["allowed", "interface", "reason"],
+          "properties": {
+            "allowed": { "type": "boolean" },
+            "interface": { "type": "string", "minLength": 1 },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "success" } } },
+      "then": {
+        "properties": {
+          "data": { "not": { "type": "null" } },
+          "error": { "type": "null" },
+          "fallback": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "data": { "type": "null" },
+          "error": { "type": "object" }
+        }
+      }
+    }
+  ]
+}

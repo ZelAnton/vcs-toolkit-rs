@@ -1,0 +1,37 @@
+[package]
+name = "vcs-agent"
+version = "0.1.0"
+description = "A bounded, outcome-oriented command interface for repository agents."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["git", "jujutsu", "agent", "automation", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# Encode the versioned stdout contract. These are direct crate dependencies
+# rather than workspace entries because no common workspace feature set exists.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The application policy uses ProcessKit's cancellation token and the toolkit's
+# fail-loud OutputBudget. Future repository/forge operations must receive these
+# same values instead of opening a second, raw subprocess path.
+processkit.workspace = true
+vcs-cli-support = { path = "../cli-support", version = "0.8" }
+
+[dev-dependencies]
+# Hermetically compile and exercise the committed Draft 2020-12 wire schema.
+# Resolution features stay off: the contract has no external `$ref` and tests
+# must not need filesystem or HTTP retrieval.
+jsonschema = { version = "0.48", default-features = false }
+
+[[bin]]
+name = "vcs-agent"
+path = "src/main.rs"
+
+[lints]
+workspace = true

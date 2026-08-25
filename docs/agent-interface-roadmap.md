@@ -9,8 +9,10 @@ interface becomes the primary executable contract for local agents; an Agent Ski
 teaches workflows over that contract; MCP remains a supported adapter rather than
 the product's only agent-facing entry point.
 
-The working name used below is `vcs-agent`. Naming and the first stable contract are
-confirmed in the initial contract task before publication.
+The executable name is `vcs-agent`. The initial contract task confirmed the
+`vcs-agent/v1` envelope, outcome taxonomy, error kinds, exit bands, output limits,
+redaction policy, and executable-composition boundary. The normative contract is
+[`docs/agent-interface/contract-v1.md`](agent-interface/contract-v1.md).
 
 ## Problem statement
 
@@ -294,4 +296,3 @@ Dynamic Rust plugins are explicitly out of scope unless a separate future design
 solves ABI stability, signing/trust, version negotiation, isolation, installation,
 and Windows/Linux/macOS loading behavior. External executable composition remains the
 default because it already supplies process isolation and independent versioning.
-

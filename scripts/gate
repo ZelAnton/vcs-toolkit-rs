@@ -245,7 +245,7 @@ fi
 if [ "$FAST" -eq 1 ]; then
   skip "cargo package" "--fast mode"
 else
-  step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-testkit --locked
+  step "cargo package" cargo package -p vcs-diff -p vcs-cli-support -p vcs-agent -p vcs-testkit --locked
 fi
 
 # --- public-api snapshot (mirrors the `public-api` CI job) --------------

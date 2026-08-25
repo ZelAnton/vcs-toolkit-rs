@@ -28,20 +28,20 @@
 # macOS's bash 3.2, which has no associative arrays — since the same file is run
 # by `scripts/gate` locally.
 
-# Packaging convention: every crate named by `release_order` has a local LICENSE
-# byte-identical to the workspace root and sets `license-file = "LICENSE"`.
-# Cargo consequently includes LICENSE in every .crate; CI checks the package list
-# and byte identity before this release logic can publish it.
+# Packaging convention: every crate named by `release_order` has a tracked local
+# LICENSE byte-identical to the workspace root. With no restrictive `include`
+# list Cargo consequently includes LICENSE in every .crate; CI checks the package
+# list and byte identity before this release logic can publish it.
 #
-# The 12 publishable crates, in publish ORDER: every crate appears AFTER all of
+# The 13 publishable crates, in publish ORDER: every crate appears AFTER all of
 # its in-workspace dependencies. Foundational crates first (vcs-diff,
-# vcs-cli-support — the wrappers/facades depend on them), then the wrappers, the
+# vcs-cli-support — the wrappers/facades depend on them), then vcs-agent and the wrappers, the
 # vcs-forge/vcs-core facades, and finally vcs-watch/vcs-mcp (which depend on
 # vcs-core / vcs-core+vcs-forge). vcs-testkit has no workspace deps (any
 # position). `test_release_order_is_topological` proves this ordering is valid
 # against `crate_deps`, so a future reorder that breaks it fails the tests.
 release_order() {
-  echo "vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp"
+  echo "vcs-diff vcs-cli-support vcs-agent vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp"
 }
 
 # crate_dir <name> -> the crate's directory under the workspace root (stdout).
@@ -50,6 +50,7 @@ crate_dir() {
   case "$1" in
     vcs-diff)        echo crates/diff ;;
     vcs-cli-support) echo crates/cli-support ;;
+    vcs-agent)       echo crates/agent ;;
     vcs-git)         echo crates/git ;;
     vcs-jj)          echo crates/jj ;;
     vcs-github)      echo crates/github ;;
@@ -72,6 +73,7 @@ crate_dir() {
 crate_deps() {
   case "$1" in
     vcs-diff|vcs-cli-support|vcs-testkit) echo "" ;;
+    vcs-agent)           echo "vcs-cli-support" ;;
     vcs-git|vcs-jj)      echo "vcs-diff vcs-cli-support" ;;
     vcs-github|vcs-gitlab) echo "vcs-cli-support vcs-diff" ;;
     vcs-gitea)           echo "vcs-cli-support vcs-diff" ;;
