@@ -196,9 +196,9 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    AnnotationLine, BackendKind, BranchDelete, ChangeKind, CloneSpec, Commit, CreateOutcome,
-    DiffStat, FileChange, FileDiff, MergeProbe, OperationLogEntry, OperationState, Remote,
-    RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo,
+    AnnotationLine, BackendKind, BranchDelete, ChangeKind, CheckedCommit, CloneSpec, Commit,
+    CreateOutcome, DiffStat, FileChange, FileDiff, MergeProbe, OperationLogEntry, OperationState,
+    Remote, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo,
     WorktreeRemove,
 };
 pub use error::{Error, Result};
@@ -1012,6 +1012,20 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Working-copy changes with every selected item represented as a leaf
+    /// repo-relative file path.
+    ///
+    /// Git's ordinary porcelain status may collapse an untracked directory to
+    /// `dir/`; this variant uses `--untracked-files=all` so callers that perform
+    /// exact-path mutations cannot accidentally turn that directory token into a
+    /// recursive pathspec. Jujutsu status already has leaf-file semantics.
+    pub async fn changed_files_exact(&self) -> Result<Vec<FileChange>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::changed_files_exact(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::changed_files_exact(j, &self.cwd).await,
+        }
+    }
+
     /// Aggregate insertion/deletion counts for the working copy.
     ///
     /// Backend nuance: git counts the working tree against `HEAD` (`git diff`,
@@ -1247,6 +1261,45 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::commit_paths(g, &self.cwd, paths, message).await,
             Backend::Jj(j) => jj_backend::commit_paths(j, &self.cwd, paths, message).await,
+        }
+    }
+
+    /// Commit `paths` only when the revision still equals `expected_revision`,
+    /// and return evidence from the commit/change actually created.
+    ///
+    /// Git prepares an exact commit through a temporary index, verifies its path
+    /// diff, then installs it with native `update-ref HEAD <new> <expected-old>`:
+    /// the expected identity and ref mutation are one atomic compare-and-swap.
+    /// A terminal CAS mismatch is [`Error::StaleRevision`]; an unobservable CAS
+    /// result or uncertainty after a successful ref update is
+    /// [`Error::OutcomeUnknown`]. Git repository commit hooks are deliberately not
+    /// executed so they cannot mutate unrelated checkout state. Jujutsu currently
+    /// exposes no equivalent expected-operation/change guard, so this method
+    /// returns [`Error::Unsupported`] before mutation.
+    ///
+    /// [`CheckedCommit::included_paths`] is observed from the created revision's
+    /// diff (including both sides of renames), never copied from the request.
+    pub async fn commit_paths_checked(
+        &self,
+        paths: &[PathBuf],
+        message: &str,
+        expected_revision: &str,
+    ) -> Result<CheckedCommit> {
+        if paths.is_empty() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "commit_paths_checked requires at least one path",
+            )));
+        }
+        match &self.backend {
+            Backend::Git(g) => {
+                git_backend::commit_paths_checked(g, &self.cwd, paths, message, expected_revision)
+                    .await
+            }
+            Backend::Jj(j) => {
+                jj_backend::commit_paths_checked(j, &self.cwd, paths, message, expected_revision)
+                    .await
+            }
         }
     }
 
@@ -1727,6 +1780,7 @@ facade_trait! {
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
+        fn changed_files_exact() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
         fn diff() -> Result<Vec<FileDiff>>;
         fn diff_between(from: &str, to: &str) -> Result<Vec<FileDiff>>;
@@ -1737,6 +1791,7 @@ facade_trait! {
         fn snapshot() -> Result<RepoSnapshot>;
         fn snapshot_readonly() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[PathBuf], message: &str) -> Result<()>;
+        fn commit_paths_checked(paths: &[PathBuf], message: &str, expected_revision: &str) -> Result<CheckedCommit>;
         fn fetch() -> Result<()>;
         fn fetch_with_progress<'a>(progress: &'a mut ProgressCallback<'a>) -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
@@ -3444,6 +3499,21 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn jj_checked_commit_is_unsupported_without_spawning_or_mutating() {
+        let runner = RecordingRunner::new(ScriptedRunner::new());
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&runner));
+        let error = repo
+            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
+            .await
+            .expect_err("jj has no atomic expected-identity mutation primitive");
+        assert!(matches!(error, Error::Unsupported(_)));
+        assert!(
+            runner.calls().is_empty(),
+            "unsupported must be returned before even a snapshot-producing jj command"
+        );
     }
 
     // `create_branch` dispatches to `git branch <name>` (no checkout) on git and to

@@ -1,0 +1,34 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "commit",
+  "status": "success",
+  "data": {
+    "repository": {
+      "backend": "git",
+      "root": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null},
+      "cwd": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}
+    },
+    "before": {"revision": "0123456789abcdef", "change_id": null},
+    "after": {"revision": "fedcba9876543210", "change_id": null},
+    "included_paths": [
+      {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}
+    ],
+    "unrelated_changes_preserved": true,
+    "semantics": {
+      "selection": "exact-repo-relative-paths",
+      "backend_selection": "git-atomic-ref-cas",
+      "refs_advanced": true,
+      "index_may_change_for_selected_paths": true,
+      "unrelated_index_preserved": true,
+      "repository_hooks_executed": false,
+      "working_copy_content_mutated": false,
+      "push_performed": false,
+      "switch_performed": false,
+      "conflict_repair_performed": false
+    }
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

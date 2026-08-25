@@ -356,6 +356,62 @@
           "then": {"properties": {"read_semantics": {"properties": {"working_copy_snapshot": {"const": "live-jj-snapshot"}}}}}
         }
       ]
+    },
+    "commitIdentity": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["revision", "change_id"],
+      "properties": {
+        "revision": {"type": "string", "minLength": 1},
+        "change_id": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "commitSemantics": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["selection", "backend_selection", "refs_advanced", "index_may_change_for_selected_paths", "unrelated_index_preserved", "repository_hooks_executed", "working_copy_content_mutated", "push_performed", "switch_performed", "conflict_repair_performed"],
+      "properties": {
+        "selection": {"const": "exact-repo-relative-paths"},
+        "backend_selection": {"const": "git-atomic-ref-cas"},
+        "refs_advanced": {"const": true},
+        "index_may_change_for_selected_paths": {"type": "boolean"},
+        "unrelated_index_preserved": {"const": true},
+        "repository_hooks_executed": {"const": false},
+        "working_copy_content_mutated": {"const": false},
+        "push_performed": {"const": false},
+        "switch_performed": {"const": false},
+        "conflict_repair_performed": {"const": false}
+      }
+    },
+    "commitData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["repository", "before", "after", "included_paths", "unrelated_changes_preserved", "semantics"],
+      "properties": {
+        "repository": {"allOf": [{"$ref": "#/$defs/repository"}, {"properties": {"backend": {"const": "git"}}}]},
+        "before": {"$ref": "#/$defs/commitIdentity"},
+        "after": {"$ref": "#/$defs/commitIdentity"},
+        "included_paths": {
+          "description": "Paths observed in the created commit/change diff, including both sides of a rename; never copied from the request.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/machinePath"}
+        },
+        "unrelated_changes_preserved": {"const": true},
+        "semantics": {"$ref": "#/$defs/commitSemantics"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"repository": {"properties": {"backend": {"const": "git"}}, "required": ["backend"]}}, "required": ["repository"]},
+          "then": {
+            "properties": {
+              "before": {"properties": {"change_id": {"type": "null"}}},
+              "after": {"properties": {"change_id": {"type": "null"}}},
+              "semantics": {"properties": {"backend_selection": {"const": "git-atomic-ref-cas"}, "index_may_change_for_selected_paths": {"const": true}}}
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [
@@ -371,6 +427,10 @@
     {
       "if": {"properties": {"operation": {"const": "changes"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
       "then": {"properties": {"data": {"$ref": "#/$defs/changesData"}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "commit"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
+      "then": {"properties": {"data": {"$ref": "#/$defs/commitData"}}}
     }
   ]
 }

@@ -6,12 +6,16 @@ the MCP server: callers ask for an outcome, receive one bounded versioned JSON
 document, and decide explicitly whether an `unsupported` result permits a lower-
 level fallback.
 
-The `0.1.0` v1 read surface implements `probe`, `inspect`, and `changes`:
+The `0.1.0` v1 surface implements `probe`, `inspect`, `changes`, and checked
+exact-path `commit`:
 
 ```text
 cargo run -p vcs-agent -- probe
 cargo run -p vcs-agent -- inspect --repo .
 cargo run -p vcs-agent -- changes --repo . --mode full --content-max-bytes 262144
+cargo run -p vcs-agent -- commit --repo . --write-intent commit \
+  --expected-revision <inspect-revision> --message "selected files" \
+  --path src/lib.rs --include-machine-paths
 ```
 
 `probe` reports the `vcs-agent/v1` contract and schema identity, binary version,
@@ -21,7 +25,13 @@ exit bands. The shared policy fixes one 120-second deadline for the complete
 outcome, including every sequential repository and forge query it composes.
 `probe` itself reads no repository and spawns no command. `inspect` reports
 backend, repository/working-copy state, remotes, forge/auth/capability facts;
-`changes` reports a summary or structured full diff.
+`changes` reports a summary or structured full diff. `commit` requires explicit
+write intent, a non-empty message and exact repo-relative file paths, and the
+revision identity obtained from preflight. It refuses stale or conflicted state,
+directory/traversal/flag-like ambiguity, and unchanged selections before
+mutation. Its success envelope proves the before/after identities, the included
+path set, and preservation of unrelated changes; it never pushes, switches, or
+repairs conflicts.
 
 Machine results — success and failure — are complete JSON documents written to
 stdout. Short human diagnostics are written only to stderr. The default machine
@@ -67,3 +77,12 @@ On Jujutsu they deliberately read the live working copy: `jj` may snapshot an
 unsnapshotted filesystem edit and append an operation-log entry. The machine
 result reports that distinction instead of claiming strict no-op reads or using
 the stale `--ignore-working-copy` view.
+
+Checked commit uses the existing typed `Repo::commit_paths` facade. Git maps the
+selection to commit-only literal pathspecs and may update the selected paths'
+index entries while retaining unrelated staged, unstaged, and untracked state.
+Jujutsu maps UTF-8 paths to exact filesets and has no Git index; its before/after
+evidence includes both revision and change IDs. A lifecycle failure remains a
+structured timeout/cancellation result, while a completed mutation whose
+postflight cannot be proved returns `outcome_unknown` (exit 43). Repeating the
+same request is fail-closed because its expected pre-mutation revision is stale.

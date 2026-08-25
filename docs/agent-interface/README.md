@@ -56,10 +56,12 @@ preferred/fallback/raw/total channels), unrelated-state evidence, and the full
 before/after/published revision block with terminal-CI revision and conclusion.
 The recorder refuses to write any output when even one corpus case is missing.
 
-The validator also checks the `inspect`/`changes` operation-specific shape,
-path encodings, summary/full distinction, and disclosed Git/Jujutsu read
-semantics. The recorder runs that same machine-fixture validation before it
-writes an evaluation recording, so the two tools cannot silently disagree.
+The validator also checks the `inspect`/`changes`/`commit` operation-specific
+shape, path encodings, summary/full distinction, disclosed Git/Jujutsu read
+semantics, exact-path mutation evidence, revision advance, backend selection,
+and unrelated-state preservation. The recorder runs that same machine-fixture
+validation before it writes an evaluation recording, so the two tools cannot
+silently disagree.
 It rejects duplicate or unknown case IDs, unclassified fallbacks,
 negative prompts that activate an interface, mismatched call totals, missing
 unrelated-state evidence, and mutation/publication results without exact

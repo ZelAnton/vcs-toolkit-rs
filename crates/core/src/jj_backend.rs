@@ -15,8 +15,8 @@ use vcs_jj::{
 };
 
 use crate::dto::{
-    AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationLogEntry, OperationState, Remote, RepoSnapshot, WorktreeInfo,
+    AnnotationLine, ChangeKind, CheckedCommit, Commit, CreateOutcome, DiffStat, FileChange,
+    MergeProbe, OperationLogEntry, OperationState, Remote, RepoSnapshot, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -208,6 +208,15 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
 ) -> Result<Vec<FileChange>> {
     let entries = jj.status(dir).await?;
     Ok(entries.into_iter().map(file_change_from_summary).collect())
+}
+
+pub(crate) async fn changed_files_exact<R: ProcessRunner>(
+    jj: &Jj<R>,
+    dir: &Path,
+) -> Result<Vec<FileChange>> {
+    // Jujutsu tracks leaf paths directly; unlike Git status it never collapses
+    // an untracked directory into a recursive path token.
+    changed_files(jj, dir).await
 }
 
 pub(crate) async fn diff_stat<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<DiffStat> {
@@ -412,6 +421,19 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
         .collect();
     jj.commit_paths(dir, &filesets, message).await?;
     Ok(())
+}
+
+pub(crate) async fn commit_paths_checked<R: ProcessRunner>(
+    _jj: &Jj<R>,
+    _dir: &Path,
+    _paths: &[PathBuf],
+    _message: &str,
+    _expected_revision: &str,
+) -> Result<CheckedCommit> {
+    Err(Error::Unsupported(
+        "Jujutsu exposes no atomic expected-operation/change guard for checked commit; refusing before mutation"
+            .into(),
+    ))
 }
 
 pub(crate) async fn fetch<R: ProcessRunner>(jj: &Jj<R>, dir: &Path) -> Result<()> {

@@ -9,7 +9,7 @@ version.
 The executable is an application facade over vcs-toolkit's typed clients, not a
 mirror of every Git, Jujutsu, or forge method. The v1 taxonomy contains `probe`,
 `inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait`. `probe`,
-`inspect`, and `changes` are implemented. The remaining outcomes return
+`inspect`, `changes`, and `commit` are implemented. The remaining outcomes return
 `unsupported` and never silently invoke a lower-level command. The production
 source assertion in `crates/agent/src/main.rs` checks that the executable has no
 raw subprocess constructor.
@@ -37,6 +37,65 @@ non-UTF-8 Unix paths use hex-encoded OS bytes, and non-Unicode Windows paths use
 hex-encoded UTF-16 units. This makes status paths round-trippable. Without
 `--include-machine-paths`, both absolute and repository-relative paths use the
 `redacted` encoding with `value: null`.
+
+## Checked exact-path commit
+
+`commit --repo <path>` is a checked mutation, not a convenience wrapper around
+an ambient commit. It additionally requires `--write-intent commit`, one exact
+`--expected-revision <id>`, a non-empty `--message`, and one or more repeated
+`--path` values. Each selected path must be a non-empty, non-flag-like,
+repo-relative file path with no absolute prefix, parent traversal, empty or dot
+component, duplicate, directory expansion, or one-sided rename. Every path must
+appear as an exact leaf in the live typed status before mutation; Git status is
+queried with `--untracked-files=all` so an untracked directory can never stand
+in for all descendants. Deletions and symlinks remain exact leaf entries. An
+unchanged path is refused rather than reported later as included.
+
+Preflight takes a live typed snapshot and fails with `denied` while conflicts or
+an in-progress operation exist, when the current revision is unavailable, or
+when it does not equal `--expected-revision`. Git also carries that identity into
+the atomic ref update, so the preflight is not the write authority by itself.
+Repeating a request after a success cannot create another commit because its
+expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths.
+Jujutsu checked commit is structured `unsupported` before any snapshot/commit
+mutation because its typed CLI surface has no atomic expected-operation/change
+guard equivalent to Git's expected-old ref update.
+
+The only mutation call is the typed `Repo::commit_paths_checked`, which carries
+the expected identity to the backend boundary. On Git it prepares the commit
+from the expected tree through a temporary index, verifies the prepared object's
+exact path diff, and installs it with native atomic
+`update-ref HEAD <new> <expected-old>`. A concurrent HEAD advance makes that CAS
+fail stale and leaves the prepared object unreachable; no T-193 commit is
+installed. Repository hooks (including commit hooks, `post-index-change`, and
+`reference-transaction`) are deliberately not executed: arbitrary hook code
+could mutate unrelated index/worktree state and make the preservation claim
+unprovable. The success envelope exposes this as
+`repository_hooks_executed: false`. After a
+successful CAS, only selected index entries are reset, preserving unrelated
+staged/unstaged/untracked state. Jujutsu is refused as unsupported before
+preparation rather than claiming a weaker stale guard. Postflight also requires an advanced revision,
+clear repository state, no selected paths left in the working-copy change set,
+and every unrelated status entry still present. Only then does success report
+the repository, before/after revision identity and included paths observed from
+the created commit diff
+(both old and new sides for renames), plus
+`unrelated_changes_preserved: true`. Its semantics explicitly state that no
+push, switch, conflict repair, or working-copy content edit occurred. Git may
+update index entries for selected paths but preserves unrelated staged,
+unstaged, and untracked state. No Jujutsu commit-success envelope is valid until
+that backend gains an atomic expected-identity mutation primitive.
+
+Timeout and cancellation remain their ProcessKit lifecycle kinds during
+preflight and Git preparation. An observed terminal nonzero CAS rejection is a
+safe stale refusal because the ref was not updated. A timeout, cancellation, or
+other unobservable CAS result is `outcome_unknown` (exit 43) even if a subsequent
+HEAD read differs from the prepared commit: the prepared ref may have been
+installed and immediately advanced again. Failures after an observed successful
+CAS are likewise unknown; neither case becomes a false success. A caller recovers by
+inspecting current state and retrying with the original expected revision: a
+commit that actually advanced is then rejected as stale, while an unchanged
+revision permits a fresh checked attempt.
 
 ## Envelope and compatibility
 
@@ -81,6 +140,7 @@ The `error.kind` vocabulary and exact exit codes are stable within v1:
 | `timeout` | 40 | Operation deadline or inactivity deadline elapsed |
 | `cancelled` | 41 | Caller cancellation fired |
 | `output_limit` | 42 | Content or machine result exceeded its fail-loud budget |
+| `outcome_unknown` | 43 | A mutation returned but its exact postflight could not be proved |
 | `external_command` | 50 | A supervised, non-domain external command failed |
 | `internal` | 70 | The application could not honor its own contract |
 

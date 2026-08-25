@@ -10,8 +10,8 @@ use vcs_git::{
 };
 
 use crate::dto::{
-    AnnotationLine, ChangeKind, Commit, CreateOutcome, DiffStat, FileChange, MergeProbe,
-    OperationState, Remote, RepoSnapshot, UpstreamTracking, WorktreeInfo,
+    AnnotationLine, ChangeKind, CheckedCommit, Commit, CreateOutcome, DiffStat, FileChange,
+    MergeProbe, OperationState, Remote, RepoSnapshot, UpstreamTracking, WorktreeInfo,
 };
 use crate::error::{Error, Result};
 
@@ -133,6 +133,14 @@ pub(crate) async fn changed_files<R: ProcessRunner>(
     dir: &Path,
 ) -> Result<Vec<FileChange>> {
     let entries = git.status(dir).await?;
+    Ok(entries.into_iter().map(file_change_from_status).collect())
+}
+
+pub(crate) async fn changed_files_exact<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+) -> Result<Vec<FileChange>> {
+    let entries = git.status_all_files(dir).await?;
     Ok(entries.into_iter().map(file_change_from_status).collect())
 }
 
@@ -327,6 +335,67 @@ pub(crate) async fn commit_paths<R: ProcessRunner>(
     )
     .await?;
     Ok(())
+}
+
+pub(crate) async fn commit_paths_checked<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    paths: &[PathBuf],
+    message: &str,
+    expected_revision: &str,
+) -> Result<CheckedCommit> {
+    let top_level = worktree_top_level(git, dir).await?;
+    match git
+        .commit_paths_cas(
+            &top_level,
+            vcs_git::CommitPaths::new(paths.iter().cloned(), message),
+            &RevSpec::new(expected_revision)?,
+        )
+        .await?
+    {
+        vcs_git::CommitPathsCas::Installed {
+            revision,
+            included_paths,
+        } => Ok(CheckedCommit::new(
+            expected_revision.to_owned(),
+            revision.clone(),
+            revision,
+            None,
+            None,
+            included_paths,
+        )),
+        vcs_git::CommitPathsCas::Stale {
+            actual_revision: Some(actual),
+        } => Err(Error::StaleRevision {
+            expected: expected_revision.to_owned(),
+            actual,
+        }),
+        vcs_git::CommitPathsCas::Stale {
+            actual_revision: None,
+        } => Err(Error::OutcomeUnknown(
+            "git atomic update rejected but current HEAD is unavailable".into(),
+        )),
+        vcs_git::CommitPathsCas::PathMismatch { .. } => Err(Error::Unsupported(
+            "the prepared Git commit did not contain exactly the requested path set; no ref was updated"
+                .into(),
+        )),
+        vcs_git::CommitPathsCas::OutcomeUnknown { .. } => Err(Error::OutcomeUnknown(
+            "git atomic commit or selected-index post-step is unverified".into(),
+        )),
+        vcs_git::CommitPathsCas::Unsupported => Err(Error::Unsupported(
+            "this Git backend cannot provide the required atomic checked-commit primitive".into(),
+        )),
+        _ => Err(Error::Unsupported(
+            "the Git backend returned an unknown atomic checked-commit outcome".into(),
+        )),
+    }
+}
+
+async fn worktree_top_level<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        git.run_args_in(dir, &["rev-parse", "--show-toplevel"])
+            .await?,
+    ))
 }
 
 pub(crate) async fn fetch<R: ProcessRunner>(git: &Git<R>, dir: &Path) -> Result<()> {

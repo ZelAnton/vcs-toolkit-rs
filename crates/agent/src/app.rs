@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use processkit::{CancellationToken, JobRunner, ProcessRunner};
@@ -108,6 +109,36 @@ struct ChangesData {
 }
 
 #[derive(Serialize)]
+struct CommitData {
+    repository: RepositoryIdentity,
+    before: CommitIdentity,
+    after: CommitIdentity,
+    included_paths: Vec<MachinePath>,
+    unrelated_changes_preserved: bool,
+    semantics: CommitSemantics,
+}
+
+#[derive(Clone, Serialize)]
+struct CommitIdentity {
+    revision: String,
+    change_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct CommitSemantics {
+    selection: &'static str,
+    backend_selection: &'static str,
+    refs_advanced: bool,
+    index_may_change_for_selected_paths: bool,
+    unrelated_index_preserved: bool,
+    repository_hooks_executed: bool,
+    working_copy_content_mutated: bool,
+    push_performed: bool,
+    switch_performed: bool,
+    conflict_repair_performed: bool,
+}
+
+#[derive(Clone, Serialize)]
 struct RepositoryIdentity {
     backend: &'static str,
     root: MachinePath,
@@ -287,7 +318,7 @@ struct StructuredLine {
 /// JSON-safe, lossless native-path representation. `value` is a UTF-8 path
 /// when possible, otherwise a hex encoding of the OS-native units. `display`
 /// is informational and may be lossy; consumers that round-trip use `value`.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct MachinePath {
     display: String,
     encoding: &'static str,
@@ -360,7 +391,7 @@ async fn execute_inner(
 ) -> AgentResult<MachineEnvelope> {
     match invocation.operation {
         Operation::Probe => Ok(probe(invocation)),
-        Operation::Inspect | Operation::Changes => {
+        Operation::Inspect | Operation::Changes | Operation::Commit => {
             let repository = invocation
                 .repository
                 .as_deref()
@@ -390,35 +421,45 @@ async fn execute_repository<R: ProcessRunner>(
     policy: &ExecutionPolicy,
     repo: &Repo<R>,
 ) -> AgentResult<MachineEnvelope> {
-    if invocation.operation == Operation::Inspect {
-        let remotes = repo.remotes().await.map_err(|error| {
-            Box::new(map_core_error(
-                Operation::Inspect,
+    match invocation.operation {
+        Operation::Inspect => {
+            let remotes = repo.remotes().await.map_err(|error| {
+                Box::new(map_core_error(
+                    Operation::Inspect,
+                    invocation.include_machine_paths,
+                    error,
+                ))
+            })?;
+            let forge_remote = preferred_forge_remote(&remotes)
+                .map(|(remote, _)| redact_metadata(&remote.url, invocation.include_machine_paths));
+            let forge = build_forge(&remotes, repo.cwd(), policy);
+            let data = inspect_repo(
+                repo,
+                remotes,
+                forge.as_deref(),
+                forge_remote,
                 invocation.include_machine_paths,
-                error,
-            ))
-        })?;
-        let forge_remote = preferred_forge_remote(&remotes)
-            .map(|(remote, _)| redact_metadata(&remote.url, invocation.include_machine_paths));
-        let forge = build_forge(&remotes, repo.cwd(), policy);
-        let data = inspect_repo(
-            repo,
-            remotes,
-            forge.as_deref(),
-            forge_remote,
-            invocation.include_machine_paths,
-        )
-        .await?;
-        Ok(MachineEnvelope::success(Operation::Inspect.name(), data))
-    } else {
-        let data = changes_repo(
-            repo,
-            invocation.changes_mode,
-            invocation.content_max_bytes,
-            invocation.include_machine_paths,
-        )
-        .await?;
-        Ok(MachineEnvelope::success(Operation::Changes.name(), data))
+            )
+            .await?;
+            Ok(MachineEnvelope::success(Operation::Inspect.name(), data))
+        }
+        Operation::Changes => {
+            let data = changes_repo(
+                repo,
+                invocation.changes_mode,
+                invocation.content_max_bytes,
+                invocation.include_machine_paths,
+            )
+            .await?;
+            Ok(MachineEnvelope::success(Operation::Changes.name(), data))
+        }
+        Operation::Commit => {
+            let data = commit_repo(repo, invocation).await?;
+            Ok(MachineEnvelope::success(Operation::Commit.name(), data))
+        }
+        _ => Err(Box::new(AgentError::internal(
+            "repository_operation_mismatch",
+        ))),
     }
 }
 
@@ -433,8 +474,8 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
                 compatibility: "same-contract-version",
             },
             commands: CommandCapabilities {
-                supported: vec!["probe", "inspect", "changes"],
-                reserved: vec!["commit", "publish", "ci status", "ci wait"],
+                supported: vec!["probe", "inspect", "changes", "commit"],
+                reserved: vec!["publish", "ci status", "ci wait"],
             },
             execution: ExecutionCapabilities {
                 vcs_backends: vec!["git", "jujutsu"],
@@ -460,6 +501,335 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
     )
 }
 
+async fn commit_repo<R: ProcessRunner>(
+    repo: &Repo<R>,
+    invocation: &Invocation,
+) -> AgentResult<CommitData> {
+    let include_paths = invocation.include_machine_paths;
+    if !invocation.write_intent {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::Denied,
+            "write_intent_required",
+            include_paths,
+        )));
+    }
+    let expected = invocation.expected_revision.as_deref().ok_or_else(|| {
+        Box::new(commit_gate_error(
+            ErrorKind::InvalidInput,
+            "expected_revision_required",
+            include_paths,
+        ))
+    })?;
+    let message = invocation.message.as_deref().ok_or_else(|| {
+        Box::new(commit_gate_error(
+            ErrorKind::InvalidInput,
+            "message_required",
+            include_paths,
+        ))
+    })?;
+    if invocation.commit_paths.is_empty() {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::InvalidInput,
+            "path_required",
+            include_paths,
+        )));
+    }
+    if matches!(repo.kind(), BackendKind::Jj) {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::Unsupported,
+            "jujutsu_atomic_commit_unsupported",
+            include_paths,
+        )));
+    }
+    let before_snapshot = repo
+        .snapshot()
+        .await
+        .map_err(|error| Box::new(map_core_error(Operation::Commit, include_paths, error)))?;
+    ensure_clear_preflight(&before_snapshot, include_paths)?;
+    let before = commit_identity(repo, before_snapshot, include_paths, false).await?;
+    if before.revision != expected {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::Denied,
+            "stale_expected_revision",
+            include_paths,
+        )));
+    }
+
+    let changed_before = repo
+        .changed_files_exact()
+        .await
+        .map_err(|error| Box::new(map_core_error(Operation::Commit, include_paths, error)))?;
+    let unrelated_before =
+        partition_preflight_changes(&changed_before, &invocation.commit_paths, include_paths)?;
+
+    let included_paths = invocation
+        .commit_paths
+        .iter()
+        .map(|path| MachinePath::from_path(path, include_paths))
+        .collect::<Vec<_>>();
+    let semantics = commit_semantics(repo.kind());
+    let preview = MachineEnvelope::success(
+        Operation::Commit.name(),
+        CommitData {
+            repository: repository_identity(repo, include_paths),
+            before: redact_commit_identity(before.clone(), include_paths),
+            after: redact_commit_identity(before.clone(), include_paths),
+            included_paths: included_paths.clone(),
+            unrelated_changes_preserved: true,
+            semantics,
+        },
+    );
+    let preview_bytes = serde_json::to_vec_pretty(&preview)
+        .expect("commit preview DTO is serializable")
+        .len()
+        + 1;
+    // Commit/revision IDs have backend-fixed widths in normal operation, but
+    // Jujutsu's shortest unique change ID can grow. Reserve space so the final
+    // success can never be replaced by an output-limit error after mutation.
+    if preview_bytes.saturating_add(256) > invocation.max_output_bytes {
+        return Err(Box::new(
+            AgentError::output_limit(Operation::Commit.name(), invocation.max_output_bytes)
+                .include_machine_paths(include_paths),
+        ));
+    }
+
+    let evidence = repo
+        .commit_paths_checked(&invocation.commit_paths, message, expected)
+        .await
+        .map_err(|error| Box::new(map_core_error(Operation::Commit, include_paths, error)))?;
+    if evidence.before_revision != before.revision
+        || evidence.before_change_id.as_ref() != before.change_id.as_ref()
+        || !same_path_set(&evidence.included_paths, &invocation.commit_paths)
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_observed_paths_or_base_mismatch",
+            include_paths,
+        )));
+    }
+
+    let after_snapshot = repo.snapshot().await.map_err(|_| {
+        Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_postflight_snapshot_failed",
+            include_paths,
+        ))
+    })?;
+    if after_snapshot.conflicted || after_snapshot.operation != OperationState::Clear {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_postflight_state_not_clear",
+            include_paths,
+        )));
+    }
+    let after = commit_identity(repo, after_snapshot, include_paths, true).await?;
+    if after.revision != evidence.after_revision
+        || after.change_id.as_ref() != evidence.after_change_id.as_ref()
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_postflight_identity_changed",
+            include_paths,
+        )));
+    }
+    let changed_after = repo.changed_files_exact().await.map_err(|_| {
+        Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_postflight_changes_unavailable",
+            include_paths,
+        ))
+    })?;
+    if after.revision == before.revision {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_revision_did_not_advance",
+            include_paths,
+        )));
+    }
+    if changed_after
+        .iter()
+        .any(|change| change_intersects_paths(change, &invocation.commit_paths))
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_selected_paths_remain_changed",
+            include_paths,
+        )));
+    }
+    if unrelated_before
+        .iter()
+        .any(|before_change| !changed_after.contains(before_change))
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_unrelated_state_changed",
+            include_paths,
+        )));
+    }
+
+    Ok(CommitData {
+        repository: repository_identity(repo, include_paths),
+        before: redact_commit_identity(before, include_paths),
+        after: redact_commit_identity(after, include_paths),
+        included_paths: evidence
+            .included_paths
+            .iter()
+            .map(|path| MachinePath::from_path(path, include_paths))
+            .collect(),
+        unrelated_changes_preserved: true,
+        semantics,
+    })
+}
+
+fn same_path_set(left: &[PathBuf], right: &[PathBuf]) -> bool {
+    left.iter().collect::<BTreeSet<_>>() == right.iter().collect::<BTreeSet<_>>()
+}
+
+fn commit_semantics(kind: BackendKind) -> CommitSemantics {
+    debug_assert!(matches!(kind, BackendKind::Git));
+    CommitSemantics {
+        selection: "exact-repo-relative-paths",
+        backend_selection: "git-atomic-ref-cas",
+        refs_advanced: true,
+        index_may_change_for_selected_paths: true,
+        unrelated_index_preserved: true,
+        repository_hooks_executed: false,
+        working_copy_content_mutated: false,
+        push_performed: false,
+        switch_performed: false,
+        conflict_repair_performed: false,
+    }
+}
+
+fn ensure_clear_preflight(snapshot: &RepoSnapshot, include_paths: bool) -> AgentResult<()> {
+    if snapshot.conflicted || snapshot.operation != OperationState::Clear {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::Denied,
+            "repository_state_not_clear",
+            include_paths,
+        )));
+    }
+    Ok(())
+}
+
+async fn commit_identity<R: ProcessRunner>(
+    repo: &Repo<R>,
+    snapshot: RepoSnapshot,
+    include_paths: bool,
+    postflight: bool,
+) -> AgentResult<CommitIdentity> {
+    let Some(revision) = snapshot.head else {
+        return Err(Box::new(commit_gate_error(
+            if postflight {
+                ErrorKind::OutcomeUnknown
+            } else {
+                ErrorKind::Denied
+            },
+            if postflight {
+                "commit_postflight_revision_unavailable"
+            } else {
+                "current_revision_unavailable"
+            },
+            include_paths,
+        )));
+    };
+    let change_id = if let Some(jj) = repo.jj_at() {
+        let change = jj.current_change().await.map_err(|_| {
+            Box::new(commit_gate_error(
+                if postflight {
+                    ErrorKind::OutcomeUnknown
+                } else {
+                    ErrorKind::Backend
+                },
+                if postflight {
+                    "commit_postflight_change_identity_unavailable"
+                } else {
+                    "change_identity_unavailable"
+                },
+                include_paths,
+            ))
+        })?;
+        if !revision.starts_with(&change.commit_id) {
+            return Err(Box::new(commit_gate_error(
+                if postflight {
+                    ErrorKind::OutcomeUnknown
+                } else {
+                    ErrorKind::Denied
+                },
+                if postflight {
+                    "commit_postflight_identity_inconsistent"
+                } else {
+                    "repository_identity_changed_during_preflight"
+                },
+                include_paths,
+            )));
+        }
+        Some(change.change_id)
+    } else {
+        None
+    };
+    Ok(CommitIdentity {
+        revision,
+        change_id,
+    })
+}
+
+fn partition_preflight_changes(
+    changes: &[FileChange],
+    selected: &[PathBuf],
+    include_paths: bool,
+) -> AgentResult<Vec<FileChange>> {
+    for change in changes {
+        let selects_new = selected.iter().any(|path| path == &change.path);
+        let selects_old = change
+            .old_path
+            .as_ref()
+            .is_some_and(|old| selected.iter().any(|path| path == old));
+        if change.old_path.is_some() && selects_new != selects_old {
+            return Err(Box::new(commit_gate_error(
+                ErrorKind::Denied,
+                "rename_requires_old_and_new_paths",
+                include_paths,
+            )));
+        }
+    }
+    if selected.iter().any(|path| {
+        !changes.iter().any(|change| {
+            &change.path == path || change.old_path.as_ref().is_some_and(|old| old == path)
+        })
+    }) {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::Denied,
+            "selected_path_not_changed",
+            include_paths,
+        )));
+    }
+    Ok(changes
+        .iter()
+        .filter(|change| !change_intersects_paths(change, selected))
+        .cloned()
+        .collect())
+}
+
+fn change_intersects_paths(change: &FileChange, selected: &[PathBuf]) -> bool {
+    selected
+        .iter()
+        .any(|path| path == &change.path || change.old_path.as_ref().is_some_and(|old| path == old))
+}
+
+fn commit_gate_error(kind: ErrorKind, code: &'static str, include_paths: bool) -> AgentError {
+    AgentError::new(Operation::Commit.name(), kind, code, false)
+        .include_machine_paths(include_paths)
+}
+
+fn redact_commit_identity(mut identity: CommitIdentity, include_paths: bool) -> CommitIdentity {
+    identity.revision = redact_metadata(&identity.revision, include_paths);
+    identity.change_id = identity
+        .change_id
+        .map(|value| redact_metadata(&value, include_paths));
+    identity
+}
+
 fn open_repo(
     path: &Path,
     operation: Operation,
@@ -469,10 +839,15 @@ fn open_repo(
     Repo::discover_with(
         path,
         || {
-            Git::new()
+            let git = Git::new()
                 .default_timeout(policy.deadline)
                 .default_cancel_on(policy.cancellation.clone())
-                .default_output_budget(policy.content_budget)
+                .default_output_budget(policy.content_budget);
+            if operation == Operation::Commit {
+                git.harden()
+            } else {
+                git
+            }
         },
         || {
             Jj::new()
@@ -906,6 +1281,18 @@ fn map_core_error(operation: Operation, include_paths: bool, error: vcs_core::Er
             "backend_capability_unsupported",
             false,
         ),
+        vcs_core::Error::StaleRevision { .. } => AgentError::new(
+            operation.name(),
+            ErrorKind::Denied,
+            "stale_expected_revision",
+            false,
+        ),
+        vcs_core::Error::OutcomeUnknown(_) => AgentError::new(
+            operation.name(),
+            ErrorKind::OutcomeUnknown,
+            "commit_backend_evidence_unverified",
+            false,
+        ),
         vcs_core::Error::Io(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
             AgentError::new(
                 operation.name(),
@@ -1075,6 +1462,10 @@ mod tests {
             content_max_bytes: 8192,
             max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
             include_machine_paths,
+            write_intent: false,
+            expected_revision: None,
+            message: None,
+            commit_paths: Vec::new(),
         }
     }
 
@@ -1214,6 +1605,34 @@ mod tests {
         let error = match changes_repo(&repo, ChangesMode::Summary, 8192, false).await {
             Err(error) => error,
             Ok(_) => panic!("fired token must cancel the first typed command"),
+        };
+        assert_eq!(error.kind(), ErrorKind::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn checked_commit_cancellation_fails_before_the_mutation() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(ScriptedRunner::new()).default_cancel_on(token),
+        );
+        let invocation = Invocation {
+            operation: Operation::Commit,
+            repository: Some(PathBuf::from("/repo")),
+            changes_mode: ChangesMode::Summary,
+            content_max_bytes: 8192,
+            max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
+            include_machine_paths: false,
+            write_intent: true,
+            expected_revision: Some("abc".to_owned()),
+            message: Some("message".to_owned()),
+            commit_paths: vec![PathBuf::from("selected.txt")],
+        };
+        let error = match commit_repo(&repo, &invocation).await {
+            Err(error) => error,
+            Ok(_) => panic!("cancelled preflight cannot reach commit_paths"),
         };
         assert_eq!(error.kind(), ErrorKind::Cancelled);
     }
@@ -1387,6 +1806,81 @@ mod tests {
         let value = MachinePath::from_path(Path::new("/repo/private"), false);
         assert_eq!(value.encoding, "redacted");
         assert!(value.value.is_none());
+    }
+
+    #[test]
+    fn checked_commit_preflight_requires_each_exact_changed_path_and_preserves_unrelated_set() {
+        let changes = vec![
+            FileChange::new("selected.txt", ChangeKind::Modified),
+            FileChange::new("unrelated.txt", ChangeKind::Added),
+        ];
+        let unrelated =
+            partition_preflight_changes(&changes, &[PathBuf::from("selected.txt")], false)
+                .expect("selected changed path passes preflight");
+        assert_eq!(unrelated, vec![changes[1].clone()]);
+
+        let error = partition_preflight_changes(&changes, &[PathBuf::from("missing.txt")], false)
+            .expect_err("an unchanged path cannot be reported as included");
+        assert_eq!(error.kind(), ErrorKind::Denied);
+    }
+
+    #[test]
+    fn checked_commit_preflight_refuses_half_of_a_rename() {
+        let changes = vec![FileChange::new("new.txt", ChangeKind::Renamed).old_path("old.txt")];
+        let error = partition_preflight_changes(&changes, &[PathBuf::from("new.txt")], false)
+            .expect_err("a one-sided rename path is ambiguous");
+        assert_eq!(error.kind(), ErrorKind::Denied);
+
+        assert!(
+            partition_preflight_changes(
+                &changes,
+                &[PathBuf::from("old.txt"), PathBuf::from("new.txt")],
+                false,
+            )
+            .expect("both rename endpoints are exact")
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn checked_commit_observed_path_proof_rejects_extra_or_missing_paths() {
+        let selected = vec![PathBuf::from("old.txt"), PathBuf::from("new.txt")];
+        assert!(same_path_set(
+            &[PathBuf::from("new.txt"), PathBuf::from("old.txt")],
+            &selected,
+        ));
+        assert!(!same_path_set(&[PathBuf::from("new.txt")], &selected));
+        assert!(!same_path_set(
+            &[
+                PathBuf::from("old.txt"),
+                PathBuf::from("new.txt"),
+                PathBuf::from("extra.txt"),
+            ],
+            &selected,
+        ));
+    }
+
+    #[test]
+    fn checked_commit_backend_unknown_maps_to_exit_43() {
+        let error = map_core_error(
+            Operation::Commit,
+            false,
+            vcs_core::Error::OutcomeUnknown("unobservable atomic ref update".into()),
+        );
+        assert_eq!(error.kind(), ErrorKind::OutcomeUnknown);
+        assert_eq!(ErrorKind::OutcomeUnknown.exit_code(), 43);
+    }
+
+    #[test]
+    fn checked_commit_preflight_refuses_conflict_and_in_progress_state() {
+        for snapshot in [
+            RepoSnapshot::new().conflicted(),
+            RepoSnapshot::new().operation(OperationState::Rebase),
+        ] {
+            let error = ensure_clear_preflight(&snapshot, false)
+                .expect_err("a checked mutation requires a clear repository");
+            assert_eq!(error.kind(), ErrorKind::Denied);
+        }
     }
 
     #[cfg(unix)]

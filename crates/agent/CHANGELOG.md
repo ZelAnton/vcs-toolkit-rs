@@ -24,6 +24,10 @@ This crate is versioned and published independently; tag releases as
   structured diffs; enforce fail-loud content and machine-output budgets plus
   one deadline for the complete outcome; and disclose Jujutsu's unavoidable
   live working-copy snapshot and possible operation-log advancement.
+- Add checked exact-path `commit` over `vcs-core`: explicit write intent,
+  revision and repository-state preflight, literal Git/Jujutsu selection,
+  before/after identity plus included-path evidence, fail-closed postflight,
+  and preservation checks for unrelated staged, unstaged, and untracked work.
 
 ### Changed
 -
