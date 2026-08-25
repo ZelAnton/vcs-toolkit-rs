@@ -44,6 +44,9 @@ three forges — in plain terms:
 - **Give an AI agent safe repo access** — a ready-made MCP server exposes every
   operation as an agent-callable tool, with writes gated off by default
   (`vcs-mcp`).
+- **Give a shell-capable agent a bounded outcome interface** — `vcs-agent`
+  exposes a small versioned JSON/exit contract, beginning with a non-mutating
+  compatibility and capability `probe`.
 - **Test it all without the real tools** — point your code at a mock or canned
   command output; no installed binary, temp repo, or network needed
   (`vcs-testkit`).
@@ -62,6 +65,7 @@ Pick the crate that matches your task — each links to its guide:
   [`vcs-gitea`](crates/gitea/docs/gitea.md) directly.
 - **Watch a repo for changes** → [`vcs-watch`](crates/watch/docs/watch.md).
 - **Serve operations to an AI agent** → [`vcs-mcp`](crates/mcp/docs/mcp.md).
+- **Use the outcome-oriented agent CLI** → [`vcs-agent`](crates/agent/README.md).
 - **Write tests against a repo** → [`vcs-testkit`](crates/testkit/docs/testkit.md).
 
 ## Why
@@ -108,7 +112,8 @@ This is a Cargo workspace, each crate **versioned and published independently**:
 five CLI wrappers built on the external
 [`processkit`](https://crates.io/crates/processkit) crate, two facades (over the
 git/jj pair and over the three forges), a filesystem-watch crate emitting typed
-repo events, an MCP server exposing the facades to agent harnesses, two
+repo events, an MCP server exposing the facades to agent harnesses, a bounded
+outcome-oriented agent binary, two
 foundational crates the wrappers share, and a dependency-free test-fixture crate:
 
 | Crate | Drives | crates.io name |
@@ -122,6 +127,7 @@ foundational crates the wrappers share, and a dependency-free test-fixture crate
 | [`crates/core`](crates/core) | — (facade over `vcs-git`/`vcs-jj`) | `vcs-core` |
 | [`crates/watch`](crates/watch) | — (filesystem-watch repo events, on `vcs-core`) | `vcs-watch` |
 | [`crates/mcp`](crates/mcp) | — (MCP server over `vcs-core`/`vcs-forge`, on `rmcp` + tokio) | `vcs-mcp` |
+| [`crates/agent`](crates/agent) | — (bounded outcome-oriented executable contract) | `vcs-agent` |
 | [`crates/diff`](crates/diff) | — (shared std-only diff model + parser, `Version`) | `vcs-diff` |
 | [`crates/cli-support`](crates/cli-support) | — (shared argv guard, fetch policy, error classifiers) | `vcs-cli-support` |
 | [`crates/testkit`](crates/testkit) | — (test fixtures: git/jj sandboxes, bare remote) | `vcs-testkit` |

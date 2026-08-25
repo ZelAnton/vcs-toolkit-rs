@@ -1457,6 +1457,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcs-agent"
+version = "0.1.0"
+dependencies = [
+ "processkit",
+ "serde",
+ "serde_json",
+ "vcs-cli-support",
+]
+
+[[package]]
 name = "vcs-cli-support"
 version = "0.8.0"
 dependencies = [
