@@ -2251,24 +2251,24 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             ));
         }
 
-        let expected_revision = self.resolve_commit(dir, expected).await?;
+        let expected_revision = checked_commit_resolve(self, dir, expected).await?;
         let temp = CommitCasTemp::new()?;
         std::fs::write(&temp.message, spec.message.as_bytes())
             .map_err(|error| Error::spawn(BINARY, error))?;
 
         self.core
-            .run_unit(
+            .run_unit(checked_commit_no_hooks(
                 self.core
                     .command_in(dir, ["read-tree", expected_revision.as_str()])
                     .env("GIT_INDEX_FILE", &temp.index),
-            )
+            ))
             .await?;
 
         let pathspec = processkit::Stdin::from_bytes(pathspec_nul_bytes(
             spec.paths.iter().map(|path| path.as_os_str()),
         )?);
         self.core
-            .run_unit(
+            .run_unit(checked_commit_no_hooks(
                 self.core
                     .command_in(
                         dir,
@@ -2282,23 +2282,22 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     )
                     .env("GIT_INDEX_FILE", &temp.index)
                     .stdin(pathspec),
-            )
+            ))
             .await?;
 
         let tree = self
             .core
-            .run(
+            .run(checked_commit_no_hooks(
                 self.core
                     .command_in(dir, ["write-tree"])
                     .env("GIT_INDEX_FILE", &temp.index),
-            )
+            ))
             .await?;
-        let mut commit_tree = self.core.command_in(
+        let mut commit_tree = checked_commit_no_hooks(self.core.command_in(
             dir,
             ["commit-tree", tree.as_str(), "-p", &expected_revision],
-        );
-        if self
-            .config_get(dir, "commit.gpgSign")
+        ));
+        if checked_commit_config_get(self, dir, "commit.gpgSign")
             .await?
             .is_some_and(|value| matches!(value.as_str(), "true" | "yes" | "on" | "1"))
         {
@@ -2309,7 +2308,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .run(commit_tree.arg("-F").arg(&temp.message))
             .await?;
         let prepared = RevSpec::new(&prepared_revision)?;
-        let diffs = self.diff_between(dir, expected, &prepared).await?;
+        let diffs = checked_commit_diff_between(self, dir, expected, &prepared).await?;
         let included_paths = paths_from_file_diffs(&diffs);
         let requested_paths = spec.paths.iter().cloned().collect::<BTreeSet<_>>();
         if included_paths.iter().cloned().collect::<BTreeSet<_>>() != requested_paths {
@@ -2324,33 +2323,25 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .trim()
             .to_owned();
         let reflog = format!("commit: {subject}");
-        let cas_command = self
-            .core
-            .command_in(
-                dir,
-                [
-                    "update-ref",
-                    "--create-reflog",
-                    "-m",
-                    reflog.as_str(),
-                    "HEAD",
-                    prepared_revision.as_str(),
-                    expected_revision.as_str(),
-                ],
-            )
-            // `update-ref` can invoke the `reference-transaction` repository
-            // hook. Pin hooks off for the atomic write itself; checked commits
-            // promise that arbitrary repository hook code is never executed.
-            .env("GIT_CONFIG_COUNT", "2")
-            .env("GIT_CONFIG_KEY_0", "core.hooksPath")
-            .env("GIT_CONFIG_VALUE_0", "/dev/null")
-            .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
-            .env("GIT_CONFIG_VALUE_1", "false");
+        let cas_command = checked_commit_no_hooks(self.core.command_in(
+            dir,
+            [
+                "update-ref",
+                "--create-reflog",
+                "-m",
+                reflog.as_str(),
+                "HEAD",
+                prepared_revision.as_str(),
+                expected_revision.as_str(),
+            ],
+        ));
         let cas = self.core.output_string(c_locale(cas_command)).await;
         match cas {
             Ok(result) if result.code() == Some(0) => {}
             Ok(result) if result.code().is_some() => {
-                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                let actual_revision = checked_commit_resolve(self, dir, &RevSpec::new("HEAD")?)
+                    .await
+                    .ok();
                 if actual_revision.as_deref() != Some(expected_revision.as_str()) {
                     return Ok(CommitPathsCas::Stale { actual_revision });
                 }
@@ -2358,11 +2349,15 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 unreachable!("a non-zero update-ref result cannot ensure success")
             }
             Ok(_) => {
-                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                let actual_revision = checked_commit_resolve(self, dir, &RevSpec::new("HEAD")?)
+                    .await
+                    .ok();
                 return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
             }
             Err(_) => {
-                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                let actual_revision = checked_commit_resolve(self, dir, &RevSpec::new("HEAD")?)
+                    .await
+                    .ok();
                 return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
             }
         }
@@ -2372,7 +2367,7 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         )?);
         if self
             .core
-            .run_unit(
+            .run_unit(checked_commit_no_hooks(
                 self.core
                     .command_in(
                         dir,
@@ -2386,11 +2381,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                         ],
                     )
                     .stdin(reset_pathspec),
-            )
+            ))
             .await
             .is_err()
         {
-            let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+            let actual_revision = checked_commit_resolve(self, dir, &RevSpec::new("HEAD")?)
+                .await
+                .ok();
             return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
         }
 
@@ -3850,6 +3847,83 @@ fn no_editor(cmd: processkit::Command) -> processkit::Command {
         .env("GIT_SEQUENCE_EDITOR", "true")
 }
 
+/// Disable every repository hook for checked-commit commands that write an
+/// index or ref. This suppresses `post-index-change` for temporary and real
+/// index writes, plus `reference-transaction` for the atomic ref update.
+fn checked_commit_no_hooks(cmd: processkit::Command) -> processkit::Command {
+    cmd.env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", "/dev/null")
+        .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
+        .env("GIT_CONFIG_VALUE_1", "false")
+}
+
+async fn checked_commit_resolve<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    rev: &RevSpec,
+) -> Result<String> {
+    let spec = format!("{}^{{commit}}", rev.as_str());
+    git.core
+        .run(checked_commit_no_hooks(
+            git.core
+                .command_in(dir, ["rev-parse", "--verify", spec.as_str()]),
+        ))
+        .await
+}
+
+async fn checked_commit_config_get<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    key: &str,
+) -> Result<Option<String>> {
+    let result = git
+        .core
+        .output_string(checked_commit_no_hooks(
+            git.core.command_in(dir, ["config", "--get", key]),
+        ))
+        .await?;
+    match result.code() {
+        Some(1) => Ok(None),
+        Some(0) => Ok(Some(
+            result.stdout().trim_end_matches(['\r', '\n']).to_string(),
+        )),
+        _ => {
+            let _ = result.ensure_success()?;
+            Ok(None)
+        }
+    }
+}
+
+async fn checked_commit_diff_between<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    from: &RevSpec,
+    to: &RevSpec,
+) -> Result<Vec<FileDiff>> {
+    let text = git
+        .core
+        .run_untrimmed_within(
+            checked_commit_no_hooks(git.core.command_in(
+                dir,
+                [
+                    "diff",
+                    from.as_str(),
+                    to.as_str(),
+                    "--no-color",
+                    "--no-ext-diff",
+                    "-M",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--",
+                ],
+            )),
+            git.core.output_budget(),
+        )
+        .await?;
+    Ok(parse_diff(&text))
+}
+
 /// Force the C locale on a command whose output feeds the error classifiers
 /// (`is_merge_conflict`, `is_nothing_to_commit`, `is_transient_fetch_error`):
 /// they match untranslated English substrings, and a localized git would emit
@@ -5187,8 +5261,41 @@ mod tests {
                 .on(["git", "config", "--get"], Reply::fail(1, ""))
                 .on(["git", "commit-tree"], Reply::ok("prepared\n"))
                 .on(["git", "diff"], Reply::ok(diff))
-                .on(["git", "update-ref"], update_ref),
+                .on(["git", "update-ref"], update_ref)
+                .on(["git", "--literal-pathspecs", "reset"], Reply::ok("")),
         )
+    }
+
+    #[tokio::test]
+    async fn commit_paths_cas_disables_hooks_for_all_index_and_ref_writes() {
+        let runner = commit_paths_cas_runner(Reply::ok(""), Reply::ok("unused\n"));
+        let git = Git::with_runner(&runner);
+
+        let outcome = git
+            .commit_paths_cas(
+                Path::new("/repo"),
+                CommitPaths::new([PathBuf::from("selected.txt")], "T-193 hooks off"),
+                &rv("expected"),
+            )
+            .await
+            .expect("checked commit");
+        assert!(matches!(outcome, CommitPathsCas::Installed { .. }));
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 9, "the full successful CAS command sequence");
+        for call in calls {
+            let has = |key: &str, value: &str| {
+                call.envs.iter().any(|(name, configured)| {
+                    name.to_str() == Some(key)
+                        && configured.as_deref().and_then(|item| item.to_str()) == Some(value)
+                })
+            };
+            assert!(
+                has("GIT_CONFIG_KEY_0", "core.hooksPath") && has("GIT_CONFIG_VALUE_0", "/dev/null"),
+                "hooks must be disabled for {:?}",
+                call.args_str()
+            );
+        }
     }
 
     #[tokio::test]

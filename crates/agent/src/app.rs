@@ -839,10 +839,15 @@ fn open_repo(
     Repo::discover_with(
         path,
         || {
-            Git::new()
+            let git = Git::new()
                 .default_timeout(policy.deadline)
                 .default_cancel_on(policy.cancellation.clone())
-                .default_output_budget(policy.content_budget)
+                .default_output_budget(policy.content_budget);
+            if operation == Operation::Commit {
+                git.harden()
+            } else {
+                git
+            }
         },
         || {
             Jj::new()

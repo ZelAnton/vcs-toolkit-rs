@@ -67,10 +67,11 @@ from the expected tree through a temporary index, verifies the prepared object's
 exact path diff, and installs it with native atomic
 `update-ref HEAD <new> <expected-old>`. A concurrent HEAD advance makes that CAS
 fail stale and leaves the prepared object unreachable; no T-193 commit is
-installed. Repository commit hooks (`pre-commit`, message hooks and
-`post-commit`) are deliberately not executed: arbitrary hook code could mutate
-unrelated index/worktree state and make the preservation claim unprovable. The
-success envelope exposes this as `repository_hooks_executed: false`. After a
+installed. Repository hooks (including commit hooks, `post-index-change`, and
+`reference-transaction`) are deliberately not executed: arbitrary hook code
+could mutate unrelated index/worktree state and make the preservation claim
+unprovable. The success envelope exposes this as
+`repository_hooks_executed: false`. After a
 successful CAS, only selected index entries are reset, preserving unrelated
 staged/unstaged/untracked state. Jujutsu is refused as unsupported before
 preparation rather than claiming a weaker stale guard. Postflight also requires an advanced revision,

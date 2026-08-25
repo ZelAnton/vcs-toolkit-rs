@@ -411,6 +411,73 @@ fn git_checked_commit_does_not_run_post_commit_hook_that_creates_and_stages_path
 }
 
 #[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_does_not_run_post_index_change_hook_during_index_writes() {
+    let sandbox = GitSandbox::init("agent-checked-git-no-post-index-change-hook");
+    sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.commit_file("unrelated.txt", "clean\n", "seed unrelated");
+    sandbox.write("selected.txt", "after\n");
+    sandbox.write("unrelated.txt", "staged\n");
+    sandbox.git(&["add", "--", "unrelated.txt"]);
+    sandbox.write("unrelated.txt", "unstaged\n");
+    sandbox.write("hook-sentinel.txt", "untouched\n");
+
+    let hook = sandbox.path().join(".git/hooks/post-index-change");
+    std::fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf 'executed\\n' > hook-sentinel.txt\nprintf 'hook-mutated\\n' > unrelated.txt\n",
+    )
+    .expect("write post-index-change hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+            .expect("make hook executable");
+    }
+
+    let before = sandbox.rev_parse("HEAD");
+    let unrelated_index_before = sandbox.rev_parse(":unrelated.txt");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "commit with every repository hook disabled",
+        "--path",
+        "selected.txt",
+    ]));
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("hook-sentinel.txt")).unwrap(),
+        "untouched\n",
+        "post-index-change must not execute during checked-commit index writes"
+    );
+    assert_eq!(sandbox.rev_parse(":unrelated.txt"), unrelated_index_before);
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "unstaged\n"
+    );
+
+    // Negative control: the installed hook is runnable and would mutate the
+    // sentinels if hooks were not pinned off by checked commit.
+    sandbox.git(&["add", "--", "unrelated.txt"]);
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("hook-sentinel.txt")).unwrap(),
+        "executed\n"
+    );
+}
+
+#[test]
 #[ignore = "requires the jj and git binaries"]
 fn jj_checked_commit_is_unsupported_without_snapshot_or_commit_mutation() {
     let sandbox = JjSandbox::init_non_colocated("agent-checked-jj");
