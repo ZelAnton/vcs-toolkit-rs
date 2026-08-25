@@ -224,9 +224,7 @@ impl MachineEnvelope {
     }
 
     fn failure(error: &AgentError) -> Self {
-        let redaction = RedactionPolicy {
-            include_machine_paths: error.include_machine_paths,
-        };
+        let redaction = error.redaction_policy();
         Self {
             contract_version: CONTRACT_VERSION,
             binary_version: BINARY_VERSION,
@@ -376,6 +374,16 @@ impl AgentError {
         self
     }
 
+    fn redaction_policy(&self) -> RedactionPolicy {
+        RedactionPolicy {
+            include_machine_paths: self.include_machine_paths,
+        }
+    }
+
+    fn redacted_diagnostic(&self) -> String {
+        redact_text(self.message, self.redaction_policy())
+    }
+
     #[cfg(test)]
     fn include_machine_paths(mut self, include: bool) -> Self {
         self.include_machine_paths = include;
@@ -383,7 +391,7 @@ impl AgentError {
     }
 
     #[cfg(test)]
-    fn with_message(mut self, message: &'static str) -> Self {
+    pub(crate) fn with_message(mut self, message: &'static str) -> Self {
         self.message = message;
         self
     }
@@ -399,26 +407,26 @@ impl AgentError {
 }
 
 pub(crate) trait IntoEnvelope {
-    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<&'static str>);
+    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<String>);
 }
 
 impl IntoEnvelope for MachineEnvelope {
-    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<&'static str>) {
+    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<String>) {
         (self, ExitCode::SUCCESS, None)
     }
 }
 
 impl IntoEnvelope for AgentError {
-    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<&'static str>) {
+    fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<String>) {
         let exit_code = self.exit_code();
-        let diagnostic = Some(self.message);
+        let diagnostic = Some(self.redacted_diagnostic());
         (MachineEnvelope::failure(&self), exit_code, diagnostic)
     }
 }
 
 pub(crate) struct RenderedOutput {
     pub(crate) stdout: Vec<u8>,
-    pub(crate) diagnostic: Option<&'static str>,
+    pub(crate) diagnostic: Option<String>,
     pub(crate) exit_code: ExitCode,
 }
 
@@ -436,7 +444,7 @@ pub(crate) fn render(value: impl IntoEnvelope, max_bytes: usize) -> RenderedOutp
         );
         return RenderedOutput {
             stdout,
-            diagnostic: Some(error.message),
+            diagnostic: Some(error.redacted_diagnostic()),
             exit_code: error.exit_code(),
         };
     }
@@ -546,42 +554,63 @@ mod tests {
 
     #[test]
     fn machine_paths_are_included_only_when_explicitly_requested() {
-        let path = "/workspaces/alice/repo";
+        let path = "file:///workspaces/alice/repo";
         let hidden = AgentError::new("probe", ErrorKind::Backend, "test", false)
-            .with_detail(DetailKey::RepositoryPath, path);
+            .with_detail(DetailKey::RepositoryPath, path)
+            .with_message("failed at file:///workspaces/alice/repo token=hidden-secret");
         let visible = AgentError::new("probe", ErrorKind::Backend, "test", false)
             .with_detail(DetailKey::RepositoryPath, path)
+            .with_message("failed at file:///workspaces/alice/repo token=visible-secret")
             .include_machine_paths(true);
-        let hidden = String::from_utf8(render(hidden, 4096).stdout).expect("UTF-8");
-        let visible = String::from_utf8(render(visible, 4096).stdout).expect("UTF-8");
-        assert!(!hidden.contains("alice"));
-        assert!(visible.contains(path));
+        let hidden = render(hidden, 4096);
+        let visible = render(visible, 4096);
+        let hidden_stdout = String::from_utf8(hidden.stdout).expect("UTF-8");
+        let visible_stdout = String::from_utf8(visible.stdout).expect("UTF-8");
+        let hidden_diagnostic = hidden.diagnostic.expect("error diagnostic");
+        let visible_diagnostic = visible.diagnostic.expect("error diagnostic");
+
+        assert!(!hidden_stdout.contains("alice"));
+        assert!(!hidden_diagnostic.contains("alice"));
+        assert!(visible_stdout.contains(path));
+        assert!(visible_diagnostic.contains(path));
+        assert!(!hidden_diagnostic.contains("hidden-secret"));
+        assert!(!visible_diagnostic.contains("visible-secret"));
     }
 
     #[test]
     fn file_uris_are_redacted_from_message_details_and_warnings() {
         let error = AgentError::new("probe", ErrorKind::Backend, "test", false)
-            .with_message("failed at file:///workspaces/message-secret/repo")
+            .with_message(
+                "failed at file:///workspaces/message-secret/repo token=diagnostic-secret",
+            )
             .with_detail(
                 DetailKey::RemoteUrl,
                 "file:///workspaces/remote-secret/repository-secret",
             )
             .with_warning("retry avoided for FILE://server-secret/share-secret/warning")
             .include_machine_paths(false);
-        let text = String::from_utf8(render(error, crate::cli::DEFAULT_MAX_OUTPUT_BYTES).stdout)
-            .expect("UTF-8");
+        let output = render(error, crate::cli::DEFAULT_MAX_OUTPUT_BYTES);
+        let diagnostic = output.diagnostic.as_deref().expect("error diagnostic");
+        let text = String::from_utf8(output.stdout).expect("UTF-8");
 
         for leaked in [
             "workspaces",
             "message-secret",
+            "diagnostic-secret",
             "remote-secret",
             "repository-secret",
             "server-secret",
             "share-secret",
         ] {
             assert!(!text.contains(leaked), "stdout leaked {leaked}: {text}");
+            assert!(
+                !diagnostic.contains(leaked),
+                "diagnostic leaked {leaked}: {diagnostic}"
+            );
         }
         assert_eq!(text.matches("[REDACTED_PATH]").count(), 3);
+        assert!(diagnostic.contains("[REDACTED_PATH]"));
+        assert!(diagnostic.contains("[REDACTED]"));
     }
 
     #[test]

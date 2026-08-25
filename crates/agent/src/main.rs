@@ -90,6 +90,7 @@ fn write_text(stdout: &mut impl io::Write, text: &str, stderr: &mut impl io::Wri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::{DetailKey, ErrorKind};
     use serde_json::Value;
 
     fn call(args: &[&str]) -> (ExitCode, String, String) {
@@ -162,6 +163,35 @@ mod tests {
         assert!(!stdout.contains("secret"));
         let value: Value = serde_json::from_str(&stdout).expect("valid error JSON");
         assert_eq!(value["operation"], "unknown");
+    }
+
+    #[test]
+    fn write_machine_redacts_diagnostics_and_machine_stdout() {
+        let error = AgentError::new("probe", ErrorKind::Backend, "test", false)
+            .with_message("failed at file:///workspaces/stderr-path/repo token=stderr-secret")
+            .with_detail(
+                DetailKey::RemoteUrl,
+                "file:///workspaces/stdout-path/repository",
+            );
+        let output = render(error, cli::DEFAULT_MAX_OUTPUT_BYTES);
+        let diagnostic = output.diagnostic.as_deref().expect("error diagnostic");
+        assert!(!diagnostic.contains("stderr-path"));
+        assert!(!diagnostic.contains("stderr-secret"));
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = write_machine(output, &mut stdout, &mut stderr);
+        assert_eq!(exit, ExitCode::from(30));
+
+        let stdout = String::from_utf8(stdout).expect("stdout is UTF-8");
+        let stderr = String::from_utf8(stderr).expect("stderr is UTF-8");
+        for leaked in ["workspaces", "stderr-path", "stderr-secret", "stdout-path"] {
+            assert!(!stdout.contains(leaked), "stdout leaked {leaked}: {stdout}");
+            assert!(!stderr.contains(leaked), "stderr leaked {leaked}: {stderr}");
+        }
+        assert!(stdout.contains("[REDACTED_PATH]"));
+        assert!(stderr.contains("[REDACTED_PATH]"));
+        assert!(stderr.contains("[REDACTED]"));
     }
 
     #[test]
