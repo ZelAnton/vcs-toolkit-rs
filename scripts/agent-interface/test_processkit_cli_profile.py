@@ -104,6 +104,49 @@ class ProcessKitCliProfileTests(unittest.TestCase):
                 ):
                     validate.validate_processkit_cli_evidence(mutated, self.profile, MACHINE_FIXTURES)
 
+    def test_evidence_rejects_classification_type_confusion(self) -> None:
+        invalid_values = {
+            "schema_version": (True, "1", None),
+            "code": (False, "0", None),
+            "child_code": (False, "0", None),
+            "event": (False, 0, None),
+            "source": (False, 0, None),
+        }
+        for scenario_id in ("agent-success", "bounded-capture", "nested-containment"):
+            for field, values in invalid_values.items():
+                for value in values:
+                    mutated = copy.deepcopy(self.evidence)
+                    scenario = next(item for item in mutated["scenarios"] if item["id"] == scenario_id)
+                    terminal = next(item for item in scenario["events"] if item["event"] == "runner_exit")
+                    terminal[field] = value
+                    with self.subTest(scenario=scenario_id, field=field, value=value), self.assertRaisesRegex(
+                        validate.ValidationError, f"{field}|classification"
+                    ):
+                        validate.validate_processkit_cli_evidence(mutated, self.profile, MACHINE_FIXTURES)
+
+    def test_evidence_rejects_non_terminal_lifecycle_type_confusion(self) -> None:
+        mutations = (
+            ("timeout", "timeout", "reason", False),
+            ("control-cancel", "cancelled", "source", None),
+            ("bounded-capture", "output_captured", "stdout.bytes", False),
+            ("bounded-capture", "output_captured", "stderr.truncated", 1),
+            ("nested-containment", "cleanup_finished", "remaining", False),
+            ("nested-containment", "cleanup_finished", "read_error", 0),
+        )
+        for scenario_id, event_name, field_path, value in mutations:
+            mutated = copy.deepcopy(self.evidence)
+            scenario = next(item for item in mutated["scenarios"] if item["id"] == scenario_id)
+            event = next(item for item in scenario["events"] if item["event"] == event_name)
+            target = event
+            path = field_path.split(".")
+            for component in path[:-1]:
+                target = target[component]
+            target[path[-1]] = value
+            with self.subTest(scenario=scenario_id, field=field_path, value=value), self.assertRaisesRegex(
+                validate.ValidationError, path[-1]
+            ):
+                validate.validate_processkit_cli_evidence(mutated, self.profile, MACHINE_FIXTURES)
+
     def test_evidence_rejects_capture_without_per_stream_truncation(self) -> None:
         mutated = copy.deepcopy(self.evidence)
         capture = next(item for item in mutated["scenarios"] if item["id"] == "bounded-capture")

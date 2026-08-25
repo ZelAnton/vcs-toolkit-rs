@@ -100,7 +100,7 @@ def _string_or_null(value: Any, label: str) -> None:
 
 
 def _integer(value: Any, label: str) -> int:
-    # bool is an int subclass in Python, but is not a call count.
+    # bool is an int subclass in Python, but is not a JSON integer contract value.
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValidationError(f"{label} must be a non-negative integer")
     return value
@@ -788,8 +788,10 @@ def _scenario_events(scenario: dict[str, Any], label: str) -> tuple[list[dict[st
         raise ValidationError(f"{label}.events must be a non-empty array")
     events = [_object(event, f"{label}.events[{index}]") for index, event in enumerate(raw_events)]
     for index, event in enumerate(events):
-        if event.get("schema_version") != 1 or not isinstance(event.get("event"), str):
-            raise ValidationError(f"{label}.events[{index}] must be a lifecycle-v1 event projection")
+        event_label = f"{label}.events[{index}]"
+        if _integer(event.get("schema_version"), f"{event_label}.schema_version") != 1:
+            raise ValidationError(f"{event_label}.schema_version must be lifecycle version 1")
+        _string(event.get("event"), f"{event_label}.event")
     terminals = [event for event in events if event["event"] == "runner_exit"]
     if len(terminals) != 1:
         raise ValidationError(f"{label} must contain exactly one runner_exit event")
@@ -806,7 +808,13 @@ def _require_scenario_classification(
     child_code: int | None,
 ) -> None:
     scenario_id = scenario["id"]
+    label = f"processkit-cli evidence.{scenario_id}.runner_exit"
     terminal_fields = ("schema_version", "event", "code", "source", "child_code")
+    _integer(terminal.get("schema_version"), f"{label}.schema_version")
+    _string(terminal.get("event"), f"{label}.event")
+    _integer(terminal.get("code"), f"{label}.code")
+    _string(terminal.get("source"), f"{label}.source")
+    _integer_or_null(terminal.get("child_code"), f"{label}.child_code")
     actual_terminal = {field: terminal.get(field) for field in terminal_fields}
     expected_terminal = {
         "schema_version": 1,
@@ -872,14 +880,20 @@ def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtur
     _require_scenario_classification(
         timeout, timeout_terminal, command_exit_code=106, runner_exit_code=106, source="timeout", child_code=None
     )
-    if not any(event.get("event") == "timeout" and event.get("reason") == "overall" for event in timeout_events):
+    timeout_records = [event for event in timeout_events if event["event"] == "timeout"]
+    for index, event in enumerate(timeout_records):
+        _string(event.get("reason"), f"processkit-cli evidence.timeout.timeout[{index}].reason")
+    if not any(event["reason"] == "overall" for event in timeout_records):
         raise ValidationError("timeout scenario lacks an overall timeout event")
 
     cancel, cancel_events, cancel_terminal = scenarios["control-cancel"]
     _require_scenario_classification(
         cancel, cancel_terminal, command_exit_code=0, runner_exit_code=108, source="control_cancel", child_code=None
     )
-    if not any(event.get("event") == "cancelled" and event.get("source") == "control_cancel" for event in cancel_events):
+    cancelled_records = [event for event in cancel_events if event["event"] == "cancelled"]
+    for index, event in enumerate(cancelled_records):
+        _string(event.get("source"), f"processkit-cli evidence.control-cancel.cancelled[{index}].source")
+    if not any(event["source"] == "control_cancel" for event in cancelled_records):
         raise ValidationError("control-cancel scenario lacks cancellation evidence")
 
     capture, capture_events, capture_terminal = scenarios["bounded-capture"]
@@ -887,19 +901,28 @@ def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtur
         capture, capture_terminal, command_exit_code=0, runner_exit_code=0, source="child_exit", child_code=0
     )
     captures = [event for event in capture_events if event.get("event") == "output_captured"]
-    if len(captures) != 1 or not all(captures[0].get(stream, {}).get("truncated") is True for stream in ("stdout", "stderr")):
+    if len(captures) != 1:
+        raise ValidationError("bounded-capture scenario must contain exactly one output_captured event")
+    for stream in ("stdout", "stderr"):
+        stream_value = _object(captures[0].get(stream), f"processkit-cli evidence.bounded-capture.{stream}")
+        _integer(stream_value.get("bytes"), f"processkit-cli evidence.bounded-capture.{stream}.bytes")
+        _boolean(stream_value.get("truncated"), f"processkit-cli evidence.bounded-capture.{stream}.truncated")
+    if not all(captures[0][stream]["truncated"] is True for stream in ("stdout", "stderr")):
         raise ValidationError("bounded-capture scenario does not disclose per-stream truncation")
 
     nested, nested_events, nested_terminal = scenarios["nested-containment"]
     _require_scenario_classification(
         nested, nested_terminal, command_exit_code=0, runner_exit_code=0, source="child_exit", child_code=0
     )
-    if nested.get("claim") != "outer-lifecycle-observed-inner-membership-not-attested":
+    nested_claim = _string(nested.get("claim"), "processkit-cli evidence.nested-containment.claim")
+    if nested_claim != "outer-lifecycle-observed-inner-membership-not-attested":
         raise ValidationError("nested-containment overclaims the observable binary contract")
-    if not any(
-        event.get("event") == "cleanup_finished" and event.get("remaining") == 0 and event.get("read_error") is False
-        for event in nested_events
-    ):
+    cleanup_records = [event for event in nested_events if event["event"] == "cleanup_finished"]
+    for index, event in enumerate(cleanup_records):
+        cleanup_label = f"processkit-cli evidence.nested-containment.cleanup_finished[{index}]"
+        _integer(event.get("remaining"), f"{cleanup_label}.remaining")
+        _boolean(event.get("read_error"), f"{cleanup_label}.read_error")
+    if not any(event["remaining"] == 0 and event["read_error"] is False for event in cleanup_records):
         raise ValidationError("nested-containment lacks successful outer cleanup evidence")
     nested_envelope = load_json(machine_fixtures / nested["child_fixture"])
     if nested_envelope.get("operation") != "inspect" or nested_envelope.get("status") != "success":
