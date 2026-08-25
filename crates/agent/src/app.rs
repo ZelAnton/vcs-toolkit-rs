@@ -837,6 +837,7 @@ fn map_changed_path(change: FileChange, include_paths: bool) -> ChangedPath {
 }
 
 fn map_file_diff(file: FileDiff, include_paths: bool) -> StructuredFileDiff {
+    let redact = |text: String| redact_metadata(&text, include_paths);
     StructuredFileDiff {
         path: MachinePath::from_path(&file.path, include_paths),
         old_path: file
@@ -852,22 +853,22 @@ fn map_file_diff(file: FileDiff, include_paths: bool) -> StructuredFileDiff {
                 old_lines: hunk.old_lines,
                 new_start: hunk.new_start,
                 new_lines: hunk.new_lines,
-                section: hunk.section,
+                section: redact(hunk.section),
                 lines: hunk
                     .lines
                     .into_iter()
                     .map(|line| match line {
                         DiffLine::Context(text) => StructuredLine {
                             kind: "context",
-                            text,
+                            text: redact(text),
                         },
                         DiffLine::Added(text) => StructuredLine {
                             kind: "added",
-                            text,
+                            text: redact(text),
                         },
                         DiffLine::Removed(text) => StructuredLine {
                             kind: "removed",
-                            text,
+                            text: redact(text),
                         },
                         _ => StructuredLine {
                             kind: "unknown",
@@ -1146,6 +1147,59 @@ mod tests {
         assert_eq!(full.counts.paths, 1);
         assert_eq!(full.diff.as_ref().map(Vec::len), Some(1));
         assert_eq!(full.diff.unwrap()[0].hunks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn scripted_full_changes_redacts_hunk_content_under_both_path_policies() {
+        const DIFF: &str = concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1,3 +1,4 @@ API_TOKEN=section-secret path=C:\\Users\\section-owner\\repo\n",
+            "-password=removed-secret\n",
+            " remote=https://alice:uri-secret@example.invalid/repo\n",
+            "+Authorization: Bearer bearer-secret\n",
+            "+workspace=/home/line-owner/repo\n",
+        );
+
+        for include_paths in [false, true] {
+            let runner = ScriptedRunner::new()
+                .on(["git", "status"], Reply::ok(" M src/lib.rs\0"))
+                .on(["git", "rev-parse", "--verify"], Reply::ok("abc\n"))
+                .on(
+                    ["git", "diff", "--shortstat"],
+                    Reply::ok(" 1 file changed, 2 insertions(+), 1 deletion(-)"),
+                )
+                .on(["git", "diff"], Reply::ok(DIFF));
+            let repo = Repo::from_git("/repo", "/repo", Git::with_runner(runner));
+            let full = changes_repo(&repo, ChangesMode::Full, 8192, include_paths)
+                .await
+                .expect("changes");
+            let encoded = serde_json::to_string(&full).expect("serialize full changes");
+
+            for leaked in [
+                "section-secret",
+                "removed-secret",
+                "alice:uri-secret",
+                "bearer-secret",
+            ] {
+                assert!(!encoded.contains(leaked), "full diff leaked {leaked}");
+            }
+
+            let hunk = &full.diff.as_ref().expect("full diff")[0].hunks[0];
+            let content = std::iter::once(hunk.section.as_str())
+                .chain(hunk.lines.iter().map(|line| line.text.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if include_paths {
+                assert!(content.contains(r"C:\Users\section-owner\repo"));
+                assert!(content.contains("/home/line-owner/repo"));
+            } else {
+                assert!(!content.contains("section-owner"));
+                assert!(!content.contains("line-owner"));
+                assert_eq!(content.matches("[REDACTED_PATH]").count(), 2);
+            }
+        }
     }
 
     #[tokio::test]

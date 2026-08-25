@@ -30,6 +30,25 @@ fn json(output: &Output) -> Value {
     value
 }
 
+fn full_diff_content(value: &Value) -> String {
+    value["data"]["diff"]
+        .as_array()
+        .expect("full changes diff array")
+        .iter()
+        .flat_map(|file| file["hunks"].as_array().expect("structured hunks").iter())
+        .flat_map(|hunk| {
+            std::iter::once(hunk["section"].as_str().expect("structured hunk section")).chain(
+                hunk["lines"]
+                    .as_array()
+                    .expect("structured hunk lines")
+                    .iter()
+                    .map(|line| line["text"].as_str().expect("structured line text")),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 #[ignore = "requires the git binary"]
 fn git_inspect_and_changes_leave_ref_index_and_content_unchanged() {
@@ -82,6 +101,63 @@ fn git_inspect_and_changes_leave_ref_index_and_content_unchanged() {
     let detached = agent(&["inspect", "--repo", repo]);
     assert!(detached.status.success());
     assert!(json(&detached)["data"]["working_copy"]["branch"].is_null());
+}
+
+#[test]
+#[ignore = "requires the git binary"]
+fn git_full_changes_redacts_hunk_content_under_both_path_policies() {
+    let sandbox = GitSandbox::init("agent-redacted-git-diff");
+    sandbox.commit_file("secrets.txt", "safe before\n", "seed");
+    sandbox.write(
+        "secrets.txt",
+        concat!(
+            "API_TOKEN=real-assignment-secret\n",
+            "remote=https://alice:real-uri-secret@example.invalid/repo\n",
+            "Authorization: Bearer real-bearer-secret\n",
+            "windows=C:\\Users\\real-owner\\repo\n",
+            "unix=/home/real-owner/repo\n",
+        ),
+    );
+    let repo = sandbox.path().to_str().expect("UTF-8 fixture path");
+
+    for include_paths in [false, true] {
+        let mut args = vec![
+            "changes",
+            "--repo",
+            repo,
+            "--mode",
+            "full",
+            "--content-max-bytes",
+            "8192",
+        ];
+        if include_paths {
+            args.push("--include-machine-paths");
+        }
+        let output = agent(&args);
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result = json(&output);
+        let encoded = serde_json::to_string(&result).expect("serialize actual envelope");
+        for leaked in [
+            "real-assignment-secret",
+            "alice:real-uri-secret",
+            "real-bearer-secret",
+        ] {
+            assert!(!encoded.contains(leaked), "machine stdout leaked {leaked}");
+        }
+
+        let content = full_diff_content(&result);
+        if include_paths {
+            assert!(content.contains(r"C:\Users\real-owner\repo"));
+            assert!(content.contains("/home/real-owner/repo"));
+        } else {
+            assert!(!content.contains("real-owner"));
+            assert_eq!(content.matches("[REDACTED_PATH]").count(), 2);
+        }
+    }
 }
 
 #[test]
