@@ -520,6 +520,7 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
             "refs_advanced",
             "index_may_change_for_selected_paths",
             "unrelated_index_preserved",
+            "repository_hooks_executed",
             "working_copy_content_mutated",
             "push_performed",
             "switch_performed",
@@ -532,6 +533,8 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
             raise ValidationError(f"{semantics_label}.backend_selection is invalid")
         if semantics["refs_advanced"] is not True or semantics["unrelated_index_preserved"] is not True:
             raise ValidationError(f"{semantics_label} must prove revision advance and unrelated-index preservation")
+        if semantics["repository_hooks_executed"] is not False:
+            raise ValidationError(f"{semantics_label}.repository_hooks_executed must be false")
         _boolean(
             semantics["index_may_change_for_selected_paths"],
             f"{semantics_label}.index_may_change_for_selected_paths",

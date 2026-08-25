@@ -259,20 +259,20 @@ pub enum CommitPathsCas {
         /// could still be resolved.
         actual_revision: Option<String>,
     },
-    /// Hooks or another preparation-side effect widened/narrowed the prepared
-    /// tree, so no ref was updated.
+    /// The prepared tree's observed path set differed from the request, so no
+    /// ref was updated.
     PathMismatch {
         /// Paths observed in the uninstalled prepared commit object.
         included_paths: Vec<PathBuf>,
     },
-    /// The atomic ref may have been installed, but a later selected-index or
-    /// post-commit-hook step could not be proven.
+    /// The atomic ref result was unobservable, or the ref was installed but the
+    /// later selected-index step could not be proven.
     OutcomeUnknown {
         /// Best-effort full `HEAD` revision after the uncertain step.
         actual_revision: Option<String>,
     },
-    /// This installed Git is too old to run hooks through `git hook run`; the
-    /// operation was refused before preparing an index or commit object.
+    /// The backend cannot provide the required atomic checked-commit primitive;
+    /// the operation was refused before preparing an index or commit object.
     Unsupported,
 }
 

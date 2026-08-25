@@ -314,14 +314,14 @@ fn git_checked_commit_proves_a_symlink_leaf() {
 
 #[test]
 #[ignore = "requires the git binary"]
-fn git_checked_commit_refuses_before_cas_when_hook_adds_an_unselected_path() {
-    let sandbox = GitSandbox::init("agent-checked-git-hook-proof");
+fn git_checked_commit_does_not_run_pre_commit_hook_that_mutates_unrelated_worktree() {
+    let sandbox = GitSandbox::init("agent-checked-git-no-pre-hook");
     sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.commit_file("unrelated.txt", "clean\n", "seed unrelated");
     sandbox.write("selected.txt", "after\n");
-    sandbox.write("extra.txt", "hook extra\n");
     let hook = sandbox.path().join(".git/hooks/pre-commit");
     std::fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
-    std::fs::write(&hook, "#!/bin/sh\ngit add -- extra.txt\n").expect("write hook");
+    std::fs::write(&hook, "#!/bin/sh\nprintf 'mutated\\n' > unrelated.txt\n").expect("write hook");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -338,35 +338,40 @@ fn git_checked_commit_refuses_before_cas_when_hook_adds_an_unselected_path() {
         "--expected-revision",
         &before,
         "--message",
-        "hook widens commit",
+        "commit without repository hooks",
         "--path",
         "selected.txt",
     ]));
-    assert_eq!(output.status.code(), Some(10));
-    assert_eq!(json(&output)["error"]["kind"], "unsupported");
-    assert_eq!(
-        sandbox.rev_parse("HEAD"),
-        before,
-        "path proof must fail before the prepared commit is installed"
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert_eq!(
+        json(&output)["data"]["semantics"]["repository_hooks_executed"],
+        false
+    );
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "clean\n",
+        "the repository pre-commit hook must not mutate unrelated content"
+    );
+    assert_ne!(sandbox.rev_parse("HEAD"), before);
 }
 
 #[test]
 #[ignore = "requires the git binary"]
-fn git_checked_commit_cas_rejects_a_commit_msg_hook_identity_race() {
-    let sandbox = GitSandbox::init("agent-checked-git-cas-race");
+fn git_checked_commit_does_not_run_post_commit_hook_that_creates_and_stages_path() {
+    let sandbox = GitSandbox::init("agent-checked-git-no-post-hook");
     sandbox.commit_file("selected.txt", "before\n", "seed selected");
     sandbox.write("selected.txt", "after\n");
-    let hook = sandbox.path().join(".git/hooks/commit-msg");
+    let hook = sandbox.path().join(".git/hooks/post-commit");
     std::fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
     std::fs::write(
         &hook,
-        "#!/bin/sh\nold=$(git rev-parse HEAD) || exit 1\n\
-         tree=$(git write-tree) || exit 1\n\
-         race=$(printf 'racer\\n' | git commit-tree \"$tree\" -p \"$old\") || exit 1\n\
-         git update-ref HEAD \"$race\" \"$old\" || exit 1\n",
+        "#!/bin/sh\nprintf 'created\\n' > hook-created.txt\ngit add -- hook-created.txt\n",
     )
-    .expect("write commit-msg hook");
+    .expect("write post-commit hook");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -384,23 +389,25 @@ fn git_checked_commit_cas_rejects_a_commit_msg_hook_identity_race() {
         "--expected-revision",
         &before,
         "--message",
-        "T-193 atomic",
+        "commit without post hook",
         "--path",
         "selected.txt",
     ]));
 
-    assert_eq!(output.status.code(), Some(20));
-    assert_eq!(json(&output)["error"]["code"], "stale_expected_revision");
-    assert_eq!(
-        capture(
-            "git",
-            sandbox.path(),
-            &["show", "-s", "--format=%s", "HEAD"]
-        ),
-        "racer",
-        "the competing identity wins; the requested prepared commit must not be installed"
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     assert_ne!(sandbox.rev_parse("HEAD"), before);
+    assert!(
+        !sandbox.path().join("hook-created.txt").exists(),
+        "the repository post-commit hook must not create or stage unrelated state"
+    );
+    assert!(
+        !capture("git", sandbox.path(), &["status", "--short"]).contains("hook-created.txt"),
+        "the repository post-commit hook must not stage the sentinel"
+    );
 }
 
 #[test]

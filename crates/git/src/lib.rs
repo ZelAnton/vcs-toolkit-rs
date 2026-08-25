@@ -423,11 +423,11 @@ pub trait GitApi: Send + Sync {
     /// **single** `git commit` invocation either way, so the one-atomic-commit
     /// contract is unaffected by the path set's size (T-052).
     async fn commit_paths(&self, dir: &Path, spec: CommitPaths) -> Result<()>;
-    /// Prepare an exact-path commit through a temporary index, run the ordinary
-    /// commit hooks, and atomically install it only if `HEAD` still equals
-    /// `expected` (`git update-ref HEAD <new> <expected-old>`). Git 2.31-2.35
-    /// return [`CommitPathsCas::Unsupported`] before preparation because they do
-    /// not provide `git hook run`; Git 2.36+ is supported.
+    /// Prepare an exact-path commit through a temporary index and atomically
+    /// install it only if `HEAD` still equals `expected` (`git update-ref HEAD
+    /// <new> <expected-old>`). Repository commit hooks are deliberately not
+    /// executed: they can mutate unrelated index/worktree state, which would
+    /// make the checked preservation guarantee unprovable.
     async fn commit_paths_cas(
         &self,
         dir: &Path,
@@ -946,44 +946,6 @@ vcs_cli_support::managed_client! {
 }
 
 impl<R: ProcessRunner> Git<R> {
-    async fn run_commit_hook(
-        &self,
-        dir: &Path,
-        index: &Path,
-        hook: &str,
-        args: &[&std::ffi::OsStr],
-    ) -> Result<()> {
-        let mut command = self
-            .core
-            .command_in(dir, ["hook", "run", "--ignore-missing", hook])
-            .env("GIT_INDEX_FILE", index);
-        if !args.is_empty() {
-            command = command.arg("--");
-            for arg in args {
-                command = command.arg(arg);
-            }
-        }
-        self.core.run_unit(command).await
-    }
-
-    async fn run_commit_hook_raw(
-        &self,
-        dir: &Path,
-        hook: &str,
-        args: &[&std::ffi::OsStr],
-    ) -> Result<ProcessResult<String>> {
-        let mut command = self
-            .core
-            .command_in(dir, ["hook", "run", "--ignore-missing", hook]);
-        if !args.is_empty() {
-            command = command.arg("--");
-            for arg in args {
-                command = command.arg(arg);
-            }
-        }
-        self.core.output_string(command).await
-    }
-
     async fn legacy_worktree_probe(&self, dir: &Path, option: &str) -> Result<Vec<u8>> {
         let output = self
             .core
@@ -2279,10 +2241,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         spec: CommitPaths,
         expected: &RevSpec,
     ) -> Result<CommitPathsCas> {
-        let capabilities = self.capabilities().await?;
-        if (capabilities.version.major, capabilities.version.minor) < (2, 36) {
-            return Ok(CommitPathsCas::Unsupported);
-        }
         if spec.amend || spec.paths.is_empty() || spec.message.trim().is_empty() {
             return Err(Error::spawn(
                 BINARY,
@@ -2327,30 +2285,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             )
             .await?;
 
-        self.run_commit_hook(dir, &temp.index, "pre-commit", &[])
-            .await?;
-        self.run_commit_hook(
-            dir,
-            &temp.index,
-            "prepare-commit-msg",
-            &[temp.message.as_os_str(), std::ffi::OsStr::new("message")],
-        )
-        .await?;
-        self.run_commit_hook(dir, &temp.index, "commit-msg", &[temp.message.as_os_str()])
-            .await?;
-
-        let final_message =
-            std::fs::read(&temp.message).map_err(|error| Error::spawn(BINARY, error))?;
-        if final_message.iter().all(|byte| byte.is_ascii_whitespace()) {
-            return Err(Error::spawn(
-                BINARY,
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "commit hook produced an empty commit message",
-                ),
-            ));
-        }
-
         let tree = self
             .core
             .run(
@@ -2382,16 +2316,17 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             return Ok(CommitPathsCas::PathMismatch { included_paths });
         }
 
-        let subject = String::from_utf8_lossy(&final_message)
+        let subject = spec
+            .message
             .lines()
             .next()
             .unwrap_or_default()
             .trim()
             .to_owned();
         let reflog = format!("commit: {subject}");
-        let cas = self
+        let cas_command = self
             .core
-            .output_string(c_locale(self.core.command_in(
+            .command_in(
                 dir,
                 [
                     "update-ref",
@@ -2402,11 +2337,19 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     prepared_revision.as_str(),
                     expected_revision.as_str(),
                 ],
-            )))
-            .await;
+            )
+            // `update-ref` can invoke the `reference-transaction` repository
+            // hook. Pin hooks off for the atomic write itself; checked commits
+            // promise that arbitrary repository hook code is never executed.
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+            .env("GIT_CONFIG_VALUE_0", "/dev/null")
+            .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
+            .env("GIT_CONFIG_VALUE_1", "false");
+        let cas = self.core.output_string(c_locale(cas_command)).await;
         match cas {
             Ok(result) if result.code() == Some(0) => {}
-            Ok(result) => {
+            Ok(result) if result.code().is_some() => {
                 let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
                 if actual_revision.as_deref() != Some(expected_revision.as_str()) {
                     return Ok(CommitPathsCas::Stale { actual_revision });
@@ -2414,15 +2357,13 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                 let _ = result.ensure_success()?;
                 unreachable!("a non-zero update-ref result cannot ensure success")
             }
-            Err(error) => {
+            Ok(_) => {
                 let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
-                if actual_revision.as_deref() == Some(prepared_revision.as_str()) {
-                    return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
-                }
-                if actual_revision.as_deref() != Some(expected_revision.as_str()) {
-                    return Ok(CommitPathsCas::Stale { actual_revision });
-                }
-                return Err(error);
+                return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
+            }
+            Err(_) => {
+                let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
+                return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
             }
         }
 
@@ -2449,12 +2390,6 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .await
             .is_err()
         {
-            let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
-            return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
-        }
-
-        let post_commit = self.run_commit_hook_raw(dir, "post-commit", &[]).await;
-        if post_commit.is_err() {
             let actual_revision = self.resolve_commit(dir, &RevSpec::new("HEAD")?).await.ok();
             return Ok(CommitPathsCas::OutcomeUnknown { actual_revision });
         }
@@ -5229,8 +5164,10 @@ mod tests {
         assert!(call.has_stdin, "paths must travel over stdin, not argv");
     }
 
-    #[tokio::test]
-    async fn commit_paths_cas_rejects_identity_advanced_at_atomic_ref_update() {
+    fn commit_paths_cas_runner(
+        update_ref: Reply,
+        observed_head: Reply,
+    ) -> RecordingRunner<ScriptedRunner> {
         let diff = "diff --git a/selected.txt b/selected.txt\n\
                     index 1111111..2222222 100644\n\
                     --- a/selected.txt\n\
@@ -5238,24 +5175,27 @@ mod tests {
                     @@ -1 +1 @@\n\
                     -before\n\
                     +after\n";
-        let runner = RecordingRunner::new(
+        RecordingRunner::new(
             ScriptedRunner::new()
-                .on(["git", "--version"], Reply::ok("git version 2.54.0\n"))
                 .on_sequence(
                     ["git", "rev-parse", "--verify"],
-                    [Reply::ok("expected\n"), Reply::ok("advanced\n")],
+                    [Reply::ok("expected\n"), observed_head],
                 )
                 .on(["git", "read-tree"], Reply::ok(""))
                 .on(["git", "--literal-pathspecs", "add"], Reply::ok(""))
-                .on(["git", "hook", "run"], Reply::ok(""))
                 .on(["git", "write-tree"], Reply::ok("tree\n"))
                 .on(["git", "config", "--get"], Reply::fail(1, ""))
                 .on(["git", "commit-tree"], Reply::ok("prepared\n"))
                 .on(["git", "diff"], Reply::ok(diff))
-                .on(
-                    ["git", "update-ref"],
-                    Reply::fail(1, "cannot lock ref: is at advanced but expected expected"),
-                ),
+                .on(["git", "update-ref"], update_ref),
+        )
+    }
+
+    #[tokio::test]
+    async fn commit_paths_cas_rejects_observed_nonzero_identity_mismatch_as_stale() {
+        let runner = commit_paths_cas_runner(
+            Reply::fail(1, "cannot lock ref: is at advanced but expected expected"),
+            Reply::ok("advanced\n"),
         );
         let git = Git::with_runner(&runner);
 
@@ -5293,10 +5233,71 @@ mod tests {
             calls.iter().all(|call| {
                 let args = call.args_str();
                 args.first().is_none_or(|arg| arg != "reset")
-                    && !(args.starts_with(&["hook".into(), "run".into()])
-                        && args.iter().any(|arg| arg == "post-commit"))
+                    && !args.iter().any(|arg| arg == "post-commit")
             }),
-            "a rejected CAS must not perform installed-commit index or post-commit steps"
+            "a rejected CAS must not perform installed-commit steps"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_paths_cas_timeout_is_unknown_even_when_head_is_advanced() {
+        let runner = commit_paths_cas_runner(Reply::timeout(), Reply::ok("advanced\n"));
+        let git = Git::with_runner(&runner);
+        let outcome = git
+            .commit_paths_cas(
+                Path::new("/repo"),
+                CommitPaths::new([PathBuf::from("selected.txt")], "T-193 atomic"),
+                &rv("expected"),
+            )
+            .await
+            .expect("an unobservable CAS result is structured unknown");
+        assert_eq!(
+            outcome,
+            CommitPathsCas::OutcomeUnknown {
+                actual_revision: Some("advanced".into())
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_paths_cas_cancellation_is_unknown_when_head_is_unreadable() {
+        use processkit::CancellationToken;
+
+        let runner = std::sync::Arc::new(commit_paths_cas_runner(
+            Reply::pending(),
+            Reply::ok("must-not-be-observed\n"),
+        ));
+        let token = CancellationToken::new();
+        let git = Git::with_runner(std::sync::Arc::clone(&runner)).default_cancel_on(token.clone());
+        let task = tokio::spawn(async move {
+            git.commit_paths_cas(
+                Path::new("/repo"),
+                CommitPaths::new([PathBuf::from("selected.txt")], "T-193 atomic"),
+                &rv("expected"),
+            )
+            .await
+        });
+
+        loop {
+            if runner.calls().iter().any(|call| {
+                call.args_str()
+                    .first()
+                    .is_some_and(|arg| arg == "update-ref")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        token.cancel();
+        let outcome = task
+            .await
+            .expect("join cancellation scenario")
+            .expect("an unobservable CAS result is structured unknown");
+        assert_eq!(
+            outcome,
+            CommitPathsCas::OutcomeUnknown {
+                actual_revision: None
+            }
         );
     }
 

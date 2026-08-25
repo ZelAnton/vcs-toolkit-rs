@@ -376,14 +376,14 @@ pub(crate) async fn commit_paths_checked<R: ProcessRunner>(
             "git atomic update rejected but current HEAD is unavailable".into(),
         )),
         vcs_git::CommitPathsCas::PathMismatch { .. } => Err(Error::Unsupported(
-            "a Git commit hook changed the prepared exact path set; no ref was updated".into(),
+            "the prepared Git commit did not contain exactly the requested path set; no ref was updated"
+                .into(),
         )),
         vcs_git::CommitPathsCas::OutcomeUnknown { .. } => Err(Error::OutcomeUnknown(
             "git atomic commit or selected-index post-step is unverified".into(),
         )),
         vcs_git::CommitPathsCas::Unsupported => Err(Error::Unsupported(
-            "atomic checked commit requires Git 2.36 or newer for hook-preserving preparation"
-                .into(),
+            "this Git backend cannot provide the required atomic checked-commit primitive".into(),
         )),
         _ => Err(Error::Unsupported(
             "the Git backend returned an unknown atomic checked-commit outcome".into(),

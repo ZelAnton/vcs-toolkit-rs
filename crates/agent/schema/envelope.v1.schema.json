@@ -369,13 +369,14 @@
     "commitSemantics": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["selection", "backend_selection", "refs_advanced", "index_may_change_for_selected_paths", "unrelated_index_preserved", "working_copy_content_mutated", "push_performed", "switch_performed", "conflict_repair_performed"],
+      "required": ["selection", "backend_selection", "refs_advanced", "index_may_change_for_selected_paths", "unrelated_index_preserved", "repository_hooks_executed", "working_copy_content_mutated", "push_performed", "switch_performed", "conflict_repair_performed"],
       "properties": {
         "selection": {"const": "exact-repo-relative-paths"},
         "backend_selection": {"const": "git-atomic-ref-cas"},
         "refs_advanced": {"const": true},
         "index_may_change_for_selected_paths": {"type": "boolean"},
         "unrelated_index_preserved": {"const": true},
+        "repository_hooks_executed": {"const": false},
         "working_copy_content_mutated": {"const": false},
         "push_performed": {"const": false},
         "switch_performed": {"const": false},

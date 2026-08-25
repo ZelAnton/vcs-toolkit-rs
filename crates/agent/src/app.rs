@@ -131,6 +131,7 @@ struct CommitSemantics {
     refs_advanced: bool,
     index_may_change_for_selected_paths: bool,
     unrelated_index_preserved: bool,
+    repository_hooks_executed: bool,
     working_copy_content_mutated: bool,
     push_performed: bool,
     switch_performed: bool,
@@ -692,6 +693,7 @@ fn commit_semantics(kind: BackendKind) -> CommitSemantics {
         refs_advanced: true,
         index_may_change_for_selected_paths: true,
         unrelated_index_preserved: true,
+        repository_hooks_executed: false,
         working_copy_content_mutated: false,
         push_performed: false,
         switch_performed: false,
@@ -1851,6 +1853,17 @@ mod tests {
             ],
             &selected,
         ));
+    }
+
+    #[test]
+    fn checked_commit_backend_unknown_maps_to_exit_43() {
+        let error = map_core_error(
+            Operation::Commit,
+            false,
+            vcs_core::Error::OutcomeUnknown("unobservable atomic ref update".into()),
+        );
+        assert_eq!(error.kind(), ErrorKind::OutcomeUnknown);
+        assert_eq!(ErrorKind::OutcomeUnknown.exit_code(), 43);
     }
 
     #[test]

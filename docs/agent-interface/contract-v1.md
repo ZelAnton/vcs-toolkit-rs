@@ -62,16 +62,18 @@ mutation because its typed CLI surface has no atomic expected-operation/change
 guard equivalent to Git's expected-old ref update.
 
 The only mutation call is the typed `Repo::commit_paths_checked`, which carries
-the expected identity to the backend boundary. On Git 2.36+, it prepares the
-commit from the expected tree through a temporary index, runs `pre-commit`,
-`prepare-commit-msg`, and `commit-msg`, verifies the prepared object's exact path
-diff, and installs it with native atomic
+the expected identity to the backend boundary. On Git it prepares the commit
+from the expected tree through a temporary index, verifies the prepared object's
+exact path diff, and installs it with native atomic
 `update-ref HEAD <new> <expected-old>`. A concurrent HEAD advance makes that CAS
 fail stale and leaves the prepared object unreachable; no T-193 commit is
-installed. After a successful CAS, only selected index entries are reset and
-`post-commit` runs, preserving unrelated staged/unstaged/untracked state. Git
-2.31-2.35 and Jujutsu are refused as unsupported before preparation rather than
-claiming a weaker stale guard. Postflight also requires an advanced revision,
+installed. Repository commit hooks (`pre-commit`, message hooks and
+`post-commit`) are deliberately not executed: arbitrary hook code could mutate
+unrelated index/worktree state and make the preservation claim unprovable. The
+success envelope exposes this as `repository_hooks_executed: false`. After a
+successful CAS, only selected index entries are reset, preserving unrelated
+staged/unstaged/untracked state. Jujutsu is refused as unsupported before
+preparation rather than claiming a weaker stale guard. Postflight also requires an advanced revision,
 clear repository state, no selected paths left in the working-copy change set,
 and every unrelated status entry still present. Only then does success report
 the repository, before/after revision identity and included paths observed from
@@ -84,10 +86,12 @@ unstaged, and untracked state. No Jujutsu commit-success envelope is valid until
 that backend gains an atomic expected-identity mutation primitive.
 
 Timeout and cancellation remain their ProcessKit lifecycle kinds during
-preflight and Git preparation. A CAS rejection is a safe stale refusal because
-the ref was not updated. Only a failure after the CAS may be `outcome_unknown`
-(exit 43), because the commit may already be installed; it is never a false
-success. A caller recovers by
+preflight and Git preparation. An observed terminal nonzero CAS rejection is a
+safe stale refusal because the ref was not updated. A timeout, cancellation, or
+other unobservable CAS result is `outcome_unknown` (exit 43) even if a subsequent
+HEAD read differs from the prepared commit: the prepared ref may have been
+installed and immediately advanced again. Failures after an observed successful
+CAS are likewise unknown; neither case becomes a false success. A caller recovers by
 inspecting current state and retrying with the original expected revision: a
 commit that actually advanced is then rejected as stale, while an unchanged
 revision permits a fresh checked attempt.

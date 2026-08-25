@@ -1270,11 +1270,12 @@ impl<R: ProcessRunner> Repo<R> {
     /// Git prepares an exact commit through a temporary index, verifies its path
     /// diff, then installs it with native `update-ref HEAD <new> <expected-old>`:
     /// the expected identity and ref mutation are one atomic compare-and-swap.
-    /// A CAS mismatch is [`Error::StaleRevision`]; uncertainty only after a
-    /// successful ref update is [`Error::OutcomeUnknown`]. Git 2.31-2.35 are
-    /// refused because hook-preserving preparation requires `git hook run`
-    /// (2.36+). Jujutsu currently exposes no equivalent expected-operation/change
-    /// guard, so this method returns [`Error::Unsupported`] before mutation.
+    /// A terminal CAS mismatch is [`Error::StaleRevision`]; an unobservable CAS
+    /// result or uncertainty after a successful ref update is
+    /// [`Error::OutcomeUnknown`]. Git repository commit hooks are deliberately not
+    /// executed so they cannot mutate unrelated checkout state. Jujutsu currently
+    /// exposes no equivalent expected-operation/change guard, so this method
+    /// returns [`Error::Unsupported`] before mutation.
     ///
     /// [`CheckedCommit::included_paths`] is observed from the created revision's
     /// diff (including both sides of renames), never copied from the request.
