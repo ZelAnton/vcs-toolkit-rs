@@ -1,0 +1,14 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "future_operation-v2",
+  "status": "success",
+  "data": {
+    "future_result": {
+      "available": true
+    }
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

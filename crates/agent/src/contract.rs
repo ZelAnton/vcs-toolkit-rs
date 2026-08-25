@@ -749,6 +749,7 @@ mod tests {
         for fixture in [
             include_str!("../tests/fixtures/probe-success.v1.json"),
             include_str!("../tests/fixtures/invalid-input.v1.json"),
+            include_str!("../tests/fixtures/future-operation-success.v1.json"),
             include_str!("../tests/fixtures/inspect-success-git.v1.json"),
             include_str!("../tests/fixtures/inspect-no-remote-git.v1.json"),
             include_str!("../tests/fixtures/changes-summary-git.v1.json"),

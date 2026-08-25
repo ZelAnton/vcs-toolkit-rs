@@ -30,7 +30,7 @@ EXPECTED_SCENARIOS = {
 }
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
-MACHINE_OPERATIONS = {"probe", "inspect", "changes", "commit", "publish", "ci_status", "ci_wait", "unknown"}
+MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
 
 
 class ValidationError(ValueError):
@@ -284,8 +284,8 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
     if re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", binary_version) is None:
         raise ValidationError(f"{label}.binary_version is invalid")
     operation = _string(envelope.get("operation"), f"{label}.operation")
-    if operation not in MACHINE_OPERATIONS:
-        raise ValidationError(f"{label}.operation is not a v1 operation")
+    if MACHINE_OPERATION_PATTERN.fullmatch(operation) is None:
+        raise ValidationError(f"{label}.operation is not a valid v1 operation identifier")
     status = envelope.get("status")
     if status not in {"success", "error"}:
         raise ValidationError(f"{label}.status is invalid")
