@@ -35,7 +35,7 @@ OPTIONS:\n\
     --write-intent commit     Explicitly authorize the checked commit mutation.\n\
     --expected-revision <ID> Fail closed unless the current revision is exactly ID.\n\
     --message <TEXT>          Non-empty commit message.\n\
-    --path <PATH>             Exact repo-relative file path; repeat for each file.\n\
+    --path <PATH>             Exact repo-relative leaf file path; repeat for each file.\n\
     --content-max-bytes <n>   Fail if captured diff content exceeds n bytes\n\
                               (1024..=1048576; default: 262144).\n\
     --max-output-bytes <n>    Fail before emitting a result larger than n bytes\n\

@@ -390,7 +390,12 @@
         "repository": {"$ref": "#/$defs/repository"},
         "before": {"$ref": "#/$defs/commitIdentity"},
         "after": {"$ref": "#/$defs/commitIdentity"},
-        "included_paths": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/machinePath"}},
+        "included_paths": {
+          "description": "Paths observed in the created commit/change diff, including both sides of a rename; never copied from the request.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/machinePath"}
+        },
         "unrelated_changes_preserved": {"const": true},
         "semantics": {"$ref": "#/$defs/commitSemantics"}
       },

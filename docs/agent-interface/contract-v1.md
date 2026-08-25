@@ -46,8 +46,10 @@ an ambient commit. It additionally requires `--write-intent commit`, one exact
 `--path` values. Each selected path must be a non-empty, non-flag-like,
 repo-relative file path with no absolute prefix, parent traversal, empty or dot
 component, duplicate, directory expansion, or one-sided rename. Every path must
-appear in the live typed status before mutation; an unchanged path is refused
-rather than reported later as included.
+appear as an exact leaf in the live typed status before mutation; Git status is
+queried with `--untracked-files=all` so an untracked directory can never stand
+in for all descendants. Deletions and symlinks remain exact leaf entries. An
+unchanged path is refused rather than reported later as included.
 
 Preflight takes a live typed snapshot and fails with `denied` while conflicts or
 an in-progress operation exist, when the current revision is unavailable, or
@@ -57,20 +59,28 @@ expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths;
 Jujutsu's fileset language is text, so a non-UTF-8 selection returns structured
 `unsupported` before mutation.
 
-The only mutation call is the existing typed `Repo::commit_paths`. Git uses
-literal commit-only pathspecs; Jujutsu uses exact root-file filesets. Postflight
-requires an advanced revision, clear repository state, no selected paths left
-in the working-copy change set, and every unrelated status entry still present.
-Only then does success report the repository, before/after revision identity,
-Jujutsu change IDs when applicable, actual included paths, and
+The only mutation call is the typed `Repo::commit_paths_checked`, which carries
+the expected identity to the backend boundary. Git uses literal commit-only
+pathspecs; because porcelain commit has no atomic expected-HEAD option, success
+also requires proof that the created commit's parent is the expected revision.
+Jujutsu uses exact root-file filesets and proves the rewrite retained the
+pre-commit working-copy tree. A boundary mismatch before either mutation starts
+is a safe stale refusal; an identity-proof failure after a process may have
+written is `outcome_unknown`. Postflight also requires an advanced revision,
+clear repository state, no selected paths left in the working-copy change set,
+and every unrelated status entry still present. Only then does success report
+the repository, before/after revision identity, Jujutsu change IDs when
+applicable, and included paths observed from the created commit/change diff
+(both old and new sides for renames), plus
 `unrelated_changes_preserved: true`. Its semantics explicitly state that no
 push, switch, conflict repair, or working-copy content edit occurred. Git may
 update index entries for selected paths but preserves unrelated staged,
 unstaged, and untracked state; Jujutsu has no Git index.
 
-Timeout and cancellation remain their ProcessKit lifecycle kinds. Once the
-typed mutation returned success, inability to establish postflight is
-`outcome_unknown` (exit 43), never a false success. A caller recovers by
+Timeout and cancellation remain their ProcessKit lifecycle kinds during
+preflight. Once the checked backend mutation call is reached, any process or
+postflight failure is `outcome_unknown` (exit 43), because the backend may have
+written before the failure became observable; it is never a false success. A caller recovers by
 inspecting current state and retrying with the original expected revision: a
 commit that actually advanced is then rejected as stale, while an unchanged
 revision permits a fresh checked attempt.

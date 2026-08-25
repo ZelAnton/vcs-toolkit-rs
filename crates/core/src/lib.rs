@@ -196,9 +196,9 @@ mod git_backend;
 mod jj_backend;
 
 pub use dto::{
-    AnnotationLine, BackendKind, BranchDelete, ChangeKind, CloneSpec, Commit, CreateOutcome,
-    DiffStat, FileChange, FileDiff, MergeProbe, OperationLogEntry, OperationState, Remote,
-    RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo,
+    AnnotationLine, BackendKind, BranchDelete, ChangeKind, CheckedCommit, CloneSpec, Commit,
+    CreateOutcome, DiffStat, FileChange, FileDiff, MergeProbe, OperationLogEntry, OperationState,
+    Remote, RepoSnapshot, UpstreamTracking, WorktreeCreate, WorktreeCreatePartial, WorktreeInfo,
     WorktreeRemove,
 };
 pub use error::{Error, Result};
@@ -1012,6 +1012,20 @@ impl<R: ProcessRunner> Repo<R> {
         }
     }
 
+    /// Working-copy changes with every selected item represented as a leaf
+    /// repo-relative file path.
+    ///
+    /// Git's ordinary porcelain status may collapse an untracked directory to
+    /// `dir/`; this variant uses `--untracked-files=all` so callers that perform
+    /// exact-path mutations cannot accidentally turn that directory token into a
+    /// recursive pathspec. Jujutsu status already has leaf-file semantics.
+    pub async fn changed_files_exact(&self) -> Result<Vec<FileChange>> {
+        match &self.backend {
+            Backend::Git(g) => git_backend::changed_files_exact(g, &self.cwd).await,
+            Backend::Jj(j) => jj_backend::changed_files_exact(j, &self.cwd).await,
+        }
+    }
+
     /// Aggregate insertion/deletion counts for the working copy.
     ///
     /// Backend nuance: git counts the working tree against `HEAD` (`git diff`,
@@ -1247,6 +1261,43 @@ impl<R: ProcessRunner> Repo<R> {
         match &self.backend {
             Backend::Git(g) => git_backend::commit_paths(g, &self.cwd, paths, message).await,
             Backend::Jj(j) => jj_backend::commit_paths(j, &self.cwd, paths, message).await,
+        }
+    }
+
+    /// Commit `paths` only when the revision still equals `expected_revision`,
+    /// and return evidence from the commit/change actually created.
+    ///
+    /// The expected identity is checked again at the backend mutation boundary.
+    /// Git porcelain has no atomic expected-HEAD option, so its equivalent is an
+    /// immediate boundary check followed by proof that the created commit's
+    /// parent is exactly `expected_revision`; Jujutsu additionally proves the
+    /// working-copy rewrite retained the pre-commit tree. A mismatch before the
+    /// process starts is [`Error::StaleRevision`]. Any identity/path-proof failure
+    /// after the process may have written is [`Error::OutcomeUnknown`].
+    ///
+    /// [`CheckedCommit::included_paths`] is observed from the created revision's
+    /// diff (including both sides of renames), never copied from the request.
+    pub async fn commit_paths_checked(
+        &self,
+        paths: &[PathBuf],
+        message: &str,
+        expected_revision: &str,
+    ) -> Result<CheckedCommit> {
+        if paths.is_empty() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "commit_paths_checked requires at least one path",
+            )));
+        }
+        match &self.backend {
+            Backend::Git(g) => {
+                git_backend::commit_paths_checked(g, &self.cwd, paths, message, expected_revision)
+                    .await
+            }
+            Backend::Jj(j) => {
+                jj_backend::commit_paths_checked(j, &self.cwd, paths, message, expected_revision)
+                    .await
+            }
         }
     }
 
@@ -1727,6 +1778,7 @@ facade_trait! {
         fn delete_branch(spec: BranchDelete) -> Result<()>;
         fn rename_branch(old: &str, new: &str) -> Result<()>;
         fn changed_files() -> Result<Vec<FileChange>>;
+        fn changed_files_exact() -> Result<Vec<FileChange>>;
         fn diff_stat() -> Result<DiffStat>;
         fn diff() -> Result<Vec<FileDiff>>;
         fn diff_between(from: &str, to: &str) -> Result<Vec<FileDiff>>;
@@ -1737,6 +1789,7 @@ facade_trait! {
         fn snapshot() -> Result<RepoSnapshot>;
         fn snapshot_readonly() -> Result<RepoSnapshot>;
         fn commit_paths(paths: &[PathBuf], message: &str) -> Result<()>;
+        fn commit_paths_checked(paths: &[PathBuf], message: &str, expected_revision: &str) -> Result<CheckedCommit>;
         fn fetch() -> Result<()>;
         fn fetch_with_progress<'a>(progress: &'a mut ProgressCallback<'a>) -> Result<()>;
         fn fetch_from(remote: &str) -> Result<()>;
@@ -3444,6 +3497,96 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn git_checked_commit_rejects_identity_advanced_after_outer_preflight_without_commit() {
+        let runner = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["git", "rev-parse"],
+            [Reply::ok("/repo\n"), Reply::ok("advanced\n")],
+        ));
+        let repo = Repo::from_git("/repo", "/repo", Git::with_runner(&runner));
+        let error = repo
+            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
+            .await
+            .expect_err("boundary identity must reject the stale outer preflight");
+        assert!(matches!(error, Error::StaleRevision { .. }));
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| !call.args_str().iter().any(|arg| arg == "commit")),
+            "the checked primitive must not start its own mutation after stale identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn jj_checked_commit_rejects_identity_advanced_after_outer_preflight_without_commit() {
+        let runner = RecordingRunner::new(ScriptedRunner::new().on_sequence(
+            ["jj", "log"],
+            [
+                Reply::ok("change\texpect\tfalse\t\"work\"\n"),
+                Reply::ok("parent\n"),
+                Reply::ok("advanced\n"),
+            ],
+        ));
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(&runner));
+        let error = repo
+            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
+            .await
+            .expect_err("boundary identity must reject the stale outer preflight");
+        assert!(matches!(error, Error::StaleRevision { .. }));
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| !call.args_str().iter().any(|arg| arg == "commit")),
+            "the checked primitive must not start its own mutation after stale identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_checked_commit_process_failure_is_outcome_unknown_after_boundary() {
+        let repo = git_repo(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["git", "rev-parse"],
+                    [Reply::ok("/repo\n"), Reply::ok("expected\n")],
+                )
+                .on(
+                    ["git", "--literal-pathspecs", "commit"],
+                    Reply::fail(1, "commit failed"),
+                ),
+        );
+        let error = repo
+            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
+            .await
+            .expect_err("an unverified mutation call cannot be a safe backend retry");
+        assert!(
+            matches!(error, Error::OutcomeUnknown(_)),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn jj_checked_commit_process_failure_is_outcome_unknown_after_boundary() {
+        let repo = jj_repo(
+            ScriptedRunner::new()
+                .on_sequence(
+                    ["jj", "log"],
+                    [
+                        Reply::ok("change\texpect\tfalse\t\"work\"\n"),
+                        Reply::ok("parent\n"),
+                        Reply::ok("expected\n"),
+                    ],
+                )
+                .on(["jj", "commit"], Reply::fail(1, "commit failed")),
+        );
+        let error = repo
+            .commit_paths_checked(&[PathBuf::from("selected.txt")], "msg", "expected")
+            .await
+            .expect_err("an unverified mutation call cannot be a safe backend retry");
+        assert!(matches!(error, Error::OutcomeUnknown(_)));
     }
 
     // `create_branch` dispatches to `git branch <name>` (no checkout) on git and to

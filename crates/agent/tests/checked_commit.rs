@@ -162,6 +162,209 @@ fn commit_output_budget_is_checked_before_mutation() {
 }
 
 #[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_rejects_directory_selection_and_commits_one_leaf_only() {
+    let sandbox = GitSandbox::init("agent-checked-git-leaves");
+    sandbox.commit_file("tracked/a.txt", "before\n", "seed tracked leaf");
+    sandbox.write("nested/a.txt", "a\n");
+    sandbox.write("nested/b.txt", "b\n");
+    sandbox.write("tracked/a.txt", "after\n");
+    let before = sandbox.rev_parse("HEAD");
+
+    let directory = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "must not expand directory",
+        "--path",
+        "nested",
+    ]));
+    assert_eq!(directory.status.code(), Some(20));
+    assert_eq!(
+        json(&directory)["error"]["code"],
+        "selected_path_not_changed"
+    );
+    assert_eq!(sandbox.rev_parse("HEAD"), before);
+
+    let leaf = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "commit one leaf",
+        "--path",
+        "tracked/a.txt",
+        "--include-machine-paths",
+    ]));
+    assert!(
+        leaf.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&leaf.stderr)
+    );
+    let result = json(&leaf);
+    assert_eq!(
+        result["data"]["included_paths"][0]["value"],
+        "tracked/a.txt"
+    );
+    assert_eq!(
+        capture(
+            "git",
+            sandbox.path(),
+            &["show", "--format=", "--name-only", "HEAD"]
+        ),
+        "tracked/a.txt"
+    );
+    assert!(sandbox.path().join("nested/a.txt").exists());
+    assert!(sandbox.path().join("nested/b.txt").exists());
+    assert!(
+        capture("git", sandbox.path(), &["status", "--short"])
+            .lines()
+            .any(|line| line == "?? nested/")
+    );
+}
+
+#[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_proves_a_deleted_leaf() {
+    let sandbox = GitSandbox::init("agent-checked-git-delete");
+    sandbox.commit_file("deleted.txt", "delete me\n", "seed deletion");
+    std::fs::remove_file(sandbox.path().join("deleted.txt")).expect("delete tracked leaf");
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "commit deletion",
+        "--path",
+        "deleted.txt",
+        "--include-machine-paths",
+    ]));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json(&output)["data"]["included_paths"][0]["value"],
+        "deleted.txt"
+    );
+    assert_eq!(
+        capture(
+            "git",
+            sandbox.path(),
+            &["show", "--format=", "--name-only", "HEAD"]
+        ),
+        "deleted.txt"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_proves_a_symlink_leaf() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = GitSandbox::init("agent-checked-git-symlink");
+    sandbox.commit_file("target-a.txt", "a\n", "seed target a");
+    sandbox.commit_file("target-b.txt", "b\n", "seed target b");
+    symlink("target-a.txt", sandbox.path().join("link.txt")).expect("create symlink");
+    sandbox.add_all();
+    sandbox.commit("seed symlink");
+    std::fs::remove_file(sandbox.path().join("link.txt")).expect("remove old symlink");
+    symlink("target-b.txt", sandbox.path().join("link.txt")).expect("replace symlink");
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "commit symlink leaf",
+        "--path",
+        "link.txt",
+        "--include-machine-paths",
+    ]));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json(&output)["data"]["included_paths"][0]["value"],
+        "link.txt"
+    );
+}
+
+#[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_reports_unknown_when_hook_adds_an_unselected_path() {
+    let sandbox = GitSandbox::init("agent-checked-git-hook-proof");
+    sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.write("selected.txt", "after\n");
+    sandbox.write("extra.txt", "hook extra\n");
+    let hook = sandbox.path().join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hooks dir");
+    std::fs::write(&hook, "#!/bin/sh\ngit add -- extra.txt\n").expect("write hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))
+            .expect("make hook executable");
+    }
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "hook widens commit",
+        "--path",
+        "selected.txt",
+    ]));
+    assert_eq!(output.status.code(), Some(43));
+    assert_eq!(json(&output)["error"]["kind"], "outcome_unknown");
+    assert_ne!(
+        sandbox.rev_parse("HEAD"),
+        before,
+        "the hook-mutated commit exists"
+    );
+    let committed = capture(
+        "git",
+        sandbox.path(),
+        &["show", "--format=", "--name-only", "HEAD"],
+    );
+    assert!(
+        committed.lines().any(|line| line == "selected.txt"),
+        "{committed}"
+    );
+    assert!(
+        committed.lines().any(|line| line == "extra.txt"),
+        "{committed}"
+    );
+}
+
+#[test]
 #[ignore = "requires the jj and git binaries"]
 fn jj_checked_commit_uses_exact_filesets_and_preserves_unselected_change_without_bookmark() {
     let sandbox = JjSandbox::init_non_colocated("agent-checked-jj");

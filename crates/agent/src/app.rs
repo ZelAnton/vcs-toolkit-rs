@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -560,7 +561,7 @@ async fn commit_repo<R: ProcessRunner>(
     }
 
     let changed_before = repo
-        .changed_files()
+        .changed_files_exact()
         .await
         .map_err(|error| Box::new(map_core_error(Operation::Commit, include_paths, error)))?;
     let unrelated_before =
@@ -597,9 +598,20 @@ async fn commit_repo<R: ProcessRunner>(
         ));
     }
 
-    repo.commit_paths(&invocation.commit_paths, message)
+    let evidence = repo
+        .commit_paths_checked(&invocation.commit_paths, message, expected)
         .await
         .map_err(|error| Box::new(map_core_error(Operation::Commit, include_paths, error)))?;
+    if evidence.before_revision != before.revision
+        || evidence.before_change_id.as_ref() != before.change_id.as_ref()
+        || !same_path_set(&evidence.included_paths, &invocation.commit_paths)
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_observed_paths_or_base_mismatch",
+            include_paths,
+        )));
+    }
 
     let after_snapshot = repo.snapshot().await.map_err(|_| {
         Box::new(commit_gate_error(
@@ -616,7 +628,16 @@ async fn commit_repo<R: ProcessRunner>(
         )));
     }
     let after = commit_identity(repo, after_snapshot, include_paths, true).await?;
-    let changed_after = repo.changed_files().await.map_err(|_| {
+    if after.revision != evidence.after_revision
+        || after.change_id.as_ref() != evidence.after_change_id.as_ref()
+    {
+        return Err(Box::new(commit_gate_error(
+            ErrorKind::OutcomeUnknown,
+            "commit_postflight_identity_changed",
+            include_paths,
+        )));
+    }
+    let changed_after = repo.changed_files_exact().await.map_err(|_| {
         Box::new(commit_gate_error(
             ErrorKind::OutcomeUnknown,
             "commit_postflight_changes_unavailable",
@@ -655,10 +676,18 @@ async fn commit_repo<R: ProcessRunner>(
         repository: repository_identity(repo, include_paths),
         before: redact_commit_identity(before, include_paths),
         after: redact_commit_identity(after, include_paths),
-        included_paths,
+        included_paths: evidence
+            .included_paths
+            .iter()
+            .map(|path| MachinePath::from_path(path, include_paths))
+            .collect(),
         unrelated_changes_preserved: true,
         semantics,
     })
+}
+
+fn same_path_set(left: &[PathBuf], right: &[PathBuf]) -> bool {
+    left.iter().collect::<BTreeSet<_>>() == right.iter().collect::<BTreeSet<_>>()
 }
 
 fn commit_semantics(kind: BackendKind) -> CommitSemantics {
@@ -1254,6 +1283,18 @@ fn map_core_error(operation: Operation, include_paths: bool, error: vcs_core::Er
             "backend_capability_unsupported",
             false,
         ),
+        vcs_core::Error::StaleRevision { .. } => AgentError::new(
+            operation.name(),
+            ErrorKind::Denied,
+            "stale_expected_revision",
+            false,
+        ),
+        vcs_core::Error::OutcomeUnknown(_) => AgentError::new(
+            operation.name(),
+            ErrorKind::OutcomeUnknown,
+            "commit_backend_evidence_unverified",
+            false,
+        ),
         vcs_core::Error::Io(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
             AgentError::new(
                 operation.name(),
@@ -1801,6 +1842,24 @@ mod tests {
             .expect("both rename endpoints are exact")
             .is_empty()
         );
+    }
+
+    #[test]
+    fn checked_commit_observed_path_proof_rejects_extra_or_missing_paths() {
+        let selected = vec![PathBuf::from("old.txt"), PathBuf::from("new.txt")];
+        assert!(same_path_set(
+            &[PathBuf::from("new.txt"), PathBuf::from("old.txt")],
+            &selected,
+        ));
+        assert!(!same_path_set(&[PathBuf::from("new.txt")], &selected));
+        assert!(!same_path_set(
+            &[
+                PathBuf::from("old.txt"),
+                PathBuf::from("new.txt"),
+                PathBuf::from("extra.txt"),
+            ],
+            &selected,
+        ));
     }
 
     #[test]

@@ -284,6 +284,11 @@ pub trait GitApi: Send + Sync {
     async fn capabilities(&self) -> Result<GitCapabilities>;
     /// Working-tree status (`git status --porcelain=v1 -z`).
     async fn status(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
+    /// Working-tree status with every untracked leaf file expanded
+    /// (`git status --porcelain=v1 -z --untracked-files=all`). Unlike Git's
+    /// default status, this never represents an untracked directory as one
+    /// recursively-expanding path.
+    async fn status_all_files(&self, dir: &Path) -> Result<Vec<StatusEntry>>;
     /// Raw porcelain status text (`git status --porcelain=v1`) — the unparsed
     /// counterpart of [`status`](GitApi::status), mirroring `vcs_jj` `status_text`.
     async fn status_text(&self, dir: &Path) -> Result<String>;
@@ -1741,6 +1746,18 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             .parse_bytes(
                 self.core
                     .command_in(dir, ["status", "--porcelain=v1", "-z"]),
+                parse::parse_porcelain,
+            )
+            .await
+    }
+
+    async fn status_all_files(&self, dir: &Path) -> Result<Vec<StatusEntry>> {
+        self.core
+            .parse_bytes(
+                self.core.command_in(
+                    dir,
+                    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                ),
                 parse::parse_porcelain,
             )
             .await
@@ -4214,6 +4231,7 @@ vcs_cli_support::at_forwarders! {
     }
     dir {
         fn status() -> Result<Vec<StatusEntry>>;
+        fn status_all_files() -> Result<Vec<StatusEntry>>;
         fn status_text() -> Result<String>;
         fn status_tracked() -> Result<Vec<StatusEntry>>;
         fn branch_status() -> Result<BranchStatus>;
@@ -4507,6 +4525,26 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].code, " M");
         assert_eq!(entries[1].path, Path::new("b.rs"));
+    }
+
+    #[tokio::test]
+    async fn status_all_files_expands_untracked_directories_at_the_command_boundary() {
+        let rec = RecordingRunner::new(ScriptedRunner::new().on(
+            ["git", "status"],
+            Reply::ok("?? nested/a.txt\0?? nested/b.txt\0"),
+        ));
+        let git = Git::with_runner(&rec);
+        let entries = git
+            .status_all_files(Path::new("."))
+            .await
+            .expect("leaf status");
+        assert_eq!(entries.len(), 2);
+        assert!(
+            rec.only_call()
+                .args_str()
+                .iter()
+                .any(|arg| arg == "--untracked-files=all")
+        );
     }
 
     // `status_tracked` is `status` minus untracked files — same parser, extra flag.

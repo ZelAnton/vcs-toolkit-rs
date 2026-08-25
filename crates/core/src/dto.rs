@@ -670,6 +670,54 @@ impl MergeProbe {
     }
 }
 
+/// Evidence returned by [`Repo::commit_paths_checked`](crate::Repo::commit_paths_checked).
+///
+/// Unlike the requested path list, [`included_paths`](Self::included_paths) is
+/// derived from the commit/change that the backend actually created. Rename
+/// evidence contains both its old and new repo-relative paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct CheckedCommit {
+    /// Revision observed at the mutation boundary before the commit.
+    pub before_revision: String,
+    /// Working-copy revision observed after the commit.
+    pub after_revision: String,
+    /// Revision containing the selected committed changes. This is the same as
+    /// `after_revision` on Git and the new working copy's parent on Jujutsu.
+    pub committed_revision: String,
+    /// Jujutsu change id at the boundary; absent on Git.
+    pub before_change_id: Option<String>,
+    /// Jujutsu working-copy change id after the commit; absent on Git.
+    pub after_change_id: Option<String>,
+    /// Paths proven by the created commit/change's actual diff, sorted and
+    /// deduplicated. Renames contribute both their old and new paths.
+    pub included_paths: Vec<PathBuf>,
+}
+
+impl CheckedCommit {
+    /// Build checked-commit evidence. Primarily for an external [`VcsRepo`](crate::VcsRepo)
+    /// implementation or a test double; [`Repo`](crate::Repo) callers receive
+    /// values from [`Repo::commit_paths_checked`](crate::Repo::commit_paths_checked).
+    pub fn new(
+        before_revision: String,
+        after_revision: String,
+        committed_revision: String,
+        before_change_id: Option<String>,
+        after_change_id: Option<String>,
+        included_paths: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            before_revision,
+            after_revision,
+            committed_revision,
+            before_change_id,
+            after_change_id,
+            included_paths,
+        }
+    }
+}
+
 /// One commit/change from the repository history — the honest least common
 /// denominator between git's typed `git log` (`vcs_git::parse::Commit`, which
 /// carries hash/short-hash/author/date/subject) and jj's typed `jj log`

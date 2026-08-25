@@ -53,6 +53,19 @@ pub enum Error {
     /// [`is_unsupported`](Error::is_unsupported); a language binding maps it to an
     /// `unsupported`/`ValueError`-style error.
     Unsupported(String),
+    /// The repository identity no longer matches the value supplied to a
+    /// checked mutation. This is detected before this facade starts its own
+    /// commit process, so callers can safely retry from a fresh preflight.
+    StaleRevision {
+        /// Identity supplied by the caller.
+        expected: String,
+        /// Identity observed at the mutation boundary.
+        actual: String,
+    },
+    /// A checked mutation may have written state, but its postflight identity or
+    /// path evidence could not be proven. Callers must inspect/reconcile instead
+    /// of retrying the mutation blindly.
+    OutcomeUnknown(String),
 }
 
 impl Error {
@@ -171,6 +184,11 @@ impl std::fmt::Display for Error {
                 write!(f, "operation rollback did not complete cleanly: {r}")
             }
             Error::Unsupported(what) => write!(f, "unsupported operation: {what}"),
+            Error::StaleRevision { expected, actual } => write!(
+                f,
+                "repository revision changed before mutation (expected {expected}, actual {actual})"
+            ),
+            Error::OutcomeUnknown(what) => write!(f, "mutation outcome is unknown: {what}"),
         }
     }
 }
