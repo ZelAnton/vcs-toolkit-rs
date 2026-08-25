@@ -1,0 +1,27 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "changes",
+  "status": "success",
+  "data": {
+    "repository": {
+      "backend": "jujutsu",
+      "root": {"display": "/repo", "encoding": "utf-8", "value": "/repo"},
+      "cwd": {"display": "/repo", "encoding": "utf-8", "value": "/repo"}
+    },
+    "mode": "full",
+    "content_max_bytes": 8192,
+    "counts": {"paths": 1, "added": 0, "modified": 1, "deleted": 0, "renamed": 0, "files_with_line_diff": 1, "insertions": 1, "deletions": 1},
+    "files": [{"path": {"display": "src/lib.rs", "encoding": "utf-8", "value": "src/lib.rs"}, "old_path": null, "kind": "modified"}],
+    "diff": [{
+      "path": {"display": "src/lib.rs", "encoding": "utf-8", "value": "src/lib.rs"},
+      "old_path": null,
+      "kind": "modified",
+      "hunks": [{"old_start": 1, "old_lines": 1, "new_start": 1, "new_lines": 1, "section": "", "lines": [{"kind": "removed", "text": "old"}, {"kind": "added", "text": "new"}]}]
+    }],
+    "read_semantics": {"refs_mutated": false, "index_mutated": false, "working_copy_content_mutated": false, "working_copy_snapshot": "live-jj-snapshot", "operation_log_may_advance": true}
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

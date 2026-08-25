@@ -122,8 +122,8 @@ impl ExitBand {
     }
 }
 
-#[allow(dead_code)] // Reserved by the v1 application boundary for T-191+ outcomes.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum FailureDomain {
     Backend,
     Forge,
@@ -170,8 +170,8 @@ pub(crate) struct MachineEnvelope {
     fallback: Option<Fallback>,
 }
 
-#[allow(dead_code)] // The full allow-list is reserved for the next typed outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum DetailKey {
     MaxBytes,
     ProcessErrorKind,
@@ -216,7 +216,7 @@ impl MachineEnvelope {
             binary_version: BINARY_VERSION,
             operation,
             status: "success",
-            data: Some(serde_json::to_value(data).expect("probe DTO is serializable")),
+            data: Some(serde_json::to_value(data).expect("machine DTO is serializable")),
             error: None,
             warnings: Vec::new(),
             fallback: None,
@@ -332,7 +332,6 @@ impl AgentError {
         .with_detail(DetailKey::MaxBytes, max_bytes.to_string())
     }
 
-    #[allow(dead_code)] // Contract mapping is pinned now; typed-client use starts in T-191.
     pub(crate) fn from_processkit(
         operation: &'static str,
         domain: FailureDomain,
@@ -368,7 +367,7 @@ impl AgentError {
         self
     }
 
-    #[allow(dead_code)] // Reserved for bounded diagnostics from future outcomes.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
@@ -384,8 +383,7 @@ impl AgentError {
         redact_text(self.message, self.redaction_policy())
     }
 
-    #[cfg(test)]
-    fn include_machine_paths(mut self, include: bool) -> Self {
+    pub(crate) fn include_machine_paths(mut self, include: bool) -> Self {
         self.include_machine_paths = include;
         self
     }
@@ -711,16 +709,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn emitted_envelopes_and_golden_fixtures_validate_against_draft_2020_12() {
+    #[tokio::test]
+    async fn emitted_envelopes_and_golden_fixtures_validate_against_draft_2020_12() {
         let validator = contract_validator();
         let invocation = Invocation {
             operation: Operation::Probe,
+            repository: None,
+            changes_mode: crate::cli::ChangesMode::Summary,
+            content_max_bytes: crate::cli::DEFAULT_CONTENT_MAX_BYTES,
             max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
             include_machine_paths: false,
         };
-        let policy = ExecutionPolicy::new(invocation.max_output_bytes);
-        let emitted_probe = rendered_json(execute(&invocation, &policy).expect("probe succeeds"));
+        let policy = ExecutionPolicy::new(invocation.content_max_bytes);
+        let emitted_probe =
+            rendered_json(execute(&invocation, &policy).await.expect("probe succeeds"));
         assert!(validator.is_valid(&emitted_probe));
 
         for kind in [
@@ -747,6 +749,12 @@ mod tests {
         for fixture in [
             include_str!("../tests/fixtures/probe-success.v1.json"),
             include_str!("../tests/fixtures/invalid-input.v1.json"),
+            include_str!("../tests/fixtures/future-operation-success.v1.json"),
+            include_str!("../tests/fixtures/inspect-success-git.v1.json"),
+            include_str!("../tests/fixtures/inspect-no-remote-git.v1.json"),
+            include_str!("../tests/fixtures/changes-summary-git.v1.json"),
+            include_str!("../tests/fixtures/changes-full-jj.v1.json"),
+            include_str!("../tests/fixtures/changes-output-limit.v1.json"),
         ] {
             let fixture: Value = serde_json::from_str(fixture).expect("golden fixture is JSON");
             assert!(
@@ -782,6 +790,23 @@ mod tests {
         error_without_error["error"] = Value::Null;
         assert!(!validator.is_valid(&error_without_error));
 
+        let inspect: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/inspect-success-git.v1.json"
+        ))
+        .expect("inspect fixture is JSON");
+        let mut dishonest_snapshot = inspect.clone();
+        dishonest_snapshot["data"]["read_semantics"]["operation_log_may_advance"] =
+            Value::Bool(true);
+        assert!(!validator.is_valid(&dishonest_snapshot));
+
+        let mut unavailable_without_reason = inspect;
+        unavailable_without_reason["data"]["forge"]["capabilities"] = json!({
+            "status": "unavailable",
+            "reason": null,
+            "value": null
+        });
+        assert!(!validator.is_valid(&unavailable_without_reason));
+
         let mut wrong_version = success.clone();
         wrong_version["contract_version"] = json!("vcs-agent/v2");
         assert!(!validator.is_valid(&wrong_version));
@@ -789,5 +814,73 @@ mod tests {
         let mut wrong_field_type = error;
         wrong_field_type["warnings"] = json!("not-an-array");
         assert!(!validator.is_valid(&wrong_field_type));
+
+        let changes: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/changes-summary-git.v1.json"
+        ))
+        .expect("changes fixture is JSON");
+        let mut summary_with_full_diff = changes.clone();
+        summary_with_full_diff["data"]["diff"] = json!([]);
+        assert!(!validator.is_valid(&summary_with_full_diff));
+
+        let inspect: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/inspect-success-git.v1.json"
+        ))
+        .expect("inspect fixture is JSON");
+        let mut lying_read_semantics = inspect;
+        lying_read_semantics["data"]["read_semantics"]["refs_mutated"] = json!(true);
+        assert!(!validator.is_valid(&lying_read_semantics));
+
+        let inspect: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/inspect-success-git.v1.json"
+        ))
+        .expect("inspect fixture is JSON");
+        let mut missing_working_copy_field = inspect.clone();
+        missing_working_copy_field["data"]["working_copy"]
+            .as_object_mut()
+            .expect("working_copy object")
+            .remove("revision");
+        assert!(!validator.is_valid(&missing_working_copy_field));
+
+        let mut invalid_forge_capability = inspect.clone();
+        invalid_forge_capability["data"]["forge"]["capabilities"]["value"]["cli_supported"] =
+            json!("yes");
+        assert!(!validator.is_valid(&invalid_forge_capability));
+
+        let mut invalid_forge_auth = inspect;
+        invalid_forge_auth["data"]["forge"]["auth"]["value"]["accounts"] = json!([{
+            "host": 42,
+            "login": "agent",
+            "active": true
+        }]);
+        assert!(!validator.is_valid(&invalid_forge_auth));
+
+        let changes: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/changes-full-jj.v1.json"))
+                .expect("full changes fixture is JSON");
+        let mut missing_count = changes.clone();
+        missing_count["data"]["counts"]
+            .as_object_mut()
+            .expect("counts object")
+            .remove("insertions");
+        assert!(!validator.is_valid(&missing_count));
+
+        let mut missing_changed_path_field = changes.clone();
+        missing_changed_path_field["data"]["files"][0]
+            .as_object_mut()
+            .expect("changed path object")
+            .remove("old_path");
+        assert!(!validator.is_valid(&missing_changed_path_field));
+
+        let mut missing_hunk_field = changes.clone();
+        missing_hunk_field["data"]["diff"][0]["hunks"][0]
+            .as_object_mut()
+            .expect("hunk object")
+            .remove("old_start");
+        assert!(!validator.is_valid(&missing_hunk_field));
+
+        let mut invalid_diff_line = changes;
+        invalid_diff_line["data"]["diff"][0]["hunks"][0]["lines"][0]["text"] = json!(7);
+        assert!(!validator.is_valid(&invalid_diff_line));
     }
 }

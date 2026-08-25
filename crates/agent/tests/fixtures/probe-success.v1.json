@@ -11,8 +11,8 @@
       "compatibility": "same-contract-version"
     },
     "commands": {
-      "supported": ["probe"],
-      "reserved": ["inspect", "changes", "commit", "publish", "ci status", "ci wait"]
+      "supported": ["probe", "inspect", "changes"],
+      "reserved": ["commit", "publish", "ci status", "ci wait"]
     },
     "execution": {
       "vcs_backends": ["git", "jujutsu"],
@@ -20,7 +20,7 @@
       "subprocess_route": "vcs-toolkit-typed-clients",
       "process_tree_containment": "processkit-rs",
       "cancellation": "processkit-cancellation-token",
-      "deadlines": "per-operation",
+      "deadlines": "per-outcome",
       "deadline_default_seconds": 120,
       "processkit_cli_composition": "external-executable",
       "raw_command_escape_hatch": false
@@ -28,6 +28,7 @@
     "limits": {
       "machine_output_default_bytes": 65536,
       "machine_output_max_bytes": 1048576,
+      "content_output_default_bytes": 262144,
       "content_overflow": "fail-loud-no-truncation",
       "machine_paths_included": false
     },

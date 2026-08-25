@@ -4,79 +4,373 @@
   "title": "vcs-agent v1 machine envelope",
   "type": "object",
   "additionalProperties": true,
-  "required": [
-    "contract_version",
-    "binary_version",
-    "operation",
-    "status",
-    "data",
-    "error",
-    "warnings",
-    "fallback"
-  ],
+  "required": ["contract_version", "binary_version", "operation", "status", "data", "error", "warnings", "fallback"],
   "properties": {
-    "contract_version": { "const": "vcs-agent/v1" },
-    "binary_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
-    "operation": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
-    "status": { "type": "string", "enum": ["success", "error"] },
-    "data": { "type": ["object", "array", "string", "number", "boolean", "null"] },
+    "contract_version": {"const": "vcs-agent/v1"},
+    "binary_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"},
+    "operation": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "status": {"enum": ["success", "error"]},
+    "data": {"type": ["object", "null"]},
     "error": {
       "oneOf": [
-        { "type": "null" },
+        {"type": "null"},
         {
           "type": "object",
           "additionalProperties": true,
           "required": ["kind", "exit_code", "code", "message", "retryable", "details"],
           "properties": {
-            "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-            "exit_code": { "type": "integer", "minimum": 2, "maximum": 79 },
-            "code": { "type": "string", "minLength": 1 },
-            "message": { "type": "string" },
-            "retryable": { "type": "boolean" },
-            "details": {
-              "type": "object",
-              "additionalProperties": { "type": "string" }
-            }
+            "kind": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "exit_code": {"type": "integer", "minimum": 2, "maximum": 79},
+            "code": {"type": "string", "minLength": 1},
+            "message": {"type": "string"},
+            "retryable": {"type": "boolean"},
+            "details": {"type": "object", "additionalProperties": {"type": "string"}}
           }
         }
       ]
     },
-    "warnings": { "type": "array", "items": { "type": "string" } },
+    "warnings": {"type": "array", "items": {"type": "string"}},
     "fallback": {
       "oneOf": [
-        { "type": "null" },
+        {"type": "null"},
         {
           "type": "object",
           "additionalProperties": true,
           "required": ["allowed", "interface", "reason"],
           "properties": {
-            "allowed": { "type": "boolean" },
-            "interface": { "type": "string", "minLength": 1 },
-            "reason": { "type": "string", "minLength": 1 }
+            "allowed": {"type": "boolean"},
+            "interface": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1}
           }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "machinePath": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["display", "encoding", "value"],
+      "properties": {
+        "display": {"type": "string"},
+        "encoding": {"enum": ["utf-8", "os-bytes-hex", "windows-utf16-hex", "platform-native-lossy", "redacted"]},
+        "value": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"encoding": {"const": "redacted"}}, "required": ["encoding"]},
+          "then": {"properties": {"value": {"type": "null"}}},
+          "else": {"properties": {"value": {"type": "string"}}}
+        }
+      ]
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["backend", "root", "cwd"],
+      "properties": {
+        "backend": {"enum": ["git", "jujutsu", "unknown"]},
+        "root": {"$ref": "#/$defs/machinePath"},
+        "cwd": {"$ref": "#/$defs/machinePath"}
+      }
+    },
+    "readSemantics": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["refs_mutated", "index_mutated", "working_copy_content_mutated", "working_copy_snapshot", "operation_log_may_advance"],
+      "properties": {
+        "refs_mutated": {"const": false},
+        "index_mutated": {"const": false},
+        "working_copy_content_mutated": {"const": false},
+        "working_copy_snapshot": {"enum": ["none", "live-jj-snapshot"]},
+        "operation_log_may_advance": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"working_copy_snapshot": {"const": "live-jj-snapshot"}}, "required": ["working_copy_snapshot"]},
+          "then": {"properties": {"operation_log_may_advance": {"const": true}}},
+          "else": {"properties": {"operation_log_may_advance": {"const": false}}}
+        }
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status", "reason", "value"],
+      "properties": {
+        "status": {"enum": ["known", "unavailable", "not_applicable"]},
+        "reason": {"type": ["string", "null"]},
+        "value": {"type": ["object", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "known"}}, "required": ["status"]},
+          "then": {"properties": {"reason": {"type": "null"}, "value": {"type": "object"}}},
+          "else": {"properties": {"value": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+          "then": {"properties": {"reason": {"type": "string", "minLength": 1}}},
+          "else": {
+            "if": {"properties": {"status": {"const": "not_applicable"}}, "required": ["status"]},
+            "then": {"properties": {"reason": {"type": "null"}}}
+          }
+        }
+      ]
+    },
+    "forgeCapabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["cli_version", "cli_supported", "authenticated", "pr_create", "pr_comment", "pr_edit", "pr_labels", "pr_checks", "pr_merge", "pr_approve", "pr_request_changes", "issue_create", "issue_close", "issue_reopen", "issue_comment", "issue_labels", "release_create", "release_delete"],
+      "properties": {
+        "cli_version": {"type": ["string", "null"]},
+        "cli_supported": {"type": "boolean"},
+        "authenticated": {"type": "boolean"},
+        "pr_create": {"type": "boolean"},
+        "pr_comment": {"type": "boolean"},
+        "pr_edit": {"type": "boolean"},
+        "pr_labels": {"type": "boolean"},
+        "pr_checks": {"type": "boolean"},
+        "pr_merge": {"type": "boolean"},
+        "pr_approve": {"type": "boolean"},
+        "pr_request_changes": {"type": "boolean"},
+        "issue_create": {"type": "boolean"},
+        "issue_close": {"type": "boolean"},
+        "issue_reopen": {"type": "boolean"},
+        "issue_comment": {"type": "boolean"},
+        "issue_labels": {"type": "boolean"},
+        "release_create": {"type": "boolean"},
+        "release_delete": {"type": "boolean"}
+      }
+    },
+    "forgeAuth": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["authenticated", "active_account", "accounts", "repository_visible"],
+      "properties": {
+        "authenticated": {"type": ["boolean", "null"]},
+        "active_account": {"type": ["string", "null"]},
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["host", "login", "active"],
+            "properties": {
+              "host": {"type": "string"},
+              "login": {"type": "string"},
+              "active": {"type": ["boolean", "null"]}
+            }
+          }
+        },
+        "repository_visible": {"type": ["boolean", "null"]}
+      }
+    },
+    "forgeCapabilitiesFact": {
+      "allOf": [
+        {"$ref": "#/$defs/fact"},
+        {
+          "if": {"properties": {"status": {"const": "known"}}, "required": ["status"]},
+          "then": {"properties": {"value": {"$ref": "#/$defs/forgeCapabilities"}}}
+        }
+      ]
+    },
+    "forgeAuthFact": {
+      "allOf": [
+        {"$ref": "#/$defs/fact"},
+        {
+          "if": {"properties": {"status": {"const": "known"}}, "required": ["status"]},
+          "then": {"properties": {"value": {"$ref": "#/$defs/forgeAuth"}}}
+        }
+      ]
+    },
+    "inspectData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["repository", "working_copy", "remotes", "forge", "capabilities", "read_semantics"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "working_copy": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["branch_kind", "branch", "revision", "change_id", "dirty", "tracked_changes", "untracked", "total_changes", "conflicted", "conflict_count", "operation", "upstream"],
+          "properties": {
+            "branch_kind": {"enum": ["branch", "bookmark"]},
+            "branch": {"type": ["string", "null"]},
+            "revision": {"type": ["string", "null"]},
+            "change_id": {"type": ["string", "null"]},
+            "dirty": {"type": "boolean"},
+            "tracked_changes": {"type": ["integer", "null"], "minimum": 0},
+            "untracked": {"type": ["integer", "null"], "minimum": 0},
+            "total_changes": {"type": "integer", "minimum": 0},
+            "conflicted": {"type": "boolean"},
+            "conflict_count": {"type": ["integer", "null"], "minimum": 0},
+            "operation": {"enum": ["clear", "merge", "rebase", "apply_mailbox", "cherry_pick", "revert", "bisect", "conflict", "unknown"]},
+            "upstream": {
+              "oneOf": [
+                {"type": "null"},
+                {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "required": ["branch", "ahead", "behind"],
+                  "properties": {
+                    "branch": {"type": "string"},
+                    "ahead": {"type": ["integer", "null"], "minimum": 0},
+                    "behind": {"type": ["integer", "null"], "minimum": 0}
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["name", "url"],
+            "properties": {"name": {"type": "string"}, "url": {"type": "string"}}
+          }
+        },
+        "forge": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["detection", "kind", "remote", "capabilities", "auth"],
+          "properties": {
+            "detection": {"enum": ["absent", "detected"]},
+            "kind": {"type": ["string", "null"], "enum": ["github", "gitlab", "gitea", "unknown", null]},
+            "remote": {"type": ["string", "null"]},
+            "capabilities": {"$ref": "#/$defs/forgeCapabilitiesFact"},
+            "auth": {"$ref": "#/$defs/forgeAuthFact"}
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["inspect", "changes_summary", "changes_full", "lossless_status_paths", "full_diff_non_utf8_paths", "raw_cli_fallback"],
+          "properties": {
+            "inspect": {"const": true},
+            "changes_summary": {"const": true},
+            "changes_full": {"const": true},
+            "lossless_status_paths": {"const": true},
+            "full_diff_non_utf8_paths": {"const": "git-lossless-jj-text-limited"},
+            "raw_cli_fallback": {"const": false}
+          }
+        },
+        "read_semantics": {"$ref": "#/$defs/readSemantics"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"repository": {"properties": {"backend": {"const": "git"}}, "required": ["backend"]}}, "required": ["repository"]},
+          "then": {"properties": {"read_semantics": {"properties": {"working_copy_snapshot": {"const": "none"}}}}}
+        },
+        {
+          "if": {"properties": {"repository": {"properties": {"backend": {"const": "jujutsu"}}, "required": ["backend"]}}, "required": ["repository"]},
+          "then": {"properties": {"read_semantics": {"properties": {"working_copy_snapshot": {"const": "live-jj-snapshot"}}}}}
+        }
+      ]
+    },
+    "changedPath": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path", "old_path", "kind"],
+      "properties": {
+        "path": {"$ref": "#/$defs/machinePath"},
+        "old_path": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/machinePath"}]},
+        "kind": {"enum": ["added", "modified", "deleted", "renamed", "unknown"]}
+      }
+    },
+    "structuredDiff": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path", "old_path", "kind", "hunks"],
+      "properties": {
+        "path": {"$ref": "#/$defs/machinePath"},
+        "old_path": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/machinePath"}]},
+        "kind": {"enum": ["added", "modified", "deleted", "renamed", "unknown"]},
+        "hunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["old_start", "old_lines", "new_start", "new_lines", "section", "lines"],
+            "properties": {
+              "old_start": {"type": "integer", "minimum": 0},
+              "old_lines": {"type": "integer", "minimum": 0},
+              "new_start": {"type": "integer", "minimum": 0},
+              "new_lines": {"type": "integer", "minimum": 0},
+              "section": {"type": "string"},
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "required": ["kind", "text"],
+                  "properties": {"kind": {"enum": ["context", "added", "removed", "unknown"]}, "text": {"type": "string"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "changesData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["repository", "mode", "content_max_bytes", "counts", "files", "diff", "read_semantics"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "mode": {"enum": ["summary", "full"]},
+        "content_max_bytes": {"type": "integer", "minimum": 1024, "maximum": 1048576},
+        "counts": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["paths", "added", "modified", "deleted", "renamed", "files_with_line_diff", "insertions", "deletions"],
+          "properties": {
+            "paths": {"type": "integer", "minimum": 0},
+            "added": {"type": "integer", "minimum": 0},
+            "modified": {"type": "integer", "minimum": 0},
+            "deleted": {"type": "integer", "minimum": 0},
+            "renamed": {"type": "integer", "minimum": 0},
+            "files_with_line_diff": {"type": "integer", "minimum": 0},
+            "insertions": {"type": "integer", "minimum": 0},
+            "deletions": {"type": "integer", "minimum": 0}
+          }
+        },
+        "files": {"type": "array", "items": {"$ref": "#/$defs/changedPath"}},
+        "diff": {"oneOf": [{"type": "null"}, {"type": "array", "items": {"$ref": "#/$defs/structuredDiff"}}]},
+        "read_semantics": {"$ref": "#/$defs/readSemantics"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"const": "summary"}}, "required": ["mode"]},
+          "then": {"properties": {"diff": {"type": "null"}}},
+          "else": {"properties": {"diff": {"type": "array"}}}
+        },
+        {
+          "if": {"properties": {"repository": {"properties": {"backend": {"const": "git"}}, "required": ["backend"]}}, "required": ["repository"]},
+          "then": {"properties": {"read_semantics": {"properties": {"working_copy_snapshot": {"const": "none"}}}}}
+        },
+        {
+          "if": {"properties": {"repository": {"properties": {"backend": {"const": "jujutsu"}}, "required": ["backend"]}}, "required": ["repository"]},
+          "then": {"properties": {"read_semantics": {"properties": {"working_copy_snapshot": {"const": "live-jj-snapshot"}}}}}
         }
       ]
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "status": { "const": "success" } } },
-      "then": {
-        "properties": {
-          "data": { "not": { "type": "null" } },
-          "error": { "type": "null" },
-          "fallback": { "type": "null" }
-        }
-      }
+      "if": {"properties": {"status": {"const": "success"}}, "required": ["status"]},
+      "then": {"properties": {"data": {"type": "object"}, "error": {"type": "null"}, "fallback": {"type": "null"}}},
+      "else": {"properties": {"data": {"type": "null"}, "error": {"type": "object"}}}
     },
     {
-      "if": { "properties": { "status": { "const": "error" } } },
-      "then": {
-        "properties": {
-          "data": { "type": "null" },
-          "error": { "type": "object" }
-        }
-      }
+      "if": {"properties": {"operation": {"const": "inspect"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
+      "then": {"properties": {"data": {"$ref": "#/$defs/inspectData"}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "changes"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
+      "then": {"properties": {"data": {"$ref": "#/$defs/changesData"}}}
     }
   ]
 }

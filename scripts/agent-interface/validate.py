@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ EXPECTED_SCENARIOS = {
 }
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
+MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
 
 
 class ValidationError(ValueError):
@@ -49,10 +51,21 @@ def _object(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
+def _require_fields(value: dict[str, Any], fields: tuple[str, ...], label: str) -> None:
+    missing = [field for field in fields if field not in value]
+    if missing:
+        raise ValidationError(f"{label} is missing required fields: {', '.join(missing)}")
+
+
 def _string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValidationError(f"{label} must be a non-empty string")
     return value
+
+
+def _string_or_null(value: Any, label: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise ValidationError(f"{label} must be a string or null")
 
 
 def _integer(value: Any, label: str) -> int:
@@ -62,10 +75,387 @@ def _integer(value: Any, label: str) -> int:
     return value
 
 
+def _integer_or_null(value: Any, label: str) -> None:
+    if value is not None:
+        _integer(value, label)
+
+
 def _boolean(value: Any, label: str) -> bool:
     if not isinstance(value, bool):
         raise ValidationError(f"{label} must be boolean")
     return value
+
+
+def _boolean_or_null(value: Any, label: str) -> None:
+    if value is not None:
+        _boolean(value, label)
+
+
+def _machine_path(value: Any, label: str) -> None:
+    path = _object(value, label)
+    _require_fields(path, ("display", "encoding", "value"), label)
+    display = path.get("display")
+    if not isinstance(display, str):
+        raise ValidationError(f"{label}.display must be a string")
+    encoding = path.get("encoding")
+    allowed = {"utf-8", "os-bytes-hex", "windows-utf16-hex", "platform-native-lossy", "redacted"}
+    if encoding not in allowed:
+        raise ValidationError(f"{label}.encoding is invalid")
+    encoded = path.get("value")
+    if encoding == "redacted":
+        if encoded is not None:
+            raise ValidationError(f"{label}.value must be null when redacted")
+    elif not isinstance(encoded, str):
+        raise ValidationError(f"{label}.value must be a string when not redacted")
+
+
+def _read_semantics(value: Any, label: str) -> None:
+    semantics = _object(value, label)
+    _require_fields(
+        semantics,
+        (
+            "refs_mutated",
+            "index_mutated",
+            "working_copy_content_mutated",
+            "working_copy_snapshot",
+            "operation_log_may_advance",
+        ),
+        label,
+    )
+    for key in ("refs_mutated", "index_mutated", "working_copy_content_mutated"):
+        if semantics.get(key) is not False:
+            raise ValidationError(f"{label}.{key} must be false for a read outcome")
+    snapshot = semantics.get("working_copy_snapshot")
+    may_advance = _boolean(semantics.get("operation_log_may_advance"), f"{label}.operation_log_may_advance")
+    if snapshot == "none" and may_advance:
+        raise ValidationError(f"{label}: a no-snapshot read cannot claim op-log advancement")
+    if snapshot == "live-jj-snapshot" and not may_advance:
+        raise ValidationError(f"{label}: live jj snapshot must disclose possible op-log advancement")
+    if snapshot not in {"none", "live-jj-snapshot"}:
+        raise ValidationError(f"{label}.working_copy_snapshot is invalid")
+
+
+def _repository(value: Any, label: str) -> dict[str, Any]:
+    repository = _object(value, label)
+    _require_fields(repository, ("backend", "root", "cwd"), label)
+    if repository["backend"] not in {"git", "jujutsu", "unknown"}:
+        raise ValidationError(f"{label}.backend is invalid")
+    _machine_path(repository["root"], f"{label}.root")
+    _machine_path(repository["cwd"], f"{label}.cwd")
+    return repository
+
+
+def _forge_capabilities(value: Any, label: str) -> None:
+    capabilities = _object(value, label)
+    boolean_fields = (
+        "cli_supported",
+        "authenticated",
+        "pr_create",
+        "pr_comment",
+        "pr_edit",
+        "pr_labels",
+        "pr_checks",
+        "pr_merge",
+        "pr_approve",
+        "pr_request_changes",
+        "issue_create",
+        "issue_close",
+        "issue_reopen",
+        "issue_comment",
+        "issue_labels",
+        "release_create",
+        "release_delete",
+    )
+    _require_fields(capabilities, ("cli_version", *boolean_fields), label)
+    _string_or_null(capabilities["cli_version"], f"{label}.cli_version")
+    for field in boolean_fields:
+        _boolean(capabilities[field], f"{label}.{field}")
+
+
+def _forge_auth(value: Any, label: str) -> None:
+    auth = _object(value, label)
+    _require_fields(
+        auth,
+        ("authenticated", "active_account", "accounts", "repository_visible"),
+        label,
+    )
+    _boolean_or_null(auth["authenticated"], f"{label}.authenticated")
+    _string_or_null(auth["active_account"], f"{label}.active_account")
+    accounts = auth["accounts"]
+    if not isinstance(accounts, list):
+        raise ValidationError(f"{label}.accounts must be an array")
+    for index, raw_account in enumerate(accounts):
+        account_label = f"{label}.accounts[{index}]"
+        account = _object(raw_account, account_label)
+        _require_fields(account, ("host", "login", "active"), account_label)
+        if not isinstance(account["host"], str):
+            raise ValidationError(f"{account_label}.host must be a string")
+        if not isinstance(account["login"], str):
+            raise ValidationError(f"{account_label}.login must be a string")
+        _boolean_or_null(account["active"], f"{account_label}.active")
+    _boolean_or_null(auth["repository_visible"], f"{label}.repository_visible")
+
+
+def _fact(value: Any, label: str, validate_payload: Any) -> None:
+    fact = _object(value, label)
+    _require_fields(fact, ("status", "reason", "value"), label)
+    status = fact.get("status")
+    reason = fact.get("reason")
+    payload = fact.get("value")
+    if status == "known":
+        if reason is not None or not isinstance(payload, dict):
+            raise ValidationError(f"{label}: known fact requires reason=null and an object value")
+        validate_payload(payload, f"{label}.value")
+    elif status == "unavailable":
+        _string(reason, f"{label}.reason")
+        if payload is not None:
+            raise ValidationError(f"{label}: unavailable fact requires value=null")
+    elif status == "not_applicable":
+        if reason is not None or payload is not None:
+            raise ValidationError(f"{label}: not_applicable fact requires reason=value=null")
+    else:
+        raise ValidationError(f"{label}.status is invalid")
+
+
+def _changed_path(value: Any, label: str) -> None:
+    changed = _object(value, label)
+    _require_fields(changed, ("path", "old_path", "kind"), label)
+    _machine_path(changed["path"], f"{label}.path")
+    if changed["old_path"] is not None:
+        _machine_path(changed["old_path"], f"{label}.old_path")
+    if changed["kind"] not in {"added", "modified", "deleted", "renamed", "unknown"}:
+        raise ValidationError(f"{label}.kind is invalid")
+
+
+def _structured_diff(value: Any, label: str) -> None:
+    changed = _object(value, label)
+    _require_fields(changed, ("path", "old_path", "kind", "hunks"), label)
+    _changed_path(
+        {"path": changed["path"], "old_path": changed["old_path"], "kind": changed["kind"]},
+        label,
+    )
+    hunks = changed["hunks"]
+    if not isinstance(hunks, list):
+        raise ValidationError(f"{label}.hunks must be an array")
+    for hunk_index, raw_hunk in enumerate(hunks):
+        hunk_label = f"{label}.hunks[{hunk_index}]"
+        hunk = _object(raw_hunk, hunk_label)
+        _require_fields(
+            hunk,
+            ("old_start", "old_lines", "new_start", "new_lines", "section", "lines"),
+            hunk_label,
+        )
+        for field in ("old_start", "old_lines", "new_start", "new_lines"):
+            _integer(hunk[field], f"{hunk_label}.{field}")
+        if not isinstance(hunk["section"], str):
+            raise ValidationError(f"{hunk_label}.section must be a string")
+        lines = hunk["lines"]
+        if not isinstance(lines, list):
+            raise ValidationError(f"{hunk_label}.lines must be an array")
+        for line_index, raw_line in enumerate(lines):
+            line_label = f"{hunk_label}.lines[{line_index}]"
+            line = _object(raw_line, line_label)
+            _require_fields(line, ("kind", "text"), line_label)
+            if line["kind"] not in {"context", "added", "removed", "unknown"}:
+                raise ValidationError(f"{line_label}.kind is invalid")
+            if not isinstance(line["text"], str):
+                raise ValidationError(f"{line_label}.text must be a string")
+
+
+def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
+    envelope = _object(value, label)
+    _require_fields(
+        envelope,
+        (
+            "contract_version",
+            "binary_version",
+            "operation",
+            "status",
+            "data",
+            "error",
+            "warnings",
+            "fallback",
+        ),
+        label,
+    )
+    if envelope.get("contract_version") != "vcs-agent/v1":
+        raise ValidationError(f"{label}.contract_version must be vcs-agent/v1")
+    binary_version = _string(envelope.get("binary_version"), f"{label}.binary_version")
+    if re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", binary_version) is None:
+        raise ValidationError(f"{label}.binary_version is invalid")
+    operation = _string(envelope.get("operation"), f"{label}.operation")
+    if MACHINE_OPERATION_PATTERN.fullmatch(operation) is None:
+        raise ValidationError(f"{label}.operation is not a valid v1 operation identifier")
+    status = envelope.get("status")
+    if status not in {"success", "error"}:
+        raise ValidationError(f"{label}.status is invalid")
+    warnings = envelope.get("warnings")
+    if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+        raise ValidationError(f"{label}.warnings must be a string array")
+
+    if status == "error":
+        if envelope.get("data") is not None:
+            raise ValidationError(f"{label}: error envelope must use data=null")
+        error = _object(envelope.get("error"), f"{label}.error")
+        _require_fields(
+            error,
+            ("kind", "exit_code", "code", "message", "retryable", "details"),
+            f"{label}.error",
+        )
+        kind = _string(error.get("kind"), f"{label}.error.kind")
+        if re.fullmatch(r"[a-z][a-z0-9_]*", kind) is None:
+            raise ValidationError(f"{label}.error.kind is invalid")
+        exit_code = error.get("exit_code")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 2 <= exit_code <= 79:
+            raise ValidationError(f"{label}.error.exit_code is invalid")
+        _string(error.get("code"), f"{label}.error.code")
+        if not isinstance(error.get("message"), str):
+            raise ValidationError(f"{label}.error.message must be a string")
+        _boolean(error.get("retryable"), f"{label}.error.retryable")
+        details = _object(error.get("details"), f"{label}.error.details")
+        if not all(isinstance(key, str) and isinstance(item, str) for key, item in details.items()):
+            raise ValidationError(f"{label}.error.details values must be strings")
+        fallback = envelope.get("fallback")
+        if fallback is not None:
+            fallback = _object(fallback, f"{label}.fallback")
+            _require_fields(fallback, ("allowed", "interface", "reason"), f"{label}.fallback")
+            _boolean(fallback["allowed"], f"{label}.fallback.allowed")
+            _string(fallback["interface"], f"{label}.fallback.interface")
+            _string(fallback["reason"], f"{label}.fallback.reason")
+        return envelope
+
+    if envelope.get("error") is not None or envelope.get("fallback") is not None:
+        raise ValidationError(f"{label}: success envelope cannot carry error/fallback")
+    data = _object(envelope.get("data"), f"{label}.data")
+    if operation == "inspect":
+        _require_fields(
+            data,
+            ("repository", "working_copy", "remotes", "forge", "capabilities", "read_semantics"),
+            f"{label}.data",
+        )
+        repository = _repository(data["repository"], f"{label}.data.repository")
+        working = _object(data["working_copy"], f"{label}.data.working_copy")
+        working_fields = (
+            "branch_kind",
+            "branch",
+            "revision",
+            "change_id",
+            "dirty",
+            "tracked_changes",
+            "untracked",
+            "total_changes",
+            "conflicted",
+            "conflict_count",
+            "operation",
+            "upstream",
+        )
+        _require_fields(working, working_fields, f"{label}.data.working_copy")
+        if working["branch_kind"] not in {"branch", "bookmark"}:
+            raise ValidationError(f"{label}.data.working_copy.branch_kind is invalid")
+        for field in ("branch", "revision", "change_id"):
+            _string_or_null(working[field], f"{label}.data.working_copy.{field}")
+        _boolean(working["dirty"], f"{label}.data.working_copy.dirty")
+        for field in ("tracked_changes", "untracked", "conflict_count"):
+            _integer_or_null(working[field], f"{label}.data.working_copy.{field}")
+        _integer(working["total_changes"], f"{label}.data.working_copy.total_changes")
+        _boolean(working["conflicted"], f"{label}.data.working_copy.conflicted")
+        if working["operation"] not in {
+            "clear", "merge", "rebase", "apply_mailbox", "cherry_pick", "revert", "bisect", "conflict", "unknown"
+        }:
+            raise ValidationError(f"{label}.data.working_copy.operation is invalid")
+        upstream = working["upstream"]
+        if upstream is not None:
+            upstream = _object(upstream, f"{label}.data.working_copy.upstream")
+            _require_fields(upstream, ("branch", "ahead", "behind"), f"{label}.data.working_copy.upstream")
+            if not isinstance(upstream["branch"], str):
+                raise ValidationError(f"{label}.data.working_copy.upstream.branch must be a string")
+            _integer_or_null(upstream["ahead"], f"{label}.data.working_copy.upstream.ahead")
+            _integer_or_null(upstream["behind"], f"{label}.data.working_copy.upstream.behind")
+
+        remotes = data["remotes"]
+        if not isinstance(remotes, list):
+            raise ValidationError(f"{label}.data.remotes must be an array")
+        for index, raw_remote in enumerate(remotes):
+            remote_label = f"{label}.data.remotes[{index}]"
+            remote = _object(raw_remote, remote_label)
+            _require_fields(remote, ("name", "url"), remote_label)
+            if not isinstance(remote["name"], str) or not isinstance(remote["url"], str):
+                raise ValidationError(f"{remote_label}.name and url must be strings")
+
+        forge = _object(data["forge"], f"{label}.data.forge")
+        _require_fields(forge, ("detection", "kind", "remote", "capabilities", "auth"), f"{label}.data.forge")
+        if forge["detection"] not in {"absent", "detected"}:
+            raise ValidationError(f"{label}.data.forge.detection is invalid")
+        if forge["kind"] not in {"github", "gitlab", "gitea", "unknown", None}:
+            raise ValidationError(f"{label}.data.forge.kind is invalid")
+        _string_or_null(forge["remote"], f"{label}.data.forge.remote")
+        _fact(forge["capabilities"], f"{label}.data.forge.capabilities", _forge_capabilities)
+        _fact(forge["auth"], f"{label}.data.forge.auth", _forge_auth)
+
+        capabilities = _object(data["capabilities"], f"{label}.data.capabilities")
+        capability_fields = (
+            "inspect", "changes_summary", "changes_full", "lossless_status_paths",
+            "full_diff_non_utf8_paths", "raw_cli_fallback",
+        )
+        _require_fields(capabilities, capability_fields, f"{label}.data.capabilities")
+        for field in ("inspect", "changes_summary", "changes_full", "lossless_status_paths"):
+            if capabilities[field] is not True:
+                raise ValidationError(f"{label}.data.capabilities.{field} must be true")
+        if capabilities["full_diff_non_utf8_paths"] != "git-lossless-jj-text-limited":
+            raise ValidationError(f"{label}.data.capabilities.full_diff_non_utf8_paths is invalid")
+        if capabilities["raw_cli_fallback"] is not False:
+            raise ValidationError(f"{label}.data.capabilities.raw_cli_fallback must be false")
+
+        _read_semantics(data["read_semantics"], f"{label}.data.read_semantics")
+        snapshot = data["read_semantics"]["working_copy_snapshot"]
+        if (repository["backend"] == "git" and snapshot != "none") or (
+            repository["backend"] == "jujutsu" and snapshot != "live-jj-snapshot"
+        ):
+            raise ValidationError(f"{label}: backend and read snapshot semantics disagree")
+    elif operation == "changes":
+        _require_fields(
+            data,
+            ("repository", "mode", "content_max_bytes", "counts", "files", "diff", "read_semantics"),
+            f"{label}.data",
+        )
+        repository = _repository(data["repository"], f"{label}.data.repository")
+        mode = data["mode"]
+        if mode not in {"summary", "full"}:
+            raise ValidationError(f"{label}.data.mode is invalid")
+        content_max = _integer(data["content_max_bytes"], f"{label}.data.content_max_bytes")
+        if not 1024 <= content_max <= 1048576:
+            raise ValidationError(f"{label}.data.content_max_bytes is out of range")
+        counts = _object(data["counts"], f"{label}.data.counts")
+        count_fields = ("paths", "added", "modified", "deleted", "renamed", "files_with_line_diff", "insertions", "deletions")
+        _require_fields(counts, count_fields, f"{label}.data.counts")
+        for field in count_fields:
+            _integer(counts[field], f"{label}.data.counts.{field}")
+
+        files = data["files"]
+        if not isinstance(files, list):
+            raise ValidationError(f"{label}.data.files must be an array")
+        for index, item in enumerate(files):
+            _changed_path(item, f"{label}.data.files[{index}]")
+        diff = data["diff"]
+        if (mode == "summary" and diff is not None) or (mode == "full" and not isinstance(diff, list)):
+            raise ValidationError(f"{label}.data.diff does not match mode")
+        if isinstance(diff, list):
+            for index, item in enumerate(diff):
+                _structured_diff(item, f"{label}.data.diff[{index}]")
+        _read_semantics(data["read_semantics"], f"{label}.data.read_semantics")
+        snapshot = data["read_semantics"]["working_copy_snapshot"]
+        if (repository.get("backend") == "git" and snapshot != "none") or (
+            repository.get("backend") == "jujutsu" and snapshot != "live-jj-snapshot"
+        ):
+            raise ValidationError(f"{label}: backend and read snapshot semantics disagree")
+    return envelope
+
+
+def validate_machine_fixtures(fixtures_dir: Path) -> list[dict[str, Any]]:
+    paths = sorted(fixtures_dir.glob("*.v1.json"))
+    if not paths:
+        raise ValidationError(f"{fixtures_dir}: no machine fixtures found")
+    return [validate_machine_envelope(load_json(path), str(path)) for path in paths]
 
 
 def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
@@ -294,7 +684,7 @@ def validate_baseline(baseline: Any) -> dict[str, Any]:
     return root
 
 
-def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: Path | None) -> dict[str, Any]:
+def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: Path | None, machine_fixtures: Path | None = None) -> dict[str, Any]:
     corpus_by_id = validate_corpus(load_json(corpus_path))
     checked_results: list[dict[str, Any]] = []
     if results_path is not None:
@@ -302,7 +692,8 @@ def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: 
     baseline = None
     if baseline_path is not None:
         baseline = validate_baseline(load_json(baseline_path))
-    return {"corpus_cases": len(corpus_by_id), "result_cases": len(checked_results), "baseline_status": baseline["status"] if baseline else None}
+    checked_machine = validate_machine_fixtures(machine_fixtures) if machine_fixtures is not None else []
+    return {"corpus_cases": len(corpus_by_id), "result_cases": len(checked_results), "machine_fixtures": len(checked_machine), "baseline_status": baseline["status"] if baseline else None}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,9 +702,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--corpus", type=Path, default=root / "docs/agent-interface/corpus.v1.json")
     parser.add_argument("--results", type=Path)
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
+    parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
     args = parser.parse_args(argv)
     try:
-        summary = validate_files(args.corpus, args.results, args.baseline)
+        summary = validate_files(args.corpus, args.results, args.baseline, args.machine_fixtures)
     except ValidationError as exc:
         print(f"agent-interface validation failed: {exc}", file=sys.stderr)
         return 1

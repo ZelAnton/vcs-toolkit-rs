@@ -29,7 +29,8 @@ selection evidence separate from outcome evidence:
 - `revision` records before/after/published identities and exact-revision
   terminal-CI evidence.
 
-Validate a corpus and optional result fixture without a network or model call:
+Validate the corpus, optional result fixture, and every committed
+`vcs-agent/v1` machine fixture without a network or model call:
 
 ```text
 python scripts/agent-interface/validate.py \
@@ -51,7 +52,11 @@ preferred/fallback/raw/total channels), unrelated-state evidence, and the full
 before/after/published revision block with terminal-CI revision and conclusion.
 The recorder refuses to write any output when even one corpus case is missing.
 
-The validator rejects duplicate or unknown case IDs, unclassified fallbacks,
+The validator also checks the `inspect`/`changes` operation-specific shape,
+path encodings, summary/full distinction, and disclosed Git/Jujutsu read
+semantics. The recorder runs that same machine-fixture validation before it
+writes an evaluation recording, so the two tools cannot silently disagree.
+It rejects duplicate or unknown case IDs, unclassified fallbacks,
 negative prompts that activate an interface, mismatched call totals, missing
 unrelated-state evidence, and mutation/publication results without exact
 revision evidence.  It also requires terminal CI evidence to be explicitly
