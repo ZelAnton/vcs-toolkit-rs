@@ -25,11 +25,43 @@
     },
     "remotes": [{"name": "origin", "url": "https://example.invalid/owner/repo"}],
     "forge": {
-      "detection": "absent",
-      "kind": null,
-      "remote": null,
-      "capabilities": {"status": "not_applicable", "reason": null, "value": null},
-      "auth": {"status": "not_applicable", "reason": null, "value": null}
+      "detection": "detected",
+      "kind": "unknown",
+      "remote": "https://example.invalid/owner/repo",
+      "capabilities": {
+        "status": "known",
+        "reason": null,
+        "value": {
+          "cli_version": null,
+          "cli_supported": false,
+          "authenticated": false,
+          "pr_create": false,
+          "pr_comment": false,
+          "pr_edit": false,
+          "pr_labels": false,
+          "pr_checks": false,
+          "pr_merge": false,
+          "pr_approve": false,
+          "pr_request_changes": false,
+          "issue_create": false,
+          "issue_close": false,
+          "issue_reopen": false,
+          "issue_comment": false,
+          "issue_labels": false,
+          "release_create": false,
+          "release_delete": false
+        }
+      },
+      "auth": {
+        "status": "known",
+        "reason": null,
+        "value": {
+          "authenticated": null,
+          "active_account": null,
+          "accounts": [],
+          "repository_visible": null
+        }
+      }
     },
     "capabilities": {
       "inspect": true,

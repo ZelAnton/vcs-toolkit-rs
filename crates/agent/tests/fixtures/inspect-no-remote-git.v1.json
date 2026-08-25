@@ -1,0 +1,53 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "inspect",
+  "status": "success",
+  "data": {
+    "repository": {
+      "backend": "git",
+      "root": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null},
+      "cwd": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}
+    },
+    "working_copy": {
+      "branch_kind": "branch",
+      "branch": "main",
+      "revision": "0123456789abcdef",
+      "change_id": null,
+      "dirty": false,
+      "tracked_changes": 0,
+      "untracked": 0,
+      "total_changes": 0,
+      "conflicted": false,
+      "conflict_count": 0,
+      "operation": "clear",
+      "upstream": null
+    },
+    "remotes": [],
+    "forge": {
+      "detection": "absent",
+      "kind": null,
+      "remote": null,
+      "capabilities": {"status": "not_applicable", "reason": null, "value": null},
+      "auth": {"status": "not_applicable", "reason": null, "value": null}
+    },
+    "capabilities": {
+      "inspect": true,
+      "changes_summary": true,
+      "changes_full": true,
+      "lossless_status_paths": true,
+      "full_diff_non_utf8_paths": "git-lossless-jj-text-limited",
+      "raw_cli_fallback": false
+    },
+    "read_semantics": {
+      "refs_mutated": false,
+      "index_mutated": false,
+      "working_copy_content_mutated": false,
+      "working_copy_snapshot": "none",
+      "operation_log_may_advance": false
+    }
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

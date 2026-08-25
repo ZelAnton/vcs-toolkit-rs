@@ -111,8 +111,9 @@ reversible op-log entry. The envelope therefore reports
 `--ignore-working-copy` view is current.
 
 All repository and forge paths use existing typed vcs-toolkit clients. Their
-execution policy is centrally defined with a ProcessKit cancellation token,
-per-operation deadline, fail-loud output budget, and ProcessKit process-tree containment.
+execution policy is centrally defined with a ProcessKit cancellation token, one
+deadline for the complete outcome (including its sequential typed queries), a
+fail-loud output budget, and ProcessKit process-tree containment.
 There is no production `std::process::Command` path for `git`, `jj`, `gh`,
 `glab`, or `tea`, and there is no raw-command escape hatch.
 

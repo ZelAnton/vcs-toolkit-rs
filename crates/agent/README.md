@@ -17,7 +17,8 @@ cargo run -p vcs-agent -- changes --repo . --mode full --content-max-bytes 26214
 `probe` reports the `vcs-agent/v1` contract and schema identity, binary version,
 implemented and reserved outcomes, compatible VCS/forge families, ProcessKit
 containment/cancellation facts, fail-loud output limits, error kinds, and stable
-exit bands. The shared policy fixes an initial 120-second per-operation deadline.
+exit bands. The shared policy fixes one 120-second deadline for the complete
+outcome, including every sequential repository and forge query it composes.
 `probe` itself reads no repository and spawns no command. `inspect` reports
 backend, repository/working-copy state, remotes, forge/auth/capability facts;
 `changes` reports a summary or structured full diff.
@@ -40,9 +41,11 @@ The executable schema and golden fixtures live in [`schema/`](schema) and
 
 ## Execution boundary
 
-The application policy carries a ProcessKit `CancellationToken`, a deadline, and
-vcs-toolkit's fail-loud `OutputBudget`. Repository and forge outcomes project
-those values onto the existing typed `vcs-core`/`vcs-forge` clients.
+The application policy carries a ProcessKit `CancellationToken`, one aggregate
+outcome deadline, and vcs-toolkit's fail-loud `OutputBudget`. Repository and
+forge outcomes project those values onto the existing typed
+`vcs-core`/`vcs-forge` clients; the aggregate deadline cancels the shared token
+when the complete composition exhausts its budget.
 There is no raw-command escape hatch and production code contains no direct
 `std::process::Command` path for `git`, `jj`, `gh`, `glab`, or `tea`.
 

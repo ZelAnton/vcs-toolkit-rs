@@ -18,6 +18,12 @@ This crate is versioned and published independently; tag releases as
 - Add a committed JSON Schema, success/error fixtures, hermetic parser and
   rendering tests, structured ProcessKit error mapping, and a production-source
   proof that no raw VCS/forge subprocess path exists.
+- Add read-only `inspect` and `changes` outcomes over the typed Git/Jujutsu and
+  forge facades. They report nullable or structured unsupported repository,
+  remote, forge, auth, and capability facts; distinguish summary from full
+  structured diffs; enforce fail-loud content and machine-output budgets plus
+  one deadline for the complete outcome; and disclose Jujutsu's unavoidable
+  live working-copy snapshot and possible operation-log advancement.
 
 ### Changed
 -

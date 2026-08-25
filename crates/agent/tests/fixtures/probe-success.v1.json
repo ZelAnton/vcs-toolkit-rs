@@ -20,7 +20,7 @@
       "subprocess_route": "vcs-toolkit-typed-clients",
       "process_tree_containment": "processkit-rs",
       "cancellation": "processkit-cancellation-token",
-      "deadlines": "per-operation",
+      "deadlines": "per-outcome",
       "deadline_default_seconds": 120,
       "processkit_cli_composition": "external-executable",
       "raw_command_escape_hatch": false

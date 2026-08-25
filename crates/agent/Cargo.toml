@@ -29,7 +29,7 @@ vcs-forge = { path = "../forge", version = "0.8" }
 # Drive the async typed clients from the synchronous executable entry point.
 # The selected features are already present in the workspace graph, so this
 # direct declaration does not widen Cargo.lock.
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [dev-dependencies]
 # Hermetically compile and exercise the committed Draft 2020-12 wire schema.
@@ -39,6 +39,8 @@ jsonschema = { version = "0.48", default-features = false }
 # Real-backend contract tests use the workspace's config-isolated Git/Jujutsu
 # sandboxes rather than inventing another fixture layer.
 vcs-testkit = { path = "../testkit" }
+# Keep aggregate-deadline tests deterministic with Tokio's paused clock.
+tokio = { version = "1", features = ["test-util"] }
 
 [[bin]]
 name = "vcs-agent"

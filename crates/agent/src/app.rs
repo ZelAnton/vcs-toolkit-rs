@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
 
@@ -317,6 +318,46 @@ pub(crate) async fn execute(
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<MachineEnvelope> {
+    with_outcome_deadline(
+        invocation.operation,
+        invocation.include_machine_paths,
+        policy,
+        execute_inner(invocation, policy),
+    )
+    .await
+}
+
+async fn with_outcome_deadline<T>(
+    operation: Operation,
+    include_paths: bool,
+    policy: &ExecutionPolicy,
+    outcome: impl Future<Output = AgentResult<T>>,
+) -> AgentResult<T> {
+    tokio::pin!(outcome);
+    let deadline = tokio::time::sleep(policy.deadline);
+    tokio::pin!(deadline);
+    tokio::select! {
+        biased;
+        _ = &mut deadline => {
+            policy.cancellation.cancel();
+            Err(Box::new(
+                AgentError::new(
+                    operation.name(),
+                    ErrorKind::Timeout,
+                    "outcome_deadline_exceeded",
+                    true,
+                )
+                .include_machine_paths(include_paths),
+            ))
+        }
+        result = &mut outcome => result,
+    }
+}
+
+async fn execute_inner(
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+) -> AgentResult<MachineEnvelope> {
     match invocation.operation {
         Operation::Probe => Ok(probe(invocation)),
         Operation::Inspect | Operation::Changes => {
@@ -330,42 +371,7 @@ pub(crate) async fn execute(
                 invocation.include_machine_paths,
                 policy,
             )?;
-            if invocation.operation == Operation::Inspect {
-                let remotes = repo.remotes().await.map_err(|error| {
-                    Box::new(map_core_error(
-                        Operation::Inspect,
-                        invocation.include_machine_paths,
-                        error,
-                    ))
-                })?;
-                let forge_remote = preferred_forge_remote(&remotes).map(|(remote, _)| {
-                    redact_text(
-                        &remote.url,
-                        RedactionPolicy {
-                            include_machine_paths: invocation.include_machine_paths,
-                        },
-                    )
-                });
-                let forge = build_forge(&remotes, repo.cwd(), policy);
-                let data = inspect_repo(
-                    &repo,
-                    remotes,
-                    forge.as_deref(),
-                    forge_remote,
-                    invocation.include_machine_paths,
-                )
-                .await?;
-                Ok(MachineEnvelope::success(Operation::Inspect.name(), data))
-            } else {
-                let data = changes_repo(
-                    &repo,
-                    invocation.changes_mode,
-                    invocation.content_max_bytes,
-                    invocation.include_machine_paths,
-                )
-                .await?;
-                Ok(MachineEnvelope::success(Operation::Changes.name(), data))
-            }
+            execute_repository(invocation, policy, &repo).await
         }
         _ => Err(Box::new(
             AgentError::new(
@@ -376,6 +382,43 @@ pub(crate) async fn execute(
             )
             .with_fallback(Fallback::raw_cli("outcome_not_implemented")),
         )),
+    }
+}
+
+async fn execute_repository<R: ProcessRunner>(
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+    repo: &Repo<R>,
+) -> AgentResult<MachineEnvelope> {
+    if invocation.operation == Operation::Inspect {
+        let remotes = repo.remotes().await.map_err(|error| {
+            Box::new(map_core_error(
+                Operation::Inspect,
+                invocation.include_machine_paths,
+                error,
+            ))
+        })?;
+        let forge_remote = preferred_forge_remote(&remotes)
+            .map(|(remote, _)| redact_metadata(&remote.url, invocation.include_machine_paths));
+        let forge = build_forge(&remotes, repo.cwd(), policy);
+        let data = inspect_repo(
+            repo,
+            remotes,
+            forge.as_deref(),
+            forge_remote,
+            invocation.include_machine_paths,
+        )
+        .await?;
+        Ok(MachineEnvelope::success(Operation::Inspect.name(), data))
+    } else {
+        let data = changes_repo(
+            repo,
+            invocation.changes_mode,
+            invocation.content_max_bytes,
+            invocation.include_machine_paths,
+        )
+        .await?;
+        Ok(MachineEnvelope::success(Operation::Changes.name(), data))
     }
 }
 
@@ -399,7 +442,7 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
                 subprocess_route: "vcs-toolkit-typed-clients",
                 process_tree_containment: "processkit-rs",
                 cancellation: "processkit-cancellation-token",
-                deadlines: "per-operation",
+                deadlines: "per-outcome",
                 deadline_default_seconds: DEFAULT_DEADLINE.as_secs(),
                 processkit_cli_composition: "external-executable",
                 raw_command_escape_hatch: false,
@@ -475,20 +518,15 @@ async fn inspect_repo<R: ProcessRunner>(
     let remotes: Vec<RemoteData> = remotes
         .into_iter()
         .map(|remote| RemoteData {
-            name: remote.name,
-            url: redact_text(
-                &remote.url,
-                RedactionPolicy {
-                    include_machine_paths: include_paths,
-                },
-            ),
+            name: redact_metadata(&remote.name, include_paths),
+            url: redact_metadata(&remote.url, include_paths),
         })
         .collect();
     let forge = inspect_forge(forge, forge_remote.as_deref(), include_paths).await?;
 
     Ok(InspectData {
         repository: repository_identity(repo, include_paths),
-        working_copy: working_copy(repo.kind(), snapshot, change_id),
+        working_copy: working_copy(repo.kind(), snapshot, change_id, include_paths),
         remotes,
         forge,
         capabilities: repository_capabilities(),
@@ -582,8 +620,13 @@ fn build_forge(
 fn preferred_forge_remote(remotes: &[vcs_core::Remote]) -> Option<(&vcs_core::Remote, ForgeKind)> {
     remotes
         .iter()
-        .filter_map(|remote| ForgeKind::from_remote_url(&remote.url).map(|kind| (remote, kind)))
-        .min_by_key(|(remote, _)| if remote.name == "origin" { 0 } else { 1 })
+        .map(|remote| {
+            (
+                remote,
+                ForgeKind::from_remote_url(&remote.url).unwrap_or(ForgeKind::Unknown),
+            )
+        })
+        .min_by_key(|(remote, kind)| (matches!(kind, ForgeKind::Unknown), remote.name != "origin"))
 }
 
 async fn inspect_forge(
@@ -601,7 +644,7 @@ async fn inspect_forge(
         });
     };
     let capabilities = match forge.capabilities().await {
-        Ok(value) => Fact::known(map_forge_capabilities(value)),
+        Ok(value) => Fact::known(map_forge_capabilities(value, include_paths)),
         Err(error) => {
             if let Some(error) = forge_lifecycle_error(&error, include_paths) {
                 return Err(Box::new(error));
@@ -610,7 +653,7 @@ async fn inspect_forge(
         }
     };
     let auth = match forge.auth_info().await {
-        Ok(value) => Fact::known(map_forge_auth(value)),
+        Ok(value) => Fact::known(map_forge_auth(value, include_paths)),
         Err(error) => {
             if let Some(error) = forge_lifecycle_error(&error, include_paths) {
                 return Err(Box::new(error));
@@ -644,9 +687,11 @@ fn forge_lifecycle_error(error: &vcs_forge::Error, include_paths: bool) -> Optio
     })
 }
 
-fn map_forge_capabilities(value: ForgeCapabilities) -> ForgeCapabilitiesData {
+fn map_forge_capabilities(value: ForgeCapabilities, include_paths: bool) -> ForgeCapabilitiesData {
     ForgeCapabilitiesData {
-        cli_version: value.version.map(|version| version.to_string()),
+        cli_version: value
+            .version
+            .map(|version| redact_metadata(&version.to_string(), include_paths)),
         cli_supported: value.supported,
         authenticated: value.authed,
         pr_create: value.pr_create,
@@ -667,16 +712,18 @@ fn map_forge_capabilities(value: ForgeCapabilities) -> ForgeCapabilitiesData {
     }
 }
 
-fn map_forge_auth(value: ForgeAuth) -> ForgeAuthData {
+fn map_forge_auth(value: ForgeAuth, include_paths: bool) -> ForgeAuthData {
     ForgeAuthData {
         authenticated: value.authed,
-        active_account: value.active_account,
+        active_account: value
+            .active_account
+            .map(|account| redact_metadata(&account, include_paths)),
         accounts: value
             .accounts
             .into_iter()
             .map(|account| ForgeAccountData {
-                host: account.host,
-                login: account.login,
+                host: redact_metadata(&account.host, include_paths),
+                login: redact_metadata(&account.login, include_paths),
                 active: account.active,
             })
             .collect(),
@@ -716,6 +763,7 @@ fn working_copy(
     kind: BackendKind,
     snapshot: RepoSnapshot,
     change_id: Option<String>,
+    include_paths: bool,
 ) -> WorkingCopy {
     WorkingCopy {
         branch_kind: if matches!(kind, BackendKind::Git) {
@@ -723,9 +771,13 @@ fn working_copy(
         } else {
             "bookmark"
         },
-        branch: snapshot.branch,
-        revision: snapshot.head,
-        change_id,
+        branch: snapshot
+            .branch
+            .map(|branch| redact_metadata(&branch, include_paths)),
+        revision: snapshot
+            .head
+            .map(|revision| redact_metadata(&revision, include_paths)),
+        change_id: change_id.map(|change| redact_metadata(&change, include_paths)),
         dirty: snapshot.dirty,
         tracked_changes: snapshot.tracked_changes,
         untracked: snapshot.untracked,
@@ -734,11 +786,20 @@ fn working_copy(
         conflict_count: snapshot.conflict_count,
         operation: operation_state(snapshot.operation),
         upstream: snapshot.tracking.map(|tracking| UpstreamData {
-            branch: tracking.branch,
+            branch: redact_metadata(&tracking.branch, include_paths),
             ahead: tracking.ahead,
             behind: tracking.behind,
         }),
     }
+}
+
+fn redact_metadata(value: &str, include_paths: bool) -> String {
+    redact_text(
+        value,
+        RedactionPolicy {
+            include_machine_paths: include_paths,
+        },
+    )
 }
 
 fn count_changes(files: &[FileChange], stat: vcs_core::DiffStat) -> ChangeCounts {
@@ -975,6 +1036,60 @@ fn hex(bytes: impl Iterator<Item = u8>) -> String {
 mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
+    use processkit::{Command, ProcessResult};
+
+    struct DelayedRunner {
+        inner: ScriptedRunner,
+        delay: Duration,
+    }
+
+    impl ProcessRunner for DelayedRunner {
+        fn output_string<'life0, 'life1, 'async_trait>(
+            &'life0 self,
+            command: &'life1 Command,
+        ) -> std::pin::Pin<
+            Box<
+                dyn Future<Output = processkit::Result<ProcessResult<String>>>
+                    + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move {
+                tokio::time::sleep(self.delay).await;
+                self.inner.output_string(command).await
+            })
+        }
+    }
+
+    fn inspect_invocation(include_machine_paths: bool) -> Invocation {
+        Invocation {
+            operation: Operation::Inspect,
+            repository: Some(Path::new("/repo/private").to_path_buf()),
+            changes_mode: ChangesMode::Summary,
+            content_max_bytes: 8192,
+            max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
+            include_machine_paths,
+        }
+    }
+
+    fn scripted_git_inspect(remote_output: &str, status_output: &str) -> Repo<ScriptedRunner> {
+        let runner = ScriptedRunner::new()
+            .on(["git", "remote", "-v"], Reply::ok(remote_output))
+            .on(
+                ["git", "status", "--porcelain=v2"],
+                Reply::ok(status_output),
+            )
+            .on(
+                ["git", "rev-parse", "--git-dir"],
+                Reply::ok("/repo/private/.git"),
+            );
+        Repo::from_git("/repo/private", "/repo/private", Git::with_runner(runner))
+    }
 
     #[tokio::test]
     async fn scripted_git_inspect_uses_typed_facade_and_redacts_remote_credentials() {
@@ -1065,6 +1180,137 @@ mod tests {
             .expect("absent forge inspection");
         assert_eq!(absent.detection, "absent");
         assert_eq!(absent.capabilities.status, "not_applicable");
+    }
+
+    #[tokio::test]
+    async fn inspect_composition_distinguishes_unknown_remote_from_no_remote() {
+        let status = "# branch.oid abc123\0# branch.head main\0";
+        let policy = ExecutionPolicy::new(8192);
+        let unknown = execute_repository(
+            &inspect_invocation(false),
+            &policy,
+            &scripted_git_inspect(
+                "origin https://forge.example.invalid/owner/repo (fetch)\n",
+                status,
+            ),
+        )
+        .await
+        .expect("unknown remote remains a detected forge");
+        let unknown = serde_json::to_value(unknown).expect("serialize inspect envelope");
+        assert_eq!(unknown["data"]["forge"]["detection"], "detected");
+        assert_eq!(unknown["data"]["forge"]["kind"], "unknown");
+        assert_eq!(unknown["data"]["forge"]["capabilities"]["status"], "known");
+
+        let absent = execute_repository(
+            &inspect_invocation(false),
+            &ExecutionPolicy::new(8192),
+            &scripted_git_inspect("", status),
+        )
+        .await
+        .expect("repository without remotes is inspectable");
+        let absent = serde_json::to_value(absent).expect("serialize inspect envelope");
+        assert_eq!(absent["data"]["forge"]["detection"], "absent");
+        assert!(absent["data"]["forge"]["kind"].is_null());
+        assert_eq!(
+            absent["data"]["forge"]["capabilities"]["status"],
+            "not_applicable"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_outcome_deadline_bounds_multiple_sequential_typed_calls() {
+        let runner = RecordingRunner::new(DelayedRunner {
+            inner: ScriptedRunner::new()
+                .on(
+                    ["git", "remote", "-v"],
+                    Reply::ok("origin https://forge.example.invalid/repo (fetch)\n"),
+                )
+                .on(
+                    ["git", "status", "--porcelain=v2"],
+                    Reply::ok("# branch.oid abc123\0# branch.head main\0"),
+                )
+                .on(["git", "rev-parse", "--git-dir"], Reply::ok("/repo/.git")),
+            delay: Duration::from_secs(60),
+        });
+        let mut policy = ExecutionPolicy::new(8192);
+        policy.deadline = Duration::from_secs(100);
+        let repo = Repo::from_git(
+            "/repo",
+            "/repo",
+            Git::with_runner(&runner)
+                .default_timeout(Duration::from_secs(120))
+                .default_cancel_on(policy.cancellation.clone()),
+        );
+
+        let error = match with_outcome_deadline(
+            Operation::Inspect,
+            false,
+            &policy,
+            execute_repository(&inspect_invocation(false), &policy, &repo),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("two 60-second calls must not receive independent 100-second budgets"),
+        };
+
+        assert_eq!(error.kind(), ErrorKind::Timeout);
+        assert_eq!(
+            runner.calls().len(),
+            2,
+            "the third typed call must not start"
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_redacts_secret_shaped_metadata_with_or_without_machine_paths() {
+        let status = concat!(
+            "# branch.oid token=revision-secret\0",
+            "# branch.head token=branch-secret\0",
+            "# branch.upstream token=upstream-secret\0",
+            "# branch.ab +0 -0\0",
+        );
+        let remotes =
+            "token=remote-secret https://example.invalid/repo?token=remote-url-secret (fetch)\n";
+
+        for include_paths in [false, true] {
+            let envelope = execute_repository(
+                &inspect_invocation(include_paths),
+                &ExecutionPolicy::new(8192),
+                &scripted_git_inspect(remotes, status),
+            )
+            .await
+            .expect("secret-shaped metadata is redacted, not rejected");
+            let value = serde_json::to_value(&envelope).expect("serialize inspect envelope");
+            assert_eq!(
+                value["data"]["repository"]["root"]["encoding"],
+                if include_paths { "utf-8" } else { "redacted" }
+            );
+            let encoded = serde_json::to_string(&value).expect("encode inspect envelope");
+            for leaked in [
+                "revision-secret",
+                "branch-secret",
+                "upstream-secret",
+                "remote-secret",
+                "remote-url-secret",
+            ] {
+                assert!(!encoded.contains(leaked), "machine output leaked {leaked}");
+            }
+        }
+
+        for include_paths in [false, true] {
+            let auth = ForgeAuth::unknown()
+                .active_account("token=active-account-secret")
+                .accounts(vec![vcs_forge::ForgeAccount::new(
+                    "token=host-secret",
+                    "token=login-secret",
+                )]);
+            let encoded = serde_json::to_string(&map_forge_auth(auth, include_paths))
+                .expect("serialize forge auth");
+            for leaked in ["active-account-secret", "host-secret", "login-secret"] {
+                assert!(!encoded.contains(leaked), "forge metadata leaked {leaked}");
+            }
+        }
     }
 
     #[test]

@@ -118,6 +118,72 @@
         }
       ]
     },
+    "forgeCapabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["cli_version", "cli_supported", "authenticated", "pr_create", "pr_comment", "pr_edit", "pr_labels", "pr_checks", "pr_merge", "pr_approve", "pr_request_changes", "issue_create", "issue_close", "issue_reopen", "issue_comment", "issue_labels", "release_create", "release_delete"],
+      "properties": {
+        "cli_version": {"type": ["string", "null"]},
+        "cli_supported": {"type": "boolean"},
+        "authenticated": {"type": "boolean"},
+        "pr_create": {"type": "boolean"},
+        "pr_comment": {"type": "boolean"},
+        "pr_edit": {"type": "boolean"},
+        "pr_labels": {"type": "boolean"},
+        "pr_checks": {"type": "boolean"},
+        "pr_merge": {"type": "boolean"},
+        "pr_approve": {"type": "boolean"},
+        "pr_request_changes": {"type": "boolean"},
+        "issue_create": {"type": "boolean"},
+        "issue_close": {"type": "boolean"},
+        "issue_reopen": {"type": "boolean"},
+        "issue_comment": {"type": "boolean"},
+        "issue_labels": {"type": "boolean"},
+        "release_create": {"type": "boolean"},
+        "release_delete": {"type": "boolean"}
+      }
+    },
+    "forgeAuth": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["authenticated", "active_account", "accounts", "repository_visible"],
+      "properties": {
+        "authenticated": {"type": ["boolean", "null"]},
+        "active_account": {"type": ["string", "null"]},
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["host", "login", "active"],
+            "properties": {
+              "host": {"type": "string"},
+              "login": {"type": "string"},
+              "active": {"type": ["boolean", "null"]}
+            }
+          }
+        },
+        "repository_visible": {"type": ["boolean", "null"]}
+      }
+    },
+    "forgeCapabilitiesFact": {
+      "allOf": [
+        {"$ref": "#/$defs/fact"},
+        {
+          "if": {"properties": {"status": {"const": "known"}}, "required": ["status"]},
+          "then": {"properties": {"value": {"$ref": "#/$defs/forgeCapabilities"}}}
+        }
+      ]
+    },
+    "forgeAuthFact": {
+      "allOf": [
+        {"$ref": "#/$defs/fact"},
+        {
+          "if": {"properties": {"status": {"const": "known"}}, "required": ["status"]},
+          "then": {"properties": {"value": {"$ref": "#/$defs/forgeAuth"}}}
+        }
+      ]
+    },
     "inspectData": {
       "type": "object",
       "additionalProperties": true,
@@ -174,8 +240,8 @@
             "detection": {"enum": ["absent", "detected"]},
             "kind": {"type": ["string", "null"], "enum": ["github", "gitlab", "gitea", "unknown", null]},
             "remote": {"type": ["string", "null"]},
-            "capabilities": {"$ref": "#/$defs/fact"},
-            "auth": {"$ref": "#/$defs/fact"}
+            "capabilities": {"$ref": "#/$defs/forgeCapabilitiesFact"},
+            "auth": {"$ref": "#/$defs/forgeAuthFact"}
           }
         },
         "capabilities": {
