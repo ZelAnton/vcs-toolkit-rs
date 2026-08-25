@@ -190,7 +190,9 @@ async fn parallel_repo_mutations_never_overlap_runner_spawns() {
     );
     let events = runner.events();
     assert_eq!(events.len(), MUTATIONS * 2);
-    for pair in events.chunks_exact(2) {
+    let (pairs, remainder) = events.as_slice().as_chunks::<2>();
+    assert!(remainder.is_empty(), "events must form enter/exit pairs");
+    for pair in pairs {
         assert!(pair[0].entering, "first event must enter: {pair:?}");
         assert!(!pair[1].entering, "second event must exit: {pair:?}");
         assert_eq!(pair[0].id, pair[1].id, "spawns interleaved: {pair:?}");

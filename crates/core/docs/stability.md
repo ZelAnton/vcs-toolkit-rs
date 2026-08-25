@@ -43,6 +43,7 @@ All crates are **pre-1.0** today — the API may still change. Relative maturity
 | `vcs-forge` | 0.8.0 | evolving |
 | `vcs-watch` | 0.8.0 | evolving |
 | `vcs-mcp` | 0.8.0 | evolving |
+| `vcs-agent` | 0.1.0 | evolving |
 
 ### Coordinated-release dependencies
 
