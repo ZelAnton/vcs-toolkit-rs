@@ -1,0 +1,21 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "unknown",
+  "status": "error",
+  "data": null,
+  "error": {
+    "kind": "unsupported",
+    "exit_code": 10,
+    "code": "unsupported_outcome",
+    "message": "unsupported outcome",
+    "retryable": false,
+    "details": {}
+  },
+  "warnings": [],
+  "fallback": {
+    "allowed": true,
+    "interface": "raw-cli",
+    "reason": "unknown_outcome"
+  }
+}

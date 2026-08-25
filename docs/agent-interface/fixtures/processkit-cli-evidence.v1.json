@@ -1,0 +1,64 @@
+{
+  "evidence_version": "vcs-agent.processkit-cli.evidence/v1",
+  "profile_version": "vcs-agent.processkit-cli/v1",
+  "scenarios": [
+    {
+      "id": "agent-success",
+      "child_fixture": "probe-success.v1.json",
+      "command_exit_code": 0,
+      "events": [
+        { "schema_version": 1, "event": "run_started", "mechanism": "job_object", "abrupt_cleanup": "whole_tree" },
+        { "schema_version": 1, "event": "runner_exit", "code": 0, "source": "child_exit", "child_code": 0 },
+        { "schema_version": 1, "event": "output_captured", "stdout": { "bytes": 4096, "truncated": false }, "stderr": { "bytes": 0, "truncated": false } }
+      ]
+    },
+    {
+      "id": "agent-structured-failure",
+      "child_fixture": "unknown-outcome.v1.json",
+      "command_exit_code": 10,
+      "events": [
+        { "schema_version": 1, "event": "run_started", "mechanism": "process_group", "abrupt_cleanup": "direct_child_only" },
+        { "schema_version": 1, "event": "runner_exit", "code": 10, "source": "child_exit", "child_code": 10 },
+        { "schema_version": 1, "event": "output_captured", "stdout": { "bytes": 512, "truncated": false }, "stderr": { "bytes": 32, "truncated": false } }
+      ]
+    },
+    {
+      "id": "timeout",
+      "child_fixture": null,
+      "command_exit_code": 106,
+      "events": [
+        { "schema_version": 1, "event": "timeout", "reason": "overall" },
+        { "schema_version": 1, "event": "runner_exit", "code": 106, "source": "timeout", "child_code": null }
+      ]
+    },
+    {
+      "id": "control-cancel",
+      "child_fixture": null,
+      "command_exit_code": 0,
+      "events": [
+        { "schema_version": 1, "event": "cancelled", "source": "control_cancel" },
+        { "schema_version": 1, "event": "runner_exit", "code": 108, "source": "control_cancel", "child_code": null }
+      ]
+    },
+    {
+      "id": "bounded-capture",
+      "child_fixture": null,
+      "command_exit_code": 0,
+      "events": [
+        { "schema_version": 1, "event": "runner_exit", "code": 0, "source": "child_exit", "child_code": 0 },
+        { "schema_version": 1, "event": "output_captured", "stdout": { "bytes": 4096, "truncated": true }, "stderr": { "bytes": 4096, "truncated": true } }
+      ]
+    },
+    {
+      "id": "nested-containment",
+      "child_fixture": "inspect-success-git.v1.json",
+      "command_exit_code": 0,
+      "events": [
+        { "schema_version": 1, "event": "run_started", "mechanism": "job_object", "abrupt_cleanup": "whole_tree" },
+        { "schema_version": 1, "event": "cleanup_finished", "remaining": 0, "read_error": false },
+        { "schema_version": 1, "event": "runner_exit", "code": 0, "source": "child_exit", "child_code": 0 }
+      ],
+      "claim": "outer-lifecycle-observed-inner-membership-not-attested"
+    }
+  ]
+}

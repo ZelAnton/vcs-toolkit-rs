@@ -8,7 +8,8 @@
 # (scripts/release/lib.test.sh), clippy (both configurations), rustdoc (incl.
 # the doctest run and, if a `nightly` toolchain is installed, the `docsrs`-cfg
 # build), the MSRV check (if the pinned toolchain is installed), per-feature
-# isolation checks, the test suite, `cargo deny check` (if `cargo-deny` is
+# isolation checks, the test suite, the offline agent-interface/ProcessKit-CLI
+# profile contract, `cargo deny check` (if `cargo-deny` is
 # installed), `cargo package` for the crates that can be packaged pre-publish,
 # and the public-api snapshot diff (Windows-only, when the pinned nightly and
 # cargo-public-api are installed — the committed baselines are Windows-shaped).
@@ -131,6 +132,28 @@ has_cargo_deny() {
   cargo deny --version >/dev/null 2>&1
 }
 
+resolve_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' python3
+  elif command -v python >/dev/null 2>&1; then
+    printf '%s\n' python
+  else
+    return 1
+  fi
+}
+
+agent_interface_contract() {
+  local python_bin="$1" agent_bin="target/debug/vcs-agent"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) agent_bin="$agent_bin.exe" ;;
+  esac
+  "$python_bin" scripts/agent-interface/validate.py &&
+    "$python_bin" scripts/agent-interface/test_validate.py &&
+    "$python_bin" scripts/agent-interface/test_processkit_cli_profile.py &&
+    "$python_bin" scripts/agent-interface/processkit_cli_profile.py \
+      --vcs-agent "$agent_bin"
+}
+
 # Assert the committed Cargo.lock is in sync with the manifests (mirrors the
 # `lockfile` CI job). `cargo metadata` emits the resolved graph as JSON on
 # stdout; discard it — we only care that `--locked` doesn't error.
@@ -228,6 +251,17 @@ fi
 step "test: build --all-targets" cargo build --all-targets
 step "test: hermetic (default features)" cargo test
 step "test: all-features" cargo test --workspace --all-features
+
+# --- agent-interface contract ----------------------------------------
+# Mirrors the `agent-interface-contract` CI job. Without an explicitly
+# provided PROCESSKIT_CLI_BIN, the final harness command verifies and reports
+# the documented optional-tier skip. A supplied but broken/incompatible binary
+# fails the step rather than being hidden as unavailable.
+if PYTHON_BIN="$(resolve_python)"; then
+  step "agent-interface contracts" agent_interface_contract "$PYTHON_BIN"
+else
+  skip "agent-interface contracts" "python3/python not installed; authoritative check is CI"
+fi
 
 # --- integration (never run locally, see header comment) --------------
 skip "integration" "needs multiple pinned jj versions + glab/tea on PATH; run manually: cargo test --workspace --all-features --tests -- --ignored"
