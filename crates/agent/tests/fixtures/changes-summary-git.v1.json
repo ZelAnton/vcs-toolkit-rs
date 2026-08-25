@@ -1,0 +1,22 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "changes",
+  "status": "success",
+  "data": {
+    "repository": {
+      "backend": "git",
+      "root": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null},
+      "cwd": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}
+    },
+    "mode": "summary",
+    "content_max_bytes": 262144,
+    "counts": {"paths": 1, "added": 0, "modified": 1, "deleted": 0, "renamed": 0, "files_with_line_diff": 1, "insertions": 1, "deletions": 1},
+    "files": [{"path": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}, "old_path": null, "kind": "modified"}],
+    "diff": null,
+    "read_semantics": {"refs_mutated": false, "index_mutated": false, "working_copy_content_mutated": false, "working_copy_snapshot": "none", "operation_log_may_advance": false}
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

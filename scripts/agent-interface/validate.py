@@ -29,6 +29,7 @@ EXPECTED_SCENARIOS = {
 }
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
+MACHINE_OPERATIONS = {"probe", "inspect", "changes", "commit", "publish", "ci_status", "ci_wait", "unknown"}
 
 
 class ValidationError(ValueError):
@@ -66,6 +67,143 @@ def _boolean(value: Any, label: str) -> bool:
     if not isinstance(value, bool):
         raise ValidationError(f"{label} must be boolean")
     return value
+
+
+def _machine_path(value: Any, label: str) -> None:
+    path = _object(value, label)
+    display = path.get("display")
+    if not isinstance(display, str):
+        raise ValidationError(f"{label}.display must be a string")
+    encoding = path.get("encoding")
+    allowed = {"utf-8", "os-bytes-hex", "windows-utf16-hex", "platform-native-lossy", "redacted"}
+    if encoding not in allowed:
+        raise ValidationError(f"{label}.encoding is invalid")
+    encoded = path.get("value")
+    if encoding == "redacted":
+        if encoded is not None:
+            raise ValidationError(f"{label}.value must be null when redacted")
+    elif not isinstance(encoded, str):
+        raise ValidationError(f"{label}.value must be a string when not redacted")
+
+
+def _read_semantics(value: Any, label: str) -> None:
+    semantics = _object(value, label)
+    for key in ("refs_mutated", "index_mutated", "working_copy_content_mutated"):
+        if semantics.get(key) is not False:
+            raise ValidationError(f"{label}.{key} must be false for a read outcome")
+    snapshot = semantics.get("working_copy_snapshot")
+    may_advance = _boolean(semantics.get("operation_log_may_advance"), f"{label}.operation_log_may_advance")
+    if snapshot == "none" and may_advance:
+        raise ValidationError(f"{label}: a no-snapshot read cannot claim op-log advancement")
+    if snapshot == "live-jj-snapshot" and not may_advance:
+        raise ValidationError(f"{label}: live jj snapshot must disclose possible op-log advancement")
+    if snapshot not in {"none", "live-jj-snapshot"}:
+        raise ValidationError(f"{label}.working_copy_snapshot is invalid")
+
+
+def _fact(value: Any, label: str) -> None:
+    fact = _object(value, label)
+    status = fact.get("status")
+    reason = fact.get("reason")
+    payload = fact.get("value")
+    if status == "known":
+        if reason is not None or not isinstance(payload, dict):
+            raise ValidationError(f"{label}: known fact requires reason=null and an object value")
+    elif status == "unavailable":
+        _string(reason, f"{label}.reason")
+        if payload is not None:
+            raise ValidationError(f"{label}: unavailable fact requires value=null")
+    elif status == "not_applicable":
+        if reason is not None or payload is not None:
+            raise ValidationError(f"{label}: not_applicable fact requires reason=value=null")
+    else:
+        raise ValidationError(f"{label}.status is invalid")
+
+
+def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
+    envelope = _object(value, label)
+    if envelope.get("contract_version") != "vcs-agent/v1":
+        raise ValidationError(f"{label}.contract_version must be vcs-agent/v1")
+    _string(envelope.get("binary_version"), f"{label}.binary_version")
+    operation = _string(envelope.get("operation"), f"{label}.operation")
+    if operation not in MACHINE_OPERATIONS:
+        raise ValidationError(f"{label}.operation is not a v1 operation")
+    status = envelope.get("status")
+    if status not in {"success", "error"}:
+        raise ValidationError(f"{label}.status is invalid")
+    warnings = envelope.get("warnings")
+    if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+        raise ValidationError(f"{label}.warnings must be a string array")
+
+    if status == "error":
+        if envelope.get("data") is not None:
+            raise ValidationError(f"{label}: error envelope must use data=null")
+        error = _object(envelope.get("error"), f"{label}.error")
+        _string(error.get("kind"), f"{label}.error.kind")
+        exit_code = error.get("exit_code")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 2 <= exit_code <= 79:
+            raise ValidationError(f"{label}.error.exit_code is invalid")
+        _string(error.get("code"), f"{label}.error.code")
+        _boolean(error.get("retryable"), f"{label}.error.retryable")
+        _object(error.get("details"), f"{label}.error.details")
+        return envelope
+
+    if envelope.get("error") is not None or envelope.get("fallback") is not None:
+        raise ValidationError(f"{label}: success envelope cannot carry error/fallback")
+    data = _object(envelope.get("data"), f"{label}.data")
+    if operation == "inspect":
+        repository = _object(data.get("repository"), f"{label}.data.repository")
+        if repository.get("backend") not in {"git", "jujutsu", "unknown"}:
+            raise ValidationError(f"{label}.data.repository.backend is invalid")
+        _machine_path(repository.get("root"), f"{label}.data.repository.root")
+        _machine_path(repository.get("cwd"), f"{label}.data.repository.cwd")
+        working = _object(data.get("working_copy"), f"{label}.data.working_copy")
+        if working.get("branch_kind") not in {"branch", "bookmark"}:
+            raise ValidationError(f"{label}.data.working_copy.branch_kind is invalid")
+        _boolean(working.get("dirty"), f"{label}.data.working_copy.dirty")
+        _integer(working.get("total_changes"), f"{label}.data.working_copy.total_changes")
+        _boolean(working.get("conflicted"), f"{label}.data.working_copy.conflicted")
+        forge = _object(data.get("forge"), f"{label}.data.forge")
+        _fact(forge.get("capabilities"), f"{label}.data.forge.capabilities")
+        _fact(forge.get("auth"), f"{label}.data.forge.auth")
+        _read_semantics(data.get("read_semantics"), f"{label}.data.read_semantics")
+        snapshot = data["read_semantics"]["working_copy_snapshot"]
+        if (repository["backend"] == "git" and snapshot != "none") or (
+            repository["backend"] == "jujutsu" and snapshot != "live-jj-snapshot"
+        ):
+            raise ValidationError(f"{label}: backend and read snapshot semantics disagree")
+    elif operation == "changes":
+        mode = data.get("mode")
+        if mode not in {"summary", "full"}:
+            raise ValidationError(f"{label}.data.mode is invalid")
+        content_max = _integer(data.get("content_max_bytes"), f"{label}.data.content_max_bytes")
+        if not 1024 <= content_max <= 1048576:
+            raise ValidationError(f"{label}.data.content_max_bytes is out of range")
+        files = data.get("files")
+        if not isinstance(files, list):
+            raise ValidationError(f"{label}.data.files must be an array")
+        for index, item in enumerate(files):
+            changed = _object(item, f"{label}.data.files[{index}]")
+            _machine_path(changed.get("path"), f"{label}.data.files[{index}].path")
+        diff = data.get("diff")
+        if (mode == "summary" and diff is not None) or (mode == "full" and not isinstance(diff, list)):
+            raise ValidationError(f"{label}.data.diff does not match mode")
+        _object(data.get("counts"), f"{label}.data.counts")
+        _read_semantics(data.get("read_semantics"), f"{label}.data.read_semantics")
+        repository = _object(data.get("repository"), f"{label}.data.repository")
+        snapshot = data["read_semantics"]["working_copy_snapshot"]
+        if (repository.get("backend") == "git" and snapshot != "none") or (
+            repository.get("backend") == "jujutsu" and snapshot != "live-jj-snapshot"
+        ):
+            raise ValidationError(f"{label}: backend and read snapshot semantics disagree")
+    return envelope
+
+
+def validate_machine_fixtures(fixtures_dir: Path) -> list[dict[str, Any]]:
+    paths = sorted(fixtures_dir.glob("*.v1.json"))
+    if not paths:
+        raise ValidationError(f"{fixtures_dir}: no machine fixtures found")
+    return [validate_machine_envelope(load_json(path), str(path)) for path in paths]
 
 
 def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
@@ -294,7 +432,7 @@ def validate_baseline(baseline: Any) -> dict[str, Any]:
     return root
 
 
-def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: Path | None) -> dict[str, Any]:
+def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: Path | None, machine_fixtures: Path | None = None) -> dict[str, Any]:
     corpus_by_id = validate_corpus(load_json(corpus_path))
     checked_results: list[dict[str, Any]] = []
     if results_path is not None:
@@ -302,7 +440,8 @@ def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: 
     baseline = None
     if baseline_path is not None:
         baseline = validate_baseline(load_json(baseline_path))
-    return {"corpus_cases": len(corpus_by_id), "result_cases": len(checked_results), "baseline_status": baseline["status"] if baseline else None}
+    checked_machine = validate_machine_fixtures(machine_fixtures) if machine_fixtures is not None else []
+    return {"corpus_cases": len(corpus_by_id), "result_cases": len(checked_results), "machine_fixtures": len(checked_machine), "baseline_status": baseline["status"] if baseline else None}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,9 +450,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--corpus", type=Path, default=root / "docs/agent-interface/corpus.v1.json")
     parser.add_argument("--results", type=Path)
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
+    parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
     args = parser.parse_args(argv)
     try:
-        summary = validate_files(args.corpus, args.results, args.baseline)
+        summary = validate_files(args.corpus, args.results, args.baseline, args.machine_fixtures)
     except ValidationError as exc:
         print(f"agent-interface validation failed: {exc}", file=sys.stderr)
         return 1

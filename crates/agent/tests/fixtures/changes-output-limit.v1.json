@@ -1,0 +1,10 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "changes",
+  "status": "error",
+  "data": null,
+  "error": {"kind": "output_limit", "exit_code": 42, "code": "typed_client_failed", "message": "output limit exceeded", "retryable": false, "details": {"process_error_kind": "output_too_large"}},
+  "warnings": [],
+  "fallback": null
+}

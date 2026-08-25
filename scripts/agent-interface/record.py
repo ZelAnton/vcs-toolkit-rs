@@ -9,7 +9,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from validate import ValidationError, load_json, validate_baseline, validate_corpus, validate_results
+from validate import (
+    ValidationError,
+    load_json,
+    validate_baseline,
+    validate_corpus,
+    validate_machine_fixtures,
+    validate_results,
+)
 
 
 def _ratio(numerator: int, denominator: int) -> dict[str, int]:
@@ -96,16 +103,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--corpus", type=Path, default=root / "docs/agent-interface/corpus.v1.json")
     parser.add_argument("--results", type=Path, default=root / "docs/agent-interface/fixtures/results.v1.json")
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
+    parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        machine_fixtures = validate_machine_fixtures(args.machine_fixtures)
         recording = make_recording(load_json(args.corpus), load_json(args.results), load_json(args.baseline))
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(recording, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except (ValidationError, OSError) as exc:
         print(f"agent-interface recording failed: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps({"written": str(args.output), "cases": len(recording["cases"])}, sort_keys=True))
+    print(json.dumps({"written": str(args.output), "cases": len(recording["cases"]), "machine_fixtures": len(machine_fixtures)}, sort_keys=True))
     return 0
 
 

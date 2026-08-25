@@ -7,10 +7,36 @@ binary versions are independent: additive binary releases may continue emitting
 version.
 
 The executable is an application facade over vcs-toolkit's typed clients, not a
-mirror of every Git, Jujutsu, or forge method. The v1 taxonomy reserves `probe`,
-`inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait`. Only
-`probe` is implemented in the initial skeleton; invoking another reserved outcome
-returns `unsupported` and never silently invokes a lower-level command.
+mirror of every Git, Jujutsu, or forge method. The v1 taxonomy contains `probe`,
+`inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait`. `probe`,
+`inspect`, and `changes` are implemented. The remaining outcomes return
+`unsupported` and never silently invoke a lower-level command. The production
+source assertion in `crates/agent/src/main.rs` checks that the executable has no
+raw subprocess constructor.
+
+## Read-only outcomes
+
+`inspect --repo <path>` discovers Git or Jujutsu through `vcs-core`, then emits
+the detected backend, repository root and bound working directory, branch or
+bookmark, revision and (for Jujutsu) change identity, split dirtiness counts,
+conflict and operation state, remotes, classified forge, auth facts, and
+capabilities. An absent forge is `detection: "absent"`; a detected forge whose
+CLI cannot be probed uses a structured `unavailable` fact rather than a guessed
+value. Nullable fields mean the backend did not establish the fact, never a
+fabricated zero or empty identity.
+
+`changes --repo <path>` defaults to `--mode summary`. Summary returns changed
+paths and aggregate line counts. `--mode full` additionally returns structured
+per-file hunks and lines. `--content-max-bytes` (1,024 through 1,048,576; default
+262,144) is projected onto the typed backend client's `OutputBudget`. Crossing
+that content budget is an `output_limit` error: no partial diff is returned.
+The independent `--max-output-bytes` budget still bounds the final envelope.
+
+Paths use `{display, encoding, value}`. UTF-8 paths use `encoding: "utf-8"`;
+non-UTF-8 Unix paths use hex-encoded OS bytes, and non-Unicode Windows paths use
+hex-encoded UTF-16 units. This makes status paths round-trippable. Without
+`--include-machine-paths`, both absolute and repository-relative paths use the
+`redacted` encoding with `value: null`.
 
 ## Envelope and compatibility
 
@@ -74,10 +100,19 @@ secret-shaped assignments, and bearer tokens are redacted. Machine-local paths
 are absent/redacted by default and can be included only with
 `--include-machine-paths`; that option never disables credential redaction.
 
-`probe` is non-mutating: it reads no repository and spawns no child. Future VCS
-and forge paths must use existing typed vcs-toolkit clients. Their execution
-policy is centrally defined with a ProcessKit cancellation token, per-operation
-deadline, fail-loud output budget, and ProcessKit process-tree containment.
+`probe` is non-mutating: it reads no repository and spawns no child. `inspect`
+and `changes` do not mutate Git refs, index, or working-copy content. Their Git
+read-only invariant is exercised by the real-backend tests under
+`crates/agent/tests`. Jujutsu differs honestly: the outcomes query the live
+working copy, so normal `jj` reads may snapshot a bare filesystem edit and add a
+reversible op-log entry. The envelope therefore reports
+`working_copy_snapshot: "live-jj-snapshot"` and
+`operation_log_may_advance: true`; it does not claim the stale, non-recording
+`--ignore-working-copy` view is current.
+
+All repository and forge paths use existing typed vcs-toolkit clients. Their
+execution policy is centrally defined with a ProcessKit cancellation token,
+per-operation deadline, fail-loud output budget, and ProcessKit process-tree containment.
 There is no production `std::process::Command` path for `git`, `jj`, `gh`,
 `glab`, or `tea`, and there is no raw-command escape hatch.
 

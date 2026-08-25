@@ -1,9 +1,9 @@
 //! `vcs-agent`: the bounded, outcome-oriented vcs-toolkit application facade.
 //!
-//! The v1 skeleton intentionally implements only `probe`. Later outcomes plug
-//! into [`app::ExecutionPolicy`], which carries ProcessKit cancellation and the
-//! same fail-loud output budget used by the typed vcs-toolkit clients. This
-//! binary never constructs raw git/jj/forge child processes.
+//! The v1 read surface implements `probe`, `inspect`, and `changes` through the
+//! typed vcs-core/vcs-forge clients. [`app::ExecutionPolicy`] carries ProcessKit
+//! cancellation, deadline, and fail-loud content limits into every backend.
+//! This binary never constructs raw git/jj/forge child processes.
 
 mod app;
 mod cli;
@@ -52,8 +52,24 @@ fn run_invocation(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> ExitCode {
-    let policy = ExecutionPolicy::new(invocation.max_output_bytes);
-    let output = match execute(&invocation, &policy) {
+    let policy = ExecutionPolicy::new(invocation.content_max_bytes);
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return write_machine(
+                render(
+                    AgentError::internal("async_runtime_initialization_failed"),
+                    invocation.max_output_bytes,
+                ),
+                stdout,
+                stderr,
+            );
+        }
+    };
+    let output = match runtime.block_on(execute(&invocation, &policy)) {
         Ok(success) => render(success, invocation.max_output_bytes),
         Err(error) => render(*error, invocation.max_output_bytes),
     };
@@ -148,15 +164,13 @@ mod tests {
     #[test]
     fn reserved_commands_with_arguments_are_structurally_unsupported() {
         for (operation, args) in [
+            ("commit", &["commit", "--message=agent-secret"][..]),
+            ("publish", &["publish", "origin", "agent-secret"][..]),
             (
-                "inspect",
-                &["inspect", "--repository", r"C:\agent-secret\repo"][..],
+                "ci_status",
+                &["ci", "status", "--provider=agent-secret"][..],
             ),
-            ("changes", &["changes", "base..agent-secret"]),
-            ("commit", &["commit", "--message=agent-secret"]),
-            ("publish", &["publish", "origin", "agent-secret"]),
-            ("ci_status", &["ci", "status", "--provider=agent-secret"]),
-            ("ci_wait", &["ci", "wait", "agent-secret"]),
+            ("ci_wait", &["ci", "wait", "agent-secret"][..]),
         ] {
             let (exit, stdout, stderr) = call(args);
             assert_eq!(exit, ExitCode::from(10), "{operation}");

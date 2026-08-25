@@ -22,12 +22,23 @@ serde_json = "1"
 # same values instead of opening a second, raw subprocess path.
 processkit.workspace = true
 vcs-cli-support = { path = "../cli-support", version = "0.8" }
+# Repository and forge outcomes dispatch exclusively through the existing typed
+# facades. No direct git/jj/gh/glab/tea process route exists in this crate.
+vcs-core = { path = "../core", version = "0.10" }
+vcs-forge = { path = "../forge", version = "0.8" }
+# Drive the async typed clients from the synchronous executable entry point.
+# The selected features are already present in the workspace graph, so this
+# direct declaration does not widen Cargo.lock.
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 # Hermetically compile and exercise the committed Draft 2020-12 wire schema.
 # Resolution features stay off: the contract has no external `$ref` and tests
 # must not need filesystem or HTTP retrieval.
 jsonschema = { version = "0.48", default-features = false }
+# Real-backend contract tests use the workspace's config-isolated Git/Jujutsu
+# sandboxes rather than inventing another fixture layer.
+vcs-testkit = { path = "../testkit" }
 
 [[bin]]
 name = "vcs-agent"
