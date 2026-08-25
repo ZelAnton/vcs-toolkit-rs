@@ -40,11 +40,34 @@ class ProcessKitCliProfileTests(unittest.TestCase):
         checked = validate.validate_processkit_cli_evidence(self.evidence, validated, MACHINE_FIXTURES)
         self.assertEqual(len(checked["scenarios"]), 6)
 
-    def test_profile_rejects_missing_required_surface(self) -> None:
-        mutated = copy.deepcopy(self.profile)
-        mutated["preflight"]["required_surface"].remove("run:--capture-max-bytes")
-        with self.assertRaisesRegex(validate.ValidationError, "required_surface"):
-            validate.validate_processkit_cli_profile(mutated)
+    def test_profile_rejects_exact_required_surface_drift(self) -> None:
+        mutations = []
+
+        missing = copy.deepcopy(self.profile)
+        missing["preflight"]["required_surface"].remove("run:--capture-max-bytes")
+        mutations.append(("removal", missing))
+
+        substituted = copy.deepcopy(self.profile)
+        substituted["preflight"]["required_surface"][10] = "run:--unrelated"
+        mutations.append(("substitution", substituted))
+
+        duplicated = copy.deepcopy(self.profile)
+        duplicated["preflight"]["required_surface"].append("run:--capture-max-bytes")
+        mutations.append(("duplication", duplicated))
+
+        added = copy.deepcopy(self.profile)
+        added["preflight"]["required_surface"].append("run:--unrelated")
+        mutations.append(("addition", added))
+
+        reordered = copy.deepcopy(self.profile)
+        reordered["preflight"]["required_surface"][9:11] = reversed(
+            reordered["preflight"]["required_surface"][9:11]
+        )
+        mutations.append(("reordering", reordered))
+
+        for label, mutated in mutations:
+            with self.subTest(label=label), self.assertRaisesRegex(validate.ValidationError, "required_surface"):
+                validate.validate_processkit_cli_profile(mutated)
 
     def test_profile_rejects_weakened_containment_claim(self) -> None:
         mutated = copy.deepcopy(self.profile)
@@ -58,6 +81,28 @@ class ProcessKitCliProfileTests(unittest.TestCase):
         timeout["events"] = [item for item in timeout["events"] if item["event"] != "timeout"]
         with self.assertRaisesRegex(validate.ValidationError, "overall timeout"):
             validate.validate_processkit_cli_evidence(mutated, self.profile, MACHINE_FIXTURES)
+
+    def test_evidence_rejects_every_scenario_classification_mutation(self) -> None:
+        for scenario in self.evidence["scenarios"]:
+            terminal = next(item for item in scenario["events"] if item["event"] == "runner_exit")
+            mutations = {
+                "command_exit_code": scenario["command_exit_code"] + 1,
+                "runner_exit.code": terminal["code"] + 1,
+                "runner_exit.source": "contradictory",
+                "runner_exit.child_code": 0 if terminal["child_code"] is None else terminal["child_code"] + 1,
+            }
+            for field, value in mutations.items():
+                mutated = copy.deepcopy(self.evidence)
+                target = next(item for item in mutated["scenarios"] if item["id"] == scenario["id"])
+                if field == "command_exit_code":
+                    target[field] = value
+                else:
+                    target_terminal = next(item for item in target["events"] if item["event"] == "runner_exit")
+                    target_terminal[field.removeprefix("runner_exit.")] = value
+                with self.subTest(scenario=scenario["id"], field=field), self.assertRaisesRegex(
+                    validate.ValidationError, "classification"
+                ):
+                    validate.validate_processkit_cli_evidence(mutated, self.profile, MACHINE_FIXTURES)
 
     def test_evidence_rejects_capture_without_per_stream_truncation(self) -> None:
         mutated = copy.deepcopy(self.evidence)

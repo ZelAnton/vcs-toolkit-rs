@@ -41,7 +41,9 @@ processkit-cli probe --json \
 ```
 
 The command above is the exact v1 preflight shape; the JSON profile is the
-machine source of truth for the same token list. Exit `0` is accepted only with
+machine source of truth for the same ordered token list, and its schema rejects
+token removal, substitution, duplication, addition, or reordering. Exit `0` is
+accepted only with
 `compatible: true`, an empty `mismatches` array, `probe_version: 1`,
 `schema_version: 1`, and the exact `100..=119` band. Probe exit `110`, a
 non-empty mismatch list, malformed JSON, a missing schema definition, or any
@@ -82,17 +84,19 @@ with a summary. The harness validates these scenarios:
   all `0`/`child_exit`;
 - structured unsupported outcome: the complete error envelope reports `10`,
   while the runner and terminal record faithfully preserve child exit `10`;
-- overall timeout: lifecycle `timeout` plus terminal code/source `106`/`timeout`,
-  with no invented child code;
+- overall timeout: command and terminal codes are both `106`, lifecycle
+  `timeout` plus terminal source `timeout`, with no invented child code;
 - detached cancellation: public `cancel --run-id` followed by read-only
   `wait --run-id`, lifecycle `cancelled`, and terminal
   `108`/`control_cancel`; the harness never targets a PID or process name;
-- bounded output: both capture files stop at the configured per-stream ceiling,
+- bounded output: command/terminal/child codes remain `0`/`0`/`0` with
+  `child_exit`; both capture files stop at the configured per-stream ceiling,
   while `output_captured` reports the full byte counters and `truncated: true`;
 - nested execution: an outer ProcessKit-CLI run invokes `vcs-agent inspect`,
   which in turn uses the existing typed clients and ProcessKit-rs for backend
-  children. The outer `run_started` mechanism and confirmed-empty
-  `cleanup_finished` record are checked.
+  children. Command/terminal/child codes remain `0`/`0`/`0` with `child_exit`;
+  the outer `run_started` mechanism and confirmed-empty `cleanup_finished`
+  record are checked.
 
 The last scenario proves successful nested execution and the outer lifecycle it
 can observe. ProcessKit-CLI 0.3.1 does not expose a membership-attestation token

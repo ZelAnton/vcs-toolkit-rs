@@ -31,7 +31,7 @@ EXPECTED_SCENARIOS = {
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
 MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
-PROCESSKIT_REQUIRED_SURFACE = {
+PROCESSKIT_REQUIRED_SURFACE = (
     "cancel",
     "cancel:--run-id",
     "probe",
@@ -53,7 +53,7 @@ PROCESSKIT_REQUIRED_SURFACE = {
     "wait",
     "wait:--run-id",
     "wait:--timeout",
-}
+)
 PROCESSKIT_SCENARIOS = {
     "agent-success",
     "agent-structured-failure",
@@ -746,7 +746,7 @@ def validate_processkit_cli_profile(profile: Any) -> dict[str, Any]:
     surfaces = preflight["required_surface"]
     if not isinstance(surfaces, list) or any(not isinstance(value, str) for value in surfaces):
         raise ValidationError("processkit-cli profile required_surface must be a string array")
-    if len(surfaces) != len(set(surfaces)) or set(surfaces) != PROCESSKIT_REQUIRED_SURFACE:
+    if surfaces != list(PROCESSKIT_REQUIRED_SURFACE):
         raise ValidationError("processkit-cli profile required_surface differs from the v1 integration profile")
 
     lifecycle = _object(root["lifecycle"], "processkit-cli profile.lifecycle")
@@ -796,6 +796,35 @@ def _scenario_events(scenario: dict[str, Any], label: str) -> tuple[list[dict[st
     return events, terminals[0]
 
 
+def _require_scenario_classification(
+    scenario: dict[str, Any],
+    terminal: dict[str, Any],
+    *,
+    command_exit_code: int,
+    runner_exit_code: int,
+    source: str,
+    child_code: int | None,
+) -> None:
+    scenario_id = scenario["id"]
+    terminal_fields = ("schema_version", "event", "code", "source", "child_code")
+    actual_terminal = {field: terminal.get(field) for field in terminal_fields}
+    expected_terminal = {
+        "schema_version": 1,
+        "event": "runner_exit",
+        "code": runner_exit_code,
+        "source": source,
+        "child_code": child_code,
+    }
+    if (
+        scenario["command_exit_code"] != command_exit_code
+        or any(field not in terminal for field in terminal_fields)
+        or actual_terminal != expected_terminal
+    ):
+        raise ValidationError(
+            f"{scenario_id} command and runner_exit classification differs from the exact v1 scenario contract"
+        )
+
+
 def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtures: Path) -> dict[str, Any]:
     profile_value = validate_processkit_cli_profile(profile)
     root = _object(evidence, "processkit-cli evidence")
@@ -824,44 +853,50 @@ def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtur
         raise ValidationError("processkit-cli evidence does not cover the exact v1 scenario set")
 
     success, _, success_terminal = scenarios["agent-success"]
-    if success["command_exit_code"] != 0 or success_terminal != {
-        "schema_version": 1, "event": "runner_exit", "code": 0, "source": "child_exit", "child_code": 0
-    }:
-        raise ValidationError("agent-success does not prove faithful zero child exit")
+    _require_scenario_classification(
+        success, success_terminal, command_exit_code=0, runner_exit_code=0, source="child_exit", child_code=0
+    )
     success_envelope = load_json(machine_fixtures / success["child_fixture"])
     if success_envelope.get("operation") != "probe" or success_envelope.get("status") != "success":
         raise ValidationError("agent-success child fixture is not a successful probe envelope")
 
     failure, _, failure_terminal = scenarios["agent-structured-failure"]
-    if failure["command_exit_code"] != 10 or failure_terminal.get("code") != 10 or failure_terminal.get("child_code") != 10 or failure_terminal.get("source") != "child_exit":
-        raise ValidationError("agent-structured-failure does not prove faithful child exit 10")
+    _require_scenario_classification(
+        failure, failure_terminal, command_exit_code=10, runner_exit_code=10, source="child_exit", child_code=10
+    )
     failure_envelope = load_json(machine_fixtures / failure["child_fixture"])
     if failure_envelope.get("status") != "error" or failure_envelope.get("error", {}).get("exit_code") != 10:
         raise ValidationError("agent-structured-failure child fixture is not a structured exit-10 envelope")
 
-    _, timeout_events, timeout_terminal = scenarios["timeout"]
-    if timeout_terminal.get("code") != 106 or timeout_terminal.get("source") != "timeout" or timeout_terminal.get("child_code") is not None:
-        raise ValidationError("timeout scenario does not prove runner-imposed timeout classification")
+    timeout, timeout_events, timeout_terminal = scenarios["timeout"]
+    _require_scenario_classification(
+        timeout, timeout_terminal, command_exit_code=106, runner_exit_code=106, source="timeout", child_code=None
+    )
     if not any(event.get("event") == "timeout" and event.get("reason") == "overall" for event in timeout_events):
         raise ValidationError("timeout scenario lacks an overall timeout event")
 
     cancel, cancel_events, cancel_terminal = scenarios["control-cancel"]
-    if cancel["command_exit_code"] != 0 or cancel_terminal.get("code") != 108 or cancel_terminal.get("source") != "control_cancel" or cancel_terminal.get("child_code") is not None:
-        raise ValidationError("control-cancel scenario does not distinguish detached start from terminal cancellation")
+    _require_scenario_classification(
+        cancel, cancel_terminal, command_exit_code=0, runner_exit_code=108, source="control_cancel", child_code=None
+    )
     if not any(event.get("event") == "cancelled" and event.get("source") == "control_cancel" for event in cancel_events):
         raise ValidationError("control-cancel scenario lacks cancellation evidence")
 
-    _, capture_events, capture_terminal = scenarios["bounded-capture"]
-    if capture_terminal.get("code") != 0 or capture_terminal.get("source") != "child_exit":
-        raise ValidationError("bounded-capture scenario changed child exit classification")
+    capture, capture_events, capture_terminal = scenarios["bounded-capture"]
+    _require_scenario_classification(
+        capture, capture_terminal, command_exit_code=0, runner_exit_code=0, source="child_exit", child_code=0
+    )
     captures = [event for event in capture_events if event.get("event") == "output_captured"]
     if len(captures) != 1 or not all(captures[0].get(stream, {}).get("truncated") is True for stream in ("stdout", "stderr")):
         raise ValidationError("bounded-capture scenario does not disclose per-stream truncation")
 
     nested, nested_events, nested_terminal = scenarios["nested-containment"]
+    _require_scenario_classification(
+        nested, nested_terminal, command_exit_code=0, runner_exit_code=0, source="child_exit", child_code=0
+    )
     if nested.get("claim") != "outer-lifecycle-observed-inner-membership-not-attested":
         raise ValidationError("nested-containment overclaims the observable binary contract")
-    if nested_terminal.get("code") != 0 or not any(
+    if not any(
         event.get("event") == "cleanup_finished" and event.get("remaining") == 0 and event.get("read_error") is False
         for event in nested_events
     ):

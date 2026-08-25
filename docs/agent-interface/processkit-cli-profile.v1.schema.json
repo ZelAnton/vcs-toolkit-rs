@@ -38,9 +38,29 @@
         "incompatible_exit_code": { "const": 110 },
         "required_surface": {
           "type": "array",
-          "minItems": 20,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+          "const": [
+            "cancel",
+            "cancel:--run-id",
+            "probe",
+            "probe:--json",
+            "probe:--print-schema",
+            "probe:--require-exit-code-band",
+            "probe:--require-schema-version",
+            "probe:--require-surface",
+            "run",
+            "run:--capture-dir",
+            "run:--capture-max-bytes",
+            "run:--cwd",
+            "run:--detach",
+            "run:--grace",
+            "run:--jsonl",
+            "run:--no-echo",
+            "run:--run-id",
+            "run:--timeout",
+            "wait",
+            "wait:--run-id",
+            "wait:--timeout"
+          ]
         }
       }
     },

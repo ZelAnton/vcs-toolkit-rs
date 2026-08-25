@@ -54,6 +54,61 @@ fn committed_processkit_cli_profile_and_child_evidence_are_schema_valid() {
 }
 
 #[test]
+fn profile_schema_rejects_exact_required_surface_drift() {
+    let profile: Value = serde_json::from_str(include_str!(
+        "../../../docs/agent-interface/processkit-cli-profile.v1.json"
+    ))
+    .expect("committed ProcessKit-CLI profile is JSON");
+    let profile_validator = compile_schema(
+        include_str!("../../../docs/agent-interface/processkit-cli-profile.v1.schema.json"),
+        "ProcessKit-CLI profile schema",
+    );
+    let surface = profile["preflight"]["required_surface"]
+        .as_array()
+        .expect("required surface array");
+    let mut mutations = Vec::new();
+
+    let mut removal = profile.clone();
+    removal["preflight"]["required_surface"]
+        .as_array_mut()
+        .expect("required surface array")
+        .remove(10);
+    mutations.push(("removal", removal));
+
+    let mut substitution = profile.clone();
+    substitution["preflight"]["required_surface"][10] = Value::String("run:--unrelated".into());
+    mutations.push(("substitution", substitution));
+
+    let mut duplication = profile.clone();
+    duplication["preflight"]["required_surface"]
+        .as_array_mut()
+        .expect("required surface array")
+        .push(surface[10].clone());
+    mutations.push(("duplication", duplication));
+
+    let mut addition = profile.clone();
+    addition["preflight"]["required_surface"]
+        .as_array_mut()
+        .expect("required surface array")
+        .push(Value::String("run:--unrelated".into()));
+    mutations.push(("addition", addition));
+
+    let mut reordering = profile.clone();
+    reordering["preflight"]["required_surface"]
+        .as_array_mut()
+        .expect("required surface array")
+        .swap(9, 10);
+    mutations.push(("reordering", reordering));
+
+    for (label, mutated) in mutations {
+        assert!(
+            profile_validator.validate(&mutated).is_err(),
+            "profile schema rejects required-surface {label}"
+        );
+    }
+}
+
+#[test]
 fn evidence_fixture_covers_each_profile_scenario_without_membership_overclaim() {
     let evidence: Value = serde_json::from_str(include_str!(
         "../../../docs/agent-interface/fixtures/processkit-cli-evidence.v1.json"
