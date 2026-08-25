@@ -479,6 +479,86 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
             repository.get("backend") == "jujutsu" and snapshot != "live-jj-snapshot"
         ):
             raise ValidationError(f"{label}: backend and read snapshot semantics disagree")
+    elif operation == "commit":
+        _require_fields(
+            data,
+            (
+                "repository",
+                "before",
+                "after",
+                "included_paths",
+                "unrelated_changes_preserved",
+                "semantics",
+            ),
+            f"{label}.data",
+        )
+        repository = _repository(data["repository"], f"{label}.data.repository")
+        identities = []
+        for name in ("before", "after"):
+            identity_label = f"{label}.data.{name}"
+            identity = _object(data[name], identity_label)
+            _require_fields(identity, ("revision", "change_id"), identity_label)
+            _string(identity["revision"], f"{identity_label}.revision")
+            _string_or_null(identity["change_id"], f"{identity_label}.change_id")
+            identities.append(identity)
+        if identities[0]["revision"] == identities[1]["revision"]:
+            raise ValidationError(f"{label}: checked commit must advance revision identity")
+
+        included = data["included_paths"]
+        if not isinstance(included, list) or not included:
+            raise ValidationError(f"{label}.data.included_paths must be a non-empty array")
+        for index, path in enumerate(included):
+            _machine_path(path, f"{label}.data.included_paths[{index}]")
+        if data["unrelated_changes_preserved"] is not True:
+            raise ValidationError(f"{label}.data.unrelated_changes_preserved must be true")
+
+        semantics_label = f"{label}.data.semantics"
+        semantics = _object(data["semantics"], semantics_label)
+        semantic_fields = (
+            "selection",
+            "backend_selection",
+            "refs_advanced",
+            "index_may_change_for_selected_paths",
+            "unrelated_index_preserved",
+            "working_copy_content_mutated",
+            "push_performed",
+            "switch_performed",
+            "conflict_repair_performed",
+        )
+        _require_fields(semantics, semantic_fields, semantics_label)
+        if semantics["selection"] != "exact-repo-relative-paths":
+            raise ValidationError(f"{semantics_label}.selection is invalid")
+        if semantics["backend_selection"] not in {"git-commit-only", "jujutsu-exact-filesets"}:
+            raise ValidationError(f"{semantics_label}.backend_selection is invalid")
+        if semantics["refs_advanced"] is not True or semantics["unrelated_index_preserved"] is not True:
+            raise ValidationError(f"{semantics_label} must prove revision advance and unrelated-index preservation")
+        _boolean(
+            semantics["index_may_change_for_selected_paths"],
+            f"{semantics_label}.index_may_change_for_selected_paths",
+        )
+        for field in (
+            "working_copy_content_mutated",
+            "push_performed",
+            "switch_performed",
+            "conflict_repair_performed",
+        ):
+            if semantics[field] is not False:
+                raise ValidationError(f"{semantics_label}.{field} must be false")
+
+        if repository["backend"] == "git":
+            if any(identity["change_id"] is not None for identity in identities):
+                raise ValidationError(f"{label}: Git commit identities cannot claim jj change IDs")
+            if semantics["backend_selection"] != "git-commit-only":
+                raise ValidationError(f"{label}: Git commit must disclose commit-only semantics")
+            if semantics["index_may_change_for_selected_paths"] is not True:
+                raise ValidationError(f"{label}: Git commit must disclose selected-index mutation")
+        elif repository["backend"] == "jujutsu":
+            if any(not isinstance(identity["change_id"], str) or not identity["change_id"] for identity in identities):
+                raise ValidationError(f"{label}: Jujutsu commit identities require change IDs")
+            if semantics["backend_selection"] != "jujutsu-exact-filesets":
+                raise ValidationError(f"{label}: Jujutsu commit must disclose exact filesets")
+            if semantics["index_may_change_for_selected_paths"] is not False:
+                raise ValidationError(f"{label}: Jujutsu has no Git index mutation")
     return envelope
 
 

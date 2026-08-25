@@ -23,6 +23,7 @@ pub(crate) enum ErrorKind {
     Timeout,
     Cancelled,
     OutputLimit,
+    OutcomeUnknown,
     ExternalCommand,
     Internal,
 }
@@ -39,6 +40,7 @@ impl ErrorKind {
             Self::Timeout => 40,
             Self::Cancelled => 41,
             Self::OutputLimit => 42,
+            Self::OutcomeUnknown => 43,
             Self::ExternalCommand => 50,
             Self::Internal => 70,
         }
@@ -55,6 +57,7 @@ impl ErrorKind {
             Self::Timeout,
             Self::Cancelled,
             Self::OutputLimit,
+            Self::OutcomeUnknown,
             Self::ExternalCommand,
             Self::Internal,
         ]
@@ -294,6 +297,7 @@ impl AgentError {
             ErrorKind::Timeout => "operation timed out",
             ErrorKind::Cancelled => "operation cancelled",
             ErrorKind::OutputLimit => "output limit exceeded",
+            ErrorKind::OutcomeUnknown => "mutation outcome could not be verified",
             ErrorKind::ExternalCommand => "external command failed",
             ErrorKind::Internal => "internal error",
         };
@@ -507,6 +511,7 @@ mod tests {
         assert_eq!(ErrorKind::Timeout.exit_code(), 40);
         assert_eq!(ErrorKind::Cancelled.exit_code(), 41);
         assert_eq!(ErrorKind::OutputLimit.exit_code(), 42);
+        assert_eq!(ErrorKind::OutcomeUnknown.exit_code(), 43);
         assert_eq!(ErrorKind::ExternalCommand.exit_code(), 50);
     }
 
@@ -719,6 +724,10 @@ mod tests {
             content_max_bytes: crate::cli::DEFAULT_CONTENT_MAX_BYTES,
             max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
             include_machine_paths: false,
+            write_intent: false,
+            expected_revision: None,
+            message: None,
+            commit_paths: Vec::new(),
         };
         let policy = ExecutionPolicy::new(invocation.content_max_bytes);
         let emitted_probe =
@@ -735,6 +744,7 @@ mod tests {
             ErrorKind::Timeout,
             ErrorKind::Cancelled,
             ErrorKind::OutputLimit,
+            ErrorKind::OutcomeUnknown,
             ErrorKind::ExternalCommand,
             ErrorKind::Internal,
         ] {
@@ -755,6 +765,7 @@ mod tests {
             include_str!("../tests/fixtures/changes-summary-git.v1.json"),
             include_str!("../tests/fixtures/changes-full-jj.v1.json"),
             include_str!("../tests/fixtures/changes-output-limit.v1.json"),
+            include_str!("../tests/fixtures/commit-success-git.v1.json"),
         ] {
             let fixture: Value = serde_json::from_str(fixture).expect("golden fixture is JSON");
             assert!(
@@ -806,6 +817,21 @@ mod tests {
             "value": null
         });
         assert!(!validator.is_valid(&unavailable_without_reason));
+
+        let commit: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/commit-success-git.v1.json"))
+                .expect("commit fixture is JSON");
+        let mut commit_without_paths = commit.clone();
+        commit_without_paths["data"]["included_paths"] = json!([]);
+        assert!(!validator.is_valid(&commit_without_paths));
+
+        let mut commit_claims_push = commit.clone();
+        commit_claims_push["data"]["semantics"]["push_performed"] = Value::Bool(true);
+        assert!(!validator.is_valid(&commit_claims_push));
+
+        let mut commit_hides_unrelated_loss = commit;
+        commit_hides_unrelated_loss["data"]["unrelated_changes_preserved"] = Value::Bool(false);
+        assert!(!validator.is_valid(&commit_hides_unrelated_loss));
 
         let mut wrong_version = success.clone();
         wrong_version["contract_version"] = json!("vcs-agent/v2");

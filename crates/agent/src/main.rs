@@ -1,9 +1,10 @@
 //! `vcs-agent`: the bounded, outcome-oriented vcs-toolkit application facade.
 //!
-//! The v1 read surface implements `probe`, `inspect`, and `changes` through the
-//! typed vcs-core/vcs-forge clients. [`app::ExecutionPolicy`] carries ProcessKit
-//! cancellation, deadline, and fail-loud content limits into every backend.
-//! This binary never constructs raw git/jj/forge child processes.
+//! The v1 surface implements `probe`, `inspect`, `changes`, and checked
+//! exact-path `commit` through the typed vcs-core/vcs-forge clients.
+//! [`app::ExecutionPolicy`] carries ProcessKit cancellation, deadline, and
+//! fail-loud content limits into every backend. This binary never constructs
+//! raw git/jj/forge child processes.
 
 mod app;
 mod cli;
@@ -164,7 +165,6 @@ mod tests {
     #[test]
     fn reserved_commands_with_arguments_are_structurally_unsupported() {
         for (operation, args) in [
-            ("commit", &["commit", "--message=agent-secret"][..]),
             ("publish", &["publish", "origin", "agent-secret"][..]),
             (
                 "ci_status",

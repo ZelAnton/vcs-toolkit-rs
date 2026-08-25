@@ -1,5 +1,5 @@
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use crate::contract::{AgentError, AgentResult, ErrorKind, Fallback};
 
@@ -15,19 +15,27 @@ USAGE:\n\
     vcs-agent probe [OPTIONS]\n\
     vcs-agent inspect --repo <PATH> [OPTIONS]\n\
     vcs-agent changes --repo <PATH> [--mode summary|full] [OPTIONS]\n\
+    vcs-agent commit --repo <PATH> --write-intent commit\n\
+                     --expected-revision <ID> --message <TEXT>\n\
+                     --path <PATH> [--path <PATH> ...] [OPTIONS]\n\
 \n\
 OUTCOMES:\n\
     probe       Report contract, compatibility, capabilities, and exit semantics.\n\
     inspect     Inspect repository, working-copy, remote, forge, auth, and capability facts.\n\
     changes     Report changed paths and counts; full mode also returns structured hunks.\n\
+    commit      Commit exactly the named repo-relative paths after a checked preflight.\n\
 \n\
-    The v1 taxonomy also reserves commit, publish, ci status, and ci wait. Until\n\
+    The v1 taxonomy also reserves publish, ci status, and ci wait. Until\n\
     implemented, they fail with a structured unsupported result; vcs-agent never\n\
     falls through to a raw VCS or forge command.\n\
 \n\
 OPTIONS:\n\
-    --repo <PATH>             Repository path. Required by inspect and changes.\n\
+    --repo <PATH>             Repository path. Required by inspect, changes, and commit.\n\
     --mode <summary|full>     Changes detail (default: summary).\n\
+    --write-intent commit     Explicitly authorize the checked commit mutation.\n\
+    --expected-revision <ID> Fail closed unless the current revision is exactly ID.\n\
+    --message <TEXT>          Non-empty commit message.\n\
+    --path <PATH>             Exact repo-relative file path; repeat for each file.\n\
     --content-max-bytes <n>   Fail if captured diff content exceeds n bytes\n\
                               (1024..=1048576; default: 262144).\n\
     --max-output-bytes <n>    Fail before emitting a result larger than n bytes\n\
@@ -65,7 +73,10 @@ impl Operation {
     }
 
     const fn implemented(self) -> bool {
-        matches!(self, Self::Probe | Self::Inspect | Self::Changes)
+        matches!(
+            self,
+            Self::Probe | Self::Inspect | Self::Changes | Self::Commit
+        )
     }
 
     fn parse_leading(args: &[OsString]) -> Option<(Self, usize)> {
@@ -101,6 +112,10 @@ pub(crate) struct Invocation {
     pub(crate) content_max_bytes: usize,
     pub(crate) max_output_bytes: usize,
     pub(crate) include_machine_paths: bool,
+    pub(crate) write_intent: bool,
+    pub(crate) expected_revision: Option<String>,
+    pub(crate) message: Option<String>,
+    pub(crate) commit_paths: Vec<PathBuf>,
 }
 
 pub(crate) enum ParseResult {
@@ -152,6 +167,10 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
     let mut max_output_bytes = DEFAULT_MAX_OUTPUT_BYTES;
     let mut machine_budget_seen = false;
     let mut include_machine_paths = false;
+    let mut write_intent = false;
+    let mut expected_revision = None;
+    let mut message = None;
+    let mut commit_paths = Vec::new();
     let mut index = command_len;
     while index < args.len() {
         let Some(option) = args[index].to_str() else {
@@ -215,6 +234,75 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
                 content_budget_seen = true;
                 index += 2;
             }
+            "--write-intent" if operation == Operation::Commit => {
+                if write_intent {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "write_intent_option_repeated",
+                    )));
+                }
+                let value = utf8_value(&args, index + 1, operation, "write_intent_required")?;
+                if value != "commit" {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "write_intent_must_be_commit",
+                    )));
+                }
+                write_intent = true;
+                index += 2;
+            }
+            "--expected-revision" if operation == Operation::Commit => {
+                if expected_revision.is_some() {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "expected_revision_option_repeated",
+                    )));
+                }
+                let value = utf8_value(&args, index + 1, operation, "expected_revision_required")?;
+                if value.trim().is_empty() {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "expected_revision_empty",
+                    )));
+                }
+                expected_revision = Some(value.to_owned());
+                index += 2;
+            }
+            "--message" if operation == Operation::Commit => {
+                if message.is_some() {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "message_option_repeated",
+                    )));
+                }
+                let value = utf8_value(&args, index + 1, operation, "message_required")?;
+                if value.trim().is_empty() {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "message_empty",
+                    )));
+                }
+                message = Some(value.to_owned());
+                index += 2;
+            }
+            "--path" if operation == Operation::Commit => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "path_required",
+                    )));
+                };
+                let path = PathBuf::from(value);
+                validate_commit_path(&path)?;
+                if commit_paths.iter().any(|existing| existing == &path) {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "path_repeated",
+                    )));
+                }
+                commit_paths.push(path);
+                index += 2;
+            }
             "--max-output-bytes" => {
                 if machine_budget_seen {
                     return Err(Box::new(AgentError::invalid_input_for(
@@ -246,11 +334,41 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
         }
     }
 
-    if matches!(operation, Operation::Inspect | Operation::Changes) && repository.is_none() {
+    if matches!(
+        operation,
+        Operation::Inspect | Operation::Changes | Operation::Commit
+    ) && repository.is_none()
+    {
         return Err(Box::new(AgentError::invalid_input_for(
             operation.name(),
             "repository_required",
         )));
+    }
+    if operation == Operation::Commit {
+        if !write_intent {
+            return Err(Box::new(AgentError::invalid_input_for(
+                operation.name(),
+                "write_intent_required",
+            )));
+        }
+        if expected_revision.is_none() {
+            return Err(Box::new(AgentError::invalid_input_for(
+                operation.name(),
+                "expected_revision_required",
+            )));
+        }
+        if message.is_none() {
+            return Err(Box::new(AgentError::invalid_input_for(
+                operation.name(),
+                "message_required",
+            )));
+        }
+        if commit_paths.is_empty() {
+            return Err(Box::new(AgentError::invalid_input_for(
+                operation.name(),
+                "path_required",
+            )));
+        }
     }
 
     Ok(ParseResult::Run(Invocation {
@@ -260,7 +378,78 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
         content_max_bytes,
         max_output_bytes,
         include_machine_paths,
+        write_intent,
+        expected_revision,
+        message,
+        commit_paths,
     }))
+}
+
+fn validate_commit_path(path: &Path) -> AgentResult<()> {
+    let invalid = |code| Box::new(AgentError::invalid_input_for("commit", code));
+    if path.as_os_str().is_empty() || path.as_os_str().to_string_lossy().trim().is_empty() {
+        return Err(invalid("path_empty"));
+    }
+    if starts_with_flag_prefix(path) {
+        return Err(invalid("path_flag_like"));
+    }
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        })
+    {
+        return Err(invalid("path_must_be_repo_relative"));
+    }
+    if has_ambiguous_component(path) {
+        return Err(invalid("path_ambiguous"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn starts_with_flag_prefix(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().first() == Some(&b'-')
+}
+
+#[cfg(windows)]
+fn starts_with_flag_prefix(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().next() == Some(b'-' as u16)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn starts_with_flag_prefix(path: &Path) -> bool {
+    path.as_os_str().to_string_lossy().starts_with('-')
+}
+
+#[cfg(unix)]
+fn has_ambiguous_component(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str()
+        .as_bytes()
+        .split(|byte| *byte == b'/')
+        .any(|part| part.is_empty() || part == b".")
+}
+
+#[cfg(windows)]
+fn has_ambiguous_component(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    let units = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    units
+        .split(|unit| *unit == b'/' as u16 || *unit == b'\\' as u16)
+        .any(|part| part.is_empty() || part == [b'.' as u16])
+}
+
+#[cfg(not(any(unix, windows)))]
+fn has_ambiguous_component(path: &Path) -> bool {
+    path.as_os_str()
+        .to_string_lossy()
+        .split('/')
+        .any(|part| part.is_empty() || part == ".")
 }
 
 fn utf8_value<'a>(
@@ -365,6 +554,33 @@ mod tests {
         };
         assert_eq!(changes.changes_mode, ChangesMode::Full);
         assert_eq!(changes.content_max_bytes, 8192);
+
+        let ParseResult::Run(commit) = parse_strings(&[
+            "commit",
+            "--repo",
+            "repo",
+            "--write-intent",
+            "commit",
+            "--expected-revision",
+            "abc123",
+            "--message",
+            "selected files",
+            "--path",
+            "src/lib.rs",
+            "--path",
+            "tests/case.rs",
+        ])
+        .expect("valid checked commit") else {
+            panic!("expected runnable invocation");
+        };
+        assert_eq!(commit.operation, Operation::Commit);
+        assert!(commit.write_intent);
+        assert_eq!(commit.expected_revision.as_deref(), Some("abc123"));
+        assert_eq!(commit.message.as_deref(), Some("selected files"));
+        assert_eq!(
+            commit.commit_paths,
+            [PathBuf::from("src/lib.rs"), PathBuf::from("tests/case.rs")]
+        );
     }
 
     #[test]
@@ -383,6 +599,98 @@ mod tests {
                 "4096",
             ],
             vec!["probe", "extra"],
+            vec!["commit"],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "a.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "yes",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "a.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "commit",
+                "--expected-revision",
+                "abc",
+                "--message",
+                " ",
+                "--path",
+                "a.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "commit",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "../a.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "commit",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "-a.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "commit",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "a//b.txt",
+            ],
+            vec![
+                "commit",
+                "--repo",
+                "repo",
+                "--write-intent",
+                "commit",
+                "--expected-revision",
+                "abc",
+                "--message",
+                "m",
+                "--path",
+                "a.txt",
+                "--path",
+                "a.txt",
+            ],
         ] {
             let err = match parse_strings(&args) {
                 Err(err) => err,
@@ -426,6 +734,34 @@ mod tests {
         assert_eq!(invocation.repository.unwrap().as_os_str().as_bytes(), raw);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn commit_path_preserves_non_utf8_os_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let raw = b"caf\xff.txt".to_vec();
+        let ParseResult::Run(invocation) = parse(
+            [
+                OsString::from("commit"),
+                OsString::from("--repo"),
+                OsString::from("repo"),
+                OsString::from("--write-intent"),
+                OsString::from("commit"),
+                OsString::from("--expected-revision"),
+                OsString::from("abc"),
+                OsString::from("--message"),
+                OsString::from("message"),
+                OsString::from("--path"),
+                OsString::from_vec(raw.clone()),
+            ]
+            .into_iter(),
+        )
+        .expect("non-UTF-8 Git commit path is preserved by the parser") else {
+            panic!("expected runnable invocation");
+        };
+        assert_eq!(invocation.commit_paths[0].as_os_str().as_bytes(), raw);
+    }
+
     #[cfg(windows)]
     #[test]
     fn repository_argument_preserves_non_unicode_utf16_units() {
@@ -447,6 +783,42 @@ mod tests {
             invocation
                 .repository
                 .unwrap()
+                .as_os_str()
+                .encode_wide()
+                .collect::<Vec<_>>(),
+            raw
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn commit_path_preserves_non_unicode_utf16_units() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let raw = [
+            0x0063, 0x0061, 0x0066, 0xd800, 0x002e, 0x0074, 0x0078, 0x0074,
+        ];
+        let ParseResult::Run(invocation) = parse(
+            [
+                OsString::from("commit"),
+                OsString::from("--repo"),
+                OsString::from("repo"),
+                OsString::from("--write-intent"),
+                OsString::from("commit"),
+                OsString::from("--expected-revision"),
+                OsString::from("abc"),
+                OsString::from("--message"),
+                OsString::from("message"),
+                OsString::from("--path"),
+                OsString::from_wide(&raw),
+            ]
+            .into_iter(),
+        )
+        .expect("non-Unicode Git path is preserved by the parser") else {
+            panic!("expected runnable invocation");
+        };
+        assert_eq!(
+            invocation.commit_paths[0]
                 .as_os_str()
                 .encode_wide()
                 .collect::<Vec<_>>(),

@@ -30,7 +30,12 @@ def _fixture(name: str) -> dict[str, Any]:
 
 
 def _mutated(name: str, mutate: Callable[[dict[str, Any]], None]) -> Mutation:
-    source = "inspect-success-git.v1.json" if name.startswith("inspect") else "changes-full-jj.v1.json"
+    if name.startswith("inspect"):
+        source = "inspect-success-git.v1.json"
+    elif name.startswith("commit"):
+        source = "commit-success-git.v1.json"
+    else:
+        source = "changes-full-jj.v1.json"
     value = copy.deepcopy(_fixture(source))
     mutate(value)
     return name, value
@@ -55,6 +60,19 @@ def schema_invalid_mutations() -> list[Mutation]:
         _mutated(
             "changes-invalid-line-text",
             lambda value: value["data"]["diff"][0]["hunks"][0]["lines"][0].__setitem__("text", 7),
+        ),
+        _mutated("commit-empty-paths", lambda value: value["data"].__setitem__("included_paths", [])),
+        _mutated(
+            "commit-same-revision",
+            lambda value: value["data"]["after"].__setitem__("revision", value["data"]["before"]["revision"]),
+        ),
+        _mutated(
+            "commit-claims-push",
+            lambda value: value["data"]["semantics"].__setitem__("push_performed", True),
+        ),
+        _mutated(
+            "commit-hides-unrelated-loss",
+            lambda value: value["data"].__setitem__("unrelated_changes_preserved", False),
         ),
     ]
 

@@ -9,7 +9,7 @@ version.
 The executable is an application facade over vcs-toolkit's typed clients, not a
 mirror of every Git, Jujutsu, or forge method. The v1 taxonomy contains `probe`,
 `inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait`. `probe`,
-`inspect`, and `changes` are implemented. The remaining outcomes return
+`inspect`, `changes`, and `commit` are implemented. The remaining outcomes return
 `unsupported` and never silently invoke a lower-level command. The production
 source assertion in `crates/agent/src/main.rs` checks that the executable has no
 raw subprocess constructor.
@@ -37,6 +37,43 @@ non-UTF-8 Unix paths use hex-encoded OS bytes, and non-Unicode Windows paths use
 hex-encoded UTF-16 units. This makes status paths round-trippable. Without
 `--include-machine-paths`, both absolute and repository-relative paths use the
 `redacted` encoding with `value: null`.
+
+## Checked exact-path commit
+
+`commit --repo <path>` is a checked mutation, not a convenience wrapper around
+an ambient commit. It additionally requires `--write-intent commit`, one exact
+`--expected-revision <id>`, a non-empty `--message`, and one or more repeated
+`--path` values. Each selected path must be a non-empty, non-flag-like,
+repo-relative file path with no absolute prefix, parent traversal, empty or dot
+component, duplicate, directory expansion, or one-sided rename. Every path must
+appear in the live typed status before mutation; an unchanged path is refused
+rather than reported later as included.
+
+Preflight takes a live typed snapshot and fails with `denied` while conflicts or
+an in-progress operation exist, when the current revision is unavailable, or
+when it does not equal `--expected-revision`. This is the stale-preflight guard:
+repeating a request after a success cannot create another commit because its
+expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths;
+Jujutsu's fileset language is text, so a non-UTF-8 selection returns structured
+`unsupported` before mutation.
+
+The only mutation call is the existing typed `Repo::commit_paths`. Git uses
+literal commit-only pathspecs; Jujutsu uses exact root-file filesets. Postflight
+requires an advanced revision, clear repository state, no selected paths left
+in the working-copy change set, and every unrelated status entry still present.
+Only then does success report the repository, before/after revision identity,
+Jujutsu change IDs when applicable, actual included paths, and
+`unrelated_changes_preserved: true`. Its semantics explicitly state that no
+push, switch, conflict repair, or working-copy content edit occurred. Git may
+update index entries for selected paths but preserves unrelated staged,
+unstaged, and untracked state; Jujutsu has no Git index.
+
+Timeout and cancellation remain their ProcessKit lifecycle kinds. Once the
+typed mutation returned success, inability to establish postflight is
+`outcome_unknown` (exit 43), never a false success. A caller recovers by
+inspecting current state and retrying with the original expected revision: a
+commit that actually advanced is then rejected as stale, while an unchanged
+revision permits a fresh checked attempt.
 
 ## Envelope and compatibility
 
@@ -81,6 +118,7 @@ The `error.kind` vocabulary and exact exit codes are stable within v1:
 | `timeout` | 40 | Operation deadline or inactivity deadline elapsed |
 | `cancelled` | 41 | Caller cancellation fired |
 | `output_limit` | 42 | Content or machine result exceeded its fail-loud budget |
+| `outcome_unknown` | 43 | A mutation returned but its exact postflight could not be proved |
 | `external_command` | 50 | A supervised, non-domain external command failed |
 | `internal` | 70 | The application could not honor its own contract |
 

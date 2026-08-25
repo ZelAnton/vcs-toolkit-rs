@@ -11,8 +11,8 @@
       "compatibility": "same-contract-version"
     },
     "commands": {
-      "supported": ["probe", "inspect", "changes"],
-      "reserved": ["commit", "publish", "ci status", "ci wait"]
+      "supported": ["probe", "inspect", "changes", "commit"],
+      "reserved": ["publish", "ci status", "ci wait"]
     },
     "execution": {
       "vcs_backends": ["git", "jujutsu"],
@@ -51,6 +51,7 @@
       { "kind": "timeout", "exit_code": 40 },
       { "kind": "cancelled", "exit_code": 41 },
       { "kind": "output_limit", "exit_code": 42 },
+      { "kind": "outcome_unknown", "exit_code": 43 },
       { "kind": "external_command", "exit_code": 50 },
       { "kind": "internal", "exit_code": 70 }
     ]
