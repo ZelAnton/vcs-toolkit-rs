@@ -331,7 +331,9 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
         "--corpus",
         corpus,
         "--results",
-        missing_fallback_path.to_str().expect("missing fallback result path"),
+        missing_fallback_path
+            .to_str()
+            .expect("missing fallback result path"),
         "--baseline",
         baseline,
     ]);
@@ -350,7 +352,9 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
         "--corpus",
         corpus,
         "--results",
-        missing_fallback_path.to_str().expect("missing fallback result path"),
+        missing_fallback_path
+            .to_str()
+            .expect("missing fallback result path"),
         "--baseline",
         baseline,
         "--output",
