@@ -146,7 +146,7 @@ test_package_set_nothing_published() {
   # First `all` release: nothing published yet -> the whole workspace packages
   # together so the temporary registry can satisfy every in-run internal dep.
   assert_eq "all-release packages full workspace" \
-    "vcs-diff vcs-cli-support vcs-agent vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp" \
+    "vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-agent vcs-watch vcs-mcp" \
     "$(package_set "$(release_order)" '' | oneline)"
 }
 
@@ -166,6 +166,14 @@ test_package_set_published_deps_resolve_from_registry() {
   assert_eq "mixed publish state pulls only unpublished deps" \
     "vcs-git vcs-jj vcs-core" \
     "$(package_set 'vcs-core' 'vcs-diff vcs-cli-support' | oneline)"
+  # Agent consumes both facades. If every dependency is published, verify the
+  # agent alone; if only the facades are unpublished, package those two first.
+  assert_eq "agent, all deps published -> itself only" \
+    "vcs-agent" \
+    "$(package_set 'vcs-agent' 'vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-core' | oneline)"
+  assert_eq "agent pulls unpublished facades" \
+    "vcs-forge vcs-core vcs-agent" \
+    "$(package_set 'vcs-agent' 'vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea' | oneline)"
 }
 
 test_verify_package_specs() {

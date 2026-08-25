@@ -35,13 +35,14 @@
 #
 # The 13 publishable crates, in publish ORDER: every crate appears AFTER all of
 # its in-workspace dependencies. Foundational crates first (vcs-diff,
-# vcs-cli-support — the wrappers/facades depend on them), then vcs-agent and the wrappers, the
-# vcs-forge/vcs-core facades, and finally vcs-watch/vcs-mcp (which depend on
-# vcs-core / vcs-core+vcs-forge). vcs-testkit has no workspace deps (any
-# position). `test_release_order_is_topological` proves this ordering is valid
-# against `crate_deps`, so a future reorder that breaks it fails the tests.
+# vcs-cli-support — the wrappers/facades depend on them), then the wrappers and
+# vcs-forge/vcs-core facades, then vcs-agent (which consumes both facades), and
+# finally vcs-watch/vcs-mcp (which depend on vcs-core / vcs-core+vcs-forge).
+# vcs-testkit has no workspace deps (any position).
+# `test_release_order_is_topological` proves this ordering is valid against
+# `crate_deps`, so a future reorder that breaks it fails the tests.
 release_order() {
-  echo "vcs-diff vcs-cli-support vcs-agent vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp"
+  echo "vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-agent vcs-watch vcs-mcp"
 }
 
 # crate_dir <name> -> the crate's directory under the workspace root (stdout).
@@ -73,7 +74,7 @@ crate_dir() {
 crate_deps() {
   case "$1" in
     vcs-diff|vcs-cli-support|vcs-testkit) echo "" ;;
-    vcs-agent)           echo "vcs-cli-support" ;;
+    vcs-agent)           echo "vcs-cli-support vcs-core vcs-forge" ;;
     vcs-git|vcs-jj)      echo "vcs-diff vcs-cli-support" ;;
     vcs-github|vcs-gitlab) echo "vcs-cli-support vcs-diff" ;;
     vcs-gitea)           echo "vcs-cli-support vcs-diff" ;;

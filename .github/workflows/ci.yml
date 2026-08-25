@@ -425,21 +425,22 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      # Only crates with no *unpublished* workspace dependency can be packaged here:
-      # vcs-diff (no deps), vcs-cli-support (only the published `processkit`),
-      # vcs-agent (published vcs-cli-support + registry deps), and vcs-testkit (no
-      # deps). They package and verify-build fully — catching missing
-      # files or bad metadata before publish. `--locked` asserts the packaged build
-      # resolves against the committed Cargo.lock (the same guarantee the release
-      # workflow's package/publish steps rely on), so a stale lock is caught here.
-      - run: cargo package -p vcs-diff -p vcs-cli-support -p vcs-agent -p vcs-testkit --locked
-      # vcs-git/vcs-jj/vcs-github/vcs-core depend (by version) on in-workspace crates
-      # not yet on crates.io — vcs-diff/vcs-cli-support, and vcs-core also on
-      # vcs-git/vcs-jj. `cargo package` (even `--no-verify`) refuses to prepare a
-      # crate whose deps it can't resolve for upload, so they can't be packaged until
-      # those deps publish. Their compile is covered by the `test`/`clippy` jobs
-      # (against the local path deps), and the release workflow verify-builds each
-      # against the local tree (or the published deps) at release time.
+      # Verify vcs-agent together with its complete current workspace dependency
+      # closure. The agent consumes facade APIs added in the same tree, so resolving
+      # already-published vcs-core/vcs-forge tarballs would test stale APIs; selecting
+      # only a partial same-version closure also makes Cargo detect conflicting
+      # registry checksums. `package_set` is the release workflow's tested topology
+      # source and keeps this registry-resolving package check in sync with manifests.
+      # vcs-testkit is an independent leaf and joins the same invocation.
+      - name: Verify registry-resolving package closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
+          specs="$(verify_package_specs 'vcs-agent vcs-testkit' '')"
+          echo "cargo package $specs --locked"
+          # shellcheck disable=SC2086 # deliberate word-split of the `-p ...` flags
+          cargo package $specs --locked
 
   package-license:
     name: packaged MIT licenses
