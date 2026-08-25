@@ -13,7 +13,8 @@ name: Release
 # Each crate is versioned and published independently (see CONTRIBUTING.md
 # "Releasing"). Two foundational crates publish FIRST — `vcs-diff` (std-only diff
 # model) and `vcs-cli-support` (the processkit-coupled plumbing) — since the
-# wrappers depend on them. The wrappers (vcs-git/vcs-jj/vcs-github/vcs-gitlab/
+# wrappers and `vcs-agent` depend on them. `vcs-agent` follows its sole workspace
+# dependency, then the wrappers (vcs-git/vcs-jj/vcs-github/vcs-gitlab/
 # vcs-gitea) then publish, then the facades — `vcs-forge` (depends on the
 # github/gitlab/gitea wrappers) and `vcs-core` (depends on vcs-git/vcs-jj) —
 # and finally `vcs-watch`/`vcs-mcp` (depend on `vcs-core`/`vcs-core`+`vcs-forge`);
@@ -47,6 +48,7 @@ on:
           - all
           - vcs-diff
           - vcs-cli-support
+          - vcs-agent
           - vcs-git
           - vcs-jj
           - vcs-github

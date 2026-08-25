@@ -85,7 +85,15 @@ test_is_semver() {
 
 # ---- dependency graph / publish order --------------------------------------
 test_release_order_covers_all() {
-  assert_eq "release_order lists all 12 crates" "12" "$(release_order | wc -w | tr -d ' ')"
+  local manifests names order
+  manifests="$REPO_ROOT"/crates/*/Cargo.toml
+  names="$(for manifest in $manifests; do
+    grep -Eq '^publish[[:space:]]*=[[:space:]]*false' "$manifest" && continue
+    grep -m1 -E '^name[[:space:]]*=' "$manifest" |
+      sed -E 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/'
+  done | sort | tr '\n' ' ' | sed 's/ $//')"
+  order="$(release_order | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+  assert_eq "release_order matches every publishable workspace crate" "$names" "$order"
 }
 
 # The publish order MUST be topological: every crate's in-workspace deps appear
@@ -120,6 +128,7 @@ test_release_order_is_topological() {
 test_crate_dir() {
   assert_eq "vcs-diff dir"        "crates/diff"        "$(crate_dir vcs-diff)"
   assert_eq "vcs-cli-support dir" "crates/cli-support" "$(crate_dir vcs-cli-support)"
+  assert_eq "vcs-agent dir"       "crates/agent"       "$(crate_dir vcs-agent)"
   assert_eq "vcs-mcp dir"         "crates/mcp"         "$(crate_dir vcs-mcp)"
   assert_fail "unknown crate dir" crate_dir vcs-nope
 }
@@ -137,7 +146,7 @@ test_package_set_nothing_published() {
   # First `all` release: nothing published yet -> the whole workspace packages
   # together so the temporary registry can satisfy every in-run internal dep.
   assert_eq "all-release packages full workspace" \
-    "vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp" \
+    "vcs-diff vcs-cli-support vcs-agent vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-testkit vcs-core vcs-watch vcs-mcp" \
     "$(package_set "$(release_order)" '' | oneline)"
 }
 
@@ -167,7 +176,8 @@ test_verify_package_specs() {
     "-p vcs-git" \
     "$(verify_package_specs 'vcs-git' 'vcs-diff vcs-cli-support')"
   # First `all` release: every crate selected as a `-p` (== cargo package --workspace).
-  assert_eq "specs for full workspace count" "12" \
+  assert_eq "specs cover every release-order crate" \
+    "$(release_order | wc -w | tr -d ' ')" \
     "$(verify_package_specs "$(release_order)" '' | tr ' ' '\n' | grep -c '^-p$' | tr -d ' ')"
 }
 

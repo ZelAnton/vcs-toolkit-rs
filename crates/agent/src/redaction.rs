@@ -17,8 +17,8 @@ fn redact_credentialed_urls(input: &str) -> String {
     let mut result = input.to_owned();
     for scheme in ["https://", "http://"] {
         let mut offset = 0;
-        while let Some(relative_scheme) = result[offset..].find(scheme) {
-            let authority_start = offset + relative_scheme + scheme.len();
+        while let Some(scheme_start) = find_ascii_case_insensitive(&result, scheme, offset) {
+            let authority_start = scheme_start + scheme.len();
             let authority_end = result[authority_start..]
                 .find(['/', '?', '#', ' ', '\t', '\r', '\n'])
                 .map_or(result.len(), |relative| authority_start + relative);
@@ -159,11 +159,23 @@ fn machine_path_start(value: &str) -> Option<usize> {
     let windows = bytes.windows(3).position(|window| {
         window[0].is_ascii_alphabetic() && window[1] == b':' && matches!(window[2], b'\\' | b'/')
     });
-    let unix = ["/home/", "/Users/", "/private/", "/tmp/"]
-        .into_iter()
-        .filter_map(|prefix| value.find(prefix))
-        .min();
-    windows.into_iter().chain(unix).min()
+    let unc = value.find(r"\\");
+    let unix = value.char_indices().find_map(|(index, ch)| {
+        if ch != '/' {
+            return None;
+        }
+        let is_url_separator = value
+            .as_bytes()
+            .get(index.saturating_sub(1)..index + 2)
+            .is_some_and(|window| window == b"://");
+        let boundary = index == 0
+            || value[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| matches!(ch, '=' | ':' | '(' | '[' | '{' | '\'' | '"' | '`'));
+        (boundary && !is_url_separator).then_some(index)
+    });
+    windows.into_iter().chain(unc).chain(unix).min()
 }
 
 #[cfg(test)]
@@ -173,20 +185,25 @@ mod tests {
     #[test]
     fn redacts_credentials_without_destroying_remote_identity() {
         let value = redact_text(
-            "remote=https://alice:ghp_secret@example.invalid/owner/repo token=abc",
+            "remote=HTTPS://alice:ghp_secret@example.invalid/owner/repo token=abc",
             RedactionPolicy {
                 include_machine_paths: true,
             },
         );
         assert_eq!(
             value,
-            "remote=https://[REDACTED]@example.invalid/owner/repo token=[REDACTED]"
+            "remote=HTTPS://[REDACTED]@example.invalid/owner/repo token=[REDACTED]"
         );
     }
 
     #[test]
     fn redacts_windows_and_unix_machine_paths_by_default() {
-        for path in [r"C:\Users\alice\repo", "/home/alice/repo", "/tmp/repo"] {
+        for path in [
+            r"C:\Users\alice\repo",
+            r"\\server\share\repo",
+            "/workspaces/alice/repo",
+            "/tmp/repo",
+        ] {
             assert_eq!(
                 redact_text(
                     path,

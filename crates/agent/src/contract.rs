@@ -170,6 +170,45 @@ pub(crate) struct MachineEnvelope {
     fallback: Option<Fallback>,
 }
 
+#[allow(dead_code)] // The full allow-list is reserved for the next typed outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DetailKey {
+    MaxBytes,
+    ProcessErrorKind,
+    RemoteUrl,
+    Token,
+    RepositoryPath,
+    WorkingDirectory,
+}
+
+#[derive(Clone, Copy)]
+enum DetailSensitivity {
+    Text,
+    Secret,
+    MachinePath,
+}
+
+impl DetailKey {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::MaxBytes => "max_bytes",
+            Self::ProcessErrorKind => "process_error_kind",
+            Self::RemoteUrl => "remote_url",
+            Self::Token => "token",
+            Self::RepositoryPath => "repository_path",
+            Self::WorkingDirectory => "working_directory",
+        }
+    }
+
+    const fn sensitivity(self) -> DetailSensitivity {
+        match self {
+            Self::Token => DetailSensitivity::Secret,
+            Self::RepositoryPath | Self::WorkingDirectory => DetailSensitivity::MachinePath,
+            Self::MaxBytes | Self::ProcessErrorKind | Self::RemoteUrl => DetailSensitivity::Text,
+        }
+    }
+}
+
 impl MachineEnvelope {
     pub(crate) fn success(operation: &'static str, data: impl Serialize) -> Self {
         Self {
@@ -203,7 +242,18 @@ impl MachineEnvelope {
                 details: error
                     .details
                     .iter()
-                    .map(|(key, value)| (key.clone(), redact_text(value, redaction)))
+                    .map(|(key, value)| {
+                        let value = match key.sensitivity() {
+                            DetailSensitivity::Secret => "[REDACTED]".to_owned(),
+                            DetailSensitivity::MachinePath if !redaction.include_machine_paths => {
+                                "[REDACTED_PATH]".to_owned()
+                            }
+                            DetailSensitivity::Text | DetailSensitivity::MachinePath => {
+                                redact_text(value, redaction)
+                            }
+                        };
+                        (key.name().to_owned(), value)
+                    })
                     .collect(),
             }),
             warnings: error
@@ -223,7 +273,7 @@ pub(crate) struct AgentError {
     code: &'static str,
     message: &'static str,
     retryable: bool,
-    details: BTreeMap<String, String>,
+    details: BTreeMap<DetailKey, String>,
     warnings: Vec<String>,
     fallback: Option<Fallback>,
     include_machine_paths: bool,
@@ -281,7 +331,7 @@ impl AgentError {
             "machine_result_too_large",
             false,
         )
-        .with_detail("max_bytes", max_bytes.to_string())
+        .with_detail(DetailKey::MaxBytes, max_bytes.to_string())
     }
 
     #[allow(dead_code)] // Contract mapping is pinned now; typed-client use starts in T-191.
@@ -307,11 +357,11 @@ impl AgentError {
             }
         };
         Self::new(operation, kind, "typed_client_failed", error.is_transient())
-            .with_detail("process_error_kind", error.kind().name())
+            .with_detail(DetailKey::ProcessErrorKind, error.kind().name())
     }
 
-    pub(crate) fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.details.insert(key.into(), value.into());
+    pub(crate) fn with_detail(mut self, key: DetailKey, value: impl Into<String>) -> Self {
+        self.details.insert(key, value.into());
         self
     }
 
@@ -320,8 +370,8 @@ impl AgentError {
         self
     }
 
-    #[cfg(test)]
-    fn with_warning(mut self, warning: impl Into<String>) -> Self {
+    #[allow(dead_code)] // Reserved for bounded diagnostics from future outcomes.
+    pub(crate) fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
     }
@@ -400,7 +450,27 @@ fn serialize(envelope: &MachineEnvelope) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{ExecutionPolicy, execute};
+    use crate::cli::{Invocation, Operation};
     use serde_json::{Value, json};
+
+    fn contract_validator() -> jsonschema::Validator {
+        let schema: Value = serde_json::from_str(include_str!("../schema/envelope.v1.schema.json"))
+            .expect("valid JSON schema");
+        assert!(
+            jsonschema::meta::is_valid(&schema),
+            "the committed contract must itself satisfy its declared meta-schema"
+        );
+        jsonschema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .build(&schema)
+            .expect("Draft 2020-12 contract compiles")
+    }
+
+    fn rendered_json(value: impl IntoEnvelope) -> Value {
+        serde_json::from_slice(&render(value, crate::cli::DEFAULT_MAX_OUTPUT_BYTES).stdout)
+            .expect("rendered envelope is JSON")
+    }
 
     #[test]
     fn exit_codes_are_stable_unique_and_inside_documented_bands() {
@@ -447,16 +517,22 @@ mod tests {
     #[test]
     fn every_error_field_runs_through_redaction() {
         let error = AgentError::new("probe", ErrorKind::Backend, "test", false)
-            .with_detail("remote", "https://user:token@example.invalid/repo")
-            .with_detail("token", "token=top-secret")
-            .with_detail("path", r"C:\Users\alice\private\repo")
-            .with_warning("Authorization: Bearer abc123")
+            .with_detail(
+                DetailKey::RemoteUrl,
+                "HTTPS://user:token@example.invalid/repo",
+            )
+            .with_detail(DetailKey::Token, "ghp_top-secret")
+            .with_detail(DetailKey::RepositoryPath, "/workspaces/alice/repo")
+            .with_detail(DetailKey::WorkingDirectory, r"\\server\private\alice\repo")
+            .with_warning("Authorization: Bearer abc123 at /workspaces/alice/cache")
             .include_machine_paths(false);
         let output = render(error, crate::cli::DEFAULT_MAX_OUTPUT_BYTES);
         let text = String::from_utf8(output.stdout).expect("UTF-8");
         assert!(!text.contains("top-secret"));
         assert!(!text.contains("user:token"));
         assert!(!text.contains("alice"));
+        assert!(!text.contains("server"));
+        assert!(!text.contains("workspaces"));
         assert!(!text.contains("abc123"));
         assert!(text.contains("[REDACTED]"));
         assert!(text.contains("[REDACTED_PATH]"));
@@ -464,16 +540,16 @@ mod tests {
 
     #[test]
     fn machine_paths_are_included_only_when_explicitly_requested() {
-        let path = r"C:\Users\alice\repo";
-        let hidden =
-            AgentError::new("probe", ErrorKind::Backend, "test", false).with_detail("path", path);
+        let path = "/workspaces/alice/repo";
+        let hidden = AgentError::new("probe", ErrorKind::Backend, "test", false)
+            .with_detail(DetailKey::RepositoryPath, path);
         let visible = AgentError::new("probe", ErrorKind::Backend, "test", false)
-            .with_detail("path", path)
+            .with_detail(DetailKey::RepositoryPath, path)
             .include_machine_paths(true);
         let hidden = String::from_utf8(render(hidden, 4096).stdout).expect("UTF-8");
         let visible = String::from_utf8(render(visible, 4096).stdout).expect("UTF-8");
         assert!(!hidden.contains("alice"));
-        assert!(visible.contains(r"C:\\Users\\alice\\repo"));
+        assert!(visible.contains(path));
     }
 
     #[test]
@@ -507,17 +583,82 @@ mod tests {
     }
 
     #[test]
-    fn schema_fixture_identifies_the_same_contract() {
-        let schema: Value = serde_json::from_str(include_str!("../schema/envelope.v1.schema.json"))
-            .expect("valid JSON schema");
-        assert_eq!(
-            schema["properties"]["contract_version"]["const"],
-            CONTRACT_VERSION
-        );
-        assert_eq!(schema["properties"]["binary_version"]["type"], "string");
-        assert_eq!(
-            schema["required"].as_array().expect("required array").len(),
-            8
-        );
+    fn emitted_envelopes_and_golden_fixtures_validate_against_draft_2020_12() {
+        let validator = contract_validator();
+        let invocation = Invocation {
+            operation: Operation::Probe,
+            max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
+            include_machine_paths: false,
+        };
+        let policy = ExecutionPolicy::new(invocation.max_output_bytes);
+        let emitted_probe = rendered_json(execute(&invocation, &policy).expect("probe succeeds"));
+        assert!(validator.is_valid(&emitted_probe));
+
+        for kind in [
+            ErrorKind::Unsupported,
+            ErrorKind::Denied,
+            ErrorKind::InvalidInput,
+            ErrorKind::Backend,
+            ErrorKind::Forge,
+            ErrorKind::Authentication,
+            ErrorKind::Timeout,
+            ErrorKind::Cancelled,
+            ErrorKind::OutputLimit,
+            ErrorKind::ExternalCommand,
+            ErrorKind::Internal,
+        ] {
+            let emitted_error =
+                rendered_json(AgentError::new("probe", kind, "schema_regression", false));
+            assert!(
+                validator.is_valid(&emitted_error),
+                "emitted {kind:?} envelope must satisfy the contract"
+            );
+        }
+
+        for fixture in [
+            include_str!("../tests/fixtures/probe-success.v1.json"),
+            include_str!("../tests/fixtures/invalid-input.v1.json"),
+        ] {
+            let fixture: Value = serde_json::from_str(fixture).expect("golden fixture is JSON");
+            assert!(
+                validator.is_valid(&fixture),
+                "every committed fixture must satisfy the executable schema"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_rejects_broken_success_error_and_version_invariants() {
+        let validator = contract_validator();
+        let success: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/probe-success.v1.json"))
+                .expect("success fixture is JSON");
+        let error: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/invalid-input.v1.json"))
+                .expect("error fixture is JSON");
+
+        let mut success_without_data = success.clone();
+        success_without_data["data"] = Value::Null;
+        assert!(!validator.is_valid(&success_without_data));
+
+        let mut success_with_error = success.clone();
+        success_with_error["error"] = error["error"].clone();
+        assert!(!validator.is_valid(&success_with_error));
+
+        let mut error_with_data = error.clone();
+        error_with_data["data"] = success["data"].clone();
+        assert!(!validator.is_valid(&error_with_data));
+
+        let mut error_without_error = error.clone();
+        error_without_error["error"] = Value::Null;
+        assert!(!validator.is_valid(&error_without_error));
+
+        let mut wrong_version = success.clone();
+        wrong_version["contract_version"] = json!("vcs-agent/v2");
+        assert!(!validator.is_valid(&wrong_version));
+
+        let mut wrong_field_type = error;
+        wrong_field_type["warnings"] = json!("not-an-array");
+        assert!(!validator.is_valid(&wrong_field_type));
     }
 }
