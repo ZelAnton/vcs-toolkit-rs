@@ -55,6 +55,25 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash scripts/release/lib.test.sh
 
+  # Keep the versioned agent envelope and optional ProcessKit-CLI composition
+  # profile synchronized without making the external runner a normal build
+  # dependency. The last command mechanically exercises the unavailable gate;
+  # an operator-provided binary activates the six-scenario live tier instead.
+  agent-interface-contract:
+    name: agent interface contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: cargo build -p vcs-agent --locked
+      - run: python scripts/agent-interface/validate.py
+      - run: python scripts/agent-interface/test_validate.py
+      - run: python scripts/agent-interface/test_processkit_cli_profile.py
+      - run: python scripts/agent-interface/processkit_cli_profile.py --vcs-agent target/debug/vcs-agent
+
   clippy:
     name: clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

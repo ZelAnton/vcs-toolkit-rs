@@ -1,0 +1,76 @@
+{
+  "profile_version": "vcs-agent.processkit-cli/v1",
+  "vcs_agent": {
+    "contract_version": "vcs-agent/v1",
+    "success_operation": "probe",
+    "structured_failure_operation": "unknown",
+    "structured_failure_exit_code": 10
+  },
+  "preflight": {
+    "probe_version": 1,
+    "schema_version": 1,
+    "exit_code_band": {
+      "start": 100,
+      "end": 119
+    },
+    "compatible_exit_code": 0,
+    "incompatible_exit_code": 110,
+    "required_surface": [
+      "cancel",
+      "cancel:--run-id",
+      "probe",
+      "probe:--json",
+      "probe:--print-schema",
+      "probe:--require-exit-code-band",
+      "probe:--require-schema-version",
+      "probe:--require-surface",
+      "run",
+      "run:--capture-dir",
+      "run:--capture-max-bytes",
+      "run:--cwd",
+      "run:--detach",
+      "run:--grace",
+      "run:--jsonl",
+      "run:--no-echo",
+      "run:--run-id",
+      "run:--timeout",
+      "wait",
+      "wait:--run-id",
+      "wait:--timeout"
+    ]
+  },
+  "lifecycle": {
+    "schema_version": 1,
+    "terminal_event": "runner_exit",
+    "child_exit_source": "child_exit",
+    "timeout": {
+      "code": 106,
+      "source": "timeout",
+      "evidence_event": "timeout"
+    },
+    "control_cancel": {
+      "code": 108,
+      "source": "control_cancel",
+      "evidence_event": "cancelled"
+    },
+    "bounded_capture": {
+      "event": "output_captured",
+      "per_stream": true,
+      "overflow_semantics": "truncate-and-disclose"
+    },
+    "containment": {
+      "start_event": "run_started",
+      "cleanup_event": "cleanup_finished",
+      "observed_fields": [
+        "mechanism",
+        "abrupt_cleanup"
+      ],
+      "claim": "outer-lifecycle-observed-inner-membership-not-attested"
+    }
+  },
+  "gating": {
+    "environment_variable": "PROCESSKIT_CLI_BIN",
+    "unavailable_status": "skipped",
+    "incompatible_status": "failed"
+  }
+}

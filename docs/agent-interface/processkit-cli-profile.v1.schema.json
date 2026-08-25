@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zelanton.github.io/vcs-toolkit-rs/vcs-agent/v1/processkit-cli-profile.schema.json",
+  "title": "vcs-agent ProcessKit-CLI interoperability profile v1",
+  "type": "object",
+  "required": ["profile_version", "vcs_agent", "preflight", "lifecycle", "gating"],
+  "additionalProperties": false,
+  "properties": {
+    "profile_version": { "const": "vcs-agent.processkit-cli/v1" },
+    "vcs_agent": {
+      "type": "object",
+      "required": ["contract_version", "success_operation", "structured_failure_operation", "structured_failure_exit_code"],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "const": "vcs-agent/v1" },
+        "success_operation": { "const": "probe" },
+        "structured_failure_operation": { "const": "unknown" },
+        "structured_failure_exit_code": { "const": 10 }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "required": ["probe_version", "schema_version", "exit_code_band", "compatible_exit_code", "incompatible_exit_code", "required_surface"],
+      "additionalProperties": false,
+      "properties": {
+        "probe_version": { "const": 1 },
+        "schema_version": { "const": 1 },
+        "exit_code_band": {
+          "type": "object",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": { "const": 100 },
+            "end": { "const": 119 }
+          }
+        },
+        "compatible_exit_code": { "const": 0 },
+        "incompatible_exit_code": { "const": 110 },
+        "required_surface": {
+          "type": "array",
+          "minItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": ["schema_version", "terminal_event", "child_exit_source", "timeout", "control_cancel", "bounded_capture", "containment"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": 1 },
+        "terminal_event": { "const": "runner_exit" },
+        "child_exit_source": { "const": "child_exit" },
+        "timeout": { "$ref": "#/$defs/imposedEndingTimeout" },
+        "control_cancel": { "$ref": "#/$defs/imposedEndingCancel" },
+        "bounded_capture": {
+          "type": "object",
+          "required": ["event", "per_stream", "overflow_semantics"],
+          "additionalProperties": false,
+          "properties": {
+            "event": { "const": "output_captured" },
+            "per_stream": { "const": true },
+            "overflow_semantics": { "const": "truncate-and-disclose" }
+          }
+        },
+        "containment": {
+          "type": "object",
+          "required": ["start_event", "cleanup_event", "observed_fields", "claim"],
+          "additionalProperties": false,
+          "properties": {
+            "start_event": { "const": "run_started" },
+            "cleanup_event": { "const": "cleanup_finished" },
+            "observed_fields": {
+              "type": "array",
+              "const": ["mechanism", "abrupt_cleanup"]
+            },
+            "claim": { "const": "outer-lifecycle-observed-inner-membership-not-attested" }
+          }
+        }
+      }
+    },
+    "gating": {
+      "type": "object",
+      "required": ["environment_variable", "unavailable_status", "incompatible_status"],
+      "additionalProperties": false,
+      "properties": {
+        "environment_variable": { "const": "PROCESSKIT_CLI_BIN" },
+        "unavailable_status": { "const": "skipped" },
+        "incompatible_status": { "const": "failed" }
+      }
+    }
+  },
+  "$defs": {
+    "imposedEndingTimeout": {
+      "type": "object",
+      "required": ["code", "source", "evidence_event"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "const": 106 },
+        "source": { "const": "timeout" },
+        "evidence_event": { "const": "timeout" }
+      }
+    },
+    "imposedEndingCancel": {
+      "type": "object",
+      "required": ["code", "source", "evidence_event"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "const": 108 },
+        "source": { "const": "control_cancel" },
+        "evidence_event": { "const": "cancelled" }
+      }
+    }
+  }
+}

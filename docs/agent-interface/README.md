@@ -8,6 +8,10 @@ result recording supplies evidence from one harness run.
 The implemented executable contract is specified separately in
 [`contract-v1.md`](contract-v1.md). Its committed schema and golden machine
 results live with the [`vcs-agent` crate](../../crates/agent).
+The optional ProcessKit-CLI executable-composition tier is pinned by
+[`processkit-cli-profile-v1.md`](processkit-cli-profile-v1.md) and its
+machine-readable profile/evidence fixtures. The offline validator and recorder
+check those layers even when no ProcessKit-CLI binary is provided.
 
 ## Offline v1 corpus
 
@@ -61,6 +65,19 @@ negative prompts that activate an interface, mismatched call totals, missing
 unrelated-state evidence, and mutation/publication results without exact
 revision evidence.  It also requires terminal CI evidence to be explicitly
 verified and successful when the corpus marks it as required.
+
+Run the live binary-composition proof only with an explicitly provided binary:
+
+```text
+python scripts/agent-interface/processkit_cli_profile.py \
+  --processkit-cli /provided/processkit-cli \
+  --vcs-agent target/debug/vcs-agent \
+  --evidence-output target/processkit-cli-profile-evidence.json
+```
+
+With neither `--processkit-cli` nor `PROCESSKIT_CLI_BIN`, that optional tier
+reports a structured `skipped` state. A supplied but incompatible or broken
+binary fails closed and is never hidden as a skip.
 
 ## MCP baseline
 

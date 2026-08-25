@@ -209,14 +209,20 @@ stable JSON surface without calling raw VCS commands.
 
 ### Phase 2 — ProcessKit-CLI interoperability
 
-- Define a pinned `processkit-cli probe` preflight for the supervision features the
+- [x] Define a pinned `processkit-cli probe` preflight for the supervision features the
   workflow uses.
-- Add a cross-binary proof that a `vcs-agent` operation can run under
+- [x] Add a cross-binary proof that a `vcs-agent` operation can run under
   `processkit-cli run`, retain its result, and produce a valid terminal lifecycle
   record with faithful exit classification.
-- Test timeout, cancellation, bounded capture, and nested containment behavior.
-- Produce an upstream request draft only if the published binary contract proves
+- [x] Test timeout, cancellation, bounded capture, and nested containment behavior.
+- [x] Produce an upstream request draft only if the published binary contract proves
   insufficient.
+
+Delivered by [`vcs-agent.processkit-cli/v1`](agent-interface/processkit-cli-profile-v1.md).
+The provided 0.3.1 binary proves the executable, lifecycle, exit, timeout,
+cancellation, capture, and outer-containment surfaces; it does not expose a
+membership attestation for stronger nested-kernel membership evidence, so the
+profile carries an explicit non-overclaim and a generic draft request.
 
 Exit condition: the two CLIs compose without linking private ProcessKit-CLI code and
 without weakening ProcessKit-rs containment.

@@ -31,6 +31,37 @@ EXPECTED_SCENARIOS = {
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
 MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
+PROCESSKIT_REQUIRED_SURFACE = {
+    "cancel",
+    "cancel:--run-id",
+    "probe",
+    "probe:--json",
+    "probe:--print-schema",
+    "probe:--require-exit-code-band",
+    "probe:--require-schema-version",
+    "probe:--require-surface",
+    "run",
+    "run:--capture-dir",
+    "run:--capture-max-bytes",
+    "run:--cwd",
+    "run:--detach",
+    "run:--grace",
+    "run:--jsonl",
+    "run:--no-echo",
+    "run:--run-id",
+    "run:--timeout",
+    "wait",
+    "wait:--run-id",
+    "wait:--timeout",
+}
+PROCESSKIT_SCENARIOS = {
+    "agent-success",
+    "agent-structured-failure",
+    "timeout",
+    "control-cancel",
+    "bounded-capture",
+    "nested-containment",
+}
 
 
 class ValidationError(ValueError):
@@ -684,7 +715,172 @@ def validate_baseline(baseline: Any) -> dict[str, Any]:
     return root
 
 
-def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: Path | None, machine_fixtures: Path | None = None) -> dict[str, Any]:
+def validate_processkit_cli_profile(profile: Any) -> dict[str, Any]:
+    root = _object(profile, "processkit-cli profile")
+    _require_fields(root, ("profile_version", "vcs_agent", "preflight", "lifecycle", "gating"), "processkit-cli profile")
+    if root["profile_version"] != "vcs-agent.processkit-cli/v1":
+        raise ValidationError("processkit-cli profile version must be vcs-agent.processkit-cli/v1")
+
+    agent = _object(root["vcs_agent"], "processkit-cli profile.vcs_agent")
+    if agent != {
+        "contract_version": "vcs-agent/v1",
+        "success_operation": "probe",
+        "structured_failure_operation": "unknown",
+        "structured_failure_exit_code": 10,
+    }:
+        raise ValidationError("processkit-cli profile.vcs_agent does not match the v1 child contract")
+
+    preflight = _object(root["preflight"], "processkit-cli profile.preflight")
+    _require_fields(
+        preflight,
+        ("probe_version", "schema_version", "exit_code_band", "compatible_exit_code", "incompatible_exit_code", "required_surface"),
+        "processkit-cli profile.preflight",
+    )
+    band = _object(preflight["exit_code_band"], "processkit-cli profile.preflight.exit_code_band")
+    if preflight["probe_version"] != 1 or preflight["schema_version"] != 1:
+        raise ValidationError("processkit-cli profile must pin probe_version=1 and schema_version=1")
+    if band != {"start": 100, "end": 119}:
+        raise ValidationError("processkit-cli profile must pin the exact 100-119 runner exit band")
+    if preflight["compatible_exit_code"] != 0 or preflight["incompatible_exit_code"] != 110:
+        raise ValidationError("processkit-cli profile preflight exit classification drifted")
+    surfaces = preflight["required_surface"]
+    if not isinstance(surfaces, list) or any(not isinstance(value, str) for value in surfaces):
+        raise ValidationError("processkit-cli profile required_surface must be a string array")
+    if len(surfaces) != len(set(surfaces)) or set(surfaces) != PROCESSKIT_REQUIRED_SURFACE:
+        raise ValidationError("processkit-cli profile required_surface differs from the v1 integration profile")
+
+    lifecycle = _object(root["lifecycle"], "processkit-cli profile.lifecycle")
+    if lifecycle.get("schema_version") != 1 or lifecycle.get("terminal_event") != "runner_exit":
+        raise ValidationError("processkit-cli profile must pin lifecycle v1 and runner_exit")
+    if lifecycle.get("child_exit_source") != "child_exit":
+        raise ValidationError("processkit-cli profile child exit source drifted")
+    if lifecycle.get("timeout") != {"code": 106, "source": "timeout", "evidence_event": "timeout"}:
+        raise ValidationError("processkit-cli profile timeout classification drifted")
+    if lifecycle.get("control_cancel") != {"code": 108, "source": "control_cancel", "evidence_event": "cancelled"}:
+        raise ValidationError("processkit-cli profile control-cancel classification drifted")
+    if lifecycle.get("bounded_capture") != {
+        "event": "output_captured",
+        "per_stream": True,
+        "overflow_semantics": "truncate-and-disclose",
+    }:
+        raise ValidationError("processkit-cli profile bounded-capture semantics drifted")
+    if lifecycle.get("containment") != {
+        "start_event": "run_started",
+        "cleanup_event": "cleanup_finished",
+        "observed_fields": ["mechanism", "abrupt_cleanup"],
+        "claim": "outer-lifecycle-observed-inner-membership-not-attested",
+    }:
+        raise ValidationError("processkit-cli profile containment claim drifted")
+
+    gating = _object(root["gating"], "processkit-cli profile.gating")
+    if gating != {
+        "environment_variable": "PROCESSKIT_CLI_BIN",
+        "unavailable_status": "skipped",
+        "incompatible_status": "failed",
+    }:
+        raise ValidationError("processkit-cli profile gating contract drifted")
+    return root
+
+
+def _scenario_events(scenario: dict[str, Any], label: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    raw_events = scenario.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        raise ValidationError(f"{label}.events must be a non-empty array")
+    events = [_object(event, f"{label}.events[{index}]") for index, event in enumerate(raw_events)]
+    for index, event in enumerate(events):
+        if event.get("schema_version") != 1 or not isinstance(event.get("event"), str):
+            raise ValidationError(f"{label}.events[{index}] must be a lifecycle-v1 event projection")
+    terminals = [event for event in events if event["event"] == "runner_exit"]
+    if len(terminals) != 1:
+        raise ValidationError(f"{label} must contain exactly one runner_exit event")
+    return events, terminals[0]
+
+
+def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtures: Path) -> dict[str, Any]:
+    profile_value = validate_processkit_cli_profile(profile)
+    root = _object(evidence, "processkit-cli evidence")
+    _require_fields(root, ("evidence_version", "profile_version", "scenarios"), "processkit-cli evidence")
+    if root["evidence_version"] != "vcs-agent.processkit-cli.evidence/v1":
+        raise ValidationError("processkit-cli evidence version is invalid")
+    if root["profile_version"] != profile_value["profile_version"]:
+        raise ValidationError("processkit-cli evidence references a different profile")
+    raw_scenarios = root["scenarios"]
+    if not isinstance(raw_scenarios, list):
+        raise ValidationError("processkit-cli evidence.scenarios must be an array")
+    scenarios: dict[str, tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]] = {}
+    for index, raw in enumerate(raw_scenarios):
+        scenario = _object(raw, f"processkit-cli evidence.scenarios[{index}]")
+        scenario_id = _string(scenario.get("id"), f"processkit-cli evidence.scenarios[{index}].id")
+        if scenario_id in scenarios:
+            raise ValidationError(f"duplicate processkit-cli evidence scenario: {scenario_id}")
+        _integer(scenario.get("command_exit_code"), f"processkit-cli evidence.{scenario_id}.command_exit_code")
+        events, terminal = _scenario_events(scenario, f"processkit-cli evidence.{scenario_id}")
+        child_fixture = scenario.get("child_fixture")
+        if child_fixture is not None:
+            _string(child_fixture, f"processkit-cli evidence.{scenario_id}.child_fixture")
+            validate_machine_envelope(load_json(machine_fixtures / child_fixture), f"processkit-cli evidence.{scenario_id}.child_fixture")
+        scenarios[scenario_id] = (scenario, events, terminal)
+    if set(scenarios) != PROCESSKIT_SCENARIOS:
+        raise ValidationError("processkit-cli evidence does not cover the exact v1 scenario set")
+
+    success, _, success_terminal = scenarios["agent-success"]
+    if success["command_exit_code"] != 0 or success_terminal != {
+        "schema_version": 1, "event": "runner_exit", "code": 0, "source": "child_exit", "child_code": 0
+    }:
+        raise ValidationError("agent-success does not prove faithful zero child exit")
+    success_envelope = load_json(machine_fixtures / success["child_fixture"])
+    if success_envelope.get("operation") != "probe" or success_envelope.get("status") != "success":
+        raise ValidationError("agent-success child fixture is not a successful probe envelope")
+
+    failure, _, failure_terminal = scenarios["agent-structured-failure"]
+    if failure["command_exit_code"] != 10 or failure_terminal.get("code") != 10 or failure_terminal.get("child_code") != 10 or failure_terminal.get("source") != "child_exit":
+        raise ValidationError("agent-structured-failure does not prove faithful child exit 10")
+    failure_envelope = load_json(machine_fixtures / failure["child_fixture"])
+    if failure_envelope.get("status") != "error" or failure_envelope.get("error", {}).get("exit_code") != 10:
+        raise ValidationError("agent-structured-failure child fixture is not a structured exit-10 envelope")
+
+    _, timeout_events, timeout_terminal = scenarios["timeout"]
+    if timeout_terminal.get("code") != 106 or timeout_terminal.get("source") != "timeout" or timeout_terminal.get("child_code") is not None:
+        raise ValidationError("timeout scenario does not prove runner-imposed timeout classification")
+    if not any(event.get("event") == "timeout" and event.get("reason") == "overall" for event in timeout_events):
+        raise ValidationError("timeout scenario lacks an overall timeout event")
+
+    cancel, cancel_events, cancel_terminal = scenarios["control-cancel"]
+    if cancel["command_exit_code"] != 0 or cancel_terminal.get("code") != 108 or cancel_terminal.get("source") != "control_cancel" or cancel_terminal.get("child_code") is not None:
+        raise ValidationError("control-cancel scenario does not distinguish detached start from terminal cancellation")
+    if not any(event.get("event") == "cancelled" and event.get("source") == "control_cancel" for event in cancel_events):
+        raise ValidationError("control-cancel scenario lacks cancellation evidence")
+
+    _, capture_events, capture_terminal = scenarios["bounded-capture"]
+    if capture_terminal.get("code") != 0 or capture_terminal.get("source") != "child_exit":
+        raise ValidationError("bounded-capture scenario changed child exit classification")
+    captures = [event for event in capture_events if event.get("event") == "output_captured"]
+    if len(captures) != 1 or not all(captures[0].get(stream, {}).get("truncated") is True for stream in ("stdout", "stderr")):
+        raise ValidationError("bounded-capture scenario does not disclose per-stream truncation")
+
+    nested, nested_events, nested_terminal = scenarios["nested-containment"]
+    if nested.get("claim") != "outer-lifecycle-observed-inner-membership-not-attested":
+        raise ValidationError("nested-containment overclaims the observable binary contract")
+    if nested_terminal.get("code") != 0 or not any(
+        event.get("event") == "cleanup_finished" and event.get("remaining") == 0 and event.get("read_error") is False
+        for event in nested_events
+    ):
+        raise ValidationError("nested-containment lacks successful outer cleanup evidence")
+    nested_envelope = load_json(machine_fixtures / nested["child_fixture"])
+    if nested_envelope.get("operation") != "inspect" or nested_envelope.get("status") != "success":
+        raise ValidationError("nested-containment child fixture is not an inspect success")
+    return root
+
+
+def validate_files(
+    corpus_path: Path,
+    results_path: Path | None,
+    baseline_path: Path | None,
+    machine_fixtures: Path | None = None,
+    processkit_profile_path: Path | None = None,
+    processkit_evidence_path: Path | None = None,
+    processkit_machine_fixtures: Path | None = None,
+) -> dict[str, Any]:
     corpus_by_id = validate_corpus(load_json(corpus_path))
     checked_results: list[dict[str, Any]] = []
     if results_path is not None:
@@ -693,7 +889,24 @@ def validate_files(corpus_path: Path, results_path: Path | None, baseline_path: 
     if baseline_path is not None:
         baseline = validate_baseline(load_json(baseline_path))
     checked_machine = validate_machine_fixtures(machine_fixtures) if machine_fixtures is not None else []
-    return {"corpus_cases": len(corpus_by_id), "result_cases": len(checked_results), "machine_fixtures": len(checked_machine), "baseline_status": baseline["status"] if baseline else None}
+    processkit_profile = None
+    processkit_evidence = None
+    if processkit_profile_path is not None:
+        processkit_profile = validate_processkit_cli_profile(load_json(processkit_profile_path))
+    if processkit_evidence_path is not None:
+        if processkit_profile is None or processkit_machine_fixtures is None:
+            raise ValidationError("processkit-cli evidence requires the profile and machine fixtures")
+        processkit_evidence = validate_processkit_cli_evidence(
+            load_json(processkit_evidence_path), processkit_profile, processkit_machine_fixtures
+        )
+    return {
+        "corpus_cases": len(corpus_by_id),
+        "result_cases": len(checked_results),
+        "machine_fixtures": len(checked_machine),
+        "baseline_status": baseline["status"] if baseline else None,
+        "processkit_cli_profile": processkit_profile["profile_version"] if processkit_profile else None,
+        "processkit_cli_scenarios": len(processkit_evidence["scenarios"]) if processkit_evidence else 0,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -703,9 +916,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", type=Path)
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
     parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
+    parser.add_argument("--processkit-cli-profile", type=Path, default=root / "docs/agent-interface/processkit-cli-profile.v1.json")
+    parser.add_argument("--processkit-cli-evidence", type=Path, default=root / "docs/agent-interface/fixtures/processkit-cli-evidence.v1.json")
+    parser.add_argument("--processkit-cli-machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
     args = parser.parse_args(argv)
     try:
-        summary = validate_files(args.corpus, args.results, args.baseline, args.machine_fixtures)
+        summary = validate_files(
+            args.corpus,
+            args.results,
+            args.baseline,
+            args.machine_fixtures,
+            args.processkit_cli_profile,
+            args.processkit_cli_evidence,
+            args.processkit_cli_machine_fixtures,
+        )
     except ValidationError as exc:
         print(f"agent-interface validation failed: {exc}", file=sys.stderr)
         return 1

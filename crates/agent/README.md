@@ -56,6 +56,11 @@ processkit-cli run -- vcs-agent <outcome> ...
 ```
 
 `vcs-agent` does not link ProcessKit-CLI internals or implement a plugin host.
+The optional composition is pinned and tested by the
+[`vcs-agent.processkit-cli/v1` profile](https://github.com/zelanton/vcs-toolkit-rs/blob/main/docs/agent-interface/processkit-cli-profile-v1.md):
+it performs an exact machine probe before launch, retains the complete child
+JSON in bounded capture, and checks terminal lifecycle/exit classification.
+Ordinary builds and packages do not require ProcessKit-CLI to be installed.
 
 On Git, these read outcomes leave refs, index, and working-copy content alone.
 On Jujutsu they deliberately read the live working copy: `jj` may snapshot an

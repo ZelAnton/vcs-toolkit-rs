@@ -122,3 +122,13 @@ ProcessKit-CLI integration is executable composition, not a Rust plugin contract
 ```text
 processkit-cli run -- vcs-agent <outcome> ...
 ```
+
+The versioned, fail-closed supervision requirements and mechanical cross-binary
+proof are specified in the
+[`vcs-agent.processkit-cli/v1` profile](processkit-cli-profile-v1.md). A normal
+`vcs-agent` build has no ProcessKit-CLI dependency. When the optional binary is
+provided, its `probe --json` surface and lifecycle schema are checked before
+launch; incompatibility is a failure, while only an unprovided binary is a
+skip. The child result remains one complete `vcs-agent/v1` JSON document in
+bounded capture, and `runner_exit` preserves either the child code or the
+runner-imposed timeout/cancellation class.
