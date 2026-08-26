@@ -27,7 +27,10 @@ the deterministic recording fixes all three ratios. Unavailable live metrics
 remain `null`, never an invented zero.
 
 The same cases compare `cli+skill` and `mcp` using one vocabulary: precision,
-recall, bypass rate, invalid-call rate, and outcome correctness. A harness
+recall, bypass rate, invalid-call rate, and outcome correctness. The recorder
+derives each ratio from validated selection, call-channel, outcome, and corpus
+eligibility evidence in `interface_metrics`; an unavailable interface is `null`,
+never a zero-valued measurement. A harness
 records only values it measured; an unavailable live tier remains `null`, never
 an invented zero.
 

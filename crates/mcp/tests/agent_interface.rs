@@ -20,6 +20,13 @@ const RECORDING_SCHEMA: &str =
 const RECORDING_FIXTURE: &str =
     include_str!("../../../docs/agent-interface/fixtures/recording.v1.json");
 const BASELINE: &str = include_str!("../../../docs/agent-interface/baseline-mcp.v1.json");
+const COMMIT_ENVELOPE: &str = include_str!("../../agent/tests/fixtures/commit-success-git.v1.json");
+const PUBLISH_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/publish-success-git.v1.json");
+const CI_STATUS_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/ci-status-success-github.v1.json");
+const CI_WAIT_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/ci-wait-success-github.v1.json");
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -172,6 +179,25 @@ fn result_schema_and_no_data_baseline_are_explicit() {
                 .any(|item| item == field)
         );
     }
+    for interface in ["cli+skill", "mcp"] {
+        assert!(
+            recording_schema["properties"]["interface_metrics"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == interface),
+            "recording schema must require {interface} measurements"
+        );
+    }
+    let measurement = &recording_schema["$defs"]["interfaceMeasurement"]["oneOf"];
+    assert!(
+        measurement
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["type"] == "null"),
+        "unavailable interface measurements must be representable as null"
+    );
     for field in [
         "preferred_interface",
         "fallback_interface",
@@ -196,6 +222,30 @@ fn result_schema_and_no_data_baseline_are_explicit() {
         "no_data must not become zero metrics"
     );
     assert_eq!(baseline["harness"]["availability"], "unavailable");
+}
+
+#[test]
+fn common_envelopes_keep_commit_publish_and_ci_revision_evidence_transport_neutral() {
+    let commit: Value = serde_json::from_str(COMMIT_ENVELOPE).expect("commit envelope");
+    let publish: Value = serde_json::from_str(PUBLISH_ENVELOPE).expect("publish envelope");
+    let status: Value = serde_json::from_str(CI_STATUS_ENVELOPE).expect("CI status envelope");
+    let wait: Value = serde_json::from_str(CI_WAIT_ENVELOPE).expect("CI wait envelope");
+
+    assert_eq!(commit["operation"], "commit");
+    assert_ne!(
+        commit["data"]["before"]["revision"],
+        commit["data"]["after"]["revision"]
+    );
+    let revision = &publish["data"]["expected_revision"];
+    assert_eq!(publish["data"]["remote_revision"], *revision);
+    assert_eq!(publish["data"]["exact_revision_verified"], true);
+    for ci in [&status, &wait] {
+        assert_eq!(ci["data"]["expected_revision"], *revision);
+        assert_eq!(ci["data"]["runs"][0]["revision"], *revision);
+        assert_eq!(ci["data"]["exact_revision_verified"], true);
+        assert_eq!(ci["data"]["terminal"], true);
+        assert_eq!(ci["data"]["successful"], true);
+    }
 }
 
 fn python_command() -> Command {
@@ -281,6 +331,19 @@ fn validator_and_recorder_are_repeatable_without_network_state() {
     let expected_recording: Value =
         serde_json::from_str(RECORDING_FIXTURE).expect("valid recording fixture");
     assert_eq!(recording, expected_recording);
+    for interface in ["cli+skill", "mcp"] {
+        let measured = &recording["interface_metrics"][interface];
+        assert_eq!(measured["availability"], "measured");
+        for metric in [
+            "precision",
+            "recall",
+            "bypass_rate",
+            "invalid_call_rate",
+            "outcome_correctness",
+        ] {
+            assert!(measured[metric]["denominator"].as_u64().unwrap() > 0);
+        }
+    }
     let published = recording["cases"]
         .as_array()
         .unwrap()
@@ -364,6 +427,12 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
     let raw_bypass_path = temp.join("raw-bypass.json");
     write_json(&raw_bypass_path, &raw_bypass);
     assert_validator_rejects(validator, corpus, &raw_bypass_path, baseline);
+
+    let mut unavailable_with_calls = original.clone();
+    unavailable_with_calls["interface_availability"]["mcp"] = "unavailable".into();
+    let unavailable_with_calls_path = temp.join("unavailable-with-calls.json");
+    write_json(&unavailable_with_calls_path, &unavailable_with_calls);
+    assert_validator_rejects(validator, corpus, &unavailable_with_calls_path, baseline);
 
     let mut missing_fallback = original.clone();
     missing_fallback["results"][0]["calls"]

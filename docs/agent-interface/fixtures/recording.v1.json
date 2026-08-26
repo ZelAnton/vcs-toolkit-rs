@@ -385,6 +385,54 @@
     }
   ],
   "corpus_version": "1.2.0",
+  "interface_metrics": {
+    "cli+skill": {
+      "availability": "measured",
+      "bypass_rate": {
+        "denominator": 9,
+        "numerator": 0
+      },
+      "invalid_call_rate": {
+        "denominator": 12,
+        "numerator": 0
+      },
+      "outcome_correctness": {
+        "denominator": 9,
+        "numerator": 9
+      },
+      "precision": {
+        "denominator": 9,
+        "numerator": 9
+      },
+      "recall": {
+        "denominator": 9,
+        "numerator": 9
+      }
+    },
+    "mcp": {
+      "availability": "measured",
+      "bypass_rate": {
+        "denominator": 1,
+        "numerator": 0
+      },
+      "invalid_call_rate": {
+        "denominator": 1,
+        "numerator": 0
+      },
+      "outcome_correctness": {
+        "denominator": 1,
+        "numerator": 1
+      },
+      "precision": {
+        "denominator": 1,
+        "numerator": 1
+      },
+      "recall": {
+        "denominator": 1,
+        "numerator": 1
+      }
+    }
+  },
   "metrics": {
     "exact_revision_verified": 5,
     "false_activation_rate": {

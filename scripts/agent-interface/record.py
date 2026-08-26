@@ -14,6 +14,7 @@ from validate import (
     load_json,
     validate_baseline,
     validate_corpus,
+    validate_interface_availability,
     validate_machine_fixtures,
     validate_processkit_cli_evidence,
     validate_processkit_cli_profile,
@@ -37,6 +38,66 @@ def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
     return recorded
 
 
+def _comparison_metrics(
+    corpus_by_id: dict[str, dict[str, Any]],
+    ordered: list[dict[str, Any]],
+    availability: dict[str, str],
+) -> dict[str, Any]:
+    by_id = {result["case_id"]: result for result in ordered}
+    metrics: dict[str, Any] = {}
+    definitions = {
+        "cli+skill": ("vcs-agent", "preferred_interface"),
+        "mcp": ("mcp", "fallback_interface"),
+    }
+    for interface, (selected_interface, call_channel) in definitions.items():
+        if availability[interface] == "unavailable":
+            metrics[interface] = None
+            continue
+        if interface == "cli+skill":
+            eligible = [case for case in corpus_by_id.values() if case["expected"]["selection"] == "preferred"]
+        else:
+            eligible = [
+                case
+                for case in corpus_by_id.values()
+                if case["expected"]["selection"] == "fallback"
+                and "mcp" in case["expected"]["fallback"]["interfaces"]
+            ]
+        selected = [result for result in ordered if result["selection"]["selected_interface"] == selected_interface]
+        correct_selected = [
+            result
+            for result in selected
+            if result["case_id"] in {case["case_id"] for case in eligible}
+        ]
+        correct_outcomes = sum(
+            1
+            for case in eligible
+            if by_id[case["case_id"]]["selection"]["selected_interface"] == selected_interface
+            and by_id[case["case_id"]]["outcome"]["status"] == case["expected"]["outcome"]
+        )
+        channel_calls = sum(result["calls"][call_channel] for result in ordered)
+        invalid_calls = sum(
+            result["calls"][call_channel]
+            for result in ordered
+            if result["selection"]["selected_interface"] != selected_interface
+        )
+        bypasses = sum(
+            1
+            for case in eligible
+            if by_id[case["case_id"]]["selection"]["raw_cli_bypass"]
+        )
+        if not selected or not eligible or channel_calls == 0:
+            raise ValidationError(f"{interface}: measured comparison lacks selected/call evidence")
+        metrics[interface] = {
+            "availability": "measured",
+            "precision": _ratio(len(correct_selected), len(selected)),
+            "recall": _ratio(len(correct_selected), len(eligible)),
+            "bypass_rate": _ratio(bypasses, len(eligible)),
+            "invalid_call_rate": _ratio(invalid_calls, channel_calls),
+            "outcome_correctness": _ratio(correct_outcomes, len(eligible)),
+        }
+    return metrics
+
+
 def make_recording(
     corpus: Any,
     results: Any,
@@ -45,6 +106,7 @@ def make_recording(
 ) -> dict[str, Any]:
     corpus_by_id = validate_corpus(corpus, skill_contract)
     checked = validate_results(corpus_by_id, results)
+    interface_availability = validate_interface_availability(results)
     baseline_value = validate_baseline(baseline) if baseline is not None else None
     by_id = {result["case_id"]: result for result in checked}
     ordered = [by_id[case_id] for case_id in corpus_by_id if case_id in by_id]
@@ -95,6 +157,9 @@ def make_recording(
             "terminal_ci_verified": terminal_verified,
             "unrelated_state_preserved": sum(1 for result in ordered if result["workspace"]["unrelated_changes_preserved"]),
         },
+        "interface_metrics": _comparison_metrics(
+            corpus_by_id, ordered, interface_availability
+        ),
     }
     if baseline_value is not None:
         recording["baseline"] = {
@@ -131,7 +196,11 @@ def main(argv: list[str] | None = None) -> int:
             load_json(args.baseline),
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(recording, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(recording, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
     except (ValidationError, OSError) as exc:
         print(f"agent-interface recording failed: {exc}", file=sys.stderr)
         return 1

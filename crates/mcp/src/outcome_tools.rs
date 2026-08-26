@@ -6,7 +6,6 @@ use std::time::Duration;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData, tool, tool_router};
-use vcs_agent::OutcomeServices;
 use vcs_agent::app::ExecutionPolicy;
 use vcs_agent::cli::{
     ChangesMode, DEFAULT_CONTENT_MAX_BYTES, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_POLL_SECONDS,
@@ -194,7 +193,13 @@ impl VcsMcpServer {
         if let Some(deadline) = deadline {
             policy = policy.with_deadline(deadline);
         }
-        let output = OutcomeServices::execute(&request, &policy).await;
+        let runner = self.outcome_runner.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "configured outcome execution context is unavailable".to_string(),
+                None,
+            )
+        })?;
+        let output = runner(request, policy).await;
         let text = String::from_utf8(output.stdout).map_err(|_| {
             ErrorData::internal_error("outcome service returned non-UTF-8 JSON".to_string(), None)
         })?;

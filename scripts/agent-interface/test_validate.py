@@ -267,6 +267,41 @@ class SkillMetadataEvaluationTests(unittest.TestCase):
         )
         self.assertIsNone(recording["skill_metadata"]["unavailable_live_metrics"])
 
+    def test_recording_contains_measured_per_interface_comparison(self) -> None:
+        recording = record.make_recording(
+            self.corpus, self.results, self.skill_contract, self.baseline
+        )
+        self.assertEqual(
+            recording["interface_metrics"]["cli+skill"],
+            {
+                "availability": "measured",
+                "precision": {"numerator": 9, "denominator": 9},
+                "recall": {"numerator": 9, "denominator": 9},
+                "bypass_rate": {"numerator": 0, "denominator": 9},
+                "invalid_call_rate": {"numerator": 0, "denominator": 12},
+                "outcome_correctness": {"numerator": 9, "denominator": 9},
+            },
+        )
+        self.assertEqual(
+            recording["interface_metrics"]["mcp"],
+            {
+                "availability": "measured",
+                "precision": {"numerator": 1, "denominator": 1},
+                "recall": {"numerator": 1, "denominator": 1},
+                "bypass_rate": {"numerator": 0, "denominator": 1},
+                "invalid_call_rate": {"numerator": 0, "denominator": 1},
+                "outcome_correctness": {"numerator": 1, "denominator": 1},
+            },
+        )
+
+    def test_unavailable_interface_cannot_hide_recorded_calls(self) -> None:
+        results = copy.deepcopy(self.results)
+        results["interface_availability"]["mcp"] = "unavailable"
+        with self.assertRaisesRegex(validate.ValidationError, "contradicts recorded calls"):
+            record.make_recording(
+                self.corpus, results, self.skill_contract, self.baseline
+            )
+
     def test_negative_metric_must_remain_first_priority(self) -> None:
         corpus = copy.deepcopy(self.corpus)
         corpus["skill_metadata"]["metric_priority"].reverse()

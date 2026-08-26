@@ -99,11 +99,17 @@
 //! auto-detection, and the binary's hardening/timeout safety model. See the
 //! [`guide`] module.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool_handler};
+use vcs_agent::OutcomeServices;
+use vcs_agent::app::{ExecutionPolicy, OutcomeExecutionContext};
+use vcs_agent::cli::Invocation;
+use vcs_agent::contract::RenderedOutput;
 use vcs_core::processkit::ProcessRunner;
 use vcs_core::{BackendKind, OutputBudget, Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi, ForgeKind};
@@ -124,6 +130,9 @@ pub use write_gate::*;
 /// the typed-tool, preflight, write-gate, and raw-fallback contract.
 pub const SERVER_INSTRUCTIONS: &str = "Prefer typed outcome_* tools for inspect, changes, checked commit, publish, and exact-revision CI. Start with outcome_inspect as preflight. Mutating tools are advertised only when the write gate enables them; never bypass that gate. Use lower-level typed repo_* or forge_* tools for operations with no outcome tool. Use a raw CLI only as a last-resort fallback when no typed tool is advertised or a typed result explicitly reports unsupported; preserve the same preflight and write policy.";
 
+type OutcomeFuture = Pin<Box<dyn Future<Output = RenderedOutput> + Send>>;
+type OutcomeRunner = Arc<dyn Fn(Invocation, ExecutionPolicy) -> OutcomeFuture + Send + Sync>;
+
 /// An MCP server over a single repository (and, optionally, its forge). Held as
 /// object-safe trait handles, so it's runner-agnostic; clone is cheap (`Arc`).
 /// Construct with [`new`](Self::new).
@@ -133,6 +142,9 @@ pub struct VcsMcpServer {
     forge: Option<Arc<dyn ForgeApi>>,
     writes: WriteGate,
     tool_router: ToolRouter<Self>,
+    /// Runs common outcomes against the exact configured clients supplied to
+    /// [`new`](Self::new), preserving their runner, credentials and hardening.
+    outcome_runner: Option<OutcomeRunner>,
     /// Serializes the **repo**-mutating tools. rmcp dispatches a task per request,
     /// so without this two concurrent mutations (e.g. `repo_try_merge`'s materialize-
     /// then-rollback racing a `repo_commit`) could interleave and lose one's work,
@@ -183,19 +195,38 @@ impl VcsMcpServer {
         forge: Option<Forge<R>>,
         writes: WriteGate,
     ) -> Self {
-        Self::from_handles(
+        let outcome_context = Arc::new(OutcomeExecutionContext::configured(
+            repo.at(repo.cwd()),
+            forge.as_ref().map(|forge| forge.at(forge.cwd())),
+        ));
+        let outcome_runner: OutcomeRunner = Arc::new(move |request, policy| {
+            let context = Arc::clone(&outcome_context);
+            Box::pin(async move { OutcomeServices::execute_in(&request, &policy, &context).await })
+        });
+        Self::from_handles_with_outcomes(
             Arc::new(repo),
             forge.map(|f| Arc::new(f) as Arc<dyn ForgeApi>),
             writes,
+            Some(outcome_runner),
         )
     }
 
     /// Build from already-erased handles — the seam tests use to inject a `Repo`
     /// over a fake `ProcessRunner`.
+    #[cfg(test)]
     fn from_handles(
         repo: Arc<dyn VcsRepo>,
         forge: Option<Arc<dyn ForgeApi>>,
         writes: WriteGate,
+    ) -> Self {
+        Self::from_handles_with_outcomes(repo, forge, writes, None)
+    }
+
+    fn from_handles_with_outcomes(
+        repo: Arc<dyn VcsRepo>,
+        forge: Option<Arc<dyn ForgeApi>>,
+        writes: WriteGate,
+        outcome_runner: Option<OutcomeRunner>,
     ) -> Self {
         let backend = repo.kind();
         let forge_kind = forge.as_deref().map(ForgeApi::kind);
@@ -262,6 +293,7 @@ impl VcsMcpServer {
             // server dispatches on (the repo tools register first, then the forge
             // tools, preserving the original registration order).
             tool_router,
+            outcome_runner,
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             content_budget: OutputBudget::unlimited(),
         }

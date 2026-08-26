@@ -12,6 +12,15 @@ fn git_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
     VcsMcpServer::from_handles(repo, None, writes)
 }
 
+/// A git-backed server that retains the typed runner in the common outcome context.
+fn git_outcome_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
+    VcsMcpServer::new(
+        Repo::from_git("/repo", "/repo", Git::with_runner(runner)),
+        None,
+        writes,
+    )
+}
+
 /// A jj-backed server over a scripted runner — no real binary, no forge.
 fn jj_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
     let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_jj("/repo", "/repo", Jj::with_runner(runner)));
@@ -23,6 +32,15 @@ fn result_json(r: &CallToolResult) -> String {
     serde_json::to_string(r).expect("CallToolResult serialises")
 }
 
+fn outcome_json(r: &CallToolResult) -> serde_json::Value {
+    let text = r
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .expect("outcome text content");
+    serde_json::from_str(&text.text).expect("outcome machine envelope")
+}
+
 // A read tool calls the facade and returns its DTO as JSON.
 #[tokio::test]
 async fn read_tool_returns_dto_json() {
@@ -32,6 +50,57 @@ async fn read_tool_returns_dto_json() {
     );
     let out = server.repo_current_branch().await.expect("tool ok");
     assert!(result_json(&out).contains("main"), "{}", result_json(&out));
+}
+
+#[tokio::test]
+async fn outcome_inspect_uses_the_injected_repo_runner_without_path_rediscovery() {
+    let server = git_outcome_server(
+        ScriptedRunner::new()
+            .on(["git", "remote", "-v"], Reply::ok(""))
+            .on(
+                ["git", "status", "--porcelain=v2"],
+                Reply::ok("# branch.oid abc123\0# branch.head main\0"),
+            )
+            .on(["git", "rev-parse", "--git-dir"], Reply::ok("/repo/.git\n")),
+        WriteGate::None,
+    );
+
+    let out = server
+        .outcome_inspect()
+        .await
+        .expect("configured runner must execute the outcome");
+    let json = outcome_json(&out);
+    assert_eq!(json["status"], "success", "{json}");
+    assert_eq!(json["data"]["working_copy"]["revision"], "abc123");
+}
+
+#[tokio::test]
+async fn outcome_ci_refuses_the_configured_forge_mismatch_without_ambient_substitution() {
+    let repo = Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new().on(
+            ["git", "remote", "-v"],
+            Reply::ok("origin https://github.com/owner/repo.git (fetch)\n"),
+        )),
+    );
+    let server = VcsMcpServer::new(
+        repo,
+        Some(Forge::<ScriptedRunner>::from_unknown("/repo")),
+        WriteGate::None,
+    );
+
+    let out = server
+        .outcome_ci_status(Parameters(OutcomeCiStatusParams {
+            forge: "github".into(),
+            source: "feature".into(),
+            expected_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+        }))
+        .await
+        .expect("common failures are rendered as machine envelopes");
+    let json = outcome_json(&out);
+    assert_eq!(json["status"], "error", "{json}");
+    assert_eq!(json["error"]["code"], "configured_forge_identity_mismatch");
 }
 
 // R1: `begin_repo_write` checks the gate and, when allowed, *holds* the per-repo

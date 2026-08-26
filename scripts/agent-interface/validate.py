@@ -32,6 +32,14 @@ EXPECTED_SCENARIOS = {
 }
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
+COMPARISON_INTERFACES = ("cli+skill", "mcp")
+COMPARISON_METRICS = (
+    "precision",
+    "recall",
+    "bypass_rate",
+    "invalid_call_rate",
+    "outcome_correctness",
+)
 MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
 PROCESSKIT_REQUIRED_SURFACE = (
     "cancel",
@@ -693,6 +701,12 @@ def validate_corpus(corpus: Any, skill_contract: Any) -> dict[str, dict[str, Any
     fallbacks = policy.get("fallback_interfaces")
     if fallbacks != ["mcp", "raw-cli"]:
         raise ValidationError("selection_policy.fallback_interfaces must be [mcp, raw-cli]")
+    if policy.get("comparison_interfaces") != list(COMPARISON_INTERFACES):
+        raise ValidationError("selection_policy.comparison_interfaces must be [cli+skill, mcp]")
+    if policy.get("comparison_metrics") != list(COMPARISON_METRICS):
+        raise ValidationError("selection_policy.comparison_metrics differs from the v1.2 comparison contract")
+    if policy.get("unavailable_live_metrics", "missing") is not None:
+        raise ValidationError("unavailable comparison metrics must be null, never zero")
     skill = _object(root.get("skill_metadata"), "corpus.skill_metadata")
     if skill.get("name") != "vcs-agent":
         raise ValidationError("skill_metadata.name must be vcs-agent")
@@ -805,10 +819,24 @@ def _validate_result_shape(result: Any, label: str) -> dict[str, Any]:
     return result
 
 
+def validate_interface_availability(results: Any) -> dict[str, str]:
+    root = _object(results, "results")
+    availability = _object(root.get("interface_availability"), "results.interface_availability")
+    if set(availability) != set(COMPARISON_INTERFACES):
+        raise ValidationError("results.interface_availability must cover exactly cli+skill and mcp")
+    for interface, status in availability.items():
+        if status not in {"measured", "unavailable"}:
+            raise ValidationError(
+                f"results.interface_availability.{interface} must be measured or unavailable"
+            )
+    return availability
+
+
 def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> list[dict[str, Any]]:
     root = _object(results, "results")
     if root.get("schema_version") != "agent-interface.results.v1":
         raise ValidationError("results.schema_version must be agent-interface.results.v1")
+    availability = validate_interface_availability(root)
     raw_results = root.get("results")
     if not isinstance(raw_results, list):
         raise ValidationError("results.results must be an array")
@@ -912,6 +940,19 @@ def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> l
     missing = sorted(set(corpus_by_id) - seen)
     if missing:
         raise ValidationError(f"results missing case IDs: {', '.join(missing)}")
+    unavailable_channels = {
+        "cli+skill": ("vcs-agent", "preferred_interface"),
+        "mcp": ("mcp", "fallback_interface"),
+    }
+    for interface, (selection, call_channel) in unavailable_channels.items():
+        if availability[interface] == "unavailable" and any(
+            result["selection"]["selected_interface"] == selection
+            or result["calls"][call_channel] > 0
+            for result in checked
+        ):
+            raise ValidationError(
+                f"results.interface_availability.{interface}=unavailable contradicts recorded calls"
+            )
     return checked
 
 

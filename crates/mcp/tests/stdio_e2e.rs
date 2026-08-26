@@ -127,6 +127,16 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     let branch = branch.as_str().expect("a branch name");
     assert!(branch == "main" || branch == "master", "{branch}");
 
+    let outcome = inner(
+        &client
+            .call_tool(CallToolRequestParams::new("outcome_inspect"))
+            .await
+            .expect("outcome_inspect call"),
+    );
+    assert_eq!(outcome["contract_version"], "vcs-agent/v1");
+    assert_eq!(outcome["operation"], "inspect");
+    assert_eq!(outcome["status"], "success");
+
     // 4. A client cannot bypass discovery by naming the disabled mutation.
     let mut args = serde_json::Map::new();
     args.insert("paths".into(), serde_json::json!(["seed.txt"]));
@@ -138,6 +148,19 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     assert!(
         format!("{err:?}").to_lowercase().contains("not found"),
         "the disabled route must be absent: {err:?}"
+    );
+
+    let mut outcome_args = serde_json::Map::new();
+    outcome_args.insert("expected_revision".into(), serde_json::json!("stale"));
+    outcome_args.insert("message".into(), serde_json::json!("should be refused"));
+    outcome_args.insert("paths".into(), serde_json::json!(["seed.txt"]));
+    let err = client
+        .call_tool(CallToolRequestParams::new("outcome_commit").with_arguments(outcome_args))
+        .await
+        .expect_err("the disabled outcome mutation must not be routable");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("not found"),
+        "the disabled outcome route must be absent: {err:?}"
     );
 
     let _ = client.cancel().await;

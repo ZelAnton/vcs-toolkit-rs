@@ -3,7 +3,7 @@
   "$id": "https://vcs-toolkit-rs.dev/schemas/agent-interface-recording-v1.json",
   "title": "Agent interface evaluation recording v1",
   "type": "object",
-  "required": ["schema_version", "corpus_version", "source", "skill_metadata", "cases", "metrics"],
+  "required": ["schema_version", "corpus_version", "source", "skill_metadata", "cases", "metrics", "interface_metrics"],
   "properties": {
     "schema_version": {"const": "agent-interface.recording.v1"},
     "corpus_version": {"type": "string", "minLength": 1},
@@ -67,7 +67,45 @@
       }
     },
     "metrics": {"type": "object"},
+    "interface_metrics": {
+      "type": "object",
+      "required": ["cli+skill", "mcp"],
+      "properties": {
+        "cli+skill": {"$ref": "#/$defs/interfaceMeasurement"},
+        "mcp": {"$ref": "#/$defs/interfaceMeasurement"}
+      },
+      "additionalProperties": false
+    },
     "baseline": {"type": "object"}
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "ratio": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 0},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "interfaceMeasurement": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["availability", "precision", "recall", "bypass_rate", "invalid_call_rate", "outcome_correctness"],
+          "properties": {
+            "availability": {"const": "measured"},
+            "precision": {"$ref": "#/$defs/ratio"},
+            "recall": {"$ref": "#/$defs/ratio"},
+            "bypass_rate": {"$ref": "#/$defs/ratio"},
+            "invalid_call_rate": {"$ref": "#/$defs/ratio"},
+            "outcome_correctness": {"$ref": "#/$defs/ratio"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
 }

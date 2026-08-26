@@ -65,7 +65,7 @@ use vcs_core::processkit::{JobRunner, ProcessRunner};
 use vcs_core::vcs_git::Git;
 use vcs_core::vcs_jj::Jj;
 use vcs_forge::vcs_gitea::Gitea;
-use vcs_forge::vcs_github::{GhAccountToken, GitHub};
+use vcs_forge::vcs_github::{GhAccountToken, GitHub, GitHubHost};
 use vcs_forge::vcs_gitlab::GitLab;
 use vcs_forge::{Forge, ForgeKind};
 use vcs_mcp::{VcsMcpServer, WriteGate};
@@ -645,6 +645,12 @@ async fn resolve_forge(
     gh: &GhAuth,
 ) -> Result<Option<Forge<Runner>>, String> {
     let cwd = repo.root().to_path_buf();
+    let github_host = repo
+        .remotes()
+        .await
+        .ok()
+        .and_then(|remotes| remotes.into_iter().find(|remote| remote.name == "origin"))
+        .and_then(|remote| GitHubHost::from_remote_url(&remote.url).ok());
     let kind = match forced {
         Some(k) => Some(k),
         None => detect_forge_kind(repo).await,
@@ -665,7 +671,12 @@ async fn resolve_forge(
             // than replaces) the timeout/budget the other flags set. `check_gh_auth_forge`
             // above has already refused a non-GitHub forge, so this is the only
             // arm that can carry one.
-            let c = apply_gh_auth(c, gh, || make_runner(log_commands), timeout);
+            let c = apply_gh_auth(c, gh, || make_runner(log_commands), timeout)
+                .default_env_remove("GH_REPO");
+            let c = match github_host {
+                Some(host) => c.with_host(host),
+                None => c,
+            };
             Some(Forge::from_github(&cwd, c))
         }
         ForgeKind::GitLab => {
