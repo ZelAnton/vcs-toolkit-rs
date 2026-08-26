@@ -74,7 +74,9 @@ async fn gh_pr_view_fixture_parses_every_field() {
     assert_eq!(pr.state, "MERGED");
     assert!(pr.is_draft);
     assert_eq!(pr.head_ref_name, "feat/x");
+    assert_eq!(pr.head_ref_oid, "0123456789abcdef0123456789abcdef01234567");
     assert_eq!(pr.base_ref_name, "release/1");
+    assert_eq!(pr.is_cross_repository, Some(false));
     assert_eq!(pr.url, "https://github.com/octocat/hello-world/pull/12");
     assert_eq!(pr.labels, ["bug", "priority-1"]);
     assert_eq!(pr.assignees, ["octocat", "hubot"]);
