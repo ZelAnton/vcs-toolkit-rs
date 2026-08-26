@@ -1,7 +1,7 @@
 //! Transport-neutral, bounded outcome application services shared by the
 //! `vcs-agent` CLI and structured transports such as `vcs-mcp`.
 //!
-//! Transport adapters parse a request and render [`OutcomeResult`]. Repository
+//! Transport adapters parse a request and render [`contract::RenderedOutput`]. Repository
 //! discovery, preflight, policy, error mapping, evidence collection, deadlines,
 //! cancellation, credential isolation, and content budgets stay in this crate.
 

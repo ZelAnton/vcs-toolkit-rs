@@ -645,15 +645,18 @@ async fn resolve_forge(
     gh: &GhAuth,
 ) -> Result<Option<Forge<Runner>>, String> {
     let cwd = repo.root().to_path_buf();
-    let github_host = repo
+    let origin_url = repo
         .remotes()
         .await
         .ok()
         .and_then(|remotes| remotes.into_iter().find(|remote| remote.name == "origin"))
-        .and_then(|remote| GitHubHost::from_remote_url(&remote.url).ok());
+        .map(|remote| remote.url);
+    let github_host = origin_url
+        .as_deref()
+        .and_then(|url| GitHubHost::from_remote_url(url).ok());
     let kind = match forced {
         Some(k) => Some(k),
-        None => detect_forge_kind(repo).await,
+        None => origin_url.as_deref().and_then(ForgeKind::from_remote_url),
     };
     check_gh_auth_forge(gh, kind, forced.is_some())?;
     // Each forge CLI client exposes the same `with_runner`/`default_timeout`/
@@ -787,6 +790,7 @@ fn apply_gh_auth<R: ProcessRunner, P: ProcessRunner + 'static>(
 /// facade and classify its host. This works for both colocated and non-colocated
 /// jj repositories. `None` when there is no `origin`, the remote query fails, or
 /// the host is unrecognised.
+#[cfg(test)]
 async fn detect_forge_kind<R: vcs_core::processkit::ProcessRunner>(
     repo: &Repo<R>,
 ) -> Option<ForgeKind> {
