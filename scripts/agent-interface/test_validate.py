@@ -244,9 +244,14 @@ class SkillMetadataEvaluationTests(unittest.TestCase):
         cls.baseline = validate.load_json(
             ROOT / "docs" / "agent-interface" / "baseline-mcp.v1.json"
         )
+        cls.skill_contract = validate.load_json(
+            ROOT / "skills" / "vcs-agent" / "references" / "contract.v1.json"
+        )
 
     def test_recording_fixes_skill_selection_false_activation_and_bypass_metrics(self) -> None:
-        recording = record.make_recording(self.corpus, self.results, self.baseline)
+        recording = record.make_recording(
+            self.corpus, self.results, self.skill_contract, self.baseline
+        )
         self.assertEqual(recording["skill_metadata"], self.corpus["skill_metadata"])
         self.assertEqual(
             recording["metrics"]["preferred_interface_selection_rate"],
@@ -266,7 +271,7 @@ class SkillMetadataEvaluationTests(unittest.TestCase):
         corpus = copy.deepcopy(self.corpus)
         corpus["skill_metadata"]["metric_priority"].reverse()
         with self.assertRaisesRegex(validate.ValidationError, "prioritize negative"):
-            validate.validate_corpus(corpus)
+            validate.validate_corpus(corpus, self.skill_contract)
 
     def test_unavailable_live_metrics_cannot_be_zero(self) -> None:
         corpus = copy.deepcopy(self.corpus)
@@ -274,7 +279,25 @@ class SkillMetadataEvaluationTests(unittest.TestCase):
             "false_activation_rate": 0
         }
         with self.assertRaisesRegex(validate.ValidationError, "never zero"):
-            validate.validate_corpus(corpus)
+            validate.validate_corpus(corpus, self.skill_contract)
+
+    def test_raw_fallback_reason_must_come_from_skill_contract(self) -> None:
+        corpus = copy.deepcopy(self.corpus)
+        result = copy.deepcopy(self.results)
+        case = next(
+            item
+            for item in corpus["cases"]
+            if item["case_id"] == "unsupported-low-level-command"
+        )
+        case["expected"]["fallback"]["reasons"] = ["fourth_reason"]
+        recorded = next(
+            item
+            for item in result["results"]
+            if item["case_id"] == "unsupported-low-level-command"
+        )
+        recorded["selection"]["fallback_reason"] = "fourth_reason"
+        with self.assertRaisesRegex(validate.ValidationError, "outside the Skill contract"):
+            record.make_recording(corpus, result, self.skill_contract, self.baseline)
 
 
 if __name__ == "__main__":

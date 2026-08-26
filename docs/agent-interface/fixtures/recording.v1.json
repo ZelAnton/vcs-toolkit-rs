@@ -337,7 +337,7 @@
         "total": 1
       },
       "case_id": "unsupported-low-level-command",
-      "fallback_reason": "unsupported_operation",
+      "fallback_reason": "structured_unsupported",
       "false_activation": false,
       "outcome_status": "fallback",
       "preferred_interface_selected": false,

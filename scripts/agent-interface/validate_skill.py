@@ -98,6 +98,10 @@ def validate_documents(
         raise SkillValidationError("ProcessKit-CLI schema version drifted")
     if preflight.get("exit_code_band") != expected_band:
         raise SkillValidationError("ProcessKit-CLI exit band drifted")
+    if preflight.get("required_surface") != source_preflight.get("required_surface"):
+        raise SkillValidationError("bundled ProcessKit-CLI required surface drifted")
+    if "required_surface_source" in preflight:
+        raise SkillValidationError("standalone Skill must not depend on a checkout-relative preflight source")
     if processkit.get("terminal_event") != profile.get("lifecycle", {}).get("terminal_event"):
         raise SkillValidationError("ProcessKit-CLI terminal event drifted")
     if contract.get("agent_contract_version") != profile.get("vcs_agent", {}).get("contract_version"):

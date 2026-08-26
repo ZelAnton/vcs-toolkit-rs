@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -47,6 +49,25 @@ class SkillDocumentTests(unittest.TestCase):
             validate_skill.SkillValidationError, "60 seconds"
         ):
             validate_skill.validate_documents(self.skill, contract, self.profile)
+
+    def test_documented_standalone_bundle_contains_exact_processkit_preflight(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="vcs-agent-skill-") as raw_temp:
+            installed = Path(raw_temp) / "vcs-agent"
+            shutil.copytree(self.root / "skills/vcs-agent", installed)
+            contract = validate_skill.load_json(
+                installed / "references/contract.v1.json"
+            )
+            validate_skill.validate_documents(
+                installed / "SKILL.md", contract, self.profile
+            )
+            self.assertEqual(
+                contract["processkit_cli_profile"]["preflight"]["required_surface"],
+                self.profile["preflight"]["required_surface"],
+            )
+            self.assertNotIn(
+                "required_surface_source",
+                contract["processkit_cli_profile"]["preflight"],
+            )
 
     def test_rejects_metadata_that_would_activate_for_file_editing(self) -> None:
         contract = copy.deepcopy(self.contract)

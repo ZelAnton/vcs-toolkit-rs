@@ -298,7 +298,7 @@
         "fallback": {
           "allowed": true,
           "interfaces": ["raw-cli"],
-          "reasons": ["unsupported_operation"]
+          "reasons": ["structured_unsupported"]
         },
         "outcome": "fallback",
         "invariants": {
