@@ -34,6 +34,12 @@ def _mutated(name: str, mutate: Callable[[dict[str, Any]], None]) -> Mutation:
         source = "inspect-success-git.v1.json"
     elif name.startswith("commit"):
         source = "commit-success-git.v1.json"
+    elif name.startswith("publish"):
+        source = "publish-success-git.v1.json"
+    elif name.startswith("ci-status"):
+        source = "ci-status-success-github.v1.json"
+    elif name.startswith("ci-wait"):
+        source = "ci-wait-success-github.v1.json"
     else:
         source = "changes-full-jj.v1.json"
     value = copy.deepcopy(_fixture(source))
@@ -73,6 +79,26 @@ def schema_invalid_mutations() -> list[Mutation]:
         _mutated(
             "commit-hides-unrelated-loss",
             lambda value: value["data"].__setitem__("unrelated_changes_preserved", False),
+        ),
+        _mutated(
+            "publish-remote-revision-mismatch",
+            lambda value: value["data"].__setitem__("remote_revision", "different"),
+        ),
+        _mutated(
+            "publish-unverified-push",
+            lambda value: value["data"]["push"].__setitem__("verified", False),
+        ),
+        _mutated(
+            "ci-status-revision-mismatch",
+            lambda value: value["data"]["runs"][0].__setitem__("revision", "different"),
+        ),
+        _mutated(
+            "ci-status-successful-pending",
+            lambda value: value["data"]["runs"][0].__setitem__("status", "in_progress"),
+        ),
+        _mutated(
+            "ci-wait-missing-watchdog",
+            lambda value: value["data"]["wait"].pop("inactivity_watchdog"),
         ),
     ]
 

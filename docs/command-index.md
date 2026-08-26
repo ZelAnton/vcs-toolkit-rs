@@ -60,6 +60,7 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 | `is_merged` | `branch --merged <base>` | via `MergeCheck` |
 | `branch_exists` | `show-ref --verify --quiet refs/heads/<name>` | |
 | `remote_branch_exists` | `ls-remote origin refs/heads/<name>` | fully-qualified ref, 10s timeout |
+| `remote_branch_revision` | `ls-remote <remote> refs/heads/<name>` | exact advertised object id or absence; failures stay errors |
 | `remote_head_branch` | `symbolic-ref refs/remotes/origin/HEAD` | `None` when unset |
 | `remote_url` | `remote get-url <remote>` | |
 | `remote_list` | `remote -v` | parsed `Vec<Remote>`; one fetch-URL row per remote |
@@ -371,8 +372,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `workflow_list` | `workflow list --limit 50 --json id,name,path,state` | active workflows |
 | `workflow_list_with` | `workflow list --limit <n> [--all] --json id,name,path,state` | via `WorkflowList`; zero rejected before spawn |
 | `workflow_view` | `workflow list --limit 2147483647 --all --json id,name,path,state` | resolves id/name/filename/path; current `workflow view` has no JSON mode, so no human output is scraped |
-| `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs |
-| `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id` |
+| `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs include exact `headSha` |
+| `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id`; includes exact `headSha` |
 | `run_watch` | `run watch <id>`, then `run view <id>` | **blocks** until the run finishes |
 | `workflow_dispatch` | `workflow run <workflow> [--ref <ref>] [--raw-field key=value …]` | via `WorkflowDispatch`; returns `()` (dispatch is async, 204) |
 | `run_rerun` | `run rerun <id> [--failed]` | via `RerunScope::{All,FailedOnly}` |

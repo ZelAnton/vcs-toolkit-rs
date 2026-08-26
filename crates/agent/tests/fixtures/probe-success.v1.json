@@ -11,8 +11,8 @@
       "compatibility": "same-contract-version"
     },
     "commands": {
-      "supported": ["probe", "inspect", "changes", "commit"],
-      "reserved": ["publish", "ci status", "ci wait"]
+      "supported": ["probe", "inspect", "changes", "commit", "publish", "ci status", "ci wait"],
+      "reserved": []
     },
     "execution": {
       "vcs_backends": ["git", "jujutsu"],

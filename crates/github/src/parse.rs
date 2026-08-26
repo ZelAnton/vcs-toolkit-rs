@@ -236,6 +236,15 @@ pub struct WorkflowRun {
         deserialize_with = "vcs_cli_support::json::null_to_empty"
     )]
     pub head_branch: String,
+    /// Exact commit SHA the workflow ran for (`headSha`). An empty value means
+    /// the CLI/backend did not provide revision evidence and must never match an
+    /// exact-revision CI query.
+    #[serde(
+        rename = "headSha",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub head_sha: String,
     /// Triggering event, e.g. `"push"`, `"workflow_dispatch"`.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub event: String,

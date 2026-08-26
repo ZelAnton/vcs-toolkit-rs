@@ -375,8 +375,7 @@ const ISSUE_LIST_FIELDS: &str =
     "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";
 const ISSUE_VIEW_FIELDS: &str =
     "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";
-const RUN_FIELDS: &str =
-    "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,event,url,createdAt";
+const RUN_FIELDS: &str = "databaseId,name,displayTitle,status,conclusion,workflowName,headBranch,headSha,event,url,createdAt";
 const WORKFLOW_FIELDS: &str = "id,name,path,state";
 // `gh workflow view` has no JSON mode. Resolve a typed view through the JSON
 // inventory instead; this signed-32-bit maximum asks gh to paginate until the

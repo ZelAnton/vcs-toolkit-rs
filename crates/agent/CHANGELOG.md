@@ -29,6 +29,12 @@ This crate is versioned and published independently; tag releases as
   before/after identity plus included-path evidence, fail-closed postflight,
   exact preservation checks for unrelated staged, unstaged, and untracked work,
   and pre-mutation refusal of selected-path clean filters and configured signing.
+- Add checked Git/GitHub publication with exact local/remote revision proof,
+  account/capability preflight, idempotent PR discovery/create, and explicit partial
+  recovery checkpoints. Unsupported backend/forge combinations fail before mutation.
+- Add exact-`headSha` GitHub `ci status` and `ci wait`, including terminal-success
+  filtering, one aggregate deadline, cancellation, inactivity watchdog, and bounded
+  diagnostic evidence.
 
 ### Changed
 -

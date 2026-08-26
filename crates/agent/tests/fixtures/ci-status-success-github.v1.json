@@ -1,0 +1,33 @@
+{
+  "contract_version": "vcs-agent/v1",
+  "binary_version": "0.1.0",
+  "operation": "ci_status",
+  "status": "success",
+  "data": {
+    "repository": {
+      "backend": "git",
+      "root": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null},
+      "cwd": {"display": "[REDACTED_PATH]", "encoding": "redacted", "value": null}
+    },
+    "forge": "github",
+    "source": "feature/checked-publish",
+    "expected_revision": "0123456789abcdef0123456789abcdef01234567",
+    "exact_revision_verified": true,
+    "terminal": true,
+    "successful": true,
+    "runs": [
+      {
+        "id": 100,
+        "workflow": "CI",
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://example.invalid/actions/runs/100"
+      }
+    ],
+    "wait": null
+  },
+  "error": null,
+  "warnings": [],
+  "fallback": null
+}

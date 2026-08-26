@@ -6,18 +6,20 @@ use std::time::Duration;
 use processkit::{CancellationToken, JobRunner, ProcessRunner};
 use serde::Serialize;
 use vcs_cli_support::OutputBudget;
-use vcs_core::vcs_git::{DiffLine, Git};
+use vcs_core::vcs_git::{DiffLine, Git, GitApi, GitPush, RefName, RevSpec};
 use vcs_core::vcs_jj::Jj;
 use vcs_core::{BackendKind, ChangeKind, FileChange, FileDiff, OperationState, Repo, RepoSnapshot};
 use vcs_forge::{
-    Forge, ForgeApi, ForgeAuth, ForgeCapabilities, ForgeKind, vcs_gitea::Gitea, vcs_github::GitHub,
+    Forge, ForgeApi, ForgeAuth, ForgeCapabilities, ForgeKind, ForgePr, PrCreate,
+    vcs_gitea::Gitea,
+    vcs_github::{GitHub, GitHubApi, WorkflowRun},
     vcs_gitlab::GitLab,
 };
 
 use crate::cli::{ChangesMode, Invocation, Operation};
 use crate::contract::{
     AgentError, AgentResult, CONTRACT_VERSION, DetailKey, ErrorDescriptor, ErrorKind, ExitBand,
-    FailureDomain, Fallback, MachineEnvelope,
+    FailureDomain, MachineEnvelope,
 };
 use crate::redaction::{RedactionPolicy, redact_text};
 
@@ -38,6 +40,11 @@ impl ExecutionPolicy {
             deadline: DEFAULT_DEADLINE,
             content_budget: OutputBudget::bytes(content_max_bytes),
         }
+    }
+
+    pub(crate) fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
     }
 }
 
@@ -136,6 +143,69 @@ struct CommitSemantics {
     push_performed: bool,
     switch_performed: bool,
     conflict_repair_performed: bool,
+}
+
+#[derive(Serialize)]
+struct PublishData {
+    repository: RepositoryIdentity,
+    expected_revision: String,
+    remote_revision: String,
+    remote: String,
+    source: String,
+    target: String,
+    forge: &'static str,
+    account: String,
+    push: StepEvidence,
+    change_request: ChangeRequestEvidence,
+    checkpoint: &'static str,
+    exact_revision_verified: bool,
+}
+
+#[derive(Serialize)]
+struct StepEvidence {
+    state: &'static str,
+    irreversible: bool,
+    verified: bool,
+}
+
+#[derive(Serialize)]
+struct ChangeRequestEvidence {
+    state: &'static str,
+    number: u64,
+    url: String,
+    source: String,
+    target: String,
+}
+
+#[derive(Serialize)]
+struct CiData {
+    repository: RepositoryIdentity,
+    forge: &'static str,
+    source: String,
+    expected_revision: String,
+    exact_revision_verified: bool,
+    terminal: bool,
+    successful: bool,
+    runs: Vec<CiRunEvidence>,
+    wait: Option<CiWaitEvidence>,
+}
+
+#[derive(Clone, Serialize)]
+struct CiRunEvidence {
+    id: u64,
+    workflow: String,
+    revision: String,
+    status: String,
+    conclusion: Option<String>,
+    url: String,
+}
+
+#[derive(Serialize)]
+struct CiWaitEvidence {
+    total_deadline_seconds: u64,
+    poll_seconds: u64,
+    inactivity_watchdog: &'static str,
+    diagnostic_budget: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -391,7 +461,12 @@ async fn execute_inner(
 ) -> AgentResult<MachineEnvelope> {
     match invocation.operation {
         Operation::Probe => Ok(probe(invocation)),
-        Operation::Inspect | Operation::Changes | Operation::Commit => {
+        Operation::Inspect
+        | Operation::Changes
+        | Operation::Commit
+        | Operation::Publish
+        | Operation::CiStatus
+        | Operation::CiWait => {
             let repository = invocation
                 .repository
                 .as_deref()
@@ -404,15 +479,6 @@ async fn execute_inner(
             )?;
             execute_repository(invocation, policy, &repo).await
         }
-        _ => Err(Box::new(
-            AgentError::new(
-                invocation.operation.name(),
-                ErrorKind::Unsupported,
-                "outcome_not_implemented",
-                false,
-            )
-            .with_fallback(Fallback::raw_cli("outcome_not_implemented")),
-        )),
     }
 }
 
@@ -457,6 +523,18 @@ async fn execute_repository<R: ProcessRunner>(
             let data = commit_repo(repo, invocation).await?;
             Ok(MachineEnvelope::success(Operation::Commit.name(), data))
         }
+        Operation::Publish => {
+            let data = publish_repo(repo, invocation, policy).await?;
+            Ok(MachineEnvelope::success(Operation::Publish.name(), data))
+        }
+        Operation::CiStatus => {
+            let data = ci_status_repo(repo, invocation, policy).await?;
+            Ok(MachineEnvelope::success(Operation::CiStatus.name(), data))
+        }
+        Operation::CiWait => {
+            let data = ci_wait_repo(repo, invocation, policy).await?;
+            Ok(MachineEnvelope::success(Operation::CiWait.name(), data))
+        }
         _ => Err(Box::new(AgentError::internal(
             "repository_operation_mismatch",
         ))),
@@ -474,8 +552,16 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
                 compatibility: "same-contract-version",
             },
             commands: CommandCapabilities {
-                supported: vec!["probe", "inspect", "changes", "commit"],
-                reserved: vec!["publish", "ci status", "ci wait"],
+                supported: vec![
+                    "probe",
+                    "inspect",
+                    "changes",
+                    "commit",
+                    "publish",
+                    "ci status",
+                    "ci wait",
+                ],
+                reserved: vec![],
             },
             execution: ExecutionCapabilities {
                 vcs_backends: vec!["git", "jujutsu"],
@@ -499,6 +585,707 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
             error_kinds: ErrorKind::contract(),
         },
     )
+}
+
+async fn publish_repo<R: ProcessRunner>(
+    repo: &Repo<R>,
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+) -> AgentResult<PublishData> {
+    let include_paths = invocation.include_machine_paths;
+    let expected = invocation
+        .expected_revision
+        .as_deref()
+        .expect("publish parser requires expected revision");
+    let remote = invocation
+        .remote
+        .as_deref()
+        .expect("publish parser requires remote");
+    let source = invocation
+        .source
+        .as_deref()
+        .expect("publish parser requires source");
+    let target = invocation
+        .target
+        .as_deref()
+        .expect("publish parser requires target");
+    let expected_remote = invocation
+        .expected_remote_revision
+        .as_deref()
+        .expect("publish parser requires expected remote revision");
+    let expected_forge = invocation
+        .forge
+        .as_deref()
+        .expect("publish parser requires forge");
+    let expected_account = invocation
+        .expected_account
+        .as_deref()
+        .expect("publish parser requires account");
+
+    if repo.kind() != BackendKind::Git {
+        return Err(Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Unsupported,
+                "jujutsu_exact_push_unsupported",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+    let Some(git) = repo.git() else {
+        return Err(Box::new(AgentError::internal("git_client_missing")));
+    };
+    let source_ref = checked_ref(source, Operation::Publish, include_paths)?;
+    let target_ref = checked_ref(target, Operation::Publish, include_paths)?;
+    let expected_spec = RevSpec::new(expected.to_owned()).map_err(|_| {
+        Box::new(
+            AgentError::invalid_input_for(Operation::Publish.name(), "expected_revision_invalid")
+                .include_machine_paths(include_paths),
+        )
+    })?;
+    let local_revision = git
+        .resolve_commit(repo.cwd(), &expected_spec)
+        .await
+        .map_err(|error| {
+            Box::new(
+                AgentError::from_processkit(
+                    Operation::Publish.name(),
+                    FailureDomain::Backend,
+                    &error,
+                )
+                .include_machine_paths(include_paths),
+            )
+        })?;
+    if local_revision != expected {
+        return Err(Box::new(publish_denied(
+            "expected_revision_must_be_full_object_id",
+            include_paths,
+        )));
+    }
+    let current_branch = git.current_branch(repo.cwd()).await.map_err(|error| {
+        Box::new(
+            AgentError::from_processkit(Operation::Publish.name(), FailureDomain::Backend, &error)
+                .include_machine_paths(include_paths),
+        )
+    })?;
+    if current_branch.as_deref() != Some(source) {
+        return Err(Box::new(publish_denied(
+            "source_branch_not_current",
+            include_paths,
+        )));
+    }
+    let head = git
+        .resolve_commit(
+            repo.cwd(),
+            &RevSpec::new("HEAD").expect("literal HEAD is valid"),
+        )
+        .await
+        .map_err(|error| {
+            Box::new(
+                AgentError::from_processkit(
+                    Operation::Publish.name(),
+                    FailureDomain::Backend,
+                    &error,
+                )
+                .include_machine_paths(include_paths),
+            )
+        })?;
+    if head != local_revision {
+        return Err(Box::new(publish_denied(
+            "expected_revision_not_current_head",
+            include_paths,
+        )));
+    }
+
+    let remotes = repo
+        .remotes()
+        .await
+        .map_err(|error| Box::new(map_core_error(Operation::Publish, include_paths, error)))?;
+    let selected = remotes
+        .iter()
+        .filter(|candidate| candidate.name == remote)
+        .collect::<Vec<_>>();
+    if selected.len() != 1 {
+        return Err(Box::new(publish_denied(
+            if selected.is_empty() {
+                "selected_remote_missing"
+            } else {
+                "selected_remote_ambiguous"
+            },
+            include_paths,
+        )));
+    }
+    if remote != "origin" {
+        return Err(Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Unsupported,
+                "forge_repository_binding_for_non_origin_unsupported",
+                false,
+            )
+            .with_detail(DetailKey::Remote, remote)
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+    let detected_forge = ForgeKind::from_remote_url(&selected[0].url);
+    if detected_forge.map(forge_kind) != Some(expected_forge) {
+        return Err(Box::new(
+            publish_denied("remote_forge_identity_mismatch", include_paths)
+                .with_detail(DetailKey::Forge, expected_forge),
+        ));
+    }
+    if detected_forge != Some(ForgeKind::GitHub) {
+        return Err(Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Unsupported,
+                "forge_account_or_idempotent_publish_unsupported",
+                false,
+            )
+            .with_detail(DetailKey::Forge, expected_forge)
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+
+    let forge = build_forge_kind(ForgeKind::GitHub, repo.cwd(), policy);
+    let capabilities = forge.capabilities().await.map_err(|error| {
+        Box::new(map_forge_operation_error(
+            Operation::Publish,
+            include_paths,
+            error,
+            "forge_capability_probe_failed",
+        ))
+    })?;
+    if !capabilities.supported || !capabilities.authed || !capabilities.pr_create {
+        return Err(Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Unsupported,
+                "publish_capability_unavailable",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+    let auth = forge.auth_info().await.map_err(|error| {
+        Box::new(map_forge_operation_error(
+            Operation::Publish,
+            include_paths,
+            error,
+            "forge_identity_probe_failed",
+        ))
+    })?;
+    if auth.authed != Some(true)
+        || auth.active_account.as_deref() != Some(expected_account)
+        || auth.repo_visible != Some(true)
+    {
+        return Err(Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Authentication,
+                "forge_account_identity_mismatch",
+                false,
+            )
+            .with_detail(DetailKey::Account, expected_account)
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+
+    let before_pr = find_change_request(&*forge, source, target, include_paths).await?;
+    let remote_before = git
+        .remote_branch_revision(repo.cwd(), remote, &source_ref)
+        .await
+        .map_err(|error| {
+            Box::new(
+                AgentError::from_processkit(
+                    Operation::Publish.name(),
+                    FailureDomain::Backend,
+                    &error,
+                )
+                .include_machine_paths(include_paths),
+            )
+        })?;
+    let expected_remote = if expected_remote == "absent" {
+        None
+    } else {
+        Some(expected_remote.to_owned())
+    };
+    let push_state = if remote_before.as_deref() == Some(local_revision.as_str()) {
+        "already_satisfied"
+    } else {
+        if remote_before != expected_remote {
+            return Err(Box::new(
+                publish_denied("remote_revision_preflight_mismatch", include_paths)
+                    .with_detail(
+                        DetailKey::Revision,
+                        remote_before.unwrap_or_else(|| "absent".into()),
+                    )
+                    .with_detail(DetailKey::Checkpoint, "before_push"),
+            ));
+        }
+        let revision_ref = RefName::new(local_revision.clone())
+            .map_err(|_| Box::new(AgentError::internal("resolved_git_object_id_invalid")))?;
+        let push = git
+            .push(
+                repo.cwd(),
+                GitPush::refspec(&revision_ref, &source_ref).remote(remote),
+            )
+            .await;
+        match push {
+            Ok(()) => "performed",
+            Err(error) => {
+                let observed = git
+                    .remote_branch_revision(repo.cwd(), remote, &source_ref)
+                    .await
+                    .map_err(|_| {
+                        Box::new(
+                            publish_unknown("push_postflight_unavailable", include_paths)
+                                .with_detail(DetailKey::Checkpoint, "after_push"),
+                        )
+                    })?;
+                if observed.as_deref() == Some(local_revision.as_str()) {
+                    "recovered_after_error"
+                } else if error.is_timeout() || error.is_cancelled() {
+                    return Err(Box::new(
+                        publish_unknown("push_outcome_unknown", include_paths)
+                            .with_detail(DetailKey::Checkpoint, "after_push"),
+                    ));
+                } else if observed == expected_remote {
+                    return Err(Box::new(
+                        AgentError::from_processkit(
+                            Operation::Publish.name(),
+                            FailureDomain::Backend,
+                            &error,
+                        )
+                        .with_detail(DetailKey::Checkpoint, "push_not_applied")
+                        .include_machine_paths(include_paths),
+                    ));
+                } else {
+                    return Err(Box::new(
+                        publish_unknown("remote_changed_during_push", include_paths)
+                            .with_detail(DetailKey::Checkpoint, "after_push"),
+                    ));
+                }
+            }
+        }
+    };
+    let remote_after = git
+        .remote_branch_revision(repo.cwd(), remote, &source_ref)
+        .await
+        .map_err(|_| {
+            Box::new(
+                publish_unknown("push_postflight_unavailable", include_paths)
+                    .with_detail(DetailKey::Checkpoint, "after_push"),
+            )
+        })?;
+    if remote_after.as_deref() != Some(local_revision.as_str()) {
+        return Err(Box::new(
+            publish_unknown("push_postflight_revision_mismatch", include_paths)
+                .with_detail(DetailKey::Checkpoint, "after_push"),
+        ));
+    }
+
+    let (change_request, pr_state) = if let Some(pr) = before_pr {
+        (pr, "already_satisfied")
+    } else if let Some(pr) = find_change_request(&*forge, source, target, include_paths).await? {
+        (pr, "discovered_after_push")
+    } else {
+        let create = PrCreate::new(
+            invocation.title.as_deref().expect("publish title"),
+            invocation.body.as_deref().expect("publish body"),
+        )
+        .source(source)
+        .target(target);
+        match forge.pr_create(create).await {
+            Ok(created_url) => {
+                let Some(mut pr) =
+                    find_change_request(&*forge, source, target, include_paths).await?
+                else {
+                    return Err(Box::new(
+                        publish_unknown("change_request_create_unverified", include_paths)
+                            .with_detail(DetailKey::Checkpoint, "after_pr_create")
+                            .with_detail(DetailKey::Revision, &local_revision),
+                    ));
+                };
+                if pr.url.is_empty() {
+                    pr.url = created_url;
+                }
+                (pr, "created")
+            }
+            Err(error) => match find_change_request(&*forge, source, target, include_paths).await {
+                Ok(Some(pr)) => (pr, "recovered_after_error"),
+                Ok(None) => {
+                    let mut mapped = map_forge_operation_error(
+                        Operation::Publish,
+                        include_paths,
+                        error,
+                        "change_request_failed_after_push",
+                    );
+                    mapped = mapped
+                        .with_detail(DetailKey::Checkpoint, "push_succeeded_pr_failed")
+                        .with_detail(DetailKey::Revision, &local_revision);
+                    return Err(Box::new(mapped));
+                }
+                Err(_) => {
+                    return Err(Box::new(
+                        publish_unknown("change_request_outcome_unknown", include_paths)
+                            .with_detail(DetailKey::Checkpoint, "after_pr_create")
+                            .with_detail(DetailKey::Revision, &local_revision),
+                    ));
+                }
+            },
+        }
+    };
+
+    Ok(PublishData {
+        repository: repository_identity(repo, include_paths),
+        expected_revision: local_revision.clone(),
+        remote_revision: local_revision,
+        remote: redact_metadata(remote, include_paths),
+        source: source.to_owned(),
+        target: target_ref.as_str().to_owned(),
+        forge: "github",
+        account: redact_metadata(expected_account, include_paths),
+        push: StepEvidence {
+            state: push_state,
+            irreversible: true,
+            verified: true,
+        },
+        change_request: ChangeRequestEvidence {
+            state: pr_state,
+            number: change_request.number,
+            url: redact_metadata(&change_request.url, include_paths),
+            source: change_request.source_branch,
+            target: change_request.target_branch,
+        },
+        checkpoint: "publish_complete",
+        exact_revision_verified: true,
+    })
+}
+
+async fn ci_status_repo<R: ProcessRunner>(
+    repo: &Repo<R>,
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+) -> AgentResult<CiData> {
+    query_ci(repo, invocation, policy, false).await
+}
+
+async fn ci_wait_repo<R: ProcessRunner>(
+    repo: &Repo<R>,
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+) -> AgentResult<CiData> {
+    let source = invocation.source.as_deref().expect("ci source");
+    let expected = invocation
+        .expected_revision
+        .as_deref()
+        .expect("ci expected revision");
+    let github = checked_github_ci(invocation, repo.cwd(), policy)?;
+    loop {
+        let runs = github
+            .run_list(repo.cwd(), 100, Some(source.to_owned()))
+            .await
+            .map_err(|error| {
+                Box::new(
+                    AgentError::from_processkit(
+                        Operation::CiWait.name(),
+                        FailureDomain::Forge,
+                        &error,
+                    )
+                    .include_machine_paths(invocation.include_machine_paths),
+                )
+            })?;
+        let exact = select_exact_ci_runs(
+            runs,
+            expected,
+            Operation::CiWait,
+            invocation.include_machine_paths,
+        )?;
+        if exact.is_empty() {
+            tokio::time::sleep(Duration::from_secs(invocation.poll_seconds)).await;
+            continue;
+        }
+        for run in exact.iter().filter(|run| !ci_run_terminal(run)) {
+            let completed = github
+                .run_watch(repo.cwd(), run.database_id)
+                .await
+                .map_err(|error| {
+                    Box::new(
+                        AgentError::from_processkit(
+                            Operation::CiWait.name(),
+                            FailureDomain::Forge,
+                            &error,
+                        )
+                        .with_detail(DetailKey::Checkpoint, "pr_succeeded_ci_interrupted")
+                        .with_detail(DetailKey::Revision, expected)
+                        .with_detail(DetailKey::RunId, run.database_id.to_string())
+                        .include_machine_paths(invocation.include_machine_paths),
+                    )
+                })?;
+            if completed.head_sha != expected {
+                return Err(Box::new(
+                    publish_unknown("ci_run_revision_changed", invocation.include_machine_paths)
+                        .with_detail(DetailKey::Checkpoint, "ci_postflight")
+                        .with_detail(DetailKey::RunId, completed.database_id.to_string()),
+                ));
+            }
+        }
+        let mut data = query_ci(repo, invocation, policy, true).await?;
+        data.wait = Some(CiWaitEvidence {
+            total_deadline_seconds: invocation.wait_seconds,
+            poll_seconds: invocation.poll_seconds,
+            inactivity_watchdog: "github-run-watch-300s",
+            diagnostic_budget: "processkit-drop-oldest-256KiB-256-lines",
+        });
+        if data.terminal && data.successful {
+            return Ok(data);
+        }
+        if data.terminal {
+            let conclusion = data
+                .runs
+                .iter()
+                .filter_map(|run| run.conclusion.as_deref())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Err(Box::new(
+                AgentError::new(
+                    Operation::CiWait.name(),
+                    ErrorKind::Forge,
+                    "ci_terminal_not_successful",
+                    false,
+                )
+                .with_detail(DetailKey::Revision, expected)
+                .with_detail(DetailKey::Conclusion, conclusion)
+                .include_machine_paths(invocation.include_machine_paths),
+            ));
+        }
+    }
+}
+
+async fn query_ci<R: ProcessRunner>(
+    repo: &Repo<R>,
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+    waiting: bool,
+) -> AgentResult<CiData> {
+    let source = invocation.source.as_deref().expect("ci source");
+    let expected = invocation
+        .expected_revision
+        .as_deref()
+        .expect("ci expected revision");
+    let github = checked_github_ci(invocation, repo.cwd(), policy)?;
+    let runs = github
+        .run_list(repo.cwd(), 100, Some(source.to_owned()))
+        .await
+        .map_err(|error| {
+            Box::new(
+                AgentError::from_processkit(
+                    invocation.operation.name(),
+                    FailureDomain::Forge,
+                    &error,
+                )
+                .include_machine_paths(invocation.include_machine_paths),
+            )
+        })?;
+    let exact = select_exact_ci_runs(
+        runs,
+        expected,
+        invocation.operation,
+        invocation.include_machine_paths,
+    )?;
+    if exact.is_empty() {
+        return Err(Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Denied,
+                "ci_expected_revision_not_found",
+                waiting,
+            )
+            .with_detail(DetailKey::Revision, expected)
+            .include_machine_paths(invocation.include_machine_paths),
+        ));
+    }
+    let terminal = exact.iter().all(ci_run_terminal);
+    let successful = terminal && exact.iter().all(|run| run.conclusion == "success");
+    let runs = exact.into_iter().map(map_ci_run).collect();
+    Ok(CiData {
+        repository: repository_identity(repo, invocation.include_machine_paths),
+        forge: "github",
+        source: source.to_owned(),
+        expected_revision: expected.to_owned(),
+        exact_revision_verified: true,
+        terminal,
+        successful,
+        runs,
+        wait: None,
+    })
+}
+
+fn checked_github_ci(
+    invocation: &Invocation,
+    cwd: &Path,
+    policy: &ExecutionPolicy,
+) -> AgentResult<GitHub<JobRunner>> {
+    let forge = invocation.forge.as_deref().expect("ci forge");
+    if forge != "github" {
+        return Err(Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Unsupported,
+                "exact_revision_ci_unsupported_for_forge",
+                false,
+            )
+            .with_detail(DetailKey::Forge, forge)
+            .include_machine_paths(invocation.include_machine_paths),
+        ));
+    }
+    let _ = cwd;
+    Ok(github_client(policy))
+}
+
+fn github_client(policy: &ExecutionPolicy) -> GitHub<JobRunner> {
+    GitHub::new()
+        .default_timeout(policy.deadline)
+        .default_cancel_on(policy.cancellation.clone())
+        .default_output_budget(policy.content_budget)
+}
+
+fn select_exact_ci_runs(
+    runs: Vec<WorkflowRun>,
+    expected: &str,
+    operation: Operation,
+    include_paths: bool,
+) -> AgentResult<Vec<WorkflowRun>> {
+    let mut exact = runs
+        .into_iter()
+        .filter(|run| run.head_sha == expected)
+        .collect::<Vec<_>>();
+    exact.sort_by(|left, right| {
+        ci_workflow_name(left)
+            .cmp(ci_workflow_name(right))
+            .then(left.database_id.cmp(&right.database_id))
+    });
+    for pair in exact.windows(2) {
+        if ci_workflow_name(&pair[0]) == ci_workflow_name(&pair[1]) {
+            return Err(Box::new(
+                AgentError::new(
+                    operation.name(),
+                    ErrorKind::Denied,
+                    "ci_revision_match_ambiguous",
+                    false,
+                )
+                .with_detail(DetailKey::Revision, expected)
+                .include_machine_paths(include_paths),
+            ));
+        }
+    }
+    Ok(exact)
+}
+
+fn ci_workflow_name(run: &WorkflowRun) -> &str {
+    if run.workflow_name.is_empty() {
+        &run.name
+    } else {
+        &run.workflow_name
+    }
+}
+
+fn ci_run_terminal(run: &WorkflowRun) -> bool {
+    run.status == "completed" && !run.conclusion.is_empty()
+}
+
+fn map_ci_run(run: WorkflowRun) -> CiRunEvidence {
+    CiRunEvidence {
+        id: run.database_id,
+        workflow: ci_workflow_name(&run).to_owned(),
+        revision: run.head_sha,
+        status: run.status,
+        conclusion: (!run.conclusion.is_empty()).then_some(run.conclusion),
+        url: run.url,
+    }
+}
+
+async fn find_change_request(
+    forge: &dyn ForgeApi,
+    source: &str,
+    target: &str,
+    include_paths: bool,
+) -> AgentResult<Option<ForgePr>> {
+    let matches = forge
+        .pr_for_branch(source)
+        .await
+        .map_err(|error| {
+            Box::new(map_forge_operation_error(
+                Operation::Publish,
+                include_paths,
+                error,
+                "change_request_lookup_failed",
+            ))
+        })?
+        .into_iter()
+        .filter(|pr| pr.source_branch == source && pr.target_branch == target)
+        .collect::<Vec<_>>();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
+        _ => Err(Box::new(
+            publish_denied("change_request_match_ambiguous", include_paths)
+                .with_detail(DetailKey::Source, source)
+                .with_detail(DetailKey::Target, target),
+        )),
+    }
+}
+
+fn checked_ref(value: &str, operation: Operation, include_paths: bool) -> AgentResult<RefName> {
+    RefName::new(value.to_owned()).map_err(|_| {
+        Box::new(
+            AgentError::invalid_input_for(operation.name(), "branch_name_invalid")
+                .include_machine_paths(include_paths),
+        )
+    })
+}
+
+fn publish_denied(code: &'static str, include_paths: bool) -> AgentError {
+    AgentError::new(Operation::Publish.name(), ErrorKind::Denied, code, false)
+        .include_machine_paths(include_paths)
+}
+
+fn publish_unknown(code: &'static str, include_paths: bool) -> AgentError {
+    AgentError::new(
+        Operation::Publish.name(),
+        ErrorKind::OutcomeUnknown,
+        code,
+        true,
+    )
+    .include_machine_paths(include_paths)
+}
+
+fn map_forge_operation_error(
+    operation: Operation,
+    include_paths: bool,
+    error: vcs_forge::Error,
+    code: &'static str,
+) -> AgentError {
+    match error {
+        vcs_forge::Error::Forge(process) => {
+            AgentError::from_processkit(operation.name(), FailureDomain::Forge, &process)
+        }
+        other if other.is_unsupported() => {
+            AgentError::new(operation.name(), ErrorKind::Unsupported, code, false)
+        }
+        other if other.is_unauthorized() => {
+            AgentError::new(operation.name(), ErrorKind::Authentication, code, false)
+        }
+        _ => AgentError::new(operation.name(), ErrorKind::Forge, code, false),
+    }
+    .include_machine_paths(include_paths)
 }
 
 async fn commit_repo<R: ProcessRunner>(
@@ -846,7 +1633,7 @@ fn open_repo(
                 .default_timeout(policy.deadline)
                 .default_cancel_on(policy.cancellation.clone())
                 .default_output_budget(policy.content_budget);
-            if operation == Operation::Commit {
+            if matches!(operation, Operation::Commit | Operation::Publish) {
                 git.harden()
             } else {
                 git
@@ -966,32 +1753,36 @@ fn build_forge(
     policy: &ExecutionPolicy,
 ) -> Option<Box<dyn ForgeApi>> {
     let kind = preferred_forge_remote(remotes)?.1;
+    Some(build_forge_kind(kind, cwd, policy))
+}
+
+fn build_forge_kind(kind: ForgeKind, cwd: &Path, policy: &ExecutionPolicy) -> Box<dyn ForgeApi> {
     let timeout = policy.deadline;
     let token = &policy.cancellation;
     let budget = policy.content_budget;
     match kind {
-        ForgeKind::GitHub => Some(Box::new(Forge::from_github(
+        ForgeKind::GitHub => Box::new(Forge::from_github(
             cwd,
             GitHub::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        ))),
-        ForgeKind::GitLab => Some(Box::new(Forge::from_gitlab(
+        )),
+        ForgeKind::GitLab => Box::new(Forge::from_gitlab(
             cwd,
             GitLab::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        ))),
-        ForgeKind::Gitea => Some(Box::new(Forge::from_gitea(
+        )),
+        ForgeKind::Gitea => Box::new(Forge::from_gitea(
             cwd,
             Gitea::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        ))),
-        _ => Some(Box::new(Forge::<JobRunner>::from_unknown(cwd))),
+        )),
+        _ => Box::new(Forge::<JobRunner>::from_unknown(cwd)),
     }
 }
 
@@ -1469,6 +2260,16 @@ mod tests {
             expected_revision: None,
             message: None,
             commit_paths: Vec::new(),
+            remote: None,
+            source: None,
+            target: None,
+            expected_remote_revision: None,
+            forge: None,
+            expected_account: None,
+            title: None,
+            body: None,
+            wait_seconds: crate::cli::DEFAULT_WAIT_SECONDS,
+            poll_seconds: crate::cli::DEFAULT_POLL_SECONDS,
         }
     }
 
@@ -1632,6 +2433,16 @@ mod tests {
             expected_revision: Some("abc".to_owned()),
             message: Some("message".to_owned()),
             commit_paths: vec![PathBuf::from("selected.txt")],
+            remote: None,
+            source: None,
+            target: None,
+            expected_remote_revision: None,
+            forge: None,
+            expected_account: None,
+            title: None,
+            body: None,
+            wait_seconds: crate::cli::DEFAULT_WAIT_SECONDS,
+            poll_seconds: crate::cli::DEFAULT_POLL_SECONDS,
         };
         let error = match commit_repo(&repo, &invocation).await {
             Err(error) => error,
@@ -1902,6 +2713,79 @@ mod tests {
                 .expect_err("a checked mutation requires a clear repository");
             assert_eq!(error.kind(), ErrorKind::Denied);
         }
+    }
+
+    fn workflow_run(json: &str) -> WorkflowRun {
+        serde_json::from_str(json).expect("valid workflow-run fixture")
+    }
+
+    #[test]
+    fn exact_ci_selection_rejects_recent_mismatch_and_duplicate_workflow() {
+        let expected = "0123456789abcdef0123456789abcdef01234567";
+        let recent_other = workflow_run(
+            r#"{"databaseId":1,"workflowName":"CI","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"success"}"#,
+        );
+        assert!(
+            select_exact_ci_runs(vec![recent_other], expected, Operation::CiStatus, false)
+                .expect("mismatched runs are ignored")
+                .is_empty(),
+            "a recent branch run for another SHA must not satisfy exact CI"
+        );
+
+        let first = workflow_run(&format!(
+            r#"{{"databaseId":2,"workflowName":"CI","headSha":"{expected}","status":"completed","conclusion":"success"}}"#
+        ));
+        let rerun = workflow_run(&format!(
+            r#"{{"databaseId":3,"workflowName":"CI","headSha":"{expected}","status":"completed","conclusion":"success"}}"#
+        ));
+        let error = select_exact_ci_runs(vec![first, rerun], expected, Operation::CiStatus, false)
+            .expect_err("two runs for one workflow/SHA are ambiguous");
+        assert_eq!(error.kind(), ErrorKind::Denied);
+    }
+
+    #[test]
+    fn exact_ci_requires_completed_success_not_pending_or_recent_success() {
+        let expected = "0123456789abcdef0123456789abcdef01234567";
+        let pending = workflow_run(&format!(
+            r#"{{"databaseId":4,"workflowName":"CI","headSha":"{expected}","status":"in_progress","conclusion":""}}"#
+        ));
+        let exact = select_exact_ci_runs(vec![pending], expected, Operation::CiStatus, false)
+            .expect("one exact pending run is unambiguous");
+        assert!(!exact.iter().all(ci_run_terminal));
+        assert!(!exact.iter().all(|run| run.conclusion == "success"));
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_jujutsu_before_any_typed_mutation() {
+        let repo = Repo::from_jj("/repo", "/repo", Jj::with_runner(ScriptedRunner::new()));
+        let invocation = Invocation {
+            operation: Operation::Publish,
+            repository: Some(PathBuf::from("/repo")),
+            changes_mode: ChangesMode::Summary,
+            content_max_bytes: 8192,
+            max_output_bytes: crate::cli::DEFAULT_MAX_OUTPUT_BYTES,
+            include_machine_paths: false,
+            write_intent: true,
+            expected_revision: Some("0123456789abcdef0123456789abcdef01234567".into()),
+            message: None,
+            commit_paths: Vec::new(),
+            remote: Some("origin".into()),
+            source: Some("feature".into()),
+            target: Some("main".into()),
+            expected_remote_revision: Some("absent".into()),
+            forge: Some("github".into()),
+            expected_account: Some("agent".into()),
+            title: Some("title".into()),
+            body: Some(String::new()),
+            wait_seconds: crate::cli::DEFAULT_WAIT_SECONDS,
+            poll_seconds: crate::cli::DEFAULT_POLL_SECONDS,
+        };
+        let error = match publish_repo(&repo, &invocation, &ExecutionPolicy::new(8192)).await {
+            Err(error) => error,
+            Ok(_) => panic!("Jujutsu lacks an exact-source checked push primitive"),
+        };
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert_eq!(error.code(), "jujutsu_exact_push_unsupported");
     }
 
     #[cfg(unix)]

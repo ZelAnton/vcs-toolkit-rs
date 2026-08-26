@@ -7,6 +7,8 @@ pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 pub(crate) const MIN_MAX_OUTPUT_BYTES: usize = 1024;
 pub(crate) const MAX_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 pub(crate) const DEFAULT_CONTENT_MAX_BYTES: usize = 256 * 1024;
+pub(crate) const DEFAULT_WAIT_SECONDS: u64 = 30 * 60;
+pub(crate) const DEFAULT_POLL_SECONDS: u64 = 10;
 
 pub(crate) const USAGE: &str = "\
 vcs-agent — bounded, outcome-oriented repository operations for agents.\n\
@@ -18,6 +20,16 @@ USAGE:\n\
     vcs-agent commit --repo <PATH> --write-intent commit\n\
                      --expected-revision <ID> --message <TEXT>\n\
                      --path <PATH> [--path <PATH> ...] [OPTIONS]\n\
+    vcs-agent publish --repo <PATH> --write-intent publish\n\
+                      --expected-revision <ID> --expected-remote-revision <ID|absent>\n\
+                      --remote <NAME> --source <BRANCH> --target <BRANCH>\n\
+                      --forge <github|gitlab|gitea> --expected-account <LOGIN>\n\
+                      --title <TEXT> --body <TEXT> [OPTIONS]\n\
+    vcs-agent ci status --repo <PATH> --forge <github|gitlab|gitea>\n\
+                        --source <BRANCH> --expected-revision <ID> [OPTIONS]\n\
+    vcs-agent ci wait --repo <PATH> --forge <github|gitlab|gitea>\n\
+                      --source <BRANCH> --expected-revision <ID>\n\
+                      [--wait-seconds <N>] [--poll-seconds <N>] [OPTIONS]\n\
 \n\
 OUTCOMES:\n\
     probe       Report contract, compatibility, capabilities, and exit semantics.\n\
@@ -25,17 +37,28 @@ OUTCOMES:\n\
     changes     Report changed paths and counts; full mode also returns structured hunks.\n\
     commit      Commit exactly the named repo-relative paths after a checked preflight.\n\
 \n\
-    The v1 taxonomy also reserves publish, ci status, and ci wait. Until\n\
-    implemented, they fail with a structured unsupported result; vcs-agent never\n\
-    falls through to a raw VCS or forge command.\n\
+    publish     Checked exact-revision push plus idempotent PR/MR discovery/create.\n\
+    ci status   Report CI only when it is tied to the expected published revision.\n\
+    ci wait     Poll the exact revision to a terminal conclusion within one deadline.\n\
 \n\
 OPTIONS:\n\
-    --repo <PATH>             Repository path. Required by inspect, changes, and commit.\n\
+    --repo <PATH>             Repository path. Required except by probe.\n\
     --mode <summary|full>     Changes detail (default: summary).\n\
-    --write-intent commit     Explicitly authorize the checked commit mutation.\n\
+    --write-intent <intent>   Explicitly authorize commit or publish.\n\
     --expected-revision <ID> Fail closed unless the current revision is exactly ID.\n\
     --message <TEXT>          Non-empty commit message.\n\
     --path <PATH>             Exact repo-relative leaf file path; repeat for each file.\n\
+    --remote <NAME>           Exact configured remote selected for publish.\n\
+    --source <BRANCH>         Exact source branch/bookmark to publish or inspect.\n\
+    --target <BRANCH>         Exact PR/MR target branch.\n\
+    --forge <KIND>            Expected forge identity: github, gitlab, or gitea.\n\
+    --expected-account <ID>   Expected active forge account; publish fails closed.\n\
+    --expected-remote-revision <ID|absent>\n\
+                              Expected pre-push remote state for retry-safe recovery.\n\
+    --title <TEXT>            PR/MR title for publish.\n\
+    --body <TEXT>             PR/MR body for publish (may be empty).\n\
+    --wait-seconds <N>        Total ci-wait deadline (default: 1800).\n\
+    --poll-seconds <N>        ci-wait polling interval (default: 10).\n\
     --content-max-bytes <n>   Fail if captured diff content exceeds n bytes\n\
                               (1024..=1048576; default: 262144).\n\
     --max-output-bytes <n>    Fail before emitting a result larger than n bytes\n\
@@ -70,13 +93,6 @@ impl Operation {
             Self::CiStatus => "ci_status",
             Self::CiWait => "ci_wait",
         }
-    }
-
-    const fn implemented(self) -> bool {
-        matches!(
-            self,
-            Self::Probe | Self::Inspect | Self::Changes | Self::Commit
-        )
     }
 
     fn parse_leading(args: &[OsString]) -> Option<(Self, usize)> {
@@ -116,12 +132,22 @@ pub(crate) struct Invocation {
     pub(crate) expected_revision: Option<String>,
     pub(crate) message: Option<String>,
     pub(crate) commit_paths: Vec<PathBuf>,
+    pub(crate) remote: Option<String>,
+    pub(crate) source: Option<String>,
+    pub(crate) target: Option<String>,
+    pub(crate) expected_remote_revision: Option<String>,
+    pub(crate) forge: Option<String>,
+    pub(crate) expected_account: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) body: Option<String>,
+    pub(crate) wait_seconds: u64,
+    pub(crate) poll_seconds: u64,
 }
 
 pub(crate) enum ParseResult {
     Help,
     Version,
-    Run(Invocation),
+    Run(Box<Invocation>),
 }
 
 pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseResult> {
@@ -147,18 +173,6 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
             .with_fallback(Fallback::raw_cli("unknown_outcome")),
         ));
     };
-    if !operation.implemented() {
-        return Err(Box::new(
-            AgentError::new(
-                operation.name(),
-                ErrorKind::Unsupported,
-                "outcome_not_implemented",
-                false,
-            )
-            .with_fallback(Fallback::raw_cli("outcome_not_implemented")),
-        ));
-    }
-
     let mut repository = None;
     let mut changes_mode = ChangesMode::Summary;
     let mut mode_seen = false;
@@ -171,6 +185,16 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
     let mut expected_revision = None;
     let mut message = None;
     let mut commit_paths = Vec::new();
+    let mut remote = None;
+    let mut source = None;
+    let mut target = None;
+    let mut expected_remote_revision = None;
+    let mut forge = None;
+    let mut expected_account = None;
+    let mut title = None;
+    let mut body = None;
+    let mut wait_seconds = DEFAULT_WAIT_SECONDS;
+    let mut poll_seconds = DEFAULT_POLL_SECONDS;
     let mut index = command_len;
     while index < args.len() {
         let Some(option) = args[index].to_str() else {
@@ -234,7 +258,7 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
                 content_budget_seen = true;
                 index += 2;
             }
-            "--write-intent" if operation == Operation::Commit => {
+            "--write-intent" if matches!(operation, Operation::Commit | Operation::Publish) => {
                 if write_intent {
                     return Err(Box::new(AgentError::invalid_input_for(
                         operation.name(),
@@ -242,16 +266,33 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
                     )));
                 }
                 let value = utf8_value(&args, index + 1, operation, "write_intent_required")?;
-                if value != "commit" {
+                let expected_intent = if operation == Operation::Commit {
+                    "commit"
+                } else {
+                    "publish"
+                };
+                if value != expected_intent {
                     return Err(Box::new(AgentError::invalid_input_for(
                         operation.name(),
-                        "write_intent_must_be_commit",
+                        if operation == Operation::Commit {
+                            "write_intent_must_be_commit"
+                        } else {
+                            "write_intent_must_be_publish"
+                        },
                     )));
                 }
                 write_intent = true;
                 index += 2;
             }
-            "--expected-revision" if operation == Operation::Commit => {
+            "--expected-revision"
+                if matches!(
+                    operation,
+                    Operation::Commit
+                        | Operation::Publish
+                        | Operation::CiStatus
+                        | Operation::CiWait
+                ) =>
+            {
                 if expected_revision.is_some() {
                     return Err(Box::new(AgentError::invalid_input_for(
                         operation.name(),
@@ -303,6 +344,74 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
                 commit_paths.push(path);
                 index += 2;
             }
+            "--remote" if operation == Operation::Publish => {
+                set_nonempty(&mut remote, &args, index + 1, operation, "remote")?;
+                index += 2;
+            }
+            "--source"
+                if matches!(
+                    operation,
+                    Operation::Publish | Operation::CiStatus | Operation::CiWait
+                ) =>
+            {
+                set_nonempty(&mut source, &args, index + 1, operation, "source")?;
+                index += 2;
+            }
+            "--target" if operation == Operation::Publish => {
+                set_nonempty(&mut target, &args, index + 1, operation, "target")?;
+                index += 2;
+            }
+            "--expected-remote-revision" if operation == Operation::Publish => {
+                set_nonempty(
+                    &mut expected_remote_revision,
+                    &args,
+                    index + 1,
+                    operation,
+                    "expected_remote_revision",
+                )?;
+                index += 2;
+            }
+            "--forge"
+                if matches!(
+                    operation,
+                    Operation::Publish | Operation::CiStatus | Operation::CiWait
+                ) =>
+            {
+                set_nonempty(&mut forge, &args, index + 1, operation, "forge")?;
+                if !matches!(forge.as_deref(), Some("github" | "gitlab" | "gitea")) {
+                    return Err(Box::new(AgentError::invalid_input_for(
+                        operation.name(),
+                        "forge_must_be_github_gitlab_or_gitea",
+                    )));
+                }
+                index += 2;
+            }
+            "--expected-account" if operation == Operation::Publish => {
+                set_nonempty(
+                    &mut expected_account,
+                    &args,
+                    index + 1,
+                    operation,
+                    "expected_account",
+                )?;
+                index += 2;
+            }
+            "--title" if operation == Operation::Publish => {
+                set_nonempty(&mut title, &args, index + 1, operation, "title")?;
+                index += 2;
+            }
+            "--body" if operation == Operation::Publish => {
+                set_once(&mut body, &args, index + 1, operation, "body")?;
+                index += 2;
+            }
+            "--wait-seconds" if operation == Operation::CiWait => {
+                wait_seconds = parse_positive_u64(&args, index + 1, operation, "wait_seconds")?;
+                index += 2;
+            }
+            "--poll-seconds" if operation == Operation::CiWait => {
+                poll_seconds = parse_positive_u64(&args, index + 1, operation, "poll_seconds")?;
+                index += 2;
+            }
             "--max-output-bytes" => {
                 if machine_budget_seen {
                     return Err(Box::new(AgentError::invalid_input_for(
@@ -336,7 +445,12 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
 
     if matches!(
         operation,
-        Operation::Inspect | Operation::Changes | Operation::Commit
+        Operation::Inspect
+            | Operation::Changes
+            | Operation::Commit
+            | Operation::Publish
+            | Operation::CiStatus
+            | Operation::CiWait
     ) && repository.is_none()
     {
         return Err(Box::new(AgentError::invalid_input_for(
@@ -370,8 +484,41 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
             )));
         }
     }
+    if operation == Operation::Publish {
+        require(write_intent, operation, "write_intent_required")?;
+        require(
+            expected_revision.is_some(),
+            operation,
+            "expected_revision_required",
+        )?;
+        require(remote.is_some(), operation, "remote_required")?;
+        require(source.is_some(), operation, "source_required")?;
+        require(target.is_some(), operation, "target_required")?;
+        require(
+            expected_remote_revision.is_some(),
+            operation,
+            "expected_remote_revision_required",
+        )?;
+        require(forge.is_some(), operation, "forge_required")?;
+        require(
+            expected_account.is_some(),
+            operation,
+            "expected_account_required",
+        )?;
+        require(title.is_some(), operation, "title_required")?;
+        require(body.is_some(), operation, "body_required")?;
+    }
+    if matches!(operation, Operation::CiStatus | Operation::CiWait) {
+        require(
+            expected_revision.is_some(),
+            operation,
+            "expected_revision_required",
+        )?;
+        require(source.is_some(), operation, "source_required")?;
+        require(forge.is_some(), operation, "forge_required")?;
+    }
 
-    Ok(ParseResult::Run(Invocation {
+    Ok(ParseResult::Run(Box::new(Invocation {
         operation,
         repository,
         changes_mode,
@@ -382,7 +529,81 @@ pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseRe
         expected_revision,
         message,
         commit_paths,
-    }))
+        remote,
+        source,
+        target,
+        expected_remote_revision,
+        forge,
+        expected_account,
+        title,
+        body,
+        wait_seconds,
+        poll_seconds,
+    })))
+}
+
+fn require(present: bool, operation: Operation, code: &'static str) -> AgentResult<()> {
+    if present {
+        Ok(())
+    } else {
+        Err(Box::new(AgentError::invalid_input_for(
+            operation.name(),
+            code,
+        )))
+    }
+}
+
+fn set_nonempty(
+    slot: &mut Option<String>,
+    args: &[OsString],
+    index: usize,
+    operation: Operation,
+    label: &'static str,
+) -> AgentResult<()> {
+    set_once(slot, args, index, operation, label)?;
+    if slot.as_deref().is_none_or(|value| value.trim().is_empty()) {
+        return Err(Box::new(AgentError::invalid_input_for(
+            operation.name(),
+            "option_value_empty",
+        )));
+    }
+    Ok(())
+}
+
+fn set_once(
+    slot: &mut Option<String>,
+    args: &[OsString],
+    index: usize,
+    operation: Operation,
+    _label: &'static str,
+) -> AgentResult<()> {
+    if slot.is_some() {
+        return Err(Box::new(AgentError::invalid_input_for(
+            operation.name(),
+            "option_repeated",
+        )));
+    }
+    let value = utf8_value(args, index, operation, "option_value_required")?;
+    *slot = Some(value.to_owned());
+    Ok(())
+}
+
+fn parse_positive_u64(
+    args: &[OsString],
+    index: usize,
+    operation: Operation,
+    _label: &'static str,
+) -> AgentResult<u64> {
+    let value = utf8_value(args, index, operation, "option_value_required")?
+        .parse::<u64>()
+        .map_err(|_| AgentError::invalid_input_for(operation.name(), "option_must_be_integer"))?;
+    if value == 0 {
+        return Err(Box::new(AgentError::invalid_input_for(
+            operation.name(),
+            "option_must_be_positive",
+        )));
+    }
+    Ok(value)
 }
 
 fn validate_commit_path(path: &Path) -> AgentResult<()> {
@@ -581,6 +802,78 @@ mod tests {
             commit.commit_paths,
             [PathBuf::from("src/lib.rs"), PathBuf::from("tests/case.rs")]
         );
+
+        let ParseResult::Run(publish) = parse_strings(&[
+            "publish",
+            "--repo",
+            "repo",
+            "--write-intent",
+            "publish",
+            "--expected-revision",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--expected-remote-revision",
+            "absent",
+            "--remote",
+            "origin",
+            "--source",
+            "feature",
+            "--target",
+            "main",
+            "--forge",
+            "github",
+            "--expected-account",
+            "agent",
+            "--title",
+            "Checked publish",
+            "--body",
+            "",
+        ])
+        .expect("valid checked publish") else {
+            panic!("expected runnable publish");
+        };
+        assert_eq!(publish.operation, Operation::Publish);
+        assert_eq!(publish.remote.as_deref(), Some("origin"));
+        assert_eq!(publish.expected_remote_revision.as_deref(), Some("absent"));
+
+        let ParseResult::Run(status) = parse_strings(&[
+            "ci",
+            "status",
+            "--repo",
+            "repo",
+            "--forge",
+            "github",
+            "--source",
+            "feature",
+            "--expected-revision",
+            "0123456789abcdef0123456789abcdef01234567",
+        ])
+        .expect("valid exact CI status") else {
+            panic!("expected runnable CI status");
+        };
+        assert_eq!(status.operation, Operation::CiStatus);
+
+        let ParseResult::Run(wait) = parse_strings(&[
+            "ci",
+            "wait",
+            "--repo",
+            "repo",
+            "--forge",
+            "github",
+            "--source",
+            "feature",
+            "--expected-revision",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--wait-seconds",
+            "60",
+            "--poll-seconds",
+            "2",
+        ])
+        .expect("valid exact CI wait") else {
+            panic!("expected runnable CI wait");
+        };
+        assert_eq!(wait.operation, Operation::CiWait);
+        assert_eq!(wait.wait_seconds, 60);
+        assert_eq!(wait.poll_seconds, 2);
     }
 
     #[test]

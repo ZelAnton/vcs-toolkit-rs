@@ -229,11 +229,11 @@ without weakening ProcessKit-rs containment.
 
 ### Phase 3 — Checked mutations and publication
 
-- Add exact-path commit with preflight and before/after evidence.
-- Add checked push and PR/MR publication with explicit account/forge identity.
-- Add exact-revision CI status and terminal wait, with cancellation and inactivity
+- [x] Add exact-path commit with preflight and before/after evidence.
+- [x] Add checked push and PR/MR publication with explicit account/forge identity.
+- [x] Add exact-revision CI status and terminal wait, with cancellation and inactivity
   handling inherited from ProcessKit.
-- Prove idempotent recovery where a remote step succeeded before a later step failed.
+- [x] Prove idempotent recovery where a remote step succeeded before a later step failed.
 
 Exit condition: the common “prepare, publish, wait for CI” workflow completes without
 raw CLI use and cannot claim success for the wrong revision.

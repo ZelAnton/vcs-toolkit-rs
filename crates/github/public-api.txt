@@ -2334,6 +2334,7 @@ pub vcs_github::WorkflowRun::database_id: u64
 pub vcs_github::WorkflowRun::display_title: alloc::string::String
 pub vcs_github::WorkflowRun::event: alloc::string::String
 pub vcs_github::WorkflowRun::head_branch: alloc::string::String
+pub vcs_github::WorkflowRun::head_sha: alloc::string::String
 pub vcs_github::WorkflowRun::name: alloc::string::String
 pub vcs_github::WorkflowRun::status: alloc::string::String
 pub vcs_github::WorkflowRun::url: alloc::string::String

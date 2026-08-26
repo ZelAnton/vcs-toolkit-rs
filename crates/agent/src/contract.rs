@@ -182,6 +182,15 @@ pub(crate) enum DetailKey {
     Token,
     RepositoryPath,
     WorkingDirectory,
+    Revision,
+    Remote,
+    Source,
+    Target,
+    Forge,
+    Account,
+    Checkpoint,
+    Conclusion,
+    RunId,
 }
 
 #[derive(Clone, Copy)]
@@ -200,6 +209,15 @@ impl DetailKey {
             Self::Token => "token",
             Self::RepositoryPath => "repository_path",
             Self::WorkingDirectory => "working_directory",
+            Self::Revision => "revision",
+            Self::Remote => "remote",
+            Self::Source => "source",
+            Self::Target => "target",
+            Self::Forge => "forge",
+            Self::Account => "account",
+            Self::Checkpoint => "checkpoint",
+            Self::Conclusion => "conclusion",
+            Self::RunId => "run_id",
         }
     }
 
@@ -207,7 +225,18 @@ impl DetailKey {
         match self {
             Self::Token => DetailSensitivity::Secret,
             Self::RepositoryPath | Self::WorkingDirectory => DetailSensitivity::MachinePath,
-            Self::MaxBytes | Self::ProcessErrorKind | Self::RemoteUrl => DetailSensitivity::Text,
+            Self::MaxBytes
+            | Self::ProcessErrorKind
+            | Self::RemoteUrl
+            | Self::Revision
+            | Self::Remote
+            | Self::Source
+            | Self::Target
+            | Self::Forge
+            | Self::Account
+            | Self::Checkpoint
+            | Self::Conclusion
+            | Self::RunId => DetailSensitivity::Text,
         }
     }
 }
@@ -401,6 +430,11 @@ impl AgentError {
     #[cfg(test)]
     pub(crate) fn kind(&self) -> ErrorKind {
         self.kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
     }
 
     pub(crate) fn exit_code(&self) -> ExitCode {
@@ -728,6 +762,16 @@ mod tests {
             expected_revision: None,
             message: None,
             commit_paths: Vec::new(),
+            remote: None,
+            source: None,
+            target: None,
+            expected_remote_revision: None,
+            forge: None,
+            expected_account: None,
+            title: None,
+            body: None,
+            wait_seconds: crate::cli::DEFAULT_WAIT_SECONDS,
+            poll_seconds: crate::cli::DEFAULT_POLL_SECONDS,
         };
         let policy = ExecutionPolicy::new(invocation.content_max_bytes);
         let emitted_probe =
@@ -766,6 +810,9 @@ mod tests {
             include_str!("../tests/fixtures/changes-full-jj.v1.json"),
             include_str!("../tests/fixtures/changes-output-limit.v1.json"),
             include_str!("../tests/fixtures/commit-success-git.v1.json"),
+            include_str!("../tests/fixtures/publish-success-git.v1.json"),
+            include_str!("../tests/fixtures/ci-status-success-github.v1.json"),
+            include_str!("../tests/fixtures/ci-wait-success-github.v1.json"),
         ] {
             let fixture: Value = serde_json::from_str(fixture).expect("golden fixture is JSON");
             assert!(
@@ -832,6 +879,22 @@ mod tests {
         let mut commit_hides_unrelated_loss = commit;
         commit_hides_unrelated_loss["data"]["unrelated_changes_preserved"] = Value::Bool(false);
         assert!(!validator.is_valid(&commit_hides_unrelated_loss));
+
+        let publish: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/publish-success-git.v1.json"
+        ))
+        .expect("publish fixture is JSON");
+        let mut publish_without_postflight = publish;
+        publish_without_postflight["data"]["push"]["verified"] = json!(false);
+        assert!(!validator.is_valid(&publish_without_postflight));
+
+        let ci: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/ci-status-success-github.v1.json"
+        ))
+        .expect("CI fixture is JSON");
+        let mut successful_but_pending = ci;
+        successful_but_pending["data"]["terminal"] = json!(false);
+        assert!(!validator.is_valid(&successful_but_pending));
 
         let mut wrong_version = success.clone();
         wrong_version["contract_version"] = json!("vcs-agent/v2");

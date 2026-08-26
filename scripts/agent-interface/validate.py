@@ -554,6 +554,99 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
             raise ValidationError(f"{label}: Git commit identities cannot claim jj change IDs")
         if semantics["index_may_change_for_selected_paths"] is not True:
             raise ValidationError(f"{label}: Git commit must disclose selected-index mutation")
+    elif operation == "publish":
+        publish_fields = (
+            "repository", "expected_revision", "remote_revision", "remote", "source",
+            "target", "forge", "account", "push", "change_request", "checkpoint",
+            "exact_revision_verified",
+        )
+        _require_fields(data, publish_fields, f"{label}.data")
+        repository = _repository(data["repository"], f"{label}.data.repository")
+        if repository["backend"] != "git":
+            raise ValidationError(f"{label}: checked publish success is supported only for Git")
+        for field in ("expected_revision", "remote_revision", "remote", "source", "target", "account"):
+            _string(data[field], f"{label}.data.{field}")
+        if data["forge"] != "github":
+            raise ValidationError(f"{label}.data.forge must be github")
+        if data["expected_revision"] != data["remote_revision"]:
+            raise ValidationError(f"{label}: publish must verify the exact remote revision")
+        if data["exact_revision_verified"] is not True:
+            raise ValidationError(f"{label}.data.exact_revision_verified must be true")
+
+        push = _object(data["push"], f"{label}.data.push")
+        _require_fields(push, ("state", "irreversible", "verified"), f"{label}.data.push")
+        if push["state"] not in {"performed", "already_present", "recovered_after_error"}:
+            raise ValidationError(f"{label}.data.push.state is invalid")
+        if push["irreversible"] is not True or push["verified"] is not True:
+            raise ValidationError(f"{label}.data.push must disclose and verify the irreversible step")
+
+        change_request = _object(data["change_request"], f"{label}.data.change_request")
+        request_fields = ("state", "number", "url", "source", "target")
+        _require_fields(change_request, request_fields, f"{label}.data.change_request")
+        if change_request["state"] not in {"created", "already_present", "recovered_after_error"}:
+            raise ValidationError(f"{label}.data.change_request.state is invalid")
+        number = _integer(change_request["number"], f"{label}.data.change_request.number")
+        if number == 0:
+            raise ValidationError(f"{label}.data.change_request.number must be positive")
+        _string(change_request["url"], f"{label}.data.change_request.url")
+        if change_request["source"] != data["source"] or change_request["target"] != data["target"]:
+            raise ValidationError(f"{label}: change request branches must match the checked publish")
+        if data["checkpoint"] != "publish_complete":
+            raise ValidationError(f"{label}.data.checkpoint must be publish_complete")
+    elif operation in {"ci_status", "ci_wait"}:
+        ci_fields = (
+            "repository", "forge", "source", "expected_revision", "exact_revision_verified",
+            "terminal", "successful", "runs", "wait",
+        )
+        _require_fields(data, ci_fields, f"{label}.data")
+        repository = _repository(data["repository"], f"{label}.data.repository")
+        if repository["backend"] != "git" or data["forge"] != "github":
+            raise ValidationError(f"{label}: exact-revision CI success is supported only for GitHub Git repositories")
+        _string(data["source"], f"{label}.data.source")
+        expected_revision = _string(data["expected_revision"], f"{label}.data.expected_revision")
+        if data["exact_revision_verified"] is not True:
+            raise ValidationError(f"{label}.data.exact_revision_verified must be true")
+        terminal = _boolean(data["terminal"], f"{label}.data.terminal")
+        successful = _boolean(data["successful"], f"{label}.data.successful")
+        runs = data["runs"]
+        if not isinstance(runs, list) or not runs:
+            raise ValidationError(f"{label}.data.runs must be a non-empty array")
+        workflows: set[str] = set()
+        all_successful = True
+        for index, raw_run in enumerate(runs):
+            run_label = f"{label}.data.runs[{index}]"
+            run = _object(raw_run, run_label)
+            _require_fields(run, ("id", "workflow", "revision", "status", "conclusion", "url"), run_label)
+            if _integer(run["id"], f"{run_label}.id") == 0:
+                raise ValidationError(f"{run_label}.id must be positive")
+            workflow = _string(run["workflow"], f"{run_label}.workflow")
+            if workflow in workflows:
+                raise ValidationError(f"{label}: duplicate workflow run is ambiguous")
+            workflows.add(workflow)
+            if _string(run["revision"], f"{run_label}.revision") != expected_revision:
+                raise ValidationError(f"{run_label}.revision must equal the expected revision")
+            status_value = _string(run["status"], f"{run_label}.status")
+            _string_or_null(run["conclusion"], f"{run_label}.conclusion")
+            _string(run["url"], f"{run_label}.url")
+            all_successful = all_successful and status_value == "completed" and run["conclusion"] == "success"
+        if successful and (not terminal or not all_successful):
+            raise ValidationError(f"{label}: successful CI must be terminal success for every exact-revision run")
+
+        wait = data["wait"]
+        if operation == "ci_status":
+            if wait is not None:
+                raise ValidationError(f"{label}.data.wait must be null for ci_status")
+        else:
+            wait = _object(wait, f"{label}.data.wait")
+            wait_fields = ("total_deadline_seconds", "poll_seconds", "inactivity_watchdog", "diagnostic_budget")
+            _require_fields(wait, wait_fields, f"{label}.data.wait")
+            for field in ("total_deadline_seconds", "poll_seconds"):
+                if _integer(wait[field], f"{label}.data.wait.{field}") == 0:
+                    raise ValidationError(f"{label}.data.wait.{field} must be positive")
+            if wait["inactivity_watchdog"] != "github-run-watch-300s":
+                raise ValidationError(f"{label}.data.wait.inactivity_watchdog is invalid")
+            if wait["diagnostic_budget"] != "processkit-drop-oldest-256KiB-256-lines":
+                raise ValidationError(f"{label}.data.wait.diagnostic_budget is invalid")
     return envelope
 
 
