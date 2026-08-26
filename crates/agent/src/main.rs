@@ -6,18 +6,14 @@
 //! fail-loud content limits into every backend. This binary never constructs
 //! raw git/jj/forge child processes.
 
-mod app;
-mod cli;
-mod contract;
-mod redaction;
-
 use std::ffi::OsString;
 use std::io;
 use std::process::ExitCode;
 
-use app::{ExecutionPolicy, execute};
-use cli::{Invocation, ParseResult, USAGE};
-use contract::{AgentError, RenderedOutput, render};
+use vcs_agent::OutcomeServices;
+use vcs_agent::app::ExecutionPolicy;
+use vcs_agent::cli::{self, Invocation, ParseResult, USAGE};
+use vcs_agent::contract::{AgentError, RenderedOutput, render};
 
 fn main() -> ExitCode {
     run(
@@ -76,10 +72,7 @@ fn run_invocation(
             );
         }
     };
-    let output = match runtime.block_on(execute(&invocation, &policy)) {
-        Ok(success) => render(success, invocation.max_output_bytes),
-        Err(error) => render(*error, invocation.max_output_bytes),
-    };
+    let output = runtime.block_on(OutcomeServices::execute(&invocation, &policy));
     write_machine(output, stdout, stderr)
 }
 
@@ -113,8 +106,8 @@ fn write_text(stdout: &mut impl io::Write, text: &str, stderr: &mut impl io::Wri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::{DetailKey, ErrorKind};
     use serde_json::Value;
+    use vcs_agent::contract::{DetailKey, ErrorKind};
 
     fn call(args: &[&str]) -> (ExitCode, String, String) {
         let mut stdout = Vec::new();

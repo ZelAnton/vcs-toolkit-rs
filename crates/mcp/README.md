@@ -11,9 +11,15 @@ Built on the [`vcs-core`](https://crates.io/crates/vcs-core) (`Repo`) and
 [`vcs-forge`](https://crates.io/crates/vcs-forge) (`Forge`) facades: each tool
 wraps a typed operation and returns its DTO as JSON, so an agent harness drives a
 repository through **structured, validated calls** instead of raw shell — with the
-wrappers' argv injection guards still underneath. **Read tools are always
-available; mutating tools are gated** behind `--allow-write` (all mutations) or
-`--allow-tools <name,…>` (a per-tool allowlist) and annotated `destructiveHint`.
+wrappers' argv injection guards still underneath. Discovery advertises only
+tools available for the selected backend, configured forge, and write gate.
+Mutations require `--allow-write` or `--allow-tools <name,…>` and remain
+annotated `destructiveHint`.
+
+Prefer `outcome_*` for inspect, changes, checked commit/publish, and
+exact-revision CI. They share the same preflight, evidence, error mapping,
+credential isolation, deadlines, and fail-loud budgets as the `vcs-agent` CLI;
+the compatible low-level `repo_*`/`forge_*` tools remain for narrower operations.
 
 > 📖 **Full guide:** [on docs.rs](https://docs.rs/vcs-mcp/latest/vcs_mcp/guide/)
 
@@ -53,9 +59,10 @@ config entry:
 ```
 
 The forge is auto-detected from the repo's `origin` remote (works on a colocated
-jj repo too); pass `--forge` to override. With neither write flag, only the read
-tools are callable; `--allow-tools repo_commit,repo_push` grants exactly those
-mutations and nothing else.
+jj repo too); pass `--forge` to override. With neither write flag, mutation
+names are absent from `tools/list`; `--allow-tools repo_commit,repo_push`
+advertises and grants exactly those mutations and nothing else. Forge names are
+likewise absent when no forge is configured.
 
 ## The library
 

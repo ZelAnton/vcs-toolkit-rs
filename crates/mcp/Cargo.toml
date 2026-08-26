@@ -25,6 +25,10 @@ vcs-forge = { path = "../forge", version = "0.8", features = ["serde"] }
 # `--log-commands` flag installs over the git/jj/forge clients, with argv secret
 # redaction. Shared plumbing, so library consumers can reuse it too.
 vcs-cli-support = { path = "../cli-support", version = "0.8" }
+# Shared inspect/changes/commit/publish/CI application services. The MCP layer
+# supplies typed parameters and renders the common bounded envelope; it does not
+# reimplement preflight, policy, evidence, or error mapping.
+vcs-agent = { path = "../agent", version = "0.1" }
 # Async runtime for the server loop + rmcp's async handler dispatch (like
 # `vcs-watch`, this is a runtime dependency, not just dev). `io-std` backs the
 # stdio transport.

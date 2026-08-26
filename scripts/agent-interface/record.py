@@ -14,10 +14,12 @@ from validate import (
     load_json,
     validate_baseline,
     validate_corpus,
+    validate_comparison_runs,
     validate_machine_fixtures,
     validate_processkit_cli_evidence,
     validate_processkit_cli_profile,
     validate_results,
+    validate_transport_parity,
 )
 
 
@@ -37,6 +39,27 @@ def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
     return recorded
 
 
+def _comparison_metrics(runs: dict[str, dict[str, Any] | None]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for interface, run in runs.items():
+        if run is None:
+            metrics[interface] = None
+            continue
+        case_ids = run["case_ids"]
+        denominator = len(case_ids)
+        metrics[interface] = {
+            "availability": "measured",
+            "case_ids": case_ids,
+            "precision": _ratio(len(run["precision_hits"]), denominator),
+            "recall": _ratio(len(run["recall_hits"]), denominator),
+            "bypass_rate": _ratio(len(run["bypass_cases"]), denominator),
+            "invalid_call_rate": _ratio(sum(run["invalid_calls"].values()), denominator),
+            "invalid_call_evidence": run["invalid_calls"],
+            "outcome_correctness": _ratio(len(run["outcome_correct_cases"]), denominator),
+        }
+    return metrics
+
+
 def make_recording(
     corpus: Any,
     results: Any,
@@ -45,6 +68,8 @@ def make_recording(
 ) -> dict[str, Any]:
     corpus_by_id = validate_corpus(corpus, skill_contract)
     checked = validate_results(corpus_by_id, results)
+    comparison_runs = validate_comparison_runs(corpus_by_id, results)
+    transport_parity = validate_transport_parity(results)
     baseline_value = validate_baseline(baseline) if baseline is not None else None
     by_id = {result["case_id"]: result for result in checked}
     ordered = [by_id[case_id] for case_id in corpus_by_id if case_id in by_id]
@@ -95,6 +120,8 @@ def make_recording(
             "terminal_ci_verified": terminal_verified,
             "unrelated_state_preserved": sum(1 for result in ordered if result["workspace"]["unrelated_changes_preserved"]),
         },
+        "interface_metrics": _comparison_metrics(comparison_runs),
+        "transport_parity": transport_parity,
     }
     if baseline_value is not None:
         recording["baseline"] = {
@@ -131,7 +158,11 @@ def main(argv: list[str] | None = None) -> int:
             load_json(args.baseline),
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(recording, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(recording, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
     except (ValidationError, OSError) as exc:
         print(f"agent-interface recording failed: {exc}", file=sys.stderr)
         return 1

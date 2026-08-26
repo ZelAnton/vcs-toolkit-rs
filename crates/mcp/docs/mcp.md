@@ -117,6 +117,21 @@ Both GitHub identity flags fail at startup rather than being quietly ignored:
 
 ## Tool catalogue
 
+Start with the intent-oriented `outcome_inspect` preflight, then use
+`outcome_changes`, `outcome_commit`, `outcome_publish`, `outcome_ci_status`, or
+`outcome_ci_wait` when the desired result matches one of those workflows. These
+adapters parse MCP parameters and render the common bounded `vcs-agent/v1`
+envelope; the shared service owns policy, error mapping, evidence, and budgets.
+Use a lower-level `repo_*`/`forge_*` tool for a narrower operation. Raw CLI is a
+last-resort fallback only when no typed tool is advertised or a typed result
+explicitly reports unsupported, and it must preserve the same preflight and
+write policy.
+
+`tools/list` is configuration-aware. It omits disabled writes, all forge tools
+when no forge is configured, Git-only structural gaps such as jj operation-log
+tools, and known forge-specific unsupported operations. Existing low-level
+names, schemas, and annotations are unchanged when their capability is enabled.
+
 ### Read tools (always available)
 
 These are the query tools — **always callable**, regardless of the write gate.

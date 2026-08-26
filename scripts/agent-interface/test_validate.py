@@ -267,6 +267,45 @@ class SkillMetadataEvaluationTests(unittest.TestCase):
         )
         self.assertIsNone(recording["skill_metadata"]["unavailable_live_metrics"])
 
+    def test_recording_contains_measured_per_interface_comparison(self) -> None:
+        recording = record.make_recording(
+            self.corpus, self.results, self.skill_contract, self.baseline
+        )
+        cli = recording["interface_metrics"]["cli+skill"]
+        mcp = recording["interface_metrics"]["mcp"]
+        self.assertEqual(cli["case_ids"], mcp["case_ids"])
+        for metric in (
+            "precision", "recall", "bypass_rate", "invalid_call_rate", "outcome_correctness"
+        ):
+            self.assertEqual(cli[metric]["denominator"], 14)
+            self.assertEqual(mcp[metric]["denominator"], 14)
+        self.assertEqual(cli["invalid_call_evidence"], mcp["invalid_call_evidence"])
+        self.assertEqual(set(cli["invalid_call_evidence"]), set(cli["case_ids"]))
+
+    def test_unavailable_interface_is_recorded_as_null(self) -> None:
+        results = copy.deepcopy(self.results)
+        results["comparison_runs"]["mcp"] = None
+        recording = record.make_recording(
+            self.corpus, results, self.skill_contract, self.baseline
+        )
+        self.assertIsNone(recording["interface_metrics"]["mcp"])
+
+    def test_comparison_rejects_membership_invalid_evidence_and_revision_drift(self) -> None:
+        mismatch = copy.deepcopy(self.results)
+        mismatch["comparison_runs"]["mcp"]["case_ids"].pop()
+        with self.assertRaisesRegex(validate.ValidationError, "common corpus case membership"):
+            record.make_recording(self.corpus, mismatch, self.skill_contract, self.baseline)
+
+        invalid = copy.deepcopy(self.results)
+        invalid["comparison_runs"]["mcp"]["invalid_calls"].pop("inspect-status-git")
+        with self.assertRaisesRegex(validate.ValidationError, "explicitly cover every case"):
+            record.make_recording(self.corpus, invalid, self.skill_contract, self.baseline)
+
+        drift = copy.deepcopy(self.results)
+        drift["transport_parity"][1]["mcp"]["run_revision"] = "drifted"
+        with self.assertRaisesRegex(validate.ValidationError, "evidence mismatch"):
+            record.make_recording(self.corpus, drift, self.skill_contract, self.baseline)
+
     def test_negative_metric_must_remain_first_priority(self) -> None:
         corpus = copy.deepcopy(self.corpus)
         corpus["skill_metadata"]["metric_priority"].reverse()

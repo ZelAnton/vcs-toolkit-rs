@@ -2,6 +2,7 @@ use super::*;
 use processkit::testing::{Reply, ScriptedRunner};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
+use vcs_agent::cli::Operation;
 use vcs_core::vcs_git::Git;
 use vcs_core::vcs_jj::Jj;
 
@@ -10,6 +11,15 @@ fn git_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
     let repo: Arc<dyn VcsRepo> =
         Arc::new(Repo::from_git("/repo", "/repo", Git::with_runner(runner)));
     VcsMcpServer::from_handles(repo, None, writes)
+}
+
+/// A git-backed server that retains the typed runner in the common outcome context.
+fn git_outcome_server(runner: ScriptedRunner, writes: WriteGate) -> VcsMcpServer {
+    VcsMcpServer::new(
+        Repo::from_git("/repo", "/repo", Git::with_runner(runner)),
+        None,
+        writes,
+    )
 }
 
 /// A jj-backed server over a scripted runner — no real binary, no forge.
@@ -23,6 +33,15 @@ fn result_json(r: &CallToolResult) -> String {
     serde_json::to_string(r).expect("CallToolResult serialises")
 }
 
+fn outcome_json(r: &CallToolResult) -> serde_json::Value {
+    let text = r
+        .content
+        .first()
+        .and_then(|content| content.as_text())
+        .expect("outcome text content");
+    serde_json::from_str(&text.text).expect("outcome machine envelope")
+}
+
 // A read tool calls the facade and returns its DTO as JSON.
 #[tokio::test]
 async fn read_tool_returns_dto_json() {
@@ -32,6 +51,135 @@ async fn read_tool_returns_dto_json() {
     );
     let out = server.repo_current_branch().await.expect("tool ok");
     assert!(result_json(&out).contains("main"), "{}", result_json(&out));
+}
+
+#[tokio::test]
+async fn outcome_inspect_uses_the_injected_repo_runner_without_path_rediscovery() {
+    let server = git_outcome_server(
+        ScriptedRunner::new()
+            .on(["git", "remote", "-v"], Reply::ok(""))
+            .on(
+                ["git", "status", "--porcelain=v2"],
+                Reply::ok("# branch.oid abc123\0# branch.head main\0"),
+            )
+            .on(["git", "rev-parse", "--git-dir"], Reply::ok("/repo/.git\n")),
+        WriteGate::None,
+    );
+
+    let out = server
+        .outcome_inspect()
+        .await
+        .expect("configured runner must execute the outcome");
+    let json = outcome_json(&out);
+    assert_eq!(json["status"], "success", "{json}");
+    assert_eq!(json["data"]["working_copy"]["revision"], "abc123");
+}
+
+#[tokio::test]
+async fn outcome_ci_refuses_the_configured_forge_mismatch_without_ambient_substitution() {
+    let repo = Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new().on(
+            ["git", "remote", "-v"],
+            Reply::ok("origin https://github.com/owner/repo.git (fetch)\n"),
+        )),
+    );
+    let server = VcsMcpServer::new(
+        repo,
+        Some(Forge::<ScriptedRunner>::from_unknown("/repo")),
+        WriteGate::None,
+    );
+
+    let out = server
+        .outcome_ci_status(Parameters(OutcomeCiStatusParams {
+            forge: "github".into(),
+            source: "feature".into(),
+            expected_revision: "0123456789abcdef0123456789abcdef01234567".into(),
+        }))
+        .await
+        .expect("common failures are rendered as machine envelopes");
+    let json = outcome_json(&out);
+    assert_eq!(json["status"], "error", "{json}");
+    assert_eq!(json["error"]["code"], "configured_forge_identity_mismatch");
+}
+
+#[tokio::test]
+async fn mocked_mcp_publish_and_ci_adapters_preserve_cli_envelope_evidence() {
+    const PUBLISH: &str = include_str!("../../agent/tests/fixtures/publish-success-git.v1.json");
+    const CI_STATUS: &str =
+        include_str!("../../agent/tests/fixtures/ci-status-success-github.v1.json");
+    const CI_WAIT: &str = include_str!("../../agent/tests/fixtures/ci-wait-success-github.v1.json");
+
+    let repo: Arc<dyn VcsRepo> = Arc::new(Repo::from_git(
+        "/repo",
+        "/repo",
+        Git::with_runner(ScriptedRunner::new()),
+    ));
+    let runner: OutcomeRunner = Arc::new(|request, _policy| {
+        let fixture = match request.operation {
+            Operation::Publish => PUBLISH,
+            Operation::CiStatus => CI_STATUS,
+            Operation::CiWait => CI_WAIT,
+            operation => panic!("unexpected mocked operation: {operation:?}"),
+        };
+        Box::pin(async move {
+            RenderedOutput {
+                stdout: fixture.as_bytes().to_vec(),
+                diagnostic: None,
+                exit_code: std::process::ExitCode::SUCCESS,
+            }
+        })
+    });
+    let server = VcsMcpServer::from_handles_with_outcomes(repo, None, WriteGate::All, Some(runner));
+    let revision = "0123456789abcdef0123456789abcdef01234567";
+
+    let publish = server
+        .outcome_publish(Parameters(OutcomePublishParams {
+            expected_revision: revision.into(),
+            expected_remote_revision: "absent".into(),
+            remote: "origin".into(),
+            source: "feature/checked-publish".into(),
+            target: "main".into(),
+            forge: "github".into(),
+            expected_account: "agent".into(),
+            title: "title".into(),
+            body: String::new(),
+        }))
+        .await
+        .expect("mocked MCP publish");
+    assert_eq!(
+        outcome_json(&publish),
+        serde_json::from_str::<serde_json::Value>(PUBLISH).unwrap()
+    );
+
+    let status = server
+        .outcome_ci_status(Parameters(OutcomeCiStatusParams {
+            forge: "github".into(),
+            source: "feature/checked-publish".into(),
+            expected_revision: revision.into(),
+        }))
+        .await
+        .expect("mocked MCP CI status");
+    assert_eq!(
+        outcome_json(&status),
+        serde_json::from_str::<serde_json::Value>(CI_STATUS).unwrap()
+    );
+
+    let wait = server
+        .outcome_ci_wait(Parameters(OutcomeCiWaitParams {
+            forge: "github".into(),
+            source: "feature/checked-publish".into(),
+            expected_revision: revision.into(),
+            wait_seconds: Some(10),
+            poll_seconds: Some(1),
+        }))
+        .await
+        .expect("mocked MCP CI wait");
+    assert_eq!(
+        outcome_json(&wait),
+        serde_json::from_str::<serde_json::Value>(CI_WAIT).unwrap()
+    );
 }
 
 // R1: `begin_repo_write` checks the gate and, when allowed, *holds* the per-repo
@@ -2405,6 +2553,60 @@ fn server_info_identifies_as_vcs_mcp() {
     let info = server.get_info();
     assert_eq!(info.server_info.name, "vcs-mcp");
     assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+    let first = &info.instructions.expect("instructions")[..SERVER_INSTRUCTIONS.len().min(512)];
+    for required in ["typed outcome_*", "preflight", "write gate", "raw CLI"] {
+        assert!(
+            first.contains(required),
+            "first 512 chars omit {required}: {first}"
+        );
+    }
+}
+
+#[test]
+fn advertised_capabilities_follow_backend_forge_and_write_gate() {
+    let readonly = git_server(ScriptedRunner::new(), WriteGate::None);
+    let names = readonly
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"outcome_inspect".to_string()), "{names:?}");
+    assert!(names.contains(&"outcome_changes".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("forge_")),
+        "{names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| WRITE_TOOLS.contains(&name.as_str())),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"repo_op_log".to_string()), "{names:?}");
+    assert!(!names.contains(&"repo_undo".to_string()), "{names:?}");
+
+    let allow = WriteGate::Set(std::collections::HashSet::from([
+        "outcome_commit".to_string()
+    ]));
+    let selective = git_server(ScriptedRunner::new(), allow);
+    let names = selective
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"outcome_commit".to_string()), "{names:?}");
+    assert!(!names.contains(&"repo_commit".to_string()), "{names:?}");
+
+    let jj = jj_server(ScriptedRunner::new(), WriteGate::None);
+    let names = jj
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"repo_op_log".to_string()), "{names:?}");
 }
 
 /// A no-op MCP client handler for the in-process round-trip.
@@ -2440,18 +2642,13 @@ async fn in_process_client_lists_and_calls_tools() {
     let tools = client.list_all_tools().await.expect("list_tools");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"repo_snapshot"), "{names:?}");
-    assert!(names.contains(&"repo_commit"), "{names:?}");
-    assert!(names.contains(&"forge_pr_list"), "{names:?}");
-    assert!(names.contains(&"forge_pr_for_branch"), "{names:?}");
-    assert!(names.contains(&"forge_pr_comment"), "{names:?}");
-    assert!(names.contains(&"forge_pr_edit"), "{names:?}");
-    assert!(names.contains(&"forge_pr_approve"), "{names:?}");
-    assert!(names.contains(&"forge_pr_request_changes"), "{names:?}");
-    assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
-    assert!(names.contains(&"forge_issue_close"), "{names:?}");
-    assert!(names.contains(&"forge_issue_reopen"), "{names:?}");
-    assert!(names.contains(&"forge_issue_comment"), "{names:?}");
-    assert!(names.contains(&"forge_info"), "{names:?}");
+    assert!(names.contains(&"outcome_inspect"), "{names:?}");
+    assert!(names.contains(&"outcome_changes"), "{names:?}");
+    assert!(!names.contains(&"repo_commit"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("forge_")),
+        "{names:?}"
+    );
 
     let result = client
         .call_tool(CallToolRequestParams::new("repo_current_branch"))

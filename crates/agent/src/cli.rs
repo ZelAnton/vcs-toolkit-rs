@@ -3,14 +3,14 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::contract::{AgentError, AgentResult, ErrorKind, Fallback};
 
-pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
-pub(crate) const MIN_MAX_OUTPUT_BYTES: usize = 1024;
-pub(crate) const MAX_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-pub(crate) const DEFAULT_CONTENT_MAX_BYTES: usize = 256 * 1024;
-pub(crate) const DEFAULT_WAIT_SECONDS: u64 = 30 * 60;
-pub(crate) const DEFAULT_POLL_SECONDS: u64 = 10;
+pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+pub const MIN_MAX_OUTPUT_BYTES: usize = 1024;
+pub const MAX_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_CONTENT_MAX_BYTES: usize = 256 * 1024;
+pub const DEFAULT_WAIT_SECONDS: u64 = 30 * 60;
+pub const DEFAULT_POLL_SECONDS: u64 = 10;
 
-pub(crate) const USAGE: &str = "\
+pub const USAGE: &str = "\
 vcs-agent — bounded, outcome-oriented repository operations for agents.\n\
 \n\
 USAGE:\n\
@@ -72,7 +72,7 @@ Machine results are complete JSON documents on stdout. Diagnostics are written\n
 only to stderr. Content is refused, never truncated into valid-looking JSON.\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Operation {
+pub enum Operation {
     Probe,
     Inspect,
     Changes,
@@ -83,7 +83,7 @@ pub(crate) enum Operation {
 }
 
 impl Operation {
-    pub(crate) const fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Probe => "probe",
             Self::Inspect => "inspect",
@@ -115,42 +115,42 @@ impl Operation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ChangesMode {
+pub enum ChangesMode {
     Summary,
     Full,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Invocation {
-    pub(crate) operation: Operation,
-    pub(crate) repository: Option<PathBuf>,
-    pub(crate) changes_mode: ChangesMode,
-    pub(crate) content_max_bytes: usize,
-    pub(crate) max_output_bytes: usize,
-    pub(crate) include_machine_paths: bool,
-    pub(crate) write_intent: bool,
-    pub(crate) expected_revision: Option<String>,
-    pub(crate) message: Option<String>,
-    pub(crate) commit_paths: Vec<PathBuf>,
-    pub(crate) remote: Option<String>,
-    pub(crate) source: Option<String>,
-    pub(crate) target: Option<String>,
-    pub(crate) expected_remote_revision: Option<String>,
-    pub(crate) forge: Option<String>,
-    pub(crate) expected_account: Option<String>,
-    pub(crate) title: Option<String>,
-    pub(crate) body: Option<String>,
-    pub(crate) wait_seconds: u64,
-    pub(crate) poll_seconds: u64,
+pub struct Invocation {
+    pub operation: Operation,
+    pub repository: Option<PathBuf>,
+    pub changes_mode: ChangesMode,
+    pub content_max_bytes: usize,
+    pub max_output_bytes: usize,
+    pub include_machine_paths: bool,
+    pub write_intent: bool,
+    pub expected_revision: Option<String>,
+    pub message: Option<String>,
+    pub commit_paths: Vec<PathBuf>,
+    pub remote: Option<String>,
+    pub source: Option<String>,
+    pub target: Option<String>,
+    pub expected_remote_revision: Option<String>,
+    pub forge: Option<String>,
+    pub expected_account: Option<String>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub wait_seconds: u64,
+    pub poll_seconds: u64,
 }
 
-pub(crate) enum ParseResult {
+pub enum ParseResult {
     Help,
     Version,
     Run(Box<Invocation>),
 }
 
-pub(crate) fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseResult> {
+pub fn parse(args: impl Iterator<Item = OsString>) -> AgentResult<ParseResult> {
     let args = args.collect::<Vec<_>>();
     if args.len() == 1 && matches!(args[0].to_str(), Some("-h" | "--help")) {
         return Ok(ParseResult::Help);

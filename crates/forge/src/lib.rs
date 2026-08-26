@@ -518,6 +518,17 @@ impl<R: ProcessRunner> Forge<R> {
         }
     }
 
+    /// The configured GitHub client behind this facade, when this is a GitHub
+    /// handle. This preserves the caller-selected runner, timeout, output
+    /// budget, and credential provider for higher-level outcome orchestration;
+    /// it never constructs an ambient replacement client.
+    pub fn github_client(&self) -> Option<&GitHub<R>> {
+        match &self.backend {
+            Backend::GitHub(client) => Some(client.as_ref()),
+            Backend::GitLab(_) | Backend::Gitea(_) | Backend::Unknown => None,
+        }
+    }
+
     /// Whether the user is authenticated (GitHub/GitLab: a zero-exit `auth
     /// status`; Gitea: at least one configured login). An
     /// [`Unknown`](ForgeKind::Unknown) handle (no classified CLI) returns

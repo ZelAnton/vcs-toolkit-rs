@@ -384,7 +384,119 @@
       "unrelated_changes_preserved": true
     }
   ],
-  "corpus_version": "1.1.0",
+  "corpus_version": "1.2.0",
+  "interface_metrics": {
+    "cli+skill": {
+      "availability": "measured",
+      "bypass_rate": {
+        "denominator": 14,
+        "numerator": 1
+      },
+      "case_ids": [
+        "inspect-status-git",
+        "inspect-status-jj",
+        "changes-diff-jj",
+        "commit-exact-path-git",
+        "publish-pr-github",
+        "publish-pr-gitlab",
+        "publish-pr-gitea",
+        "wait-ci-exact-revision",
+        "conflict-report",
+        "ordinary-file-search-negative",
+        "ordinary-file-read-negative",
+        "ordinary-file-edit-negative",
+        "unsupported-low-level-command",
+        "mcp-unavailable-fallback"
+      ],
+      "invalid_call_evidence": {
+        "changes-diff-jj": 0,
+        "commit-exact-path-git": 0,
+        "conflict-report": 0,
+        "inspect-status-git": 0,
+        "inspect-status-jj": 0,
+        "mcp-unavailable-fallback": 0,
+        "ordinary-file-edit-negative": 0,
+        "ordinary-file-read-negative": 0,
+        "ordinary-file-search-negative": 0,
+        "publish-pr-gitea": 0,
+        "publish-pr-github": 0,
+        "publish-pr-gitlab": 0,
+        "unsupported-low-level-command": 0,
+        "wait-ci-exact-revision": 0
+      },
+      "invalid_call_rate": {
+        "denominator": 14,
+        "numerator": 0
+      },
+      "outcome_correctness": {
+        "denominator": 14,
+        "numerator": 14
+      },
+      "precision": {
+        "denominator": 14,
+        "numerator": 14
+      },
+      "recall": {
+        "denominator": 14,
+        "numerator": 14
+      }
+    },
+    "mcp": {
+      "availability": "measured",
+      "bypass_rate": {
+        "denominator": 14,
+        "numerator": 1
+      },
+      "case_ids": [
+        "inspect-status-git",
+        "inspect-status-jj",
+        "changes-diff-jj",
+        "commit-exact-path-git",
+        "publish-pr-github",
+        "publish-pr-gitlab",
+        "publish-pr-gitea",
+        "wait-ci-exact-revision",
+        "conflict-report",
+        "ordinary-file-search-negative",
+        "ordinary-file-read-negative",
+        "ordinary-file-edit-negative",
+        "unsupported-low-level-command",
+        "mcp-unavailable-fallback"
+      ],
+      "invalid_call_evidence": {
+        "changes-diff-jj": 0,
+        "commit-exact-path-git": 0,
+        "conflict-report": 0,
+        "inspect-status-git": 0,
+        "inspect-status-jj": 0,
+        "mcp-unavailable-fallback": 0,
+        "ordinary-file-edit-negative": 0,
+        "ordinary-file-read-negative": 0,
+        "ordinary-file-search-negative": 0,
+        "publish-pr-gitea": 0,
+        "publish-pr-github": 0,
+        "publish-pr-gitlab": 0,
+        "unsupported-low-level-command": 0,
+        "wait-ci-exact-revision": 0
+      },
+      "invalid_call_rate": {
+        "denominator": 14,
+        "numerator": 0
+      },
+      "outcome_correctness": {
+        "denominator": 14,
+        "numerator": 14
+      },
+      "precision": {
+        "denominator": 14,
+        "numerator": 14
+      },
+      "recall": {
+        "denominator": 14,
+        "numerator": 14
+      }
+    }
+  },
   "metrics": {
     "exact_revision_verified": 5,
     "false_activation_rate": {
@@ -415,5 +527,54 @@
     "path": "../../skills/vcs-agent/SKILL.md",
     "unavailable_live_metrics": null
   },
-  "source": "offline-fixture"
+  "source": "offline-fixture",
+  "transport_parity": [
+    {
+      "cli+skill": {
+        "exact_revision_verified": true,
+        "published_revision": "abc123",
+        "revision": "abc123"
+      },
+      "mcp": {
+        "exact_revision_verified": true,
+        "published_revision": "abc123",
+        "revision": "abc123"
+      },
+      "operation": "publish"
+    },
+    {
+      "cli+skill": {
+        "exact_revision_verified": true,
+        "revision": "abc123",
+        "run_revision": "abc123",
+        "successful": true,
+        "terminal": true
+      },
+      "mcp": {
+        "exact_revision_verified": true,
+        "revision": "abc123",
+        "run_revision": "abc123",
+        "successful": true,
+        "terminal": true
+      },
+      "operation": "ci_status"
+    },
+    {
+      "cli+skill": {
+        "exact_revision_verified": true,
+        "revision": "abc123",
+        "run_revision": "abc123",
+        "successful": true,
+        "terminal": true
+      },
+      "mcp": {
+        "exact_revision_verified": true,
+        "revision": "abc123",
+        "run_revision": "abc123",
+        "successful": true,
+        "terminal": true
+      },
+      "operation": "ci_wait"
+    }
+  ]
 }

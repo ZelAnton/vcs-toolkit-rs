@@ -10,6 +10,8 @@
 /// real tool, so the intended write would stay disabled). `require_write`
 /// debug-asserts every gated tool is listed here, so the two can't drift.
 pub const WRITE_TOOLS: &[&str] = &[
+    "outcome_commit",
+    "outcome_publish",
     "repo_try_merge",
     "repo_resolve_conflict",
     "repo_commit",

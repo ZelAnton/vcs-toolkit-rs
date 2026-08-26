@@ -32,6 +32,14 @@ EXPECTED_SCENARIOS = {
 }
 EXPECTED_SELECTIONS = {"preferred", "fallback", "none"}
 EXPECTED_INTERFACES = {"vcs-agent", "mcp", "raw-cli", "none"}
+COMPARISON_INTERFACES = ("cli+skill", "mcp")
+COMPARISON_METRICS = (
+    "precision",
+    "recall",
+    "bypass_rate",
+    "invalid_call_rate",
+    "outcome_correctness",
+)
 MACHINE_OPERATION_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
 PROCESSKIT_REQUIRED_SURFACE = (
     "cancel",
@@ -693,6 +701,12 @@ def validate_corpus(corpus: Any, skill_contract: Any) -> dict[str, dict[str, Any
     fallbacks = policy.get("fallback_interfaces")
     if fallbacks != ["mcp", "raw-cli"]:
         raise ValidationError("selection_policy.fallback_interfaces must be [mcp, raw-cli]")
+    if policy.get("comparison_interfaces") != list(COMPARISON_INTERFACES):
+        raise ValidationError("selection_policy.comparison_interfaces must be [cli+skill, mcp]")
+    if policy.get("comparison_metrics") != list(COMPARISON_METRICS):
+        raise ValidationError("selection_policy.comparison_metrics differs from the v1.2 comparison contract")
+    if policy.get("unavailable_live_metrics", "missing") is not None:
+        raise ValidationError("unavailable comparison metrics must be null, never zero")
     skill = _object(root.get("skill_metadata"), "corpus.skill_metadata")
     if skill.get("name") != "vcs-agent":
         raise ValidationError("skill_metadata.name must be vcs-agent")
@@ -805,10 +819,91 @@ def _validate_result_shape(result: Any, label: str) -> dict[str, Any]:
     return result
 
 
+def _comparison_case_ids(value: Any, label: str, expected: list[str]) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValidationError(f"{label} must be a case-ID array")
+    if len(value) != len(set(value)):
+        raise ValidationError(f"{label} contains duplicate case IDs")
+    if value != expected:
+        raise ValidationError(f"{label} must match the common corpus case membership and order")
+    return value
+
+
+def validate_comparison_runs(
+    corpus_by_id: dict[str, dict[str, Any]], results: Any
+) -> dict[str, dict[str, Any] | None]:
+    root = _object(results, "results")
+    runs = _object(root.get("comparison_runs"), "results.comparison_runs")
+    if set(runs) != set(COMPARISON_INTERFACES):
+        raise ValidationError("results.comparison_runs must cover exactly cli+skill and mcp")
+    expected_ids = list(corpus_by_id)
+    checked: dict[str, dict[str, Any] | None] = {}
+    for interface in COMPARISON_INTERFACES:
+        raw_run = runs[interface]
+        if raw_run is None:
+            checked[interface] = None
+            continue
+        run = _object(raw_run, f"results.comparison_runs.{interface}")
+        case_ids = _comparison_case_ids(
+            run.get("case_ids"), f"results.comparison_runs.{interface}.case_ids", expected_ids
+        )
+        for field in ("precision_hits", "recall_hits", "bypass_cases", "outcome_correct_cases"):
+            values = run.get(field)
+            if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+                raise ValidationError(f"results.comparison_runs.{interface}.{field} must be a case-ID array")
+            if len(values) != len(set(values)) or not set(values) <= set(case_ids):
+                raise ValidationError(f"results.comparison_runs.{interface}.{field} has invalid case evidence")
+        invalid_calls = _object(
+            run.get("invalid_calls"), f"results.comparison_runs.{interface}.invalid_calls"
+        )
+        if set(invalid_calls) != set(case_ids):
+            raise ValidationError(
+                f"results.comparison_runs.{interface}.invalid_calls must explicitly cover every case"
+            )
+        for case_id, count in invalid_calls.items():
+            if _integer(count, f"results.comparison_runs.{interface}.invalid_calls.{case_id}") < 0:
+                raise ValidationError("invalid-call evidence cannot be negative")
+        checked[interface] = run
+    return checked
+
+
+def validate_transport_parity(results: Any) -> list[dict[str, Any]]:
+    root = _object(results, "results")
+    parity = root.get("transport_parity")
+    if not isinstance(parity, list):
+        raise ValidationError("results.transport_parity must be an array")
+    expected_operations = ["publish", "ci_status", "ci_wait"]
+    if [item.get("operation") for item in parity if isinstance(item, dict)] != expected_operations:
+        raise ValidationError("results.transport_parity must cover publish, ci_status, and ci_wait in order")
+    checked: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(parity):
+        item = _object(raw_item, f"results.transport_parity[{index}]")
+        operation = _string(item.get("operation"), f"results.transport_parity[{index}].operation")
+        cli = _object(item.get("cli+skill"), f"results.transport_parity[{index}].cli+skill")
+        mcp = _object(item.get("mcp"), f"results.transport_parity[{index}].mcp")
+        if cli != mcp:
+            raise ValidationError(f"{operation}: CLI+Skill and MCP revision/CI evidence mismatch")
+        revision = _string(cli.get("revision"), f"{operation}.revision")
+        if cli.get("exact_revision_verified") is not True:
+            raise ValidationError(f"{operation}: exact revision must be verified")
+        if operation == "publish":
+            if cli.get("published_revision") != revision:
+                raise ValidationError("publish: published revision drift")
+        else:
+            if cli.get("run_revision") != revision:
+                raise ValidationError(f"{operation}: CI run revision drift")
+            if cli.get("terminal") is not True or cli.get("successful") is not True:
+                raise ValidationError(f"{operation}: terminal successful CI evidence required")
+        checked.append(item)
+    return checked
+
+
 def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> list[dict[str, Any]]:
     root = _object(results, "results")
     if root.get("schema_version") != "agent-interface.results.v1":
         raise ValidationError("results.schema_version must be agent-interface.results.v1")
+    validate_comparison_runs(corpus_by_id, root)
+    validate_transport_parity(root)
     raw_results = root.get("results")
     if not isinstance(raw_results, list):
         raise ValidationError("results.results must be an array")

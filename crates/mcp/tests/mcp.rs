@@ -9,8 +9,8 @@
 use rmcp::handler::server::wrapper::Parameters;
 use vcs_core::Repo;
 use vcs_mcp::{
-    CheckoutParams, ConflictRegionsParams, ConflictSideArg, ResolveConflictParams, VcsMcpServer,
-    WriteGate,
+    CheckoutParams, ConflictRegionsParams, ConflictSideArg, OutcomeCommitParams,
+    ResolveConflictParams, VcsMcpServer, WriteGate,
 };
 use vcs_testkit::GitSandbox;
 
@@ -43,6 +43,14 @@ async fn read_tools_run_against_a_real_repo() {
     assert_eq!(snap["dirty"], false);
     assert_eq!(snap["operation"], "Clear");
 
+    // The intent-oriented adapter delegates to the same common application
+    // service as vcs-agent and reports the same exact revision evidence.
+    let inspect = inner(&server.outcome_inspect().await.expect("outcome inspect"));
+    assert_eq!(inspect["contract_version"], "vcs-agent/v1");
+    assert_eq!(inspect["operation"], "inspect");
+    assert_eq!(inspect["data"]["repository"]["backend"], "git");
+    assert_eq!(inspect["data"]["working_copy"]["revision"], snap["head"]);
+
     // An edit shows up in repo_status as a modified seed.txt.
     sandbox.write("seed.txt", "changed\n");
     let status = inner(&server.repo_status().await.expect("status"));
@@ -53,6 +61,17 @@ async fn read_tools_run_against_a_real_repo() {
             .iter()
             .any(|c| c["path"] == "seed.txt"),
         "{status}"
+    );
+    let changes = inner(
+        &server
+            .outcome_changes(Parameters(vcs_mcp::OutcomeChangesParams { mode: None }))
+            .await
+            .expect("outcome changes"),
+    );
+    assert_eq!(changes["operation"], "changes");
+    assert_eq!(
+        changes["data"]["counts"]["paths"],
+        status.as_array().expect("status files").len()
     );
 }
 
@@ -72,6 +91,39 @@ async fn gated_mutation_does_not_run_against_a_real_repo() {
         .await
         .expect_err("gated");
     assert!(format!("{err:?}").contains("allow-write"), "{err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the git binary"]
+async fn outcome_commit_returns_the_real_exact_revision_and_preserves_unrelated_changes() {
+    let sandbox = GitSandbox::init("mcp-outcome-commit");
+    sandbox.commit_file("seed.txt", "seed\n", "initial");
+    let before = sandbox.rev_parse("HEAD");
+    sandbox.write("selected.txt", "selected\n");
+    sandbox.write("unrelated.txt", "keep dirty\n");
+    let repo = Repo::discover(sandbox.path()).expect("open");
+    let server = VcsMcpServer::new(repo, None, WriteGate::All);
+
+    let committed = inner(
+        &server
+            .outcome_commit(Parameters(OutcomeCommitParams {
+                expected_revision: before.clone(),
+                message: "selected only".into(),
+                paths: vec!["selected.txt".into()],
+            }))
+            .await
+            .expect("outcome commit"),
+    );
+    let after = sandbox.rev_parse("HEAD");
+    assert_ne!(after, before);
+    assert_eq!(committed["status"], "success");
+    assert_eq!(committed["data"]["before"]["revision"], before);
+    assert_eq!(committed["data"]["after"]["revision"], after);
+    assert_eq!(committed["data"]["unrelated_changes_preserved"], true);
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).expect("unrelated file"),
+        "keep dirty\n"
+    );
 }
 
 /// Seed a real, conflicting `git merge` on `path` and return the sandbox.

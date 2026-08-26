@@ -2121,6 +2121,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "vcs-agent",
  "vcs-cli-support",
  "vcs-core",
  "vcs-forge",

@@ -29,14 +29,14 @@ const DEFAULT_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Policy carried across every outcome implementation and projected onto every
 /// typed client. No outcome owns a second process-launch path.
-pub(crate) struct ExecutionPolicy {
-    pub(crate) cancellation: CancellationToken,
-    pub(crate) deadline: Duration,
-    pub(crate) content_budget: OutputBudget,
+pub struct ExecutionPolicy {
+    pub cancellation: CancellationToken,
+    pub deadline: Duration,
+    pub content_budget: OutputBudget,
 }
 
 impl ExecutionPolicy {
-    pub(crate) fn new(content_max_bytes: usize) -> Self {
+    pub fn new(content_max_bytes: usize) -> Self {
         Self {
             cancellation: CancellationToken::new(),
             deadline: DEFAULT_DEADLINE,
@@ -44,7 +44,7 @@ impl ExecutionPolicy {
         }
     }
 
-    pub(crate) fn with_deadline(mut self, deadline: Duration) -> Self {
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
         self
     }
@@ -417,7 +417,7 @@ impl MachinePath {
     }
 }
 
-pub(crate) async fn execute(
+pub async fn execute(
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<MachineEnvelope> {
@@ -425,7 +425,78 @@ pub(crate) async fn execute(
         invocation.operation,
         invocation.include_machine_paths,
         policy,
-        execute_inner(invocation, policy),
+        execute_discovered(invocation, policy),
+    )
+    .await
+}
+
+/// Already-configured repository and forge clients for outcome execution.
+///
+/// The handles retain their injected runner, timeout, output budget, SSH
+/// policy, forced forge, and credential provider. A transport must construct
+/// this once and must not replace it with path-based rediscovery.
+pub struct OutcomeExecutionContext<R: ProcessRunner> {
+    repo: Repo<R>,
+    forge: Option<Forge<R>>,
+}
+
+impl<R: ProcessRunner> OutcomeExecutionContext<R> {
+    /// Bind common outcome orchestration to caller-configured clients.
+    pub fn configured(repo: Repo<R>, forge: Option<Forge<R>>) -> Self {
+        Self { repo, forge }
+    }
+}
+
+impl OutcomeExecutionContext<JobRunner> {
+    async fn discover(invocation: &Invocation, policy: &ExecutionPolicy) -> AgentResult<Self> {
+        let repository = invocation
+            .repository
+            .as_deref()
+            .ok_or_else(|| Box::new(AgentError::internal("parsed_repository_missing")))?;
+        let repo = open_repo(
+            repository,
+            invocation.operation,
+            invocation.include_machine_paths,
+            policy,
+        )?;
+        let forge = match invocation.operation {
+            Operation::Inspect => {
+                let remotes = repo.remotes().await.map_err(|error| {
+                    Box::new(map_core_error(
+                        Operation::Inspect,
+                        invocation.include_machine_paths,
+                        error,
+                    ))
+                })?;
+                build_forge(&remotes, repo.cwd(), policy)
+            }
+            Operation::Publish | Operation::CiStatus | Operation::CiWait => {
+                let remotes = repo.remotes().await.map_err(|error| {
+                    Box::new(map_core_error(
+                        invocation.operation,
+                        invocation.include_machine_paths,
+                        error,
+                    ))
+                })?;
+                build_forge(&remotes, repo.cwd(), policy)
+            }
+            _ => None,
+        };
+        Ok(Self { repo, forge })
+    }
+}
+
+/// Execute using caller-configured clients rather than rediscovering by path.
+pub async fn execute_with_context<R: ProcessRunner>(
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+    context: &OutcomeExecutionContext<R>,
+) -> AgentResult<MachineEnvelope> {
+    with_outcome_deadline(
+        invocation.operation,
+        invocation.include_machine_paths,
+        policy,
+        execute_configured(invocation, policy, context),
     )
     .await
 }
@@ -457,7 +528,7 @@ async fn with_outcome_deadline<T>(
     }
 }
 
-async fn execute_inner(
+async fn execute_discovered(
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<MachineEnvelope> {
@@ -469,26 +540,18 @@ async fn execute_inner(
         | Operation::Publish
         | Operation::CiStatus
         | Operation::CiWait => {
-            let repository = invocation
-                .repository
-                .as_deref()
-                .ok_or_else(|| Box::new(AgentError::internal("parsed_repository_missing")))?;
-            let repo = open_repo(
-                repository,
-                invocation.operation,
-                invocation.include_machine_paths,
-                policy,
-            )?;
-            execute_repository(invocation, policy, &repo).await
+            let context = OutcomeExecutionContext::discover(invocation, policy).await?;
+            execute_configured(invocation, policy, &context).await
         }
     }
 }
 
-async fn execute_repository<R: ProcessRunner>(
+async fn execute_configured<R: ProcessRunner>(
     invocation: &Invocation,
     policy: &ExecutionPolicy,
-    repo: &Repo<R>,
+    context: &OutcomeExecutionContext<R>,
 ) -> AgentResult<MachineEnvelope> {
+    let repo = &context.repo;
     match invocation.operation {
         Operation::Inspect => {
             let remotes = repo.remotes().await.map_err(|error| {
@@ -500,11 +563,10 @@ async fn execute_repository<R: ProcessRunner>(
             })?;
             let forge_remote = preferred_forge_remote(&remotes)
                 .map(|(remote, _)| redact_metadata(&remote.url, invocation.include_machine_paths));
-            let forge = build_forge(&remotes, repo.cwd(), policy);
             let data = inspect_repo(
                 repo,
                 remotes,
-                forge.as_deref(),
+                context.forge.as_ref().map(|forge| forge as &dyn ForgeApi),
                 forge_remote,
                 invocation.include_machine_paths,
             )
@@ -526,21 +588,31 @@ async fn execute_repository<R: ProcessRunner>(
             Ok(MachineEnvelope::success(Operation::Commit.name(), data))
         }
         Operation::Publish => {
-            let data = publish_repo(repo, invocation, policy).await?;
+            let data = publish_repo(repo, context.forge.as_ref(), invocation, policy).await?;
             Ok(MachineEnvelope::success(Operation::Publish.name(), data))
         }
         Operation::CiStatus => {
-            let data = ci_status_repo(repo, invocation, policy).await?;
+            let data = ci_status_repo(repo, context.forge.as_ref(), invocation, policy).await?;
             Ok(MachineEnvelope::success(Operation::CiStatus.name(), data))
         }
         Operation::CiWait => {
-            let data = ci_wait_repo(repo, invocation, policy).await?;
+            let data = ci_wait_repo(repo, context.forge.as_ref(), invocation, policy).await?;
             Ok(MachineEnvelope::success(Operation::CiWait.name(), data))
         }
         _ => Err(Box::new(AgentError::internal(
             "repository_operation_mismatch",
         ))),
     }
+}
+
+#[cfg(test)]
+async fn execute_repository<R: ProcessRunner>(
+    invocation: &Invocation,
+    policy: &ExecutionPolicy,
+    repo: &Repo<R>,
+) -> AgentResult<MachineEnvelope> {
+    let context = OutcomeExecutionContext::configured(repo.at(repo.cwd()), None);
+    execute_configured(invocation, policy, &context).await
 }
 
 fn probe(invocation: &Invocation) -> MachineEnvelope {
@@ -591,8 +663,9 @@ fn probe(invocation: &Invocation) -> MachineEnvelope {
 
 async fn publish_repo<R: ProcessRunner>(
     repo: &Repo<R>,
+    configured_forge: Option<&Forge<R>>,
     invocation: &Invocation,
-    policy: &ExecutionPolicy,
+    _policy: &ExecutionPolicy,
 ) -> AgentResult<PublishData> {
     let include_paths = invocation.include_machine_paths;
     let expected = invocation
@@ -753,10 +826,43 @@ async fn publish_repo<R: ProcessRunner>(
         ));
     }
 
-    let github = verified_github_repository(
+    let configured_forge = configured_forge.ok_or_else(|| {
+        Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Unsupported,
+                "configured_forge_unavailable",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        )
+    })?;
+    if configured_forge.kind() != ForgeKind::GitHub {
+        return Err(Box::new(
+            publish_denied("configured_forge_identity_mismatch", include_paths)
+                .with_detail(DetailKey::Forge, expected_forge),
+        ));
+    }
+    let github = configured_forge
+        .github_client()
+        .ok_or_else(|| Box::new(AgentError::internal("configured_github_client_missing")))?;
+    let expected_repository = github_repository_identity(&selected[0].url).ok_or_else(|| {
+        Box::new(
+            AgentError::new(
+                Operation::Publish.name(),
+                ErrorKind::Denied,
+                "github_remote_repository_identity_unverified",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        )
+    })?;
+    verify_github_repository(
+        github,
         repo.cwd(),
-        &selected[0].url,
-        policy,
+        &expected_repository,
         Operation::Publish,
         include_paths,
     )
@@ -807,7 +913,7 @@ async fn publish_repo<R: ProcessRunner>(
     }
 
     let before_pr = find_change_request(
-        &github,
+        github,
         repo.cwd(),
         source,
         target,
@@ -912,7 +1018,7 @@ async fn publish_repo<R: ProcessRunner>(
     let (change_request, pr_state) = if let Some(pr) = before_pr {
         (pr, "already_satisfied")
     } else if let Some(pr) = find_change_request(
-        &github,
+        github,
         repo.cwd(),
         source,
         target,
@@ -933,7 +1039,7 @@ async fn publish_repo<R: ProcessRunner>(
         match github.pr_create(repo.cwd(), create).await {
             Ok(created_url) => {
                 let Some(mut pr) = find_change_request(
-                    &github,
+                    github,
                     repo.cwd(),
                     source,
                     target,
@@ -955,7 +1061,7 @@ async fn publish_repo<R: ProcessRunner>(
                 (pr, "created")
             }
             Err(error) => match find_change_request(
-                &github,
+                github,
                 repo.cwd(),
                 source,
                 target,
@@ -1016,14 +1122,16 @@ async fn publish_repo<R: ProcessRunner>(
 
 async fn ci_status_repo<R: ProcessRunner>(
     repo: &Repo<R>,
+    forge: Option<&Forge<R>>,
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<CiData> {
-    query_ci(repo, invocation, policy, false).await
+    query_ci(repo, forge, invocation, policy, false).await
 }
 
 async fn ci_wait_repo<R: ProcessRunner>(
     repo: &Repo<R>,
+    forge: Option<&Forge<R>>,
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<CiData> {
@@ -1032,7 +1140,7 @@ async fn ci_wait_repo<R: ProcessRunner>(
         .expected_revision
         .as_deref()
         .expect("ci expected revision");
-    let github = checked_github_ci(repo, invocation, policy).await?;
+    let github = checked_github_ci(repo, forge, invocation).await?;
     loop {
         let runs = github
             .run_list(repo.cwd(), 100, Some(source.to_owned()))
@@ -1080,7 +1188,7 @@ async fn ci_wait_repo<R: ProcessRunner>(
                 invocation.include_machine_paths,
             )?;
         }
-        let mut data = query_ci(repo, invocation, policy, true).await?;
+        let mut data = query_ci(repo, forge, invocation, policy, true).await?;
         data.wait = Some(CiWaitEvidence {
             total_deadline_seconds: invocation.wait_seconds,
             poll_seconds: invocation.poll_seconds,
@@ -1114,8 +1222,9 @@ async fn ci_wait_repo<R: ProcessRunner>(
 
 async fn query_ci<R: ProcessRunner>(
     repo: &Repo<R>,
+    forge: Option<&Forge<R>>,
     invocation: &Invocation,
-    policy: &ExecutionPolicy,
+    _policy: &ExecutionPolicy,
     waiting: bool,
 ) -> AgentResult<CiData> {
     let source = invocation.source.as_deref().expect("ci source");
@@ -1123,7 +1232,7 @@ async fn query_ci<R: ProcessRunner>(
         .expected_revision
         .as_deref()
         .expect("ci expected revision");
-    let github = checked_github_ci(repo, invocation, policy).await?;
+    let github = checked_github_ci(repo, forge, invocation).await?;
     let runs = github
         .run_list(repo.cwd(), 100, Some(source.to_owned()))
         .await
@@ -1171,11 +1280,11 @@ async fn query_ci<R: ProcessRunner>(
     })
 }
 
-async fn checked_github_ci<R: ProcessRunner>(
+async fn checked_github_ci<'a, R: ProcessRunner>(
     repo: &Repo<R>,
+    configured_forge: Option<&'a Forge<R>>,
     invocation: &Invocation,
-    policy: &ExecutionPolicy,
-) -> AgentResult<GitHub<JobRunner>> {
+) -> AgentResult<&'a GitHub<R>> {
     let forge = invocation.forge.as_deref().expect("ci forge");
     if forge != "github" {
         return Err(Box::new(
@@ -1229,14 +1338,55 @@ async fn checked_github_ci<R: ProcessRunner>(
             .include_machine_paths(invocation.include_machine_paths),
         ));
     }
-    verified_github_repository(
+    let configured_forge = configured_forge.ok_or_else(|| {
+        Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Unsupported,
+                "configured_forge_unavailable",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(invocation.include_machine_paths),
+        )
+    })?;
+    if configured_forge.kind() != ForgeKind::GitHub {
+        return Err(Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Denied,
+                "configured_forge_identity_mismatch",
+                false,
+            )
+            .with_detail(DetailKey::Forge, forge)
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(invocation.include_machine_paths),
+        ));
+    }
+    let github = configured_forge
+        .github_client()
+        .ok_or_else(|| Box::new(AgentError::internal("configured_github_client_missing")))?;
+    let expected = github_repository_identity(&origin[0].url).ok_or_else(|| {
+        Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Denied,
+                "github_remote_repository_identity_unverified",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(invocation.include_machine_paths),
+        )
+    })?;
+    verify_github_repository(
+        github,
         repo.cwd(),
-        &origin[0].url,
-        policy,
+        &expected,
         invocation.operation,
         invocation.include_machine_paths,
     )
-    .await
+    .await?;
+    Ok(github)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1270,31 +1420,6 @@ fn configured_github_client<R: ProcessRunner>(
         .default_output_budget(policy.content_budget)
         .default_env_remove("GH_REPO")
         .with_host(host))
-}
-
-async fn verified_github_repository(
-    cwd: &Path,
-    remote_url: &str,
-    policy: &ExecutionPolicy,
-    operation: Operation,
-    include_paths: bool,
-) -> AgentResult<GitHub<JobRunner>> {
-    let expected = github_repository_identity(remote_url).ok_or_else(|| {
-        Box::new(
-            AgentError::new(
-                operation.name(),
-                ErrorKind::Denied,
-                "github_remote_repository_identity_unverified",
-                false,
-            )
-            .with_detail(DetailKey::Checkpoint, "preflight")
-            .include_machine_paths(include_paths),
-        )
-    })?;
-    let github =
-        configured_github_client(GitHub::new(), remote_url, policy, operation, include_paths)?;
-    verify_github_repository(&github, cwd, &expected, operation, include_paths).await?;
-    Ok(github)
 }
 
 async fn verify_github_repository<R: ProcessRunner>(
@@ -2031,38 +2156,49 @@ fn build_forge(
     remotes: &[vcs_core::Remote],
     cwd: &Path,
     policy: &ExecutionPolicy,
-) -> Option<Box<dyn ForgeApi>> {
-    let kind = preferred_forge_remote(remotes)?.1;
+) -> Option<Forge<JobRunner>> {
+    let (remote, kind) = preferred_forge_remote(remotes)?;
+    if kind == ForgeKind::GitHub {
+        let github = configured_github_client(
+            GitHub::new(),
+            &remote.url,
+            policy,
+            Operation::Inspect,
+            false,
+        )
+        .ok()?;
+        return Some(Forge::from_github(cwd, github));
+    }
     Some(build_forge_kind(kind, cwd, policy))
 }
 
-fn build_forge_kind(kind: ForgeKind, cwd: &Path, policy: &ExecutionPolicy) -> Box<dyn ForgeApi> {
+fn build_forge_kind(kind: ForgeKind, cwd: &Path, policy: &ExecutionPolicy) -> Forge<JobRunner> {
     let timeout = policy.deadline;
     let token = &policy.cancellation;
     let budget = policy.content_budget;
     match kind {
-        ForgeKind::GitHub => Box::new(Forge::from_github(
+        ForgeKind::GitHub => Forge::from_github(
             cwd,
             GitHub::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        )),
-        ForgeKind::GitLab => Box::new(Forge::from_gitlab(
+        ),
+        ForgeKind::GitLab => Forge::from_gitlab(
             cwd,
             GitLab::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        )),
-        ForgeKind::Gitea => Box::new(Forge::from_gitea(
+        ),
+        ForgeKind::Gitea => Forge::from_gitea(
             cwd,
             Gitea::new()
                 .default_timeout(timeout)
                 .default_cancel_on(token.clone())
                 .default_output_budget(budget),
-        )),
-        _ => Box::new(Forge::<JobRunner>::from_unknown(cwd)),
+        ),
+        _ => Forge::<JobRunner>::from_unknown(cwd),
     }
 }
 
@@ -2754,16 +2890,17 @@ mod tests {
     async fn inspect_composition_distinguishes_unknown_remote_from_no_remote() {
         let status = "# branch.oid abc123\0# branch.head main\0";
         let policy = ExecutionPolicy::new(8192);
-        let unknown = execute_repository(
-            &inspect_invocation(false),
-            &policy,
-            &scripted_git_inspect(
-                "origin https://forge.example.invalid/owner/repo (fetch)\n",
-                status,
-            ),
-        )
-        .await
-        .expect("unknown remote remains a detected forge");
+        let unknown_repo = scripted_git_inspect(
+            "origin https://forge.example.invalid/owner/repo (fetch)\n",
+            status,
+        );
+        let unknown_context = OutcomeExecutionContext::configured(
+            unknown_repo,
+            Some(Forge::<ScriptedRunner>::from_unknown("/repo")),
+        );
+        let unknown = execute_configured(&inspect_invocation(false), &policy, &unknown_context)
+            .await
+            .expect("unknown remote remains a detected forge");
         let unknown = serde_json::to_value(unknown).expect("serialize inspect envelope");
         assert_eq!(unknown["data"]["forge"]["detection"], "detected");
         assert_eq!(unknown["data"]["forge"]["kind"], "unknown");
@@ -3264,7 +3401,8 @@ mod tests {
             wait_seconds: crate::cli::DEFAULT_WAIT_SECONDS,
             poll_seconds: crate::cli::DEFAULT_POLL_SECONDS,
         };
-        let error = match publish_repo(&repo, &invocation, &ExecutionPolicy::new(8192)).await {
+        let error = match publish_repo(&repo, None, &invocation, &ExecutionPolicy::new(8192)).await
+        {
             Err(error) => error,
             Ok(_) => panic!("Jujutsu lacks an exact-source checked push primitive"),
         };

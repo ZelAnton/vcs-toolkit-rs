@@ -20,6 +20,13 @@ const RECORDING_SCHEMA: &str =
 const RECORDING_FIXTURE: &str =
     include_str!("../../../docs/agent-interface/fixtures/recording.v1.json");
 const BASELINE: &str = include_str!("../../../docs/agent-interface/baseline-mcp.v1.json");
+const COMMIT_ENVELOPE: &str = include_str!("../../agent/tests/fixtures/commit-success-git.v1.json");
+const PUBLISH_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/publish-success-git.v1.json");
+const CI_STATUS_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/ci-status-success-github.v1.json");
+const CI_WAIT_ENVELOPE: &str =
+    include_str!("../../agent/tests/fixtures/ci-wait-success-github.v1.json");
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -32,11 +39,26 @@ fn root() -> PathBuf {
 fn corpus_is_versioned_and_covers_the_routing_matrix() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("valid corpus JSON");
     assert_eq!(corpus["schema_version"], "agent-interface.corpus.v1");
-    assert_eq!(corpus["corpus_version"], "1.1.0");
+    assert_eq!(corpus["corpus_version"], "1.2.0");
     assert_eq!(
         corpus["selection_policy"]["preferred_interface"],
         "vcs-agent"
     );
+    assert_eq!(
+        corpus["selection_policy"]["comparison_interfaces"],
+        serde_json::json!(["cli+skill", "mcp"])
+    );
+    assert_eq!(
+        corpus["selection_policy"]["comparison_metrics"],
+        serde_json::json!([
+            "precision",
+            "recall",
+            "bypass_rate",
+            "invalid_call_rate",
+            "outcome_correctness"
+        ])
+    );
+    assert!(corpus["selection_policy"]["unavailable_live_metrics"].is_null());
 
     let cases = corpus["cases"].as_array().expect("cases array");
     let mut ids = BTreeSet::new();
@@ -157,6 +179,25 @@ fn result_schema_and_no_data_baseline_are_explicit() {
                 .any(|item| item == field)
         );
     }
+    for interface in ["cli+skill", "mcp"] {
+        assert!(
+            recording_schema["properties"]["interface_metrics"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == interface),
+            "recording schema must require {interface} measurements"
+        );
+    }
+    let measurement = &recording_schema["$defs"]["interfaceMeasurement"]["oneOf"];
+    assert!(
+        measurement
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["type"] == "null"),
+        "unavailable interface measurements must be representable as null"
+    );
     for field in [
         "preferred_interface",
         "fallback_interface",
@@ -181,6 +222,30 @@ fn result_schema_and_no_data_baseline_are_explicit() {
         "no_data must not become zero metrics"
     );
     assert_eq!(baseline["harness"]["availability"], "unavailable");
+}
+
+#[test]
+fn common_envelopes_keep_commit_publish_and_ci_revision_evidence_transport_neutral() {
+    let commit: Value = serde_json::from_str(COMMIT_ENVELOPE).expect("commit envelope");
+    let publish: Value = serde_json::from_str(PUBLISH_ENVELOPE).expect("publish envelope");
+    let status: Value = serde_json::from_str(CI_STATUS_ENVELOPE).expect("CI status envelope");
+    let wait: Value = serde_json::from_str(CI_WAIT_ENVELOPE).expect("CI wait envelope");
+
+    assert_eq!(commit["operation"], "commit");
+    assert_ne!(
+        commit["data"]["before"]["revision"],
+        commit["data"]["after"]["revision"]
+    );
+    let revision = &publish["data"]["expected_revision"];
+    assert_eq!(publish["data"]["remote_revision"], *revision);
+    assert_eq!(publish["data"]["exact_revision_verified"], true);
+    for ci in [&status, &wait] {
+        assert_eq!(ci["data"]["expected_revision"], *revision);
+        assert_eq!(ci["data"]["runs"][0]["revision"], *revision);
+        assert_eq!(ci["data"]["exact_revision_verified"], true);
+        assert_eq!(ci["data"]["terminal"], true);
+        assert_eq!(ci["data"]["successful"], true);
+    }
 }
 
 fn python_command() -> Command {
@@ -266,6 +331,27 @@ fn validator_and_recorder_are_repeatable_without_network_state() {
     let expected_recording: Value =
         serde_json::from_str(RECORDING_FIXTURE).expect("valid recording fixture");
     assert_eq!(recording, expected_recording);
+    for interface in ["cli+skill", "mcp"] {
+        let measured = &recording["interface_metrics"][interface];
+        assert_eq!(measured["availability"], "measured");
+        for metric in [
+            "precision",
+            "recall",
+            "bypass_rate",
+            "invalid_call_rate",
+            "outcome_correctness",
+        ] {
+            assert_eq!(measured[metric]["denominator"], 14);
+        }
+        assert_eq!(
+            measured["invalid_call_evidence"].as_object().unwrap().len(),
+            14
+        );
+    }
+    assert_eq!(
+        recording["interface_metrics"]["cli+skill"]["case_ids"],
+        recording["interface_metrics"]["mcp"]["case_ids"]
+    );
     let published = recording["cases"]
         .as_array()
         .unwrap()
@@ -349,6 +435,30 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
     let raw_bypass_path = temp.join("raw-bypass.json");
     write_json(&raw_bypass_path, &raw_bypass);
     assert_validator_rejects(validator, corpus, &raw_bypass_path, baseline);
+
+    let mut membership_mismatch = original.clone();
+    membership_mismatch["comparison_runs"]["mcp"]["case_ids"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let membership_mismatch_path = temp.join("membership-mismatch.json");
+    write_json(&membership_mismatch_path, &membership_mismatch);
+    assert_validator_rejects(validator, corpus, &membership_mismatch_path, baseline);
+
+    let mut missing_invalid_evidence = original.clone();
+    missing_invalid_evidence["comparison_runs"]["mcp"]["invalid_calls"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inspect-status-git");
+    let missing_invalid_evidence_path = temp.join("missing-invalid-evidence.json");
+    write_json(&missing_invalid_evidence_path, &missing_invalid_evidence);
+    assert_validator_rejects(validator, corpus, &missing_invalid_evidence_path, baseline);
+
+    let mut revision_drift = original.clone();
+    revision_drift["transport_parity"][1]["mcp"]["run_revision"] = "drifted".into();
+    let revision_drift_path = temp.join("revision-drift.json");
+    write_json(&revision_drift_path, &revision_drift);
+    assert_validator_rejects(validator, corpus, &revision_drift_path, baseline);
 
     let mut missing_fallback = original.clone();
     missing_fallback["results"][0]["calls"]

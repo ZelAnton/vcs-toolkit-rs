@@ -26,6 +26,17 @@ puts false-activation evidence first, then selection and raw-bypass evidence;
 the deterministic recording fixes all three ratios. Unavailable live metrics
 remain `null`, never an invented zero.
 
+The same cases compare `cli+skill` and `mcp` using one vocabulary: precision,
+recall, bypass rate, invalid-call rate, and outcome correctness. The recorder
+derives each ratio from validated selection, call-channel, outcome, and corpus
+eligibility evidence in `interface_metrics`. Both interface runs carry the same
+ordered case IDs and use that common set as every denominator; per-case
+`invalid_call_evidence` is recorded explicitly. An unavailable interface is
+`null`, never a zero-valued measurement. `transport_parity` separately records
+matching publish and exact-revision CI status/wait evidence. A harness
+records only values it measured; an unavailable live tier remains `null`, never
+an invented zero.
+
 The result envelope in [`result-schema.v1.json`](result-schema.v1.json) keeps
 selection evidence separate from outcome evidence:
 
@@ -106,7 +117,7 @@ fixture and includes:
 ```json
 {
   "schema_version": "agent-interface.live-recording.v1",
-  "corpus_version": "1.1.0",
+  "corpus_version": "1.2.0",
   "harness": {"name": "operator-selected", "model": "redacted", "network": true},
   "cases": [{
     "case_id": "inspect-status-git",
