@@ -1,10 +1,21 @@
 {
   "schema_version": "agent-interface.corpus.v1",
-  "corpus_version": "1.0.0",
+  "corpus_version": "1.1.0",
   "selection_policy": {
     "preferred_interface": "vcs-agent",
     "fallback_interfaces": ["mcp", "raw-cli"],
     "selection_outcomes": ["preferred", "fallback", "none"]
+  },
+  "skill_metadata": {
+    "name": "vcs-agent",
+    "contract_version": "vcs-agent-skill/v1",
+    "path": "../../skills/vcs-agent/SKILL.md",
+    "metric_priority": [
+      "false_activation_rate",
+      "preferred_interface_selection_rate",
+      "raw_cli_bypass_rate"
+    ],
+    "unavailable_live_metrics": null
   },
   "cases": [
     {
@@ -230,6 +241,50 @@
       }
     },
     {
+      "case_id": "ordinary-file-read-negative",
+      "scenario": "ordinary_file_read",
+      "request": {
+        "prompt": "Read src/lib.rs and explain how the parser is structured.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "none",
+        "operation": "none",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "ignored",
+        "invariants": {
+          "preferred_calls": {"min": 0, "max": 0},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
+      "case_id": "ordinary-file-edit-negative",
+      "scenario": "ordinary_file_edit",
+      "request": {
+        "prompt": "Edit src/lib.rs to rename the local variable; do not perform a repository operation.",
+        "backend": "git",
+        "forge": "none"
+      },
+      "expected": {
+        "selection": "none",
+        "operation": "none",
+        "fallback": {"allowed": false, "interfaces": [], "reasons": []},
+        "outcome": "ignored",
+        "invariants": {
+          "preferred_calls": {"min": 0, "max": 0},
+          "raw_cli_calls": 0,
+          "unrelated_changes_preserved": true,
+          "exact_revision_evidence": "not_required",
+          "terminal_ci": "not_required"
+        }
+      }
+    },
+    {
       "case_id": "unsupported-low-level-command",
       "scenario": "unsupported_low_level",
       "request": {
@@ -243,7 +298,7 @@
         "fallback": {
           "allowed": true,
           "interfaces": ["raw-cli"],
-          "reasons": ["unsupported_operation"]
+          "reasons": ["structured_unsupported"]
         },
         "outcome": "fallback",
         "invariants": {

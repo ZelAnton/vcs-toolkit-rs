@@ -25,6 +25,8 @@ EXPECTED_SCENARIOS = {
     "wait_ci",
     "conflict",
     "ordinary_file_search",
+    "ordinary_file_read",
+    "ordinary_file_edit",
     "unsupported_low_level",
     "preferred_unavailable",
 }
@@ -662,8 +664,26 @@ def validate_machine_fixtures(fixtures_dir: Path) -> list[dict[str, Any]]:
     return [validate_machine_envelope(load_json(path), str(path)) for path in paths]
 
 
-def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
+def validate_skill_contract(contract: Any) -> dict[str, Any]:
+    root = _object(contract, "skill contract")
+    if root.get("skill_contract_version") != "vcs-agent-skill/v1":
+        raise ValidationError("skill contract version must be vcs-agent-skill/v1")
+    metadata = _object(root.get("metadata"), "skill contract.metadata")
+    if metadata.get("name") != "vcs-agent":
+        raise ValidationError("skill contract metadata.name must be vcs-agent")
+    reasons = root.get("fallback_reasons")
+    if reasons != [
+        "structured_unsupported",
+        "missing_vcs_agent",
+        "exact_low_level_diagnostic",
+    ]:
+        raise ValidationError("skill contract must expose exactly three fallback reasons")
+    return root
+
+
+def validate_corpus(corpus: Any, skill_contract: Any) -> dict[str, dict[str, Any]]:
     root = _object(corpus, "corpus")
+    checked_skill = validate_skill_contract(skill_contract)
     if root.get("schema_version") != "agent-interface.corpus.v1":
         raise ValidationError("corpus.schema_version must be agent-interface.corpus.v1")
     _string(root.get("corpus_version"), "corpus.corpus_version")
@@ -673,6 +693,23 @@ def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
     fallbacks = policy.get("fallback_interfaces")
     if fallbacks != ["mcp", "raw-cli"]:
         raise ValidationError("selection_policy.fallback_interfaces must be [mcp, raw-cli]")
+    skill = _object(root.get("skill_metadata"), "corpus.skill_metadata")
+    if skill.get("name") != "vcs-agent":
+        raise ValidationError("skill_metadata.name must be vcs-agent")
+    if skill.get("name") != checked_skill["metadata"]["name"]:
+        raise ValidationError("skill_metadata.name differs from the Skill contract")
+    if skill.get("contract_version") != checked_skill["skill_contract_version"]:
+        raise ValidationError("skill_metadata.contract_version differs from the Skill contract")
+    if skill.get("path") != "../../skills/vcs-agent/SKILL.md":
+        raise ValidationError("skill_metadata.path must select the standalone Skill")
+    if skill.get("metric_priority") != [
+        "false_activation_rate",
+        "preferred_interface_selection_rate",
+        "raw_cli_bypass_rate",
+    ]:
+        raise ValidationError("skill_metadata must prioritize negative false-activation evidence")
+    if skill.get("unavailable_live_metrics", "missing") is not None:
+        raise ValidationError("unavailable Skill live metrics must be null, never zero")
     cases = root.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValidationError("corpus.cases must be a non-empty array")
@@ -702,6 +739,10 @@ def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
             raise ValidationError(f"{case_id}.expected.fallback.interfaces must be a string array")
         if not isinstance(reasons, list) or not all(isinstance(item, str) for item in reasons):
             raise ValidationError(f"{case_id}.expected.fallback.reasons must be a string array")
+        if "raw-cli" in interfaces and any(
+            reason not in checked_skill["fallback_reasons"] for reason in reasons
+        ):
+            raise ValidationError(f"{case_id}: raw fallback reason is outside the Skill contract")
         if selection == "preferred" and fallback["allowed"]:
             raise ValidationError(f"{case_id}: preferred selection cannot allow fallback")
         if selection == "none" and fallback["allowed"]:
@@ -1105,6 +1146,7 @@ def validate_processkit_cli_evidence(evidence: Any, profile: Any, machine_fixtur
 
 def validate_files(
     corpus_path: Path,
+    skill_contract_path: Path,
     results_path: Path | None,
     baseline_path: Path | None,
     machine_fixtures: Path | None = None,
@@ -1112,7 +1154,8 @@ def validate_files(
     processkit_evidence_path: Path | None = None,
     processkit_machine_fixtures: Path | None = None,
 ) -> dict[str, Any]:
-    corpus_by_id = validate_corpus(load_json(corpus_path))
+    checked_skill = validate_skill_contract(load_json(skill_contract_path))
+    corpus_by_id = validate_corpus(load_json(corpus_path), checked_skill)
     checked_results: list[dict[str, Any]] = []
     if results_path is not None:
         checked_results = validate_results(corpus_by_id, load_json(results_path))
@@ -1132,6 +1175,7 @@ def validate_files(
         )
     return {
         "corpus_cases": len(corpus_by_id),
+        "skill_contract": checked_skill["skill_contract_version"],
         "result_cases": len(checked_results),
         "machine_fixtures": len(checked_machine),
         "baseline_status": baseline["status"] if baseline else None,
@@ -1144,6 +1188,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[2]
     parser.add_argument("--corpus", type=Path, default=root / "docs/agent-interface/corpus.v1.json")
+    parser.add_argument("--skill-contract", type=Path, default=root / "skills/vcs-agent/references/contract.v1.json")
     parser.add_argument("--results", type=Path)
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
     parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
@@ -1154,6 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         summary = validate_files(
             args.corpus,
+            args.skill_contract,
             args.results,
             args.baseline,
             args.machine_fixtures,

@@ -1,0 +1,85 @@
+{
+  "skill_contract_version": "vcs-agent-skill/v1",
+  "metadata": {
+    "name": "vcs-agent",
+    "description": "Inspect repository state, review changes, commit exact files, publish Git or Jujutsu revisions, open or recover pull or merge requests, wait for exact-revision CI, and report conflicts through vcs-agent. Use for repository and revision workflows; do not use for ordinary file search, source reading, or editing files without a VCS outcome."
+  },
+  "agent_contract_version": "vcs-agent/v1",
+  "commands": ["probe", "inspect", "changes", "commit", "publish", "ci status", "ci wait"],
+  "required_flags": {
+    "inspect": ["--repo"],
+    "changes": ["--repo", "--mode", "--content-max-bytes"],
+    "commit": ["--repo", "--write-intent", "--expected-revision", "--message", "--path"],
+    "publish": ["--repo", "--write-intent", "--expected-revision", "--expected-remote-revision", "--remote", "--source", "--target", "--forge", "--expected-account", "--title", "--body"],
+    "ci status": ["--repo", "--forge", "--source", "--expected-revision"],
+    "ci wait": ["--repo", "--forge", "--source", "--expected-revision", "--wait-seconds", "--poll-seconds"]
+  },
+  "error_kinds": {
+    "unsupported": 10,
+    "denied": 20,
+    "invalid_input": 2,
+    "backend": 30,
+    "forge": 31,
+    "authentication": 32,
+    "timeout": 40,
+    "cancelled": 41,
+    "output_limit": 42,
+    "outcome_unknown": 43,
+    "external_command": 50,
+    "internal": 70
+  },
+  "exit_bands": {
+    "success": [0, 0],
+    "caller": [2, 19],
+    "policy": [20, 29],
+    "domain": [30, 39],
+    "lifecycle": [40, 49],
+    "external_command": [50, 59],
+    "internal": [70, 79]
+  },
+  "fallback_reasons": ["structured_unsupported", "missing_vcs_agent", "exact_low_level_diagnostic"],
+  "processkit_cli_profile": {
+    "profile_version": "vcs-agent.processkit-cli/v1",
+    "minimum_expected_duration_seconds": 60,
+    "wrap_on_descendant_cleanup_risk": true,
+    "direct_short_operations": ["probe", "inspect", "changes", "commit", "ci status"],
+    "preflight": {
+      "probe_version": 1,
+      "schema_version": 1,
+      "exit_code_band": [100, 119],
+      "required_surface": [
+        "cancel",
+        "cancel:--run-id",
+        "probe",
+        "probe:--json",
+        "probe:--print-schema",
+        "probe:--require-exit-code-band",
+        "probe:--require-schema-version",
+        "probe:--require-surface",
+        "run",
+        "run:--capture-dir",
+        "run:--capture-max-bytes",
+        "run:--cwd",
+        "run:--detach",
+        "run:--grace",
+        "run:--jsonl",
+        "run:--no-echo",
+        "run:--run-id",
+        "run:--timeout",
+        "wait",
+        "wait:--run-id",
+        "wait:--timeout"
+      ]
+    },
+    "terminal_event": "runner_exit"
+  },
+  "examples": [
+    {"id": "probe", "operation": "probe", "argv": ["probe"]},
+    {"id": "inspect", "operation": "inspect", "argv": ["inspect", "--repo", "__missing_repo__"]},
+    {"id": "changes", "operation": "changes", "argv": ["changes", "--repo", "__missing_repo__", "--mode", "full", "--content-max-bytes", "262144"]},
+    {"id": "commit", "operation": "commit", "argv": ["commit", "--repo", "__missing_repo__", "--write-intent", "commit", "--expected-revision", "0123456789abcdef0123456789abcdef01234567", "--message", "Selected paths", "--path", "src/lib.rs"]},
+    {"id": "publish", "operation": "publish", "argv": ["publish", "--repo", "__missing_repo__", "--write-intent", "publish", "--expected-revision", "0123456789abcdef0123456789abcdef01234567", "--expected-remote-revision", "absent", "--remote", "origin", "--source", "feature", "--target", "main", "--forge", "github", "--expected-account", "agent", "--title", "Checked publish", "--body", ""]},
+    {"id": "ci-status", "operation": "ci_status", "argv": ["ci", "status", "--repo", "__missing_repo__", "--forge", "github", "--source", "feature", "--expected-revision", "0123456789abcdef0123456789abcdef01234567"]},
+    {"id": "ci-wait", "operation": "ci_wait", "argv": ["ci", "wait", "--repo", "__missing_repo__", "--forge", "github", "--source", "feature", "--expected-revision", "0123456789abcdef0123456789abcdef01234567", "--wait-seconds", "60", "--poll-seconds", "2"]}
+  ]
+}

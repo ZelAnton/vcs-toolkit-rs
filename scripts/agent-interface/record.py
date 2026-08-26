@@ -37,8 +37,13 @@ def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
     return recorded
 
 
-def make_recording(corpus: Any, results: Any, baseline: Any | None = None) -> dict[str, Any]:
-    corpus_by_id = validate_corpus(corpus)
+def make_recording(
+    corpus: Any,
+    results: Any,
+    skill_contract: Any,
+    baseline: Any | None = None,
+) -> dict[str, Any]:
+    corpus_by_id = validate_corpus(corpus, skill_contract)
     checked = validate_results(corpus_by_id, results)
     baseline_value = validate_baseline(baseline) if baseline is not None else None
     by_id = {result["case_id"]: result for result in checked}
@@ -55,6 +60,7 @@ def make_recording(corpus: Any, results: Any, baseline: Any | None = None) -> di
         "schema_version": "agent-interface.recording.v1",
         "corpus_version": corpus["corpus_version"],
         "source": "offline-fixture",
+        "skill_metadata": corpus["skill_metadata"],
         "cases": [
             {
                 "case_id": result["case_id"],
@@ -103,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[2]
     parser.add_argument("--corpus", type=Path, default=root / "docs/agent-interface/corpus.v1.json")
+    parser.add_argument("--skill-contract", type=Path, default=root / "skills/vcs-agent/references/contract.v1.json")
     parser.add_argument("--results", type=Path, default=root / "docs/agent-interface/fixtures/results.v1.json")
     parser.add_argument("--baseline", type=Path, default=root / "docs/agent-interface/baseline-mcp.v1.json")
     parser.add_argument("--machine-fixtures", type=Path, default=root / "crates/agent/tests/fixtures")
@@ -117,7 +124,12 @@ def main(argv: list[str] | None = None) -> int:
         processkit_evidence = validate_processkit_cli_evidence(
             load_json(args.processkit_cli_evidence), processkit_profile, args.processkit_cli_machine_fixtures
         )
-        recording = make_recording(load_json(args.corpus), load_json(args.results), load_json(args.baseline))
+        recording = make_recording(
+            load_json(args.corpus),
+            load_json(args.results),
+            load_json(args.skill_contract),
+            load_json(args.baseline),
+        )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(recording, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except (ValidationError, OSError) as exc:
