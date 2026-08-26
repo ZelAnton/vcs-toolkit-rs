@@ -60,6 +60,12 @@ expected identity no longer matches. Git accepts byte-faithful non-UTF-8 paths.
 Jujutsu checked commit is structured `unsupported` before any snapshot/commit
 mutation because its typed CLI surface has no atomic expected-operation/change
 guard equivalent to Git's expected-old ref update.
+Before Git preparation, an active `filter` attribute on any selected path and
+`commit.gpgSign=true` are refused. Consequently checked commit does not execute
+a repository-selected clean filter or signing program; the focused real-Git
+tests `git_checked_commit_rejects_an_active_clean_filter_before_it_executes` and
+`git_checked_commit_rejects_configured_signing_before_the_program_executes`
+install executable negative controls and verify that neither helper runs.
 
 The only mutation call is the typed `Repo::commit_paths_checked`, which carries
 the expected identity to the backend boundary. On Git it prepares the commit
@@ -76,7 +82,9 @@ successful CAS, only selected index entries are reset, preserving unrelated
 staged/unstaged/untracked state. Jujutsu is refused as unsupported before
 preparation rather than claiming a weaker stale guard. Postflight also requires an advanced revision,
 clear repository state, no selected paths left in the working-copy change set,
-and every unrelated status entry still present. Only then does success report
+and exact equality of the complete unrelated status-entry set before and after
+the mutation. A new, removed, or changed unrelated entry therefore becomes
+`outcome_unknown`. Only then does success report
 the repository, before/after revision identity and included paths observed from
 the created commit diff
 (both old and new sides for renames), plus

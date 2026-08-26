@@ -27,7 +27,8 @@ This crate is versioned and published independently; tag releases as
 - Add checked exact-path `commit` over `vcs-core`: explicit write intent,
   revision and repository-state preflight, literal Git/Jujutsu selection,
   before/after identity plus included-path evidence, fail-closed postflight,
-  and preservation checks for unrelated staged, unstaged, and untracked work.
+  exact preservation checks for unrelated staged, unstaged, and untracked work,
+  and pre-mutation refusal of selected-path clean filters and configured signing.
 
 ### Changed
 -

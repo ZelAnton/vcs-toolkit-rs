@@ -656,10 +656,7 @@ async fn commit_repo<R: ProcessRunner>(
             include_paths,
         )));
     }
-    if unrelated_before
-        .iter()
-        .any(|before_change| !changed_after.contains(before_change))
-    {
+    if !same_change_set(&unrelated_before, &changed_after) {
         return Err(Box::new(commit_gate_error(
             ErrorKind::OutcomeUnknown,
             "commit_unrelated_state_changed",
@@ -683,6 +680,12 @@ async fn commit_repo<R: ProcessRunner>(
 
 fn same_path_set(left: &[PathBuf], right: &[PathBuf]) -> bool {
     left.iter().collect::<BTreeSet<_>>() == right.iter().collect::<BTreeSet<_>>()
+}
+
+fn same_change_set(left: &[FileChange], right: &[FileChange]) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|change| right.contains(change))
+        && right.iter().all(|change| left.contains(change))
 }
 
 fn commit_semantics(kind: BackendKind) -> CommitSemantics {
@@ -1857,6 +1860,24 @@ mod tests {
                 PathBuf::from("extra.txt"),
             ],
             &selected,
+        ));
+    }
+
+    #[test]
+    fn checked_commit_postflight_requires_exact_unrelated_change_set() {
+        let before = vec![FileChange::new("unrelated.txt", ChangeKind::Modified)];
+        assert!(same_change_set(&before, &before));
+        assert!(!same_change_set(
+            &before,
+            &[
+                before[0].clone(),
+                FileChange::new("new-unrelated.txt", ChangeKind::Added),
+            ],
+        ));
+        assert!(!same_change_set(&before, &[]));
+        assert!(!same_change_set(
+            &before,
+            &[FileChange::new("unrelated.txt", ChangeKind::Deleted)],
         ));
     }
 

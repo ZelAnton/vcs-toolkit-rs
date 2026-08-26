@@ -478,6 +478,126 @@ fn git_checked_commit_does_not_run_post_index_change_hook_during_index_writes() 
 }
 
 #[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_rejects_an_active_clean_filter_before_it_executes() {
+    let sandbox = GitSandbox::init("agent-checked-git-no-clean-filter");
+    sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.commit_file("unrelated.txt", "clean\n", "seed unrelated");
+    sandbox.commit_file(
+        ".gitattributes",
+        "selected.txt filter=mutating\n",
+        "select clean filter",
+    );
+    sandbox.git(&[
+        "config",
+        "filter.mutating.clean",
+        "printf 'executed\\n' > filter-marker.txt; printf 'mutated\\n' > unrelated.txt; cat",
+    ]);
+    sandbox.write("selected.txt", "after\n");
+
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "must not run a clean filter",
+        "--path",
+        "selected.txt",
+    ]));
+
+    assert!(
+        !output.status.success(),
+        "active clean filter must fail closed"
+    );
+    assert_eq!(sandbox.rev_parse("HEAD"), before);
+    assert!(!sandbox.path().join("filter-marker.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "clean\n"
+    );
+
+    // Negative control: the same repository configuration really is executable
+    // by ordinary Git and would mutate unrelated state if checked commit used
+    // `git add` without the preflight refusal.
+    sandbox.git(&["add", "--", "selected.txt"]);
+    assert!(sandbox.path().join("filter-marker.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "mutated\n"
+    );
+}
+
+#[test]
+#[ignore = "requires the git binary"]
+fn git_checked_commit_rejects_configured_signing_before_the_program_executes() {
+    let sandbox = GitSandbox::init("agent-checked-git-no-signing-helper");
+    sandbox.commit_file("selected.txt", "before\n", "seed selected");
+    sandbox.commit_file("unrelated.txt", "clean\n", "seed unrelated");
+    let helper = sandbox.path().join("signing-helper.sh");
+    std::fs::write(
+        &helper,
+        "#!/bin/sh\nprintf 'executed\\n' > signing-marker.txt\nprintf 'mutated\\n' > unrelated.txt\nexit 1\n",
+    )
+    .expect("write signing helper");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))
+            .expect("make signing helper executable");
+    }
+    sandbox.git(&["config", "commit.gpgSign", "true"]);
+    sandbox.git(&["config", "gpg.program", &helper.to_string_lossy()]);
+    sandbox.write("selected.txt", "after\n");
+
+    let before = sandbox.rev_parse("HEAD");
+    let output = agent(args(&[
+        "commit",
+        "--repo",
+        sandbox.path().to_str().expect("UTF-8 sandbox path"),
+        "--write-intent",
+        "commit",
+        "--expected-revision",
+        &before,
+        "--message",
+        "must not run a signing helper",
+        "--path",
+        "selected.txt",
+    ]));
+
+    assert!(
+        !output.status.success(),
+        "configured signing must fail closed"
+    );
+    assert_eq!(sandbox.rev_parse("HEAD"), before);
+    assert!(!sandbox.path().join("signing-marker.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "clean\n"
+    );
+
+    // Negative control: ordinary Git honours the configured signing program.
+    let ordinary = Command::new("git")
+        .current_dir(sandbox.path())
+        .args(["commit", "--allow-empty", "-m", "exercise signing helper"])
+        .output()
+        .expect("run ordinary signed git commit");
+    assert!(
+        !ordinary.status.success(),
+        "the sentinel signer must reject"
+    );
+    assert!(sandbox.path().join("signing-marker.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(sandbox.path().join("unrelated.txt")).unwrap(),
+        "mutated\n"
+    );
+}
+
+#[test]
 #[ignore = "requires the jj and git binaries"]
 fn jj_checked_commit_is_unsupported_without_snapshot_or_commit_mutation() {
     let sandbox = JjSandbox::init_non_colocated("agent-checked-jj");

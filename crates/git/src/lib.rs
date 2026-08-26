@@ -426,7 +426,10 @@ pub trait GitApi: Send + Sync {
     /// Prepare an exact-path commit through a temporary index and atomically
     /// install it only if `HEAD` still equals `expected` (`git update-ref HEAD
     /// <new> <expected-old>`). Repository commit hooks are deliberately not
-    /// executed: they can mutate unrelated index/worktree state, which would
+    /// executed. An active clean-filter attribute on a selected path or
+    /// `commit.gpgSign=true` is refused before preparation, so repository-selected
+    /// filter/signing programs cannot run inside the checked mutation. Those
+    /// executable paths can mutate unrelated index/worktree state, which would
     /// make the checked preservation guarantee unprovable.
     async fn commit_paths_cas(
         &self,
@@ -2251,6 +2254,11 @@ impl<R: ProcessRunner> GitApi for Git<R> {
             ));
         }
 
+        // These probes are intentionally before the temporary index and object
+        // writes below. A checked commit cannot safely honour repository-selected
+        // clean filters or signing programs: either helper can execute arbitrary
+        // code outside the selected path boundary.
+        checked_commit_reject_configured_helpers(self, dir, &spec.paths).await?;
         let expected_revision = checked_commit_resolve(self, dir, expected).await?;
         let temp = CommitCasTemp::new()?;
         std::fs::write(&temp.message, spec.message.as_bytes())
@@ -2293,16 +2301,10 @@ impl<R: ProcessRunner> GitApi for Git<R> {
                     .env("GIT_INDEX_FILE", &temp.index),
             ))
             .await?;
-        let mut commit_tree = checked_commit_no_hooks(self.core.command_in(
+        let commit_tree = checked_commit_no_hooks(self.core.command_in(
             dir,
             ["commit-tree", tree.as_str(), "-p", &expected_revision],
         ));
-        if checked_commit_config_get(self, dir, "commit.gpgSign")
-            .await?
-            .is_some_and(|value| matches!(value.as_str(), "true" | "yes" | "on" | "1"))
-        {
-            commit_tree = commit_tree.arg("-S");
-        }
         let prepared_revision = self
             .core
             .run(commit_tree.arg("-F").arg(&temp.message))
@@ -3872,7 +3874,7 @@ async fn checked_commit_resolve<R: ProcessRunner>(
         .await
 }
 
-async fn checked_commit_config_get<R: ProcessRunner>(
+async fn checked_commit_config_bool<R: ProcessRunner>(
     git: &Git<R>,
     dir: &Path,
     key: &str,
@@ -3880,7 +3882,7 @@ async fn checked_commit_config_get<R: ProcessRunner>(
     let result = git
         .core
         .output_string(checked_commit_no_hooks(
-            git.core.command_in(dir, ["config", "--get", key]),
+            git.core.command_in(dir, ["config", "--bool", "--get", key]),
         ))
         .await?;
     match result.code() {
@@ -3893,6 +3895,71 @@ async fn checked_commit_config_get<R: ProcessRunner>(
             Ok(None)
         }
     }
+}
+
+async fn checked_commit_reject_configured_helpers<R: ProcessRunner>(
+    git: &Git<R>,
+    dir: &Path,
+    paths: &[PathBuf],
+) -> Result<()> {
+    if checked_commit_config_bool(git, dir, "commit.gpgSign")
+        .await?
+        .is_some_and(|value| value == "true")
+    {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "checked commit does not support commit.gpgSign=true because a repository-selected signing program may execute",
+            ),
+        ));
+    }
+
+    let stdin = processkit::Stdin::from_bytes(pathspec_nul_bytes(
+        paths.iter().map(|path| path.as_os_str()),
+    )?);
+    let output = git
+        .core
+        .output_bytes(checked_commit_no_hooks(
+            git.core
+                .command_in(
+                    dir,
+                    [
+                        "--literal-pathspecs",
+                        "check-attr",
+                        "-z",
+                        "--stdin",
+                        "filter",
+                    ],
+                )
+                .stdin(stdin),
+        ))
+        .await?
+        .ensure_success()?
+        .into_stdout();
+    let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let fields = fields
+        .strip_suffix(&[&[][..]])
+        .ok_or_else(|| Error::parse(BINARY, "git check-attr -z output is not NUL-terminated"))?;
+    if fields.len() % 3 != 0 {
+        return Err(Error::parse(
+            BINARY,
+            "git check-attr -z output does not contain path/attribute/value triples",
+        ));
+    }
+    if fields.chunks_exact(3).any(|entry| {
+        let value = entry[2];
+        value != b"unspecified" && value != b"unset"
+    }) {
+        return Err(Error::spawn(
+            BINARY,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "checked commit does not support selected paths with an active clean filter",
+            ),
+        ));
+    }
+    Ok(())
 }
 
 async fn checked_commit_diff_between<R: ProcessRunner>(
@@ -5251,6 +5318,11 @@ mod tests {
                     +after\n";
         RecordingRunner::new(
             ScriptedRunner::new()
+                .on(["git", "config", "--bool", "--get"], Reply::fail(1, ""))
+                .on(
+                    ["git", "--literal-pathspecs", "check-attr"],
+                    Reply::ok("selected.txt\0filter\0unspecified\0"),
+                )
                 .on_sequence(
                     ["git", "rev-parse", "--verify"],
                     [Reply::ok("expected\n"), observed_head],
@@ -5258,7 +5330,6 @@ mod tests {
                 .on(["git", "read-tree"], Reply::ok(""))
                 .on(["git", "--literal-pathspecs", "add"], Reply::ok(""))
                 .on(["git", "write-tree"], Reply::ok("tree\n"))
-                .on(["git", "config", "--get"], Reply::fail(1, ""))
                 .on(["git", "commit-tree"], Reply::ok("prepared\n"))
                 .on(["git", "diff"], Reply::ok(diff))
                 .on(["git", "update-ref"], update_ref)
@@ -5282,7 +5353,7 @@ mod tests {
         assert!(matches!(outcome, CommitPathsCas::Installed { .. }));
 
         let calls = runner.calls();
-        assert_eq!(calls.len(), 9, "the full successful CAS command sequence");
+        assert_eq!(calls.len(), 10, "the full successful CAS command sequence");
         for call in calls {
             let has = |key: &str, value: &str| {
                 call.envs.iter().any(|(name, configured)| {

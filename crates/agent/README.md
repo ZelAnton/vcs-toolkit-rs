@@ -28,10 +28,10 @@ backend, repository/working-copy state, remotes, forge/auth/capability facts;
 `changes` reports a summary or structured full diff. `commit` requires explicit
 write intent, a non-empty message and exact repo-relative file paths, and the
 revision identity obtained from preflight. It refuses stale or conflicted state,
-directory/traversal/flag-like ambiguity, and unchanged selections before
-mutation. Its success envelope proves the before/after identities, the included
-path set, and preservation of unrelated changes; it never pushes, switches, or
-repairs conflicts.
+directory/traversal/flag-like ambiguity, unchanged selections, active selected-path
+clean filters, and configured commit signing before mutation. Its success envelope
+proves the before/after identities, the included path set, and exact preservation
+of the unrelated status-entry set; it never pushes, switches, or repairs conflicts.
 
 Machine results — success and failure — are complete JSON documents written to
 stdout. Short human diagnostics are written only to stderr. The default machine
