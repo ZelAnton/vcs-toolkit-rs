@@ -16,7 +16,8 @@ pub(crate) fn parse_gh_version(raw: &str) -> Option<vcs_diff::Version> {
 }
 
 /// A pull request
-/// (`gh pr list/view --json number,title,state,isDraft,headRefName,baseRefName,url`).
+/// (`gh pr list/view --json number,title,state,isDraft,headRefName,headRefOid,
+/// baseRefName,isCrossRepository,url`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
 pub struct PullRequest {
@@ -36,6 +37,15 @@ pub struct PullRequest {
         deserialize_with = "vcs_cli_support::json::null_to_empty"
     )]
     pub head_ref_name: String,
+    /// Exact object id at the PR head. Empty only when an older/scripted response
+    /// omitted the requested `headRefOid`; callers that need identity proof must
+    /// fail closed on that value.
+    #[serde(
+        rename = "headRefOid",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub head_ref_oid: String,
     /// Target (base) branch name.
     #[serde(
         rename = "baseRefName",
@@ -43,6 +53,10 @@ pub struct PullRequest {
         deserialize_with = "vcs_cli_support::json::null_to_empty"
     )]
     pub base_ref_name: String,
+    /// Whether the PR head comes from another repository. `None` means the
+    /// requested field was absent, not "same repository".
+    #[serde(rename = "isCrossRepository", default)]
+    pub is_cross_repository: Option<bool>,
     /// Web URL.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub url: String,
@@ -236,6 +250,15 @@ pub struct WorkflowRun {
         deserialize_with = "vcs_cli_support::json::null_to_empty"
     )]
     pub head_branch: String,
+    /// Exact commit SHA the workflow ran for (`headSha`). An empty value means
+    /// the CLI/backend did not provide revision evidence and must never match an
+    /// exact-revision CI query.
+    #[serde(
+        rename = "headSha",
+        default,
+        deserialize_with = "vcs_cli_support::json::null_to_empty"
+    )]
+    pub head_sha: String,
     /// Triggering event, e.g. `"push"`, `"workflow_dispatch"`.
     #[serde(default, deserialize_with = "vcs_cli_support::json::null_to_empty")]
     pub event: String,
@@ -819,7 +842,9 @@ mod tests {
                 state: "OPEN".into(),
                 is_draft: true,
                 head_ref_name: "feat/x".into(),
+                head_ref_oid: String::new(),
                 base_ref_name: "main".into(),
+                is_cross_repository: None,
                 url: "https://gh/pr/12".into(),
                 labels: Vec::new(),
                 assignees: Vec::new(),
@@ -829,6 +854,17 @@ mod tests {
                 milestone: None,
             }
         );
+    }
+
+    #[test]
+    fn pr_parses_exact_head_identity_and_repository_relation() {
+        let json = r#"{"number":12,"title":"Add feature","state":"OPEN","isDraft":false,
+            "headRefName":"feat/x","headRefOid":"0123456789abcdef","baseRefName":"main",
+            "isCrossRepository":false,"url":"https://gh/pr/12"}"#;
+        let pr: PullRequest =
+            vcs_cli_support::json::from_json(BINARY, json).expect("parse exact PR identity");
+        assert_eq!(pr.head_ref_oid, "0123456789abcdef");
+        assert_eq!(pr.is_cross_repository, Some(false));
     }
 
     // Positive case: gh's `--json labels,assignees` shape (`[{"name": …}]`,

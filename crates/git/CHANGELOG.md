@@ -10,6 +10,9 @@ crates; tag releases as `vcs-git-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Add `GitApi::remote_branch_revision` and `GitAt::remote_branch_revision` for an
+  exact, prompt-free `ls-remote` object ID query; absence is typed, while command,
+  authentication, and ambiguous-output failures remain errors.
 - **`Git::with_ssh_command` / `Git::trust_repo_ssh_command`** — the two explicit
   opt-ins out of the new hardened `core.sshCommand` refusal below.
   `with_ssh_command(<command>)` runs SSH network operations with that command,

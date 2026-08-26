@@ -2614,7 +2614,7 @@ mod tests {
                 "--limit",
                 "7",
                 "--json",
-                "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees,author,createdAt,updatedAt,milestone"
+                "number,title,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,url,labels,assignees,author,createdAt,updatedAt,milestone"
             ]
         );
 

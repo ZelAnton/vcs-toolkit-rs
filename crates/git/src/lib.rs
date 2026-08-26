@@ -468,6 +468,17 @@ pub trait GitApi: Send + Sync {
     /// `bar/foo`). Runs with `GIT_TERMINAL_PROMPT=0` and a 10s timeout so a missing
     /// credential or a flaky network can't hang the call.
     async fn remote_branch_exists(&self, dir: &Path, name: &RefName) -> Result<bool>;
+    /// The exact object id advertised for `refs/heads/<name>` on `remote`, or
+    /// `None` when that ref is absent (`ls-remote <remote> refs/heads/<name>`).
+    /// Unlike [`remote_branch_exists`](GitApi::remote_branch_exists), command
+    /// failures are never collapsed into absence: callers use this value as
+    /// pre/postflight evidence around an irreversible checked push.
+    async fn remote_branch_revision(
+        &self,
+        dir: &Path,
+        remote: &str,
+        name: &RefName,
+    ) -> Result<Option<String>>;
     /// A remote's URL (`remote get-url <remote>`).
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String>;
     /// Configured remotes from `remote -v`, coalesced to one typed row per name
@@ -2531,6 +2542,45 @@ impl<R: ProcessRunner> GitApi for Git<R> {
         );
         let res = self.core.output_string(cmd).await?;
         Ok(res.code() == Some(0) && !res.stdout().trim().is_empty())
+    }
+
+    async fn remote_branch_revision(
+        &self,
+        dir: &Path,
+        remote: &str,
+        name: &RefName,
+    ) -> Result<Option<String>> {
+        reject_flag_like("remote name", remote)?;
+        let refname = format!("refs/heads/{}", name.as_str());
+        self.ensure_ssh_transport_allowed(dir).await?;
+        let (pre, envs) = self.remote_credentials(None).await?;
+        let mut args: Vec<String> = pre;
+        args.extend(["ls-remote", remote, refname.as_str()].map(String::from));
+        let cmd = apply_secret_env(
+            self.apply_ssh_command(
+                self.core
+                    .command_in(dir, &args)
+                    .env("GIT_TERMINAL_PROMPT", "0"),
+            ),
+            &envs,
+        );
+        let output = self.core.output_string(cmd).await?;
+        let output = output.ensure_success()?;
+        let mut matches = output.stdout().lines().filter_map(|line| {
+            let (revision, advertised_ref) = line.split_once('\t')?;
+            (advertised_ref == refname).then_some(revision)
+        });
+        let first = matches.next().map(str::to_owned);
+        if matches.next().is_some() {
+            return Err(Error::spawn(
+                BINARY,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "ls-remote returned the exact branch more than once",
+                ),
+            ));
+        }
+        Ok(first)
     }
 
     async fn remote_url(&self, dir: &Path, remote: &str) -> Result<String> {
@@ -4637,6 +4687,7 @@ vcs_cli_support::at_forwarders! {
         fn remote_head_branch() -> Result<Option<String>>;
         fn branch_exists(name: &RefName) -> Result<bool>;
         fn remote_branch_exists(name: &RefName) -> Result<bool>;
+        fn remote_branch_revision(remote: &str, name: &RefName) -> Result<Option<String>>;
         fn remote_url(remote: &str) -> Result<String>;
         fn remote_list() -> Result<Vec<Remote>>;
         fn upstream() -> Result<Option<String>>;
@@ -7137,6 +7188,53 @@ mod tests {
                 .remote_branch_exists(Path::new("."), &rn("x"))
                 .await
                 .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_branch_revision_is_exact_and_fail_closed() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            "0123456789abcdef0123456789abcdef01234567\trefs/heads/feature\n",
+        ));
+        let git = Git::with_runner(&rec);
+        let revision = git
+            .remote_branch_revision(Path::new("/repo"), "upstream", &rn("feature"))
+            .await
+            .expect("exact remote revision");
+        assert_eq!(
+            revision.as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        let call = rec.only_call();
+        assert_eq!(
+            call.args_str(),
+            ["ls-remote", "upstream", "refs/heads/feature"]
+        );
+        assert!(call.envs.iter().any(|(key, value)| {
+            key.to_str() == Some("GIT_TERMINAL_PROMPT")
+                && value.as_deref().and_then(|item| item.to_str()) == Some("0")
+        }));
+
+        let absent =
+            Git::with_runner(ScriptedRunner::new().on(["git", "ls-remote"], Reply::ok("")));
+        assert_eq!(
+            absent
+                .remote_branch_revision(Path::new("."), "origin", &rn("feature"))
+                .await
+                .expect("absence is typed"),
+            None
+        );
+
+        let failed = Git::with_runner(ScriptedRunner::new().on(
+            ["git", "ls-remote"],
+            Reply::fail(128, "authentication failed"),
+        ));
+        assert!(
+            failed
+                .remote_branch_revision(Path::new("."), "origin", &rn("feature"))
+                .await
+                .is_err(),
+            "a failed probe must never look like an absent ref"
         );
     }
 

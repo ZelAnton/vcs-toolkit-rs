@@ -10,6 +10,10 @@ crates; tag releases as `vcs-github-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Add `PullRequest::head_ref_oid` and `PullRequest::is_cross_repository`, requested
+  by every typed PR list/view operation, for exact head and repository identity proof.
+- Add `WorkflowRun::head_sha`, requested as `headSha` by run list/view/watch, so
+  callers can bind CI evidence to one exact published revision.
 - **Per-account credential provider — `GhAccountToken`.** Runs operations as one
   *named* `gh` account on a machine with several logins, instead of switching the
   user's active account globally (`gh auth switch`). It resolves that account's

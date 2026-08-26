@@ -6,8 +6,8 @@ the MCP server: callers ask for an outcome, receive one bounded versioned JSON
 document, and decide explicitly whether an `unsupported` result permits a lower-
 level fallback.
 
-The `0.1.0` v1 surface implements `probe`, `inspect`, `changes`, and checked
-exact-path `commit`:
+The `0.1.0` v1 surface implements `probe`, `inspect`, `changes`, checked
+exact-path `commit`, checked `publish`, and exact-revision `ci status`/`ci wait`:
 
 ```text
 cargo run -p vcs-agent -- probe
@@ -16,6 +16,12 @@ cargo run -p vcs-agent -- changes --repo . --mode full --content-max-bytes 26214
 cargo run -p vcs-agent -- commit --repo . --write-intent commit \
   --expected-revision <inspect-revision> --message "selected files" \
   --path src/lib.rs --include-machine-paths
+cargo run -p vcs-agent -- publish --repo . --write-intent publish \
+  --expected-revision <full-sha> --expected-remote-revision absent \
+  --remote origin --source feature --target main --forge github \
+  --expected-account agent --title "Checked publish" --body ""
+cargo run -p vcs-agent -- ci wait --repo . --forge github --source feature \
+  --expected-revision <full-sha> --wait-seconds 1800 --poll-seconds 10
 ```
 
 `probe` reports the `vcs-agent/v1` contract and schema identity, binary version,
@@ -32,6 +38,23 @@ directory/traversal/flag-like ambiguity, unchanged selections, active selected-p
 clean filters, and configured commit signing before mutation. Its success envelope
 proves the before/after identities, the included path set, and exact preservation
 of the unrelated status-entry set; it never pushes, switches, or repairs conflicts.
+
+Checked publish currently supports a Git repository, the explicit `origin` remote,
+and GitHub. It verifies the full local object ID, branch, remote/forge identity,
+active account, exact `origin` owner/name through a `GH_REPO`-scrubbed client,
+capabilities, and expected remote ref before the first mutation. Jujutsu and
+GitLab/Gitea return structured `unsupported` before push or PR/MR mutation. A retry
+recognizes an already-pushed exact SHA and only an open, same-repository source/target
+PR at that exact SHA; ambiguous or missing identity, unexpected remote advancement,
+or an unprovable mutation result never becomes success. Four representative outcomes
+cover every reachable push/PR state in committed cross-layer validator fixtures.
+
+GitHub CI status/wait filters runs by exact `headSha`, rejects a recent different
+revision and duplicate workflow matches, and reports success only after every
+selected run is terminal with conclusion `success`. `ci wait` uses one aggregate
+deadline plus the typed GitHub 300-second inactivity watchdog and bounded diagnostic
+capture. Rust schema tests and `scripts/agent-interface/test_validate.py` check the
+negative controls and committed `ci-*-success-github.v1.json` fixtures.
 
 Machine results — success and failure — are complete JSON documents written to
 stdout. Short human diagnostics are written only to stderr. The default machine
@@ -59,10 +82,12 @@ when the complete composition exhausts its budget.
 There is no raw-command escape hatch and production code contains no direct
 `std::process::Command` path for `git`, `jj`, `gh`, `glab`, or `tea`.
 
-Long-running workflows can be supervised by executable composition:
+Long-running workflows can be supervised by executable composition while preserving
+the child JSON and terminal exit classification:
 
 ```text
-processkit-cli run -- vcs-agent <outcome> ...
+processkit-cli run --timeout 1800 --capture-max-bytes 65536 --no-echo -- \
+  vcs-agent ci wait <arguments>
 ```
 
 `vcs-agent` does not link ProcessKit-CLI internals or implement a plugin host.

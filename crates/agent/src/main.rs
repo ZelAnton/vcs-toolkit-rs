@@ -39,7 +39,7 @@ fn run(
             concat!("vcs-agent ", env!("CARGO_PKG_VERSION"), "\n"),
             stderr,
         ),
-        Ok(ParseResult::Run(invocation)) => run_invocation(invocation, stdout, stderr),
+        Ok(ParseResult::Run(invocation)) => run_invocation(*invocation, stdout, stderr),
         Err(error) => write_machine(
             render(*error, cli::DEFAULT_MAX_OUTPUT_BYTES),
             stdout,
@@ -53,7 +53,13 @@ fn run_invocation(
     stdout: &mut impl io::Write,
     stderr: &mut impl io::Write,
 ) -> ExitCode {
-    let policy = ExecutionPolicy::new(invocation.content_max_bytes);
+    let policy = ExecutionPolicy::new(invocation.content_max_bytes).with_deadline(
+        if invocation.operation == cli::Operation::CiWait {
+            std::time::Duration::from_secs(invocation.wait_seconds)
+        } else {
+            std::time::Duration::from_secs(120)
+        },
+    );
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -163,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_commands_with_arguments_are_structurally_unsupported() {
+    fn publish_and_ci_reject_incomplete_requests_without_echoing_values() {
         for (operation, args) in [
             ("publish", &["publish", "origin", "agent-secret"][..]),
             (
@@ -173,17 +179,15 @@ mod tests {
             ("ci_wait", &["ci", "wait", "agent-secret"][..]),
         ] {
             let (exit, stdout, stderr) = call(args);
-            assert_eq!(exit, ExitCode::from(10), "{operation}");
+            assert_eq!(exit, ExitCode::from(2), "{operation}");
             assert!(!stdout.contains("agent-secret"), "{operation}: {stdout}");
             let value: Value = serde_json::from_str(&stdout).expect("valid error JSON");
             assert_eq!(value["operation"], operation);
-            assert_eq!(value["error"]["kind"], "unsupported");
-            assert_eq!(value["error"]["exit_code"], 10);
-            assert_eq!(value["error"]["code"], "outcome_not_implemented");
-            assert_eq!(value["fallback"]["allowed"], true);
-            assert_eq!(value["fallback"]["interface"], "raw-cli");
-            assert_eq!(value["fallback"]["reason"], "outcome_not_implemented");
-            assert_eq!(stderr, "vcs-agent: unsupported outcome\n");
+            assert_eq!(value["error"]["kind"], "invalid_input");
+            assert_eq!(value["error"]["exit_code"], 2);
+            assert_ne!(value["error"]["code"], "outcome_not_implemented");
+            assert!(value["fallback"].is_null());
+            assert_eq!(stderr, "vcs-agent: invalid input\n");
             assert!(!stderr.contains("agent-secret"));
         }
     }

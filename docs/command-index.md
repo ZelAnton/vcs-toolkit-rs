@@ -60,6 +60,7 @@ Guide: [vcs-git](../crates/git/docs/git.md). Trait: `GitApi`
 | `is_merged` | `branch --merged <base>` | via `MergeCheck` |
 | `branch_exists` | `show-ref --verify --quiet refs/heads/<name>` | |
 | `remote_branch_exists` | `ls-remote origin refs/heads/<name>` | fully-qualified ref, 10s timeout |
+| `remote_branch_revision` | `ls-remote <remote> refs/heads/<name>` | exact advertised object id or absence; failures stay errors |
 | `remote_head_branch` | `symbolic-ref refs/remotes/origin/HEAD` | `None` when unset |
 | `remote_url` | `remote get-url <remote>` | |
 | `remote_list` | `remote -v` | parsed `Vec<Remote>`; one fetch-URL row per remote |
@@ -342,12 +343,12 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `Forge::auth_info` | `auth status`, then `repo view --json name` **only when a session exists** | active account + every login + repo visibility; no second spawn when unauthenticated |
 | `repo_view` | `repo view --json …` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
-| `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100 |
-| `pr_list_with` | `pr list --state open\|closed\|merged\|all --limit <n> --json …` | via `PrList`; zero rejected before spawn |
-| `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only |
-| `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state |
+| `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100; includes exact `headRefOid` and `isCrossRepository` |
+| `pr_list_with` | `pr list --state open\|closed\|merged\|all --limit <n> --json …` | via `PrList`; zero rejected before spawn; includes exact head/repository identity |
+| `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only; includes exact head/repository identity |
+| `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state; includes exact head/repository identity |
 | `Forge::pr_for_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; independent of target |
-| `pr_view` | `pr view <n> --json …` | |
+| `pr_view` | `pr view <n> --json …` | includes exact `headRefOid` and `isCrossRepository` |
 | `pr_create` | `pr create … [--label <name> …]` | via `PrCreate`; returns URL |
 | `pr_add_labels` / `pr_remove_labels` | `pr edit <n> --add-label\|--remove-label <name> …` | repeated flag-value pairs; empty sets rejected |
 | `pr_merge` | `pr merge <n> --merge\|--squash\|--rebase [--auto] [--delete-branch]` | via `PrMerge` |
@@ -371,8 +372,8 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `workflow_list` | `workflow list --limit 50 --json id,name,path,state` | active workflows |
 | `workflow_list_with` | `workflow list --limit <n> [--all] --json id,name,path,state` | via `WorkflowList`; zero rejected before spawn |
 | `workflow_view` | `workflow list --limit 2147483647 --all --json id,name,path,state` | resolves id/name/filename/path; current `workflow view` has no JSON mode, so no human output is scraped |
-| `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs |
-| `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id` |
+| `run_list` | `run list --limit <n> [--branch <b>] --json …` | Actions runs include exact `headSha` |
+| `run_view` | `run view <id> --json …` | id is `WorkflowRun::database_id`; includes exact `headSha` |
 | `run_watch` | `run watch <id>`, then `run view <id>` | **blocks** until the run finishes |
 | `workflow_dispatch` | `workflow run <workflow> [--ref <ref>] [--raw-field key=value …]` | via `WorkflowDispatch`; returns `()` (dispatch is async, 204) |
 | `run_rerun` | `run rerun <id> [--failed]` | via `RerunScope::{All,FailedOnly}` |

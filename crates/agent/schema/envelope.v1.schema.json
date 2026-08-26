@@ -412,6 +412,99 @@
           }
         }
       ]
+    },
+    "stepEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "irreversible", "verified"],
+      "properties": {
+        "state": {"enum": ["performed", "already_satisfied", "recovered_after_error"]},
+        "irreversible": {"const": true},
+        "verified": {"const": true}
+      }
+    },
+    "publishData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "expected_revision", "remote_revision", "remote", "source", "target", "forge", "account", "push", "change_request", "checkpoint", "exact_revision_verified"],
+      "properties": {
+        "repository": {"allOf": [{"$ref": "#/$defs/repository"}, {"properties": {"backend": {"const": "git"}}}]},
+        "expected_revision": {"type": "string", "minLength": 1},
+        "remote_revision": {"type": "string", "minLength": 1},
+        "remote": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "forge": {"const": "github"},
+        "account": {"type": "string", "minLength": 1},
+        "push": {"$ref": "#/$defs/stepEvidence"},
+        "change_request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "number", "url", "source", "target"],
+          "properties": {
+            "state": {"enum": ["created", "already_satisfied", "discovered_after_push", "recovered_after_error"]},
+            "number": {"type": "integer", "minimum": 1},
+            "url": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "minLength": 1},
+            "target": {"type": "string", "minLength": 1}
+          }
+        },
+        "checkpoint": {"const": "publish_complete"},
+        "exact_revision_verified": {"const": true}
+      }
+    },
+    "ciData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "forge", "source", "expected_revision", "exact_revision_verified", "terminal", "successful", "runs", "wait"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "forge": {"const": "github"},
+        "source": {"type": "string", "minLength": 1},
+        "expected_revision": {"type": "string", "minLength": 1},
+        "exact_revision_verified": {"const": true},
+        "terminal": {"type": "boolean"},
+        "successful": {"type": "boolean"},
+        "runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "workflow", "revision", "status", "conclusion", "url"],
+            "properties": {
+              "id": {"type": "integer", "minimum": 1},
+              "workflow": {"type": "string", "minLength": 1},
+              "revision": {"type": "string", "minLength": 1},
+              "status": {"type": "string", "minLength": 1},
+              "conclusion": {"type": ["string", "null"]},
+              "url": {"type": "string"}
+            }
+          }
+        },
+        "wait": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["total_deadline_seconds", "poll_seconds", "inactivity_watchdog", "diagnostic_budget"],
+              "properties": {
+                "total_deadline_seconds": {"type": "integer", "minimum": 1},
+                "poll_seconds": {"type": "integer", "minimum": 1},
+                "inactivity_watchdog": {"const": "github-run-watch-300s"},
+                "diagnostic_budget": {"const": "processkit-drop-oldest-256KiB-256-lines"}
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"successful": {"const": true}}, "required": ["successful"]},
+          "then": {"properties": {"terminal": {"const": true}}}
+        }
+      ]
     }
   },
   "allOf": [
@@ -431,6 +524,14 @@
     {
       "if": {"properties": {"operation": {"const": "commit"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
       "then": {"properties": {"data": {"$ref": "#/$defs/commitData"}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "publish"}, "status": {"const": "success"}}, "required": ["operation", "status"]},
+      "then": {"properties": {"data": {"$ref": "#/$defs/publishData"}}}
+    },
+    {
+      "if": {"properties": {"operation": {"enum": ["ci_status", "ci_wait"]}, "status": {"const": "success"}}, "required": ["operation", "status"]},
+      "then": {"properties": {"data": {"$ref": "#/$defs/ciData"}}}
     }
   ]
 }

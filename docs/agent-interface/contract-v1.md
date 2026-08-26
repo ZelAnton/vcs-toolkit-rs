@@ -9,8 +9,10 @@ version.
 The executable is an application facade over vcs-toolkit's typed clients, not a
 mirror of every Git, Jujutsu, or forge method. The v1 taxonomy contains `probe`,
 `inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait`. `probe`,
-`inspect`, `changes`, and `commit` are implemented. The remaining outcomes return
-`unsupported` and never silently invoke a lower-level command. The production
+`inspect`, `changes`, `commit`, `publish`, `ci status`, and `ci wait` are implemented.
+Publication is intentionally limited to checked Git/GitHub capabilities; unsupported
+backend/forge combinations fail before the corresponding mutation and never silently
+invoke a lower-level command. The production
 source assertion in `crates/agent/src/main.rs` checks that the executable has no
 raw subprocess constructor.
 
@@ -104,6 +106,45 @@ CAS are likewise unknown; neither case becomes a false success. A caller recover
 inspecting current state and retrying with the original expected revision: a
 commit that actually advanced is then rejected as stale, while an unchanged
 revision permits a fresh checked attempt.
+
+## Checked publish and recovery
+
+`publish` requires `--write-intent publish`, a full expected local object ID, the
+expected pre-push remote value (`<id>` or `absent`), explicit remote/source/target,
+forge/account, and PR title/body. The current typed capability boundary is Git on
+`origin` plus GitHub. Preflight proves branch, local revision, remote URL/forge,
+active account, repository visibility, capabilities, a unique source/target PR (if
+one exists), and the exact remote ref before an ordinary exact-SHA refspec push.
+Jujutsu, non-origin routing, and GitLab/Gitea return structured `unsupported` before
+push or PR/MR mutation.
+
+Every GitHub command clears ambient `GH_REPO`, pins the host derived from `origin`,
+and verifies that `gh repo view` reports the same owner/name before any publish or CI
+operation. PR recovery accepts only one open, same-repository source/target PR whose
+`headRefOid` exactly equals the requested revision; closed, merged, fork, missing-identity,
+and revision-mismatch results cannot satisfy recovery.
+
+After push, an exact remote-ref postflight is mandatory. The push state is one of
+`performed`, `already_satisfied`, or `recovered_after_error`; the PR state is one of
+`created`, `already_satisfied`, `discovered_after_push`, or `recovered_after_error`.
+If the irreversible result cannot be proved it is `outcome_unknown`. Error details carry
+checkpoints such as `push_succeeded_pr_failed`, while success carries verified
+irreversible-step and PR number/URL/source/target evidence. If the normal publish envelope
+exceeds the output budget, the bounded `output_limit` replacement preserves the checkpoint
+and any verified revision/push/PR states needed for recovery. Schema fixtures and validator
+negative mutations mechanically check the exact-revision and verified-step claims.
+
+## Exact-revision CI
+
+`ci status` and `ci wait` require an explicit branch and expected published revision.
+The GitHub implementation requests `headSha` and filters by exact equality; a recent
+run for another SHA, an incomplete run, no exact match, or duplicate workflow match
+cannot satisfy success. `ci wait` shares one caller deadline and cancellation token,
+uses the typed `run_watch` 300-second inactivity watchdog, and reports its bounded
+256 KiB/256-line diagnostic policy in the success evidence. Interruption after PR
+publication is classified with checkpoint `pr_succeeded_ci_interrupted`. GitLab and
+Gitea CI are structured `unsupported` until their typed facades expose equivalent
+exact-revision evidence.
 
 ## Envelope and compatibility
 
