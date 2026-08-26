@@ -324,6 +324,7 @@ pub fn vcs_forge::Forge<R>::from_gitea(impl core::convert::Into<std::path::PathB
 pub fn vcs_forge::Forge<R>::from_github(impl core::convert::Into<std::path::PathBuf>, vcs_github::GitHub<R>) -> Self
 pub fn vcs_forge::Forge<R>::from_gitlab(impl core::convert::Into<std::path::PathBuf>, vcs_gitlab::GitLab<R>) -> Self
 pub fn vcs_forge::Forge<R>::from_unknown(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn vcs_forge::Forge<R>::github_client(&self) -> core::option::Option<&vcs_github::GitHub<R>>
 pub async fn vcs_forge::Forge<R>::issue_add_labels(&self, u64, &[alloc::string::String]) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_close(&self, u64) -> vcs_forge::Result<()>
 pub async fn vcs_forge::Forge<R>::issue_comment(&self, u64, &str) -> vcs_forge::Result<alloc::string::String>

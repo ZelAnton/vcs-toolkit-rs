@@ -78,6 +78,28 @@ impl core::marker::Unpin for vcs_mcp::MergeStrategyArg
 impl core::marker::UnsafeUnpin for vcs_mcp::MergeStrategyArg
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::MergeStrategyArg
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::MergeStrategyArg
+pub enum vcs_mcp::OutcomeChangesModeArg
+pub vcs_mcp::OutcomeChangesModeArg::Full
+pub vcs_mcp::OutcomeChangesModeArg::Summary
+impl core::clone::Clone for vcs_mcp::OutcomeChangesModeArg
+pub fn vcs_mcp::OutcomeChangesModeArg::clone(&self) -> vcs_mcp::OutcomeChangesModeArg
+impl core::fmt::Debug for vcs_mcp::OutcomeChangesModeArg
+pub fn vcs_mcp::OutcomeChangesModeArg::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for vcs_mcp::OutcomeChangesModeArg
+impl schemars::JsonSchema for vcs_mcp::OutcomeChangesModeArg
+pub fn vcs_mcp::OutcomeChangesModeArg::inline_schema() -> bool
+pub fn vcs_mcp::OutcomeChangesModeArg::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomeChangesModeArg::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomeChangesModeArg::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomeChangesModeArg
+pub fn vcs_mcp::OutcomeChangesModeArg::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomeChangesModeArg
+impl core::marker::Send for vcs_mcp::OutcomeChangesModeArg
+impl core::marker::Sync for vcs_mcp::OutcomeChangesModeArg
+impl core::marker::Unpin for vcs_mcp::OutcomeChangesModeArg
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomeChangesModeArg
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomeChangesModeArg
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomeChangesModeArg
 pub enum vcs_mcp::PrListStateArg
 pub vcs_mcp::PrListStateArg::All
 pub vcs_mcp::PrListStateArg::Closed
@@ -410,6 +432,112 @@ impl core::marker::Unpin for vcs_mcp::OpLogParams
 impl core::marker::UnsafeUnpin for vcs_mcp::OpLogParams
 impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OpLogParams
 impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OpLogParams
+pub struct vcs_mcp::OutcomeChangesParams
+pub vcs_mcp::OutcomeChangesParams::mode: core::option::Option<vcs_mcp::OutcomeChangesModeArg>
+impl core::fmt::Debug for vcs_mcp::OutcomeChangesParams
+pub fn vcs_mcp::OutcomeChangesParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OutcomeChangesParams
+pub fn vcs_mcp::OutcomeChangesParams::inline_schema() -> bool
+pub fn vcs_mcp::OutcomeChangesParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomeChangesParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomeChangesParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomeChangesParams
+pub fn vcs_mcp::OutcomeChangesParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomeChangesParams
+impl core::marker::Send for vcs_mcp::OutcomeChangesParams
+impl core::marker::Sync for vcs_mcp::OutcomeChangesParams
+impl core::marker::Unpin for vcs_mcp::OutcomeChangesParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomeChangesParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomeChangesParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomeChangesParams
+pub struct vcs_mcp::OutcomeCiStatusParams
+pub vcs_mcp::OutcomeCiStatusParams::expected_revision: alloc::string::String
+pub vcs_mcp::OutcomeCiStatusParams::forge: alloc::string::String
+pub vcs_mcp::OutcomeCiStatusParams::source: alloc::string::String
+impl core::fmt::Debug for vcs_mcp::OutcomeCiStatusParams
+pub fn vcs_mcp::OutcomeCiStatusParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OutcomeCiStatusParams
+pub fn vcs_mcp::OutcomeCiStatusParams::inline_schema() -> bool
+pub fn vcs_mcp::OutcomeCiStatusParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomeCiStatusParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomeCiStatusParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomeCiStatusParams
+pub fn vcs_mcp::OutcomeCiStatusParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomeCiStatusParams
+impl core::marker::Send for vcs_mcp::OutcomeCiStatusParams
+impl core::marker::Sync for vcs_mcp::OutcomeCiStatusParams
+impl core::marker::Unpin for vcs_mcp::OutcomeCiStatusParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomeCiStatusParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomeCiStatusParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomeCiStatusParams
+pub struct vcs_mcp::OutcomeCiWaitParams
+pub vcs_mcp::OutcomeCiWaitParams::expected_revision: alloc::string::String
+pub vcs_mcp::OutcomeCiWaitParams::forge: alloc::string::String
+pub vcs_mcp::OutcomeCiWaitParams::poll_seconds: core::option::Option<u64>
+pub vcs_mcp::OutcomeCiWaitParams::source: alloc::string::String
+pub vcs_mcp::OutcomeCiWaitParams::wait_seconds: core::option::Option<u64>
+impl core::fmt::Debug for vcs_mcp::OutcomeCiWaitParams
+pub fn vcs_mcp::OutcomeCiWaitParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OutcomeCiWaitParams
+pub fn vcs_mcp::OutcomeCiWaitParams::inline_schema() -> bool
+pub fn vcs_mcp::OutcomeCiWaitParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomeCiWaitParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomeCiWaitParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomeCiWaitParams
+pub fn vcs_mcp::OutcomeCiWaitParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomeCiWaitParams
+impl core::marker::Send for vcs_mcp::OutcomeCiWaitParams
+impl core::marker::Sync for vcs_mcp::OutcomeCiWaitParams
+impl core::marker::Unpin for vcs_mcp::OutcomeCiWaitParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomeCiWaitParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomeCiWaitParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomeCiWaitParams
+pub struct vcs_mcp::OutcomeCommitParams
+pub vcs_mcp::OutcomeCommitParams::expected_revision: alloc::string::String
+pub vcs_mcp::OutcomeCommitParams::message: alloc::string::String
+pub vcs_mcp::OutcomeCommitParams::paths: alloc::vec::Vec<alloc::string::String>
+impl core::fmt::Debug for vcs_mcp::OutcomeCommitParams
+pub fn vcs_mcp::OutcomeCommitParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OutcomeCommitParams
+pub fn vcs_mcp::OutcomeCommitParams::inline_schema() -> bool
+pub fn vcs_mcp::OutcomeCommitParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomeCommitParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomeCommitParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomeCommitParams
+pub fn vcs_mcp::OutcomeCommitParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomeCommitParams
+impl core::marker::Send for vcs_mcp::OutcomeCommitParams
+impl core::marker::Sync for vcs_mcp::OutcomeCommitParams
+impl core::marker::Unpin for vcs_mcp::OutcomeCommitParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomeCommitParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomeCommitParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomeCommitParams
+pub struct vcs_mcp::OutcomePublishParams
+pub vcs_mcp::OutcomePublishParams::body: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::expected_account: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::expected_remote_revision: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::expected_revision: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::forge: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::remote: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::source: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::target: alloc::string::String
+pub vcs_mcp::OutcomePublishParams::title: alloc::string::String
+impl core::fmt::Debug for vcs_mcp::OutcomePublishParams
+pub fn vcs_mcp::OutcomePublishParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for vcs_mcp::OutcomePublishParams
+pub fn vcs_mcp::OutcomePublishParams::inline_schema() -> bool
+pub fn vcs_mcp::OutcomePublishParams::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn vcs_mcp::OutcomePublishParams::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn vcs_mcp::OutcomePublishParams::schema_name() -> alloc::borrow::Cow<'static, str>
+impl<'de> serde_core::de::Deserialize<'de> for vcs_mcp::OutcomePublishParams
+pub fn vcs_mcp::OutcomePublishParams::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for vcs_mcp::OutcomePublishParams
+impl core::marker::Send for vcs_mcp::OutcomePublishParams
+impl core::marker::Sync for vcs_mcp::OutcomePublishParams
+impl core::marker::Unpin for vcs_mcp::OutcomePublishParams
+impl core::marker::UnsafeUnpin for vcs_mcp::OutcomePublishParams
+impl core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::OutcomePublishParams
+impl core::panic::unwind_safe::UnwindSafe for vcs_mcp::OutcomePublishParams
 pub struct vcs_mcp::PrCloseParams
 pub vcs_mcp::PrCloseParams::delete_branch: bool
 pub vcs_mcp::PrCloseParams::number: u64
@@ -828,6 +956,19 @@ impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::new<R: processkit::runner::ProcessRunner + 'static>(vcs_core::Repo<R>, core::option::Option<vcs_forge::Forge<R>>, vcs_mcp::WriteGate) -> Self
 pub fn vcs_mcp::VcsMcpServer::with_output_budget(self, vcs_cli_support::OutputBudget) -> Self
 impl vcs_mcp::VcsMcpServer
+pub fn vcs_mcp::VcsMcpServer::outcome_changes(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OutcomeChangesParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_changes_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::outcome_ci_status(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OutcomeCiStatusParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_ci_status_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::outcome_ci_wait(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OutcomeCiWaitParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_ci_wait_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::outcome_commit(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OutcomeCommitParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_commit_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::outcome_inspect(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_inspect_tool_attr() -> rmcp::model::tool::Tool
+pub fn vcs_mcp::VcsMcpServer::outcome_publish(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::OutcomePublishParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
+pub fn vcs_mcp::VcsMcpServer::outcome_publish_tool_attr() -> rmcp::model::tool::Tool
+impl vcs_mcp::VcsMcpServer
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress(&self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
 pub fn vcs_mcp::VcsMcpServer::repo_abort_in_progress_tool_attr() -> rmcp::model::tool::Tool
 pub fn vcs_mcp::VcsMcpServer::repo_annotate(&self, rmcp::handler::server::wrapper::parameters::Parameters<vcs_mcp::AnnotateParams>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>> + core::marker::Send + '_)>>
@@ -904,4 +1045,5 @@ impl core::marker::Unpin for vcs_mcp::VcsMcpServer
 impl core::marker::UnsafeUnpin for vcs_mcp::VcsMcpServer
 impl !core::panic::unwind_safe::RefUnwindSafe for vcs_mcp::VcsMcpServer
 impl !core::panic::unwind_safe::UnwindSafe for vcs_mcp::VcsMcpServer
+pub const vcs_mcp::SERVER_INSTRUCTIONS: &str
 pub const vcs_mcp::WRITE_TOOLS: &[&str]
