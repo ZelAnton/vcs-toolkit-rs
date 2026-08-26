@@ -35,7 +35,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # Hermetically compile and exercise the committed Draft 2020-12 wire schema.
 # Resolution features stay off: the contract has no external `$ref` and tests
 # must not need filesystem or HTTP retrieval.
-jsonschema = { version = "0.48", default-features = false }
+jsonschema = { version = "0.51", default-features = false }
 # Real-backend contract tests use the workspace's config-isolated Git/Jujutsu
 # sandboxes rather than inventing another fixture layer.
 vcs-testkit = { path = "../testkit" }
