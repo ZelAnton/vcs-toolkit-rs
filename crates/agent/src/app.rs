@@ -1074,13 +1074,11 @@ async fn ci_wait_repo<R: ProcessRunner>(
                         .include_machine_paths(invocation.include_machine_paths),
                     )
                 })?;
-            if completed.head_sha != expected {
-                return Err(Box::new(
-                    publish_unknown("ci_run_revision_changed", invocation.include_machine_paths)
-                        .with_detail(DetailKey::Checkpoint, "ci_postflight")
-                        .with_detail(DetailKey::RunId, completed.database_id.to_string()),
-                ));
-            }
+            ensure_ci_run_revision_unchanged(
+                &completed,
+                expected,
+                invocation.include_machine_paths,
+            )?;
         }
         let mut data = query_ci(repo, invocation, policy, true).await?;
         data.wait = Some(CiWaitEvidence {
@@ -1410,6 +1408,28 @@ fn ci_workflow_name(run: &WorkflowRun) -> &str {
 
 fn ci_run_terminal(run: &WorkflowRun) -> bool {
     run.status == "completed" && !run.conclusion.is_empty()
+}
+
+fn ensure_ci_run_revision_unchanged(
+    completed: &WorkflowRun,
+    expected_revision: &str,
+    include_paths: bool,
+) -> AgentResult<()> {
+    if completed.head_sha == expected_revision {
+        return Ok(());
+    }
+    Err(Box::new(
+        AgentError::new(
+            Operation::CiWait.name(),
+            ErrorKind::OutcomeUnknown,
+            "ci_run_revision_changed",
+            true,
+        )
+        .with_detail(DetailKey::Checkpoint, "ci_postflight")
+        .with_detail(DetailKey::Revision, expected_revision)
+        .with_detail(DetailKey::RunId, completed.database_id.to_string())
+        .include_machine_paths(include_paths),
+    ))
 }
 
 fn map_ci_run(run: WorkflowRun) -> CiRunEvidence {
@@ -3014,6 +3034,30 @@ mod tests {
             .expect("one exact pending run is unambiguous");
         assert!(!exact.iter().all(ci_run_terminal));
         assert!(!exact.iter().all(|run| run.conclusion == "success"));
+    }
+
+    #[test]
+    fn ci_wait_post_watch_revision_drift_serializes_as_ci_wait_unknown() {
+        let expected = "0123456789abcdef0123456789abcdef01234567";
+        let completed = workflow_run(
+            r#"{"databaseId":9,"workflowName":"CI","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"success"}"#,
+        );
+        let error = ensure_ci_run_revision_unchanged(&completed, expected, false)
+            .expect_err("post-watch revision drift must fail closed");
+        let output = crate::contract::render(*error, crate::cli::DEFAULT_MAX_OUTPUT_BYTES);
+        let text = String::from_utf8(output.stdout).expect("machine envelope is UTF-8");
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("machine envelope is JSON");
+
+        assert_eq!(value["operation"], "ci_wait");
+        assert_eq!(value["error"]["kind"], "outcome_unknown");
+        assert_eq!(value["error"]["code"], "ci_run_revision_changed");
+        assert_eq!(value["error"]["details"]["checkpoint"], "ci_postflight");
+        assert_eq!(value["error"]["details"]["revision"], expected);
+        assert!(
+            !text.contains("\"publish\""),
+            "CI drift envelope must not carry a publish discriminator: {text}"
+        );
     }
 
     fn pull_request(state: &str, revision: &str, cross_repository: Option<bool>) -> PullRequest {
