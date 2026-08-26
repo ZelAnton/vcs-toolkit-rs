@@ -160,7 +160,7 @@ test_package_set_published_deps_resolve_from_registry() {
   # Everything but the released crate is published -> package just that crate.
   assert_eq "solo facade, all deps published -> itself only" \
     "vcs-mcp" \
-    "$(package_set 'vcs-mcp' 'vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-core' | oneline)"
+    "$(package_set 'vcs-mcp' 'vcs-diff vcs-cli-support vcs-git vcs-jj vcs-github vcs-gitlab vcs-gitea vcs-forge vcs-core vcs-agent' | oneline)"
   # Mixed: diff+cli-support published, git+jj not -> package core with its
   # unpublished deps (git, jj); the published diff/cli-support stay on crates.io.
   assert_eq "mixed publish state pulls only unpublished deps" \
