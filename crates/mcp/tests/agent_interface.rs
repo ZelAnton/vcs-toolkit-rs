@@ -32,7 +32,7 @@ fn root() -> PathBuf {
 fn corpus_is_versioned_and_covers_the_routing_matrix() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("valid corpus JSON");
     assert_eq!(corpus["schema_version"], "agent-interface.corpus.v1");
-    assert_eq!(corpus["corpus_version"], "1.0.0");
+    assert_eq!(corpus["corpus_version"], "1.1.0");
     assert_eq!(
         corpus["selection_policy"]["preferred_interface"],
         "vcs-agent"
@@ -56,6 +56,8 @@ fn corpus_is_versioned_and_covers_the_routing_matrix() {
         "wait_ci",
         "conflict",
         "ordinary_file_search",
+        "ordinary_file_read",
+        "ordinary_file_edit",
         "unsupported_low_level",
         "preferred_unavailable",
     ] {
@@ -68,6 +70,36 @@ fn corpus_is_versioned_and_covers_the_routing_matrix() {
             cases.iter().any(|case| case["request"]["forge"] == forge),
             "missing forge variant {forge}"
         );
+    }
+
+    let skill = &corpus["skill_metadata"];
+    assert_eq!(skill["name"], "vcs-agent");
+    assert_eq!(skill["contract_version"], "vcs-agent-skill/v1");
+    assert_eq!(skill["path"], "../../skills/vcs-agent/SKILL.md");
+    assert_eq!(
+        skill["metric_priority"],
+        serde_json::json!([
+            "false_activation_rate",
+            "preferred_interface_selection_rate",
+            "raw_cli_bypass_rate"
+        ])
+    );
+    assert!(skill["unavailable_live_metrics"].is_null());
+
+    for negative in [
+        "ordinary_file_search",
+        "ordinary_file_read",
+        "ordinary_file_edit",
+    ] {
+        let case = cases
+            .iter()
+            .find(|case| case["scenario"] == negative)
+            .expect("negative routing case");
+        assert_eq!(case["expected"]["selection"], "none");
+        assert_eq!(case["expected"]["operation"], "none");
+        assert_eq!(case["expected"]["fallback"]["allowed"], false);
+        assert_eq!(case["expected"]["invariants"]["preferred_calls"]["max"], 0);
+        assert_eq!(case["expected"]["invariants"]["raw_cli_calls"], 0);
     }
 }
 
