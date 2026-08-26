@@ -118,13 +118,21 @@ one exists), and the exact remote ref before an ordinary exact-SHA refspec push.
 Jujutsu, non-origin routing, and GitLab/Gitea return structured `unsupported` before
 push or PR/MR mutation.
 
-After push, an exact remote-ref postflight is mandatory. A retry may report the push
-as `already_present`, and PR discovery makes create idempotent. If an error is
-followed by exact observed state it is `recovered_after_error`; if the irreversible
-result cannot be proved it is `outcome_unknown`. Error details carry checkpoints such
-as `push_succeeded_pr_failed`, while success carries verified irreversible-step and
-PR number/URL/source/target evidence. Schema fixtures and validator negative mutations
-mechanically check the exact-revision and verified-step claims.
+Every GitHub command clears ambient `GH_REPO`, pins the host derived from `origin`,
+and verifies that `gh repo view` reports the same owner/name before any publish or CI
+operation. PR recovery accepts only one open, same-repository source/target PR whose
+`headRefOid` exactly equals the requested revision; closed, merged, fork, missing-identity,
+and revision-mismatch results cannot satisfy recovery.
+
+After push, an exact remote-ref postflight is mandatory. The push state is one of
+`performed`, `already_satisfied`, or `recovered_after_error`; the PR state is one of
+`created`, `already_satisfied`, `discovered_after_push`, or `recovered_after_error`.
+If the irreversible result cannot be proved it is `outcome_unknown`. Error details carry
+checkpoints such as `push_succeeded_pr_failed`, while success carries verified
+irreversible-step and PR number/URL/source/target evidence. If the normal publish envelope
+exceeds the output budget, the bounded `output_limit` replacement preserves the checkpoint
+and any verified revision/push/PR states needed for recovery. Schema fixtures and validator
+negative mutations mechanically check the exact-revision and verified-step claims.
 
 ## Exact-revision CI
 

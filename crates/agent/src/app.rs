@@ -10,9 +10,11 @@ use vcs_core::vcs_git::{DiffLine, Git, GitApi, GitPush, RefName, RevSpec};
 use vcs_core::vcs_jj::Jj;
 use vcs_core::{BackendKind, ChangeKind, FileChange, FileDiff, OperationState, Repo, RepoSnapshot};
 use vcs_forge::{
-    Forge, ForgeApi, ForgeAuth, ForgeCapabilities, ForgeKind, ForgePr, PrCreate,
+    Forge, ForgeApi, ForgeAuth, ForgeCapabilities, ForgeKind,
     vcs_gitea::Gitea,
-    vcs_github::{GitHub, GitHubApi, WorkflowRun},
+    vcs_github::{
+        GitHub, GitHubApi, GitHubHost, PrCreate as GitHubPrCreate, PullRequest, WorkflowRun,
+    },
     vcs_gitlab::GitLab,
 };
 
@@ -751,16 +753,22 @@ async fn publish_repo<R: ProcessRunner>(
         ));
     }
 
-    let forge = build_forge_kind(ForgeKind::GitHub, repo.cwd(), policy);
-    let capabilities = forge.capabilities().await.map_err(|error| {
-        Box::new(map_forge_operation_error(
-            Operation::Publish,
-            include_paths,
-            error,
-            "forge_capability_probe_failed",
-        ))
+    let github = verified_github_repository(
+        repo.cwd(),
+        &selected[0].url,
+        policy,
+        Operation::Publish,
+        include_paths,
+    )
+    .await?;
+    let capabilities = github.capabilities().await.map_err(|error| {
+        Box::new(
+            AgentError::from_processkit(Operation::Publish.name(), FailureDomain::Forge, &error)
+                .with_detail(DetailKey::Checkpoint, "preflight")
+                .include_machine_paths(include_paths),
+        )
     })?;
-    if !capabilities.supported || !capabilities.authed || !capabilities.pr_create {
+    if !capabilities.is_supported() {
         return Err(Box::new(
             AgentError::new(
                 Operation::Publish.name(),
@@ -772,17 +780,18 @@ async fn publish_repo<R: ProcessRunner>(
             .include_machine_paths(include_paths),
         ));
     }
-    let auth = forge.auth_info().await.map_err(|error| {
-        Box::new(map_forge_operation_error(
-            Operation::Publish,
-            include_paths,
-            error,
-            "forge_identity_probe_failed",
-        ))
+    let auth = github.auth_info().await.map_err(|error| {
+        Box::new(
+            AgentError::from_processkit(
+                Operation::Publish.name(),
+                FailureDomain::Authentication,
+                &error,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        )
     })?;
-    if auth.authed != Some(true)
-        || auth.active_account.as_deref() != Some(expected_account)
-        || auth.repo_visible != Some(true)
+    if !auth.authed || auth.active().map(|account| account.login.as_str()) != Some(expected_account)
     {
         return Err(Box::new(
             AgentError::new(
@@ -797,7 +806,16 @@ async fn publish_repo<R: ProcessRunner>(
         ));
     }
 
-    let before_pr = find_change_request(&*forge, source, target, include_paths).await?;
+    let before_pr = find_change_request(
+        &github,
+        repo.cwd(),
+        source,
+        target,
+        &local_revision,
+        "preflight",
+        include_paths,
+    )
+    .await?;
     let remote_before = git
         .remote_branch_revision(repo.cwd(), remote, &source_ref)
         .await
@@ -893,19 +911,37 @@ async fn publish_repo<R: ProcessRunner>(
 
     let (change_request, pr_state) = if let Some(pr) = before_pr {
         (pr, "already_satisfied")
-    } else if let Some(pr) = find_change_request(&*forge, source, target, include_paths).await? {
+    } else if let Some(pr) = find_change_request(
+        &github,
+        repo.cwd(),
+        source,
+        target,
+        &local_revision,
+        "after_push",
+        include_paths,
+    )
+    .await?
+    {
         (pr, "discovered_after_push")
     } else {
-        let create = PrCreate::new(
+        let create = GitHubPrCreate::new(
             invocation.title.as_deref().expect("publish title"),
             invocation.body.as_deref().expect("publish body"),
         )
-        .source(source)
-        .target(target);
-        match forge.pr_create(create).await {
+        .head(source)
+        .base(target);
+        match github.pr_create(repo.cwd(), create).await {
             Ok(created_url) => {
-                let Some(mut pr) =
-                    find_change_request(&*forge, source, target, include_paths).await?
+                let Some(mut pr) = find_change_request(
+                    &github,
+                    repo.cwd(),
+                    source,
+                    target,
+                    &local_revision,
+                    "after_pr_create",
+                    include_paths,
+                )
+                .await?
                 else {
                     return Err(Box::new(
                         publish_unknown("change_request_create_unverified", include_paths)
@@ -918,18 +954,27 @@ async fn publish_repo<R: ProcessRunner>(
                 }
                 (pr, "created")
             }
-            Err(error) => match find_change_request(&*forge, source, target, include_paths).await {
+            Err(error) => match find_change_request(
+                &github,
+                repo.cwd(),
+                source,
+                target,
+                &local_revision,
+                "after_pr_create",
+                include_paths,
+            )
+            .await
+            {
                 Ok(Some(pr)) => (pr, "recovered_after_error"),
                 Ok(None) => {
-                    let mut mapped = map_forge_operation_error(
-                        Operation::Publish,
-                        include_paths,
-                        error,
-                        "change_request_failed_after_push",
-                    );
-                    mapped = mapped
-                        .with_detail(DetailKey::Checkpoint, "push_succeeded_pr_failed")
-                        .with_detail(DetailKey::Revision, &local_revision);
+                    let mapped = AgentError::from_processkit(
+                        Operation::Publish.name(),
+                        FailureDomain::Forge,
+                        &error,
+                    )
+                    .with_detail(DetailKey::Checkpoint, "push_succeeded_pr_failed")
+                    .with_detail(DetailKey::Revision, &local_revision)
+                    .include_machine_paths(include_paths);
                     return Err(Box::new(mapped));
                 }
                 Err(_) => {
@@ -961,8 +1006,8 @@ async fn publish_repo<R: ProcessRunner>(
             state: pr_state,
             number: change_request.number,
             url: redact_metadata(&change_request.url, include_paths),
-            source: change_request.source_branch,
-            target: change_request.target_branch,
+            source: change_request.head_ref_name,
+            target: change_request.base_ref_name,
         },
         checkpoint: "publish_complete",
         exact_revision_verified: true,
@@ -987,7 +1032,7 @@ async fn ci_wait_repo<R: ProcessRunner>(
         .expected_revision
         .as_deref()
         .expect("ci expected revision");
-    let github = checked_github_ci(invocation, repo.cwd(), policy)?;
+    let github = checked_github_ci(repo, invocation, policy).await?;
     loop {
         let runs = github
             .run_list(repo.cwd(), 100, Some(source.to_owned()))
@@ -1080,7 +1125,7 @@ async fn query_ci<R: ProcessRunner>(
         .expected_revision
         .as_deref()
         .expect("ci expected revision");
-    let github = checked_github_ci(invocation, repo.cwd(), policy)?;
+    let github = checked_github_ci(repo, invocation, policy).await?;
     let runs = github
         .run_list(repo.cwd(), 100, Some(source.to_owned()))
         .await
@@ -1128,9 +1173,9 @@ async fn query_ci<R: ProcessRunner>(
     })
 }
 
-fn checked_github_ci(
+async fn checked_github_ci<R: ProcessRunner>(
+    repo: &Repo<R>,
     invocation: &Invocation,
-    cwd: &Path,
     policy: &ExecutionPolicy,
 ) -> AgentResult<GitHub<JobRunner>> {
     let forge = invocation.forge.as_deref().expect("ci forge");
@@ -1146,15 +1191,181 @@ fn checked_github_ci(
             .include_machine_paths(invocation.include_machine_paths),
         ));
     }
-    let _ = cwd;
-    Ok(github_client(policy))
+    let remotes = repo.remotes().await.map_err(|error| {
+        Box::new(map_core_error(
+            invocation.operation,
+            invocation.include_machine_paths,
+            error,
+        ))
+    })?;
+    let origin = remotes
+        .iter()
+        .filter(|remote| remote.name == "origin")
+        .collect::<Vec<_>>();
+    if origin.len() != 1 {
+        return Err(Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Denied,
+                if origin.is_empty() {
+                    "origin_remote_missing"
+                } else {
+                    "origin_remote_ambiguous"
+                },
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(invocation.include_machine_paths),
+        ));
+    }
+    if ForgeKind::from_remote_url(&origin[0].url) != Some(ForgeKind::GitHub) {
+        return Err(Box::new(
+            AgentError::new(
+                invocation.operation.name(),
+                ErrorKind::Denied,
+                "origin_forge_identity_mismatch",
+                false,
+            )
+            .with_detail(DetailKey::Forge, forge)
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(invocation.include_machine_paths),
+        ));
+    }
+    verified_github_repository(
+        repo.cwd(),
+        &origin[0].url,
+        policy,
+        invocation.operation,
+        invocation.include_machine_paths,
+    )
+    .await
 }
 
-fn github_client(policy: &ExecutionPolicy) -> GitHub<JobRunner> {
-    GitHub::new()
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GitHubRepositoryIdentity {
+    owner: String,
+    name: String,
+}
+
+fn configured_github_client<R: ProcessRunner>(
+    client: GitHub<R>,
+    remote_url: &str,
+    policy: &ExecutionPolicy,
+    operation: Operation,
+    include_paths: bool,
+) -> AgentResult<GitHub<R>> {
+    let host = GitHubHost::from_remote_url(remote_url).map_err(|_| {
+        Box::new(
+            AgentError::new(
+                operation.name(),
+                ErrorKind::Denied,
+                "github_remote_host_unverified",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        )
+    })?;
+    Ok(client
         .default_timeout(policy.deadline)
         .default_cancel_on(policy.cancellation.clone())
         .default_output_budget(policy.content_budget)
+        .default_env_remove("GH_REPO")
+        .with_host(host))
+}
+
+async fn verified_github_repository(
+    cwd: &Path,
+    remote_url: &str,
+    policy: &ExecutionPolicy,
+    operation: Operation,
+    include_paths: bool,
+) -> AgentResult<GitHub<JobRunner>> {
+    let expected = github_repository_identity(remote_url).ok_or_else(|| {
+        Box::new(
+            AgentError::new(
+                operation.name(),
+                ErrorKind::Denied,
+                "github_remote_repository_identity_unverified",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        )
+    })?;
+    let github =
+        configured_github_client(GitHub::new(), remote_url, policy, operation, include_paths)?;
+    verify_github_repository(&github, cwd, &expected, operation, include_paths).await?;
+    Ok(github)
+}
+
+async fn verify_github_repository<R: ProcessRunner>(
+    github: &GitHub<R>,
+    cwd: &Path,
+    expected: &GitHubRepositoryIdentity,
+    operation: Operation,
+    include_paths: bool,
+) -> AgentResult<()> {
+    let actual = github.repo_view(cwd).await.map_err(|error| {
+        Box::new(
+            AgentError::from_processkit(operation.name(), FailureDomain::Forge, &error)
+                .with_detail(DetailKey::Checkpoint, "preflight")
+                .include_machine_paths(include_paths),
+        )
+    })?;
+    if !actual.owner.eq_ignore_ascii_case(&expected.owner)
+        || !actual.name.eq_ignore_ascii_case(&expected.name)
+    {
+        return Err(Box::new(
+            AgentError::new(
+                operation.name(),
+                ErrorKind::Denied,
+                "forge_repository_identity_mismatch",
+                false,
+            )
+            .with_detail(DetailKey::Checkpoint, "preflight")
+            .include_machine_paths(include_paths),
+        ));
+    }
+    Ok(())
+}
+
+fn github_repository_identity(remote_url: &str) -> Option<GitHubRepositoryIdentity> {
+    let url = remote_url.trim();
+    if url.is_empty() || url.contains(['?', '#', '\\', '%']) || url.chars().any(char::is_whitespace)
+    {
+        return None;
+    }
+
+    let path = if let Some((_, rest)) = url.split_once("://") {
+        rest.split_once('/')?.1
+    } else if let Some((authority, path)) = url.split_once(':') {
+        if authority.contains('/') || !authority.contains('.') {
+            return None;
+        }
+        path
+    } else {
+        url.split_once('/')?.1
+    };
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let mut components = path.split('/');
+    let owner = components.next()?;
+    let name_with_suffix = components.next()?;
+    let name = name_with_suffix
+        .strip_suffix(".git")
+        .unwrap_or(name_with_suffix);
+    if components.next().is_some()
+        || owner.is_empty()
+        || name.is_empty()
+        || matches!(owner, "." | "..")
+        || matches!(name, "." | "..")
+    {
+        return None;
+    }
+    Some(GitHubRepositoryIdentity {
+        owner: owner.to_owned(),
+        name: name.to_owned(),
+    })
 }
 
 fn select_exact_ci_runs(
@@ -1212,33 +1423,103 @@ fn map_ci_run(run: WorkflowRun) -> CiRunEvidence {
     }
 }
 
-async fn find_change_request(
-    forge: &dyn ForgeApi,
+async fn find_change_request<R: ProcessRunner>(
+    github: &GitHub<R>,
+    cwd: &Path,
     source: &str,
     target: &str,
+    expected_revision: &str,
+    checkpoint: &'static str,
     include_paths: bool,
-) -> AgentResult<Option<ForgePr>> {
-    let matches = forge
-        .pr_for_branch(source)
+) -> AgentResult<Option<PullRequest>> {
+    let matches = github
+        .pr_list_for_branch(cwd, source, target)
         .await
         .map_err(|error| {
-            Box::new(map_forge_operation_error(
-                Operation::Publish,
-                include_paths,
-                error,
-                "change_request_lookup_failed",
-            ))
-        })?
-        .into_iter()
-        .filter(|pr| pr.source_branch == source && pr.target_branch == target)
-        .collect::<Vec<_>>();
-    match matches.len() {
+            Box::new(
+                AgentError::from_processkit(
+                    Operation::Publish.name(),
+                    FailureDomain::Forge,
+                    &error,
+                )
+                .with_detail(DetailKey::Checkpoint, checkpoint)
+                .with_detail(DetailKey::Revision, expected_revision)
+                .include_machine_paths(include_paths),
+            )
+        })?;
+    select_verified_change_request(
+        matches,
+        source,
+        target,
+        expected_revision,
+        checkpoint,
+        include_paths,
+    )
+}
+
+fn select_verified_change_request(
+    candidates: Vec<PullRequest>,
+    source: &str,
+    target: &str,
+    expected_revision: &str,
+    checkpoint: &'static str,
+    include_paths: bool,
+) -> AgentResult<Option<PullRequest>> {
+    let mut exact = Vec::new();
+    for candidate in candidates.into_iter().filter(|candidate| {
+        candidate.state == "OPEN"
+            && candidate.head_ref_name == source
+            && candidate.base_ref_name == target
+    }) {
+        match candidate.is_cross_repository {
+            Some(true) => continue,
+            None => {
+                return Err(Box::new(
+                    AgentError::new(
+                        Operation::Publish.name(),
+                        ErrorKind::Unsupported,
+                        "change_request_repository_identity_unavailable",
+                        false,
+                    )
+                    .with_detail(DetailKey::Checkpoint, checkpoint)
+                    .with_detail(DetailKey::Revision, expected_revision)
+                    .include_machine_paths(include_paths),
+                ));
+            }
+            Some(false) => {}
+        }
+        if candidate.head_ref_oid.is_empty() {
+            return Err(Box::new(
+                AgentError::new(
+                    Operation::Publish.name(),
+                    ErrorKind::Unsupported,
+                    "change_request_revision_identity_unavailable",
+                    false,
+                )
+                .with_detail(DetailKey::Checkpoint, checkpoint)
+                .with_detail(DetailKey::Revision, expected_revision)
+                .include_machine_paths(include_paths),
+            ));
+        }
+        if candidate.head_ref_oid != expected_revision {
+            return Err(Box::new(
+                publish_denied("change_request_revision_mismatch", include_paths)
+                    .with_detail(DetailKey::Checkpoint, checkpoint)
+                    .with_detail(DetailKey::Revision, expected_revision),
+            ));
+        }
+        exact.push(candidate);
+    }
+
+    match exact.len() {
         0 => Ok(None),
-        1 => Ok(matches.into_iter().next()),
+        1 => Ok(exact.into_iter().next()),
         _ => Err(Box::new(
             publish_denied("change_request_match_ambiguous", include_paths)
                 .with_detail(DetailKey::Source, source)
-                .with_detail(DetailKey::Target, target),
+                .with_detail(DetailKey::Target, target)
+                .with_detail(DetailKey::Revision, expected_revision)
+                .with_detail(DetailKey::Checkpoint, checkpoint),
         )),
     }
 }
@@ -1264,27 +1545,6 @@ fn publish_unknown(code: &'static str, include_paths: bool) -> AgentError {
         code,
         true,
     )
-    .include_machine_paths(include_paths)
-}
-
-fn map_forge_operation_error(
-    operation: Operation,
-    include_paths: bool,
-    error: vcs_forge::Error,
-    code: &'static str,
-) -> AgentError {
-    match error {
-        vcs_forge::Error::Forge(process) => {
-            AgentError::from_processkit(operation.name(), FailureDomain::Forge, &process)
-        }
-        other if other.is_unsupported() => {
-            AgentError::new(operation.name(), ErrorKind::Unsupported, code, false)
-        }
-        other if other.is_unauthorized() => {
-            AgentError::new(operation.name(), ErrorKind::Authentication, code, false)
-        }
-        _ => AgentError::new(operation.name(), ErrorKind::Forge, code, false),
-    }
     .include_machine_paths(include_paths)
 }
 
@@ -2219,6 +2479,7 @@ mod tests {
     use super::*;
     use processkit::testing::{RecordingRunner, Reply, ScriptedRunner};
     use processkit::{Command, ProcessResult};
+    use serde_json::json;
 
     struct DelayedRunner {
         inner: ScriptedRunner,
@@ -2753,6 +3014,185 @@ mod tests {
             .expect("one exact pending run is unambiguous");
         assert!(!exact.iter().all(ci_run_terminal));
         assert!(!exact.iter().all(|run| run.conclusion == "success"));
+    }
+
+    fn pull_request(state: &str, revision: &str, cross_repository: Option<bool>) -> PullRequest {
+        serde_json::from_value(json!({
+            "number": 42,
+            "title": "checked publish",
+            "state": state,
+            "headRefName": "feature",
+            "headRefOid": revision,
+            "baseRefName": "main",
+            "isCrossRepository": cross_repository,
+            "url": "https://github.com/owner/repo/pull/42"
+        }))
+        .expect("pull request fixture")
+    }
+
+    #[test]
+    fn github_remote_identity_parser_accepts_exact_repository_shapes_only() {
+        let expected = GitHubRepositoryIdentity {
+            owner: "owner".into(),
+            name: "repo".into(),
+        };
+        for remote in [
+            "https://github.com/owner/repo.git",
+            "ssh://git@github.com/owner/repo.git",
+            "git@github.com:owner/repo.git",
+            "github.com/owner/repo",
+        ] {
+            assert_eq!(github_repository_identity(remote), Some(expected.clone()));
+        }
+        for remote in [
+            "https://github.com/owner",
+            "https://github.com/owner/repo/extra",
+            "https://github.com/owner/repo.git?redirect=other",
+            "C:\\owner\\repo",
+        ] {
+            assert_eq!(github_repository_identity(remote), None, "{remote}");
+        }
+    }
+
+    #[tokio::test]
+    async fn verified_github_client_scrubs_ambient_repo_and_checks_origin_identity() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            r#"{"name":"repo","owner":{"login":"owner"},"description":null,"url":"https://github.com/owner/repo","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#,
+        ));
+        let policy = ExecutionPolicy::new(8192);
+        let github = configured_github_client(
+            GitHub::with_runner(&rec),
+            "https://github.com/owner/repo.git",
+            &policy,
+            Operation::Publish,
+            false,
+        )
+        .expect("verified host configuration");
+        verify_github_repository(
+            &github,
+            Path::new("/repo"),
+            &GitHubRepositoryIdentity {
+                owner: "owner".into(),
+                name: "repo".into(),
+            },
+            Operation::Publish,
+            false,
+        )
+        .await
+        .expect("matching repository");
+
+        let call = rec.only_call();
+        assert!(
+            call.envs
+                .iter()
+                .any(|(key, value)| { key.to_str() == Some("GH_REPO") && value.is_none() })
+        );
+        assert!(call.env_is("GH_HOST", "github.com"));
+        assert_eq!(
+            call.args_str(),
+            [
+                "repo",
+                "view",
+                "--json",
+                "name,owner,description,url,isPrivate,defaultBranchRef"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_github_client_rejects_ambient_repository_mismatch() {
+        let rec = RecordingRunner::replying(Reply::ok(
+            r#"{"name":"other","owner":{"login":"attacker"},"description":null,"url":"https://github.com/attacker/other","isPrivate":false,"defaultBranchRef":{"name":"main"}}"#,
+        ));
+        let policy = ExecutionPolicy::new(8192);
+        let github = configured_github_client(
+            GitHub::with_runner(&rec),
+            "https://github.com/owner/repo.git",
+            &policy,
+            Operation::Publish,
+            false,
+        )
+        .expect("verified host configuration");
+        let error = verify_github_repository(
+            &github,
+            Path::new("/repo"),
+            &GitHubRepositoryIdentity {
+                owner: "owner".into(),
+                name: "repo".into(),
+            },
+            Operation::Publish,
+            false,
+        )
+        .await
+        .expect_err("a redirected repository must fail closed");
+        assert_eq!(error.kind(), ErrorKind::Denied);
+        assert_eq!(error.code(), "forge_repository_identity_mismatch");
+    }
+
+    #[test]
+    fn change_request_recovery_requires_open_same_repo_exact_revision() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        let ignored = vec![
+            pull_request("CLOSED", revision, Some(false)),
+            pull_request("MERGED", revision, Some(false)),
+            pull_request("OPEN", revision, Some(true)),
+        ];
+        assert!(
+            select_verified_change_request(
+                ignored,
+                "feature",
+                "main",
+                revision,
+                "preflight",
+                false,
+            )
+            .expect("closed, merged, and fork PRs are not recovery evidence")
+            .is_none()
+        );
+
+        let exact = select_verified_change_request(
+            vec![pull_request("OPEN", revision, Some(false))],
+            "feature",
+            "main",
+            revision,
+            "after_push",
+            false,
+        )
+        .expect("same-repository exact revision")
+        .expect("one exact PR");
+        assert_eq!(exact.number, 42);
+
+        let mismatch = select_verified_change_request(
+            vec![pull_request(
+                "OPEN",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some(false),
+            )],
+            "feature",
+            "main",
+            revision,
+            "after_push",
+            false,
+        )
+        .expect_err("a branch-name match at another revision must fail closed");
+        assert_eq!(mismatch.kind(), ErrorKind::Denied);
+        assert_eq!(mismatch.code(), "change_request_revision_mismatch");
+
+        for candidate in [
+            pull_request("OPEN", revision, None),
+            pull_request("OPEN", "", Some(false)),
+        ] {
+            let error = select_verified_change_request(
+                vec![candidate],
+                "feature",
+                "main",
+                revision,
+                "after_push",
+                false,
+            )
+            .expect_err("missing identity proof must be structured unsupported");
+            assert_eq!(error.kind(), ErrorKind::Unsupported);
+        }
     }
 
     #[tokio::test]

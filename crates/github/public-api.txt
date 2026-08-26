@@ -2122,6 +2122,8 @@ pub vcs_github::PullRequest::author: alloc::string::String
 pub vcs_github::PullRequest::base_ref_name: alloc::string::String
 pub vcs_github::PullRequest::created_at: alloc::string::String
 pub vcs_github::PullRequest::head_ref_name: alloc::string::String
+pub vcs_github::PullRequest::head_ref_oid: alloc::string::String
+pub vcs_github::PullRequest::is_cross_repository: core::option::Option<bool>
 pub vcs_github::PullRequest::is_draft: bool
 pub vcs_github::PullRequest::labels: alloc::vec::Vec<alloc::string::String>
 pub vcs_github::PullRequest::milestone: core::option::Option<alloc::string::String>

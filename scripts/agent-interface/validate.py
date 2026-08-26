@@ -575,7 +575,7 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
 
         push = _object(data["push"], f"{label}.data.push")
         _require_fields(push, ("state", "irreversible", "verified"), f"{label}.data.push")
-        if push["state"] not in {"performed", "already_present", "recovered_after_error"}:
+        if push["state"] not in {"performed", "already_satisfied", "recovered_after_error"}:
             raise ValidationError(f"{label}.data.push.state is invalid")
         if push["irreversible"] is not True or push["verified"] is not True:
             raise ValidationError(f"{label}.data.push must disclose and verify the irreversible step")
@@ -583,7 +583,12 @@ def validate_machine_envelope(value: Any, label: str) -> dict[str, Any]:
         change_request = _object(data["change_request"], f"{label}.data.change_request")
         request_fields = ("state", "number", "url", "source", "target")
         _require_fields(change_request, request_fields, f"{label}.data.change_request")
-        if change_request["state"] not in {"created", "already_present", "recovered_after_error"}:
+        if change_request["state"] not in {
+            "created",
+            "already_satisfied",
+            "discovered_after_push",
+            "recovered_after_error",
+        }:
             raise ValidationError(f"{label}.data.change_request.state is invalid")
         number = _integer(change_request["number"], f"{label}.data.change_request.number")
         if number == 0:

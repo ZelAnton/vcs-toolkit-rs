@@ -89,6 +89,10 @@ def schema_invalid_mutations() -> list[Mutation]:
             lambda value: value["data"]["push"].__setitem__("verified", False),
         ),
         _mutated(
+            "publish-invented-retry-state",
+            lambda value: value["data"]["push"].__setitem__("state", "already_present"),
+        ),
+        _mutated(
             "ci-status-revision-mismatch",
             lambda value: value["data"]["runs"][0].__setitem__("revision", "different"),
         ),
@@ -125,6 +129,44 @@ def invalid_mutations() -> list[Mutation]:
 
 
 class MachineFixtureValidationTests(unittest.TestCase):
+    def test_publish_retry_vocabulary_fixtures_reach_validator_and_recorder(self) -> None:
+        names = [
+            "publish-success-git.v1.json",
+            "publish-success-retry-git.v1.json",
+            "publish-success-discovered-git.v1.json",
+            "publish-success-recovered-git.v1.json",
+        ]
+        for name in names:
+            with self.subTest(name=name):
+                value = _fixture(name)
+                self.assertIs(validate.validate_machine_envelope(value, name), value)
+
+        corpus = ROOT / "docs" / "agent-interface" / "corpus.v1.json"
+        results = ROOT / "docs" / "agent-interface" / "fixtures" / "results.v1.json"
+        baseline = ROOT / "docs" / "agent-interface" / "baseline-mcp.v1.json"
+        source = ROOT / "crates" / "agent" / "tests" / "fixtures"
+        with tempfile.TemporaryDirectory(prefix="agent-validator-") as raw_temp:
+            temp = Path(raw_temp)
+            fixtures = temp / "fixtures"
+            fixtures.mkdir()
+            for name in names:
+                (fixtures / name).write_text(
+                    (source / name).read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            output = temp / "recording.json"
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                exit_code = record.main(
+                    [
+                        "--corpus", str(corpus),
+                        "--results", str(results),
+                        "--baseline", str(baseline),
+                        "--machine-fixtures", str(fixtures),
+                        "--output", str(output),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(output.exists(), "reachable retry fixtures must produce a recording")
+
     def test_future_operation_is_accepted_by_validator_and_recorder(self) -> None:
         future_operation = _fixture("future-operation-success.v1.json")
         self.assertIs(

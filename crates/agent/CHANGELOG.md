@@ -9,6 +9,13 @@ This crate is versioned and published independently; tag releases as
 
 ## [Unreleased]
 
+### Fixed
+- Bind checked GitHub publish/CI commands to the verified `origin` owner/name,
+  ignore ambient `GH_REPO`, and require an open same-repository PR at the exact
+  expected head revision for recovery. Preserve bounded publish checkpoint/state
+  evidence when the normal success or error envelope exceeds its output budget,
+  and align all retry-state fixtures and validators with the emitted vocabulary.
+
 ### Added
 - Add the `vcs-agent` binary and its non-mutating `probe` outcome. The command
   emits the versioned `vcs-agent/v1` success/error envelope, reports implemented

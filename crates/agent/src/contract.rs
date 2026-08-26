@@ -189,6 +189,8 @@ pub(crate) enum DetailKey {
     Forge,
     Account,
     Checkpoint,
+    PushState,
+    ChangeRequestState,
     Conclusion,
     RunId,
 }
@@ -216,6 +218,8 @@ impl DetailKey {
             Self::Forge => "forge",
             Self::Account => "account",
             Self::Checkpoint => "checkpoint",
+            Self::PushState => "push_state",
+            Self::ChangeRequestState => "change_request_state",
             Self::Conclusion => "conclusion",
             Self::RunId => "run_id",
         }
@@ -235,6 +239,8 @@ impl DetailKey {
             | Self::Forge
             | Self::Account
             | Self::Checkpoint
+            | Self::PushState
+            | Self::ChangeRequestState
             | Self::Conclusion
             | Self::RunId => DetailSensitivity::Text,
         }
@@ -468,10 +474,9 @@ pub(crate) struct RenderedOutput {
 
 pub(crate) fn render(value: impl IntoEnvelope, max_bytes: usize) -> RenderedOutput {
     let (envelope, exit_code, diagnostic) = value.into_envelope();
-    let operation = envelope.operation;
     let mut stdout = serialize(&envelope);
     if stdout.len() > max_bytes {
-        let error = AgentError::output_limit(operation, max_bytes);
+        let error = output_limit_error(&envelope, max_bytes);
         let envelope = MachineEnvelope::failure(&error);
         stdout = serialize(&envelope);
         debug_assert!(
@@ -489,6 +494,98 @@ pub(crate) fn render(value: impl IntoEnvelope, max_bytes: usize) -> RenderedOutp
         diagnostic,
         exit_code,
     }
+}
+
+fn output_limit_error(envelope: &MachineEnvelope, max_bytes: usize) -> AgentError {
+    let mut error = AgentError::output_limit(envelope.operation, max_bytes);
+    if envelope.operation != "publish" {
+        return error;
+    }
+
+    error.code = "machine_result_too_large_after_publish";
+    let mut checkpoint = None;
+    let mut revision = None;
+    let mut push_state = None;
+    let mut change_request_state = None;
+    if let Some(data) = envelope.data.as_ref() {
+        checkpoint = bounded_evidence(
+            data.get("checkpoint").and_then(serde_json::Value::as_str),
+            64,
+        );
+        revision = bounded_revision(
+            data.get("expected_revision")
+                .and_then(serde_json::Value::as_str),
+        );
+        push_state = bounded_state(
+            data.get("push")
+                .and_then(|push| push.get("state"))
+                .and_then(serde_json::Value::as_str),
+            &["performed", "already_satisfied", "recovered_after_error"],
+        );
+        change_request_state = bounded_state(
+            data.get("change_request")
+                .and_then(|request| request.get("state"))
+                .and_then(serde_json::Value::as_str),
+            &[
+                "created",
+                "already_satisfied",
+                "discovered_after_push",
+                "recovered_after_error",
+            ],
+        );
+    } else if let Some(source) = envelope.error.as_ref() {
+        checkpoint = bounded_evidence(source.details.get("checkpoint").map(String::as_str), 64);
+        revision = bounded_revision(source.details.get("revision").map(String::as_str));
+        push_state = bounded_state(
+            source.details.get("push_state").map(String::as_str),
+            &["performed", "already_satisfied", "recovered_after_error"],
+        );
+        change_request_state = bounded_state(
+            source
+                .details
+                .get("change_request_state")
+                .map(String::as_str),
+            &[
+                "created",
+                "already_satisfied",
+                "discovered_after_push",
+                "recovered_after_error",
+            ],
+        );
+    }
+
+    error = error.with_detail(DetailKey::Checkpoint, checkpoint.unwrap_or("preflight"));
+    if let Some(value) = revision {
+        error = error.with_detail(DetailKey::Revision, value);
+    }
+    if let Some(value) = push_state {
+        error = error.with_detail(DetailKey::PushState, value);
+    }
+    if let Some(value) = change_request_state {
+        error = error.with_detail(DetailKey::ChangeRequestState, value);
+    }
+    error
+}
+
+fn bounded_evidence(value: Option<&str>, max_len: usize) -> Option<&str> {
+    value.filter(|value| {
+        !value.is_empty()
+            && value.len() <= max_len
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    })
+}
+
+fn bounded_revision(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| {
+        (40..=64).contains(&value.len())
+            && value.chars().all(|character| character.is_ascii_hexdigit())
+    })
+}
+
+fn bounded_state<'a>(value: Option<&'a str>, allowed: &[&str]) -> Option<&'a str> {
+    value.filter(|value| allowed.contains(value))
 }
 
 fn serialize(envelope: &MachineEnvelope) -> Vec<u8> {
@@ -563,6 +660,41 @@ mod tests {
                 .expect("UTF-8")
                 .contains("xxxx")
         );
+    }
+
+    #[test]
+    fn publish_output_overflow_preserves_bounded_recovery_evidence() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        let success = MachineEnvelope::success(
+            "publish",
+            json!({
+                "expected_revision": revision,
+                "checkpoint": "publish_complete",
+                "push": {"state": "recovered_after_error"},
+                "change_request": {"state": "discovered_after_push"},
+                "large": "x".repeat(4096),
+            }),
+        );
+        let output = render(success, crate::cli::MIN_MAX_OUTPUT_BYTES);
+        assert_eq!(output.exit_code, ExitCode::from(42));
+        assert!(output.stdout.len() <= crate::cli::MIN_MAX_OUTPUT_BYTES);
+        let value: Value = serde_json::from_slice(&output.stdout).expect("complete JSON error");
+        assert_eq!(
+            value["error"]["code"],
+            "machine_result_too_large_after_publish"
+        );
+        assert_eq!(value["error"]["details"]["checkpoint"], "publish_complete");
+        assert_eq!(value["error"]["details"]["revision"], revision);
+        assert_eq!(
+            value["error"]["details"]["push_state"],
+            "recovered_after_error"
+        );
+        assert_eq!(
+            value["error"]["details"]["change_request_state"],
+            "discovered_after_push"
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("xxxx"));
+        assert!(contract_validator().is_valid(&value));
     }
 
     #[test]
@@ -811,6 +943,9 @@ mod tests {
             include_str!("../tests/fixtures/changes-output-limit.v1.json"),
             include_str!("../tests/fixtures/commit-success-git.v1.json"),
             include_str!("../tests/fixtures/publish-success-git.v1.json"),
+            include_str!("../tests/fixtures/publish-success-retry-git.v1.json"),
+            include_str!("../tests/fixtures/publish-success-discovered-git.v1.json"),
+            include_str!("../tests/fixtures/publish-success-recovered-git.v1.json"),
             include_str!("../tests/fixtures/ci-status-success-github.v1.json"),
             include_str!("../tests/fixtures/ci-wait-success-github.v1.json"),
         ] {

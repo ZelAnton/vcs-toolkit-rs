@@ -369,7 +369,7 @@ impl Default for WorkflowList {
 /// Name of the underlying CLI binary this crate drives.
 pub const BINARY: &str = "gh";
 
-const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,baseRefName,url,labels,assignees,author,createdAt,updatedAt,milestone";
+const PR_FIELDS: &str = "number,title,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,url,labels,assignees,author,createdAt,updatedAt,milestone";
 const REPO_FIELDS: &str = "name,owner,description,url,isPrivate,defaultBranchRef";
 const ISSUE_LIST_FIELDS: &str =
     "number,title,state,body,url,labels,assignees,author,createdAt,updatedAt,milestone";

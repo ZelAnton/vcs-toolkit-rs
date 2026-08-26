@@ -343,12 +343,12 @@ Guide: [vcs-github](../crates/github/docs/github.md). Trait: `GitHubApi`
 | `Forge::auth_info` | `auth status`, then `repo view --json name` **only when a session exists** | active account + every login + repo visibility; no second spawn when unauthenticated |
 | `repo_view` | `repo view --json …` | |
 | `api` | `api <endpoint>` | raw REST/GraphQL body; flag-guarded endpoint |
-| `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100 |
-| `pr_list_with` | `pr list --state open\|closed\|merged\|all --limit <n> --json …` | via `PrList`; zero rejected before spawn |
-| `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only |
-| `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state |
+| `pr_list` | `pr list --state open --limit 100 --json …` | compatibility default: open PRs, ≤100; includes exact `headRefOid` and `isCrossRepository` |
+| `pr_list_with` | `pr list --state open\|closed\|merged\|all --limit <n> --json …` | via `PrList`; zero rejected before spawn; includes exact head/repository identity |
+| `pr_list_for_source_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; source branch only; includes exact head/repository identity |
+| `pr_list_for_branch` | `pr list --head <head> --base <base> --state all --limit 100 --json …` | any state; includes exact head/repository identity |
 | `Forge::pr_for_branch` | `pr list --head <source_branch> --state all --limit 100 --json …` | any state; independent of target |
-| `pr_view` | `pr view <n> --json …` | |
+| `pr_view` | `pr view <n> --json …` | includes exact `headRefOid` and `isCrossRepository` |
 | `pr_create` | `pr create … [--label <name> …]` | via `PrCreate`; returns URL |
 | `pr_add_labels` / `pr_remove_labels` | `pr edit <n> --add-label\|--remove-label <name> …` | repeated flag-value pairs; empty sets rejected |
 | `pr_merge` | `pr merge <n> --merge\|--squash\|--rebase [--auto] [--delete-branch]` | via `PrMerge` |

@@ -41,12 +41,13 @@ of the unrelated status-entry set; it never pushes, switches, or repairs conflic
 
 Checked publish currently supports a Git repository, the explicit `origin` remote,
 and GitHub. It verifies the full local object ID, branch, remote/forge identity,
-active account, repository visibility, capabilities, and expected remote ref before
-the first mutation. Jujutsu and GitLab/Gitea return structured `unsupported` before
-push or PR/MR mutation. A retry recognizes an already-pushed exact SHA and an existing
-unique source/target PR; ambiguous identity, unexpected remote advancement, or an
-unprovable mutation result never becomes success. These claims are exercised by
-`app::tests` and the committed `publish-success-git.v1.json` fixture.
+active account, exact `origin` owner/name through a `GH_REPO`-scrubbed client,
+capabilities, and expected remote ref before the first mutation. Jujutsu and
+GitLab/Gitea return structured `unsupported` before push or PR/MR mutation. A retry
+recognizes an already-pushed exact SHA and only an open, same-repository source/target
+PR at that exact SHA; ambiguous or missing identity, unexpected remote advancement,
+or an unprovable mutation result never becomes success. Four representative outcomes
+cover every reachable push/PR state in committed cross-layer validator fixtures.
 
 GitHub CI status/wait filters runs by exact `headSha`, rejects a recent different
 revision and duplicate workflow matches, and reports success only after every
