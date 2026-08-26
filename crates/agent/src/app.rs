@@ -1726,7 +1726,7 @@ async fn commit_repo<R: ProcessRunner>(
             include_paths,
         )));
     }
-    if matches!(repo.kind(), BackendKind::Jj) {
+    if !crate::checked_commit_supported(repo.kind()) {
         return Err(Box::new(commit_gate_error(
             ErrorKind::Unsupported,
             "jujutsu_atomic_commit_unsupported",

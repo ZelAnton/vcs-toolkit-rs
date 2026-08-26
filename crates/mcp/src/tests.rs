@@ -2599,14 +2599,23 @@ fn advertised_capabilities_follow_backend_forge_and_write_gate() {
     assert!(names.contains(&"outcome_commit".to_string()), "{names:?}");
     assert!(!names.contains(&"repo_commit".to_string()), "{names:?}");
 
-    let jj = jj_server(ScriptedRunner::new(), WriteGate::None);
-    let names = jj
-        .tool_router
-        .list_all()
-        .into_iter()
-        .map(|tool| tool.name.into_owned())
-        .collect::<Vec<_>>();
-    assert!(names.contains(&"repo_op_log".to_string()), "{names:?}");
+    for writes in [
+        WriteGate::None,
+        WriteGate::All,
+        WriteGate::Set(std::collections::HashSet::from([
+            "outcome_commit".to_string()
+        ])),
+    ] {
+        let jj = jj_server(ScriptedRunner::new(), writes);
+        let names = jj
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.into_owned())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"repo_op_log".to_string()), "{names:?}");
+        assert!(!names.contains(&"outcome_commit".to_string()), "{names:?}");
+    }
 }
 
 /// A no-op MCP client handler for the in-process round-trip.

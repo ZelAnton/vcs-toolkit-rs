@@ -14,6 +14,12 @@ use app::{ExecutionPolicy, OutcomeExecutionContext, execute, execute_with_contex
 use cli::Invocation;
 use contract::{RenderedOutput, render};
 use processkit::ProcessRunner;
+use vcs_core::BackendKind;
+
+/// Whether the backend can perform the checked, exact-path commit outcome.
+pub const fn checked_commit_supported(backend: BackendKind) -> bool {
+    matches!(backend, BackendKind::Git)
+}
 
 /// The common application-service entry point used by every transport.
 pub struct OutcomeServices;

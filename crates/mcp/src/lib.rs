@@ -106,10 +106,10 @@ use std::sync::Arc;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool_handler};
-use vcs_agent::OutcomeServices;
 use vcs_agent::app::{ExecutionPolicy, OutcomeExecutionContext};
 use vcs_agent::cli::Invocation;
 use vcs_agent::contract::RenderedOutput;
+use vcs_agent::{OutcomeServices, checked_commit_supported};
 use vcs_core::processkit::ProcessRunner;
 use vcs_core::{BackendKind, OutputBudget, Repo, VcsRepo};
 use vcs_forge::{Forge, ForgeApi, ForgeKind};
@@ -245,6 +245,9 @@ impl VcsMcpServer {
             for name in ["repo_op_log", "repo_undo"] {
                 tool_router.remove_route(name);
             }
+        }
+        if !checked_commit_supported(backend) {
+            tool_router.remove_route("outcome_commit");
         }
         if forge_kind.is_none() || forge_kind == Some(ForgeKind::Unknown) {
             let forge_names = tool_router
