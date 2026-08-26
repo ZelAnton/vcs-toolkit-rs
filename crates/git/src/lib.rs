@@ -3997,7 +3997,7 @@ async fn checked_commit_reject_configured_helpers<R: ProcessRunner>(
             "git check-attr -z output does not contain path/attribute/value triples",
         ));
     }
-    if fields.chunks_exact(3).any(|entry| {
+    if fields.as_chunks::<3>().0.iter().any(|entry| {
         let value = entry[2];
         value != b"unspecified" && value != b"unset"
     }) {
