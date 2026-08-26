@@ -43,6 +43,14 @@ async fn read_tools_run_against_a_real_repo() {
     assert_eq!(snap["dirty"], false);
     assert_eq!(snap["operation"], "Clear");
 
+    // The intent-oriented adapter delegates to the same common application
+    // service as vcs-agent and reports the same exact revision evidence.
+    let inspect = inner(&server.outcome_inspect().await.expect("outcome inspect"));
+    assert_eq!(inspect["contract_version"], "vcs-agent/v1");
+    assert_eq!(inspect["operation"], "inspect");
+    assert_eq!(inspect["data"]["repository"]["backend"], "git");
+    assert_eq!(inspect["data"]["working_copy"]["revision"], snap["head"]);
+
     // An edit shows up in repo_status as a modified seed.txt.
     sandbox.write("seed.txt", "changed\n");
     let status = inner(&server.repo_status().await.expect("status"));
@@ -53,6 +61,17 @@ async fn read_tools_run_against_a_real_repo() {
             .iter()
             .any(|c| c["path"] == "seed.txt"),
         "{status}"
+    );
+    let changes = inner(
+        &server
+            .outcome_changes(Parameters(vcs_mcp::OutcomeChangesParams { mode: None }))
+            .await
+            .expect("outcome changes"),
+    );
+    assert_eq!(changes["operation"], "changes");
+    assert_eq!(
+        changes["data"]["counts"]["paths"],
+        status.as_array().expect("status files").len()
     );
 }
 

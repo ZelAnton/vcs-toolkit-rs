@@ -17,6 +17,9 @@ This crate is versioned and published independently; tag releases as
   and align all retry-state fixtures and validators with the emitted vocabulary.
 
 ### Added
+- Expose inspect/changes/commit/publish/CI orchestration as the
+  transport-neutral `OutcomeServices` API. The CLI delegates to the same
+  bounded service entry point used by structured transports.
 - Add the `vcs-agent` binary and its non-mutating `probe` outcome. The command
   emits the versioned `vcs-agent/v1` success/error envelope, reports implemented
   and reserved outcomes plus ProcessKit execution capabilities, uses stable exit

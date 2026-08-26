@@ -384,7 +384,7 @@
       "unrelated_changes_preserved": true
     }
   ],
-  "corpus_version": "1.1.0",
+  "corpus_version": "1.2.0",
   "metrics": {
     "exact_revision_verified": 5,
     "false_activation_rate": {

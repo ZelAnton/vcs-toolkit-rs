@@ -6,6 +6,12 @@ the MCP server: callers ask for an outcome, receive one bounded versioned JSON
 document, and decide explicitly whether an `unsupported` result permits a lower-
 level fallback.
 
+The crate also exposes `OutcomeServices`: the transport-neutral application
+layer used by both this CLI and `vcs-mcp`'s intent-oriented tools. Transports
+only parse parameters and render its bounded envelope; repository discovery,
+preflight, write policy, error mapping, evidence, deadlines, and budgets live in
+the shared service.
+
 The `0.1.0` v1 surface implements `probe`, `inspect`, `changes`, checked
 exact-path `commit`, checked `publish`, and exact-revision `ci status`/`ci wait`:
 

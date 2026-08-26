@@ -6,6 +6,86 @@
 use rmcp::schemars;
 use serde::Deserialize;
 
+/// Detail requested from the outcome-oriented changes service.
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OutcomeChangesModeArg {
+    /// Changed paths, kinds, counts, and aggregate line statistics.
+    Summary,
+    /// Summary plus structured file hunks and lines.
+    Full,
+}
+
+/// Parameters for the outcome-oriented repository changes workflow.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeChangesParams {
+    /// Detail level. Defaults to `summary`.
+    #[serde(default)]
+    pub mode: Option<OutcomeChangesModeArg>,
+}
+
+/// Checked exact-path commit request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeCommitParams {
+    /// Revision that must still be current at preflight and after selection.
+    pub expected_revision: String,
+    /// Non-empty commit message.
+    pub message: String,
+    /// Exact repo-relative leaf paths to commit, preserving every unrelated change.
+    pub paths: Vec<String>,
+}
+
+/// Checked exact-revision publish request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomePublishParams {
+    /// Revision that must be current and must be the revision published.
+    pub expected_revision: String,
+    /// Expected remote state before push: a revision or the literal `absent`.
+    pub expected_remote_revision: String,
+    /// Configured remote name.
+    pub remote: String,
+    /// Local source branch/bookmark.
+    pub source: String,
+    /// Pull/merge request target branch.
+    pub target: String,
+    /// Expected forge (`github`, `gitlab`, or `gitea`).
+    pub forge: String,
+    /// Expected active forge account.
+    pub expected_account: String,
+    /// Pull/merge request title.
+    pub title: String,
+    /// Pull/merge request body; may be empty.
+    pub body: String,
+}
+
+/// Exact-revision CI status request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeCiStatusParams {
+    /// Expected forge (`github`, `gitlab`, or `gitea`).
+    pub forge: String,
+    /// Published source branch/bookmark.
+    pub source: String,
+    /// Exact revision whose runs may be reported.
+    pub expected_revision: String,
+}
+
+/// Exact-revision CI wait request.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeCiWaitParams {
+    /// Expected forge (`github`, `gitlab`, or `gitea`).
+    pub forge: String,
+    /// Published source branch/bookmark.
+    pub source: String,
+    /// Exact revision whose runs may be reported.
+    pub expected_revision: String,
+    /// Total deadline in seconds. Defaults to 1800.
+    #[serde(default)]
+    pub wait_seconds: Option<u64>,
+    /// Poll interval in seconds. Defaults to 10.
+    #[serde(default)]
+    pub poll_seconds: Option<u64>,
+}
+
 /// Switch the working copy to a branch/bookmark/revision.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CheckoutParams {

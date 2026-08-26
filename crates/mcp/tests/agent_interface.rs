@@ -32,11 +32,26 @@ fn root() -> PathBuf {
 fn corpus_is_versioned_and_covers_the_routing_matrix() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("valid corpus JSON");
     assert_eq!(corpus["schema_version"], "agent-interface.corpus.v1");
-    assert_eq!(corpus["corpus_version"], "1.1.0");
+    assert_eq!(corpus["corpus_version"], "1.2.0");
     assert_eq!(
         corpus["selection_policy"]["preferred_interface"],
         "vcs-agent"
     );
+    assert_eq!(
+        corpus["selection_policy"]["comparison_interfaces"],
+        serde_json::json!(["cli+skill", "mcp"])
+    );
+    assert_eq!(
+        corpus["selection_policy"]["comparison_metrics"],
+        serde_json::json!([
+            "precision",
+            "recall",
+            "bypass_rate",
+            "invalid_call_rate",
+            "outcome_correctness"
+        ])
+    );
+    assert!(corpus["selection_policy"]["unavailable_live_metrics"].is_null());
 
     let cases = corpus["cases"].as_array().expect("cases array");
     let mut ids = BTreeSet::new();

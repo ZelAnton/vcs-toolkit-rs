@@ -10,6 +10,15 @@ crates; tag releases as `vcs-mcp-v<version>`.
 ## [Unreleased]
 
 ### Added
+- Add intent-oriented `outcome_inspect`, `outcome_changes`, `outcome_commit`,
+  `outcome_publish`, `outcome_ci_status`, and `outcome_ci_wait` tools backed by
+  `vcs-agent`'s common application services. Server instructions now put typed
+  outcomes, preflight, write gating, and the bounded raw fallback first.
+- Capability discovery now omits tools unavailable under the configured write
+  gate, missing forge, or selected backend/forge. Migration note: low-level
+  method names and schemas are unchanged, but `tools/list` no longer advertises
+  a disabled call merely so it can reject it later; enable that capability
+  before invoking the existing name.
 - **`--ssh-command <command>` and `--trust-repo-ssh-command`** — the operator's
   two ways past the hardened client's new refusal (see the `vcs-git` changelog):
   serving a repository that overrides `core.sshCommand` now fails `repo_fetch` /

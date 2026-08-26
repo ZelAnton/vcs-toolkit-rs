@@ -41,8 +41,8 @@ fn inner(r: &rmcp::model::CallToolResult) -> serde_json::Value {
 
 // The full stdio transport, driven end to end against the real binary: spawn
 // read-only (no --allow-write), `initialize`, `tools/list` (catalogue +
-// schemas + annotations), a real read-tool round trip, then a mutating tool
-// call refused by the SERVER (not the client) for lacking --allow-write.
+// schemas + annotations), a real read-tool round trip, then proof that a
+// disabled mutation is neither advertised nor routable.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the git binary and a built vcs-mcp binary"]
 async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
@@ -91,27 +91,11 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     );
     assert_eq!(read_only_annotations.destructive_hint, None);
 
-    // A genuinely mutating tool, annotated destructiveHint, whose JSON-schema
-    // parameters (`paths`, `message`) made it across the wire intact.
-    let mutating = tools
-        .iter()
-        .find(|t| t.name == "repo_commit")
-        .expect("repo_commit is in the catalogue");
-    let mutating_annotations = mutating
-        .annotations
-        .as_ref()
-        .expect("repo_commit carries MCP annotations");
-    assert_eq!(
-        mutating_annotations.destructive_hint,
-        Some(true),
-        "repo_commit must be annotated destructiveHint"
-    );
-    let schema = serde_json::to_value(&mutating.input_schema).expect("schema serializes");
-    let props = schema
-        .get("properties")
-        .expect("repo_commit schema declares properties");
-    assert!(props.get("paths").is_some(), "{props}");
-    assert!(props.get("message").is_some(), "{props}");
+    assert!(tools.iter().any(|tool| tool.name == "outcome_inspect"));
+    assert!(tools.iter().any(|tool| tool.name == "outcome_changes"));
+    assert!(!tools.iter().any(|tool| tool.name == "repo_commit"));
+    assert!(!tools.iter().any(|tool| tool.name == "outcome_commit"));
+    assert!(!tools.iter().any(|tool| tool.name.starts_with("forge_")));
 
     // A genuinely idempotent tool: on jj it snapshots the working copy (a
     // reversible, append-only op-log operation), so per crates/mcp/docs/mcp.md
@@ -143,19 +127,17 @@ async fn stdio_binary_e2e_initialize_tools_list_read_call_and_gated_mutation() {
     let branch = branch.as_str().expect("a branch name");
     assert!(branch == "main" || branch == "master", "{branch}");
 
-    // 4. A mutating tool call is refused by the SERVER (not the client) —
-    //    the write gate rejects it before it ever reaches git, and the
-    //    refusal surfaces as a protocol-level error naming the missing flag.
+    // 4. A client cannot bypass discovery by naming the disabled mutation.
     let mut args = serde_json::Map::new();
     args.insert("paths".into(), serde_json::json!(["seed.txt"]));
     args.insert("message".into(), serde_json::json!("should be refused"));
     let err = client
         .call_tool(CallToolRequestParams::new("repo_commit").with_arguments(args))
         .await
-        .expect_err("a mutating tool must be refused without --allow-write");
+        .expect_err("a disabled mutation must not be routable");
     assert!(
-        format!("{err:?}").contains("allow-write"),
-        "the refusal should name the missing flag: {err:?}"
+        format!("{err:?}").to_lowercase().contains("not found"),
+        "the disabled route must be absent: {err:?}"
     );
 
     let _ = client.cancel().await;

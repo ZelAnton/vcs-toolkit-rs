@@ -2405,6 +2405,60 @@ fn server_info_identifies_as_vcs_mcp() {
     let info = server.get_info();
     assert_eq!(info.server_info.name, "vcs-mcp");
     assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+    let first = &info.instructions.expect("instructions")[..SERVER_INSTRUCTIONS.len().min(512)];
+    for required in ["typed outcome_*", "preflight", "write gate", "raw CLI"] {
+        assert!(
+            first.contains(required),
+            "first 512 chars omit {required}: {first}"
+        );
+    }
+}
+
+#[test]
+fn advertised_capabilities_follow_backend_forge_and_write_gate() {
+    let readonly = git_server(ScriptedRunner::new(), WriteGate::None);
+    let names = readonly
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"outcome_inspect".to_string()), "{names:?}");
+    assert!(names.contains(&"outcome_changes".to_string()), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("forge_")),
+        "{names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| WRITE_TOOLS.contains(&name.as_str())),
+        "{names:?}"
+    );
+    assert!(!names.contains(&"repo_op_log".to_string()), "{names:?}");
+    assert!(!names.contains(&"repo_undo".to_string()), "{names:?}");
+
+    let allow = WriteGate::Set(std::collections::HashSet::from([
+        "outcome_commit".to_string()
+    ]));
+    let selective = git_server(ScriptedRunner::new(), allow);
+    let names = selective
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"outcome_commit".to_string()), "{names:?}");
+    assert!(!names.contains(&"repo_commit".to_string()), "{names:?}");
+
+    let jj = jj_server(ScriptedRunner::new(), WriteGate::None);
+    let names = jj
+        .tool_router
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"repo_op_log".to_string()), "{names:?}");
 }
 
 /// A no-op MCP client handler for the in-process round-trip.
@@ -2440,18 +2494,13 @@ async fn in_process_client_lists_and_calls_tools() {
     let tools = client.list_all_tools().await.expect("list_tools");
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"repo_snapshot"), "{names:?}");
-    assert!(names.contains(&"repo_commit"), "{names:?}");
-    assert!(names.contains(&"forge_pr_list"), "{names:?}");
-    assert!(names.contains(&"forge_pr_for_branch"), "{names:?}");
-    assert!(names.contains(&"forge_pr_comment"), "{names:?}");
-    assert!(names.contains(&"forge_pr_edit"), "{names:?}");
-    assert!(names.contains(&"forge_pr_approve"), "{names:?}");
-    assert!(names.contains(&"forge_pr_request_changes"), "{names:?}");
-    assert!(names.contains(&"forge_pr_checkout"), "{names:?}");
-    assert!(names.contains(&"forge_issue_close"), "{names:?}");
-    assert!(names.contains(&"forge_issue_reopen"), "{names:?}");
-    assert!(names.contains(&"forge_issue_comment"), "{names:?}");
-    assert!(names.contains(&"forge_info"), "{names:?}");
+    assert!(names.contains(&"outcome_inspect"), "{names:?}");
+    assert!(names.contains(&"outcome_changes"), "{names:?}");
+    assert!(!names.contains(&"repo_commit"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("forge_")),
+        "{names:?}"
+    );
 
     let result = client
         .call_tool(CallToolRequestParams::new("repo_current_branch"))

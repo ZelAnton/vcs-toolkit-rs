@@ -1,10 +1,19 @@
 {
   "schema_version": "agent-interface.corpus.v1",
-  "corpus_version": "1.1.0",
+  "corpus_version": "1.2.0",
   "selection_policy": {
     "preferred_interface": "vcs-agent",
     "fallback_interfaces": ["mcp", "raw-cli"],
-    "selection_outcomes": ["preferred", "fallback", "none"]
+    "selection_outcomes": ["preferred", "fallback", "none"],
+    "comparison_interfaces": ["cli+skill", "mcp"],
+    "comparison_metrics": [
+      "precision",
+      "recall",
+      "bypass_rate",
+      "invalid_call_rate",
+      "outcome_correctness"
+    ],
+    "unavailable_live_metrics": null
   },
   "skill_metadata": {
     "name": "vcs-agent",

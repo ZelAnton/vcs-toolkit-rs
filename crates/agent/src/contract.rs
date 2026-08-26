@@ -6,14 +6,14 @@ use serde::Serialize;
 
 use crate::redaction::{RedactionPolicy, redact_text};
 
-pub(crate) const CONTRACT_VERSION: &str = "vcs-agent/v1";
+pub const CONTRACT_VERSION: &str = "vcs-agent/v1";
 const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub(crate) type AgentResult<T> = Result<T, Box<AgentError>>;
+pub type AgentResult<T> = Result<T, Box<AgentError>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ErrorKind {
+pub enum ErrorKind {
     Unsupported,
     Denied,
     InvalidInput,
@@ -29,7 +29,7 @@ pub(crate) enum ErrorKind {
 }
 
 impl ErrorKind {
-    pub(crate) const fn exit_code(self) -> u8 {
+    pub const fn exit_code(self) -> u8 {
         match self {
             Self::InvalidInput => 2,
             Self::Unsupported => 10,
@@ -46,7 +46,7 @@ impl ErrorKind {
         }
     }
 
-    pub(crate) fn contract() -> Vec<ErrorDescriptor> {
+    pub fn contract() -> Vec<ErrorDescriptor> {
         [
             Self::Unsupported,
             Self::Denied,
@@ -71,20 +71,20 @@ impl ErrorKind {
 }
 
 #[derive(Serialize)]
-pub(crate) struct ErrorDescriptor {
+pub struct ErrorDescriptor {
     kind: ErrorKind,
     exit_code: u8,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ExitBand {
+pub struct ExitBand {
     name: &'static str,
     first: u8,
     last: u8,
 }
 
 impl ExitBand {
-    pub(crate) fn contract() -> Vec<Self> {
+    pub fn contract() -> Vec<Self> {
         vec![
             Self {
                 name: "success",
@@ -127,7 +127,7 @@ impl ExitBand {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) enum FailureDomain {
+pub enum FailureDomain {
     Backend,
     Forge,
     Authentication,
@@ -135,14 +135,14 @@ pub(crate) enum FailureDomain {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct Fallback {
+pub struct Fallback {
     allowed: bool,
     interface: &'static str,
     reason: &'static str,
 }
 
 impl Fallback {
-    pub(crate) const fn raw_cli(reason: &'static str) -> Self {
+    pub const fn raw_cli(reason: &'static str) -> Self {
         Self {
             allowed: true,
             interface: "raw-cli",
@@ -152,7 +152,7 @@ impl Fallback {
 }
 
 #[derive(Serialize)]
-pub(crate) struct MachineError {
+pub struct MachineError {
     kind: ErrorKind,
     exit_code: u8,
     code: &'static str,
@@ -162,7 +162,7 @@ pub(crate) struct MachineError {
 }
 
 #[derive(Serialize)]
-pub(crate) struct MachineEnvelope {
+pub struct MachineEnvelope {
     contract_version: &'static str,
     binary_version: &'static str,
     operation: &'static str,
@@ -175,7 +175,7 @@ pub(crate) struct MachineEnvelope {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) enum DetailKey {
+pub enum DetailKey {
     MaxBytes,
     ProcessErrorKind,
     RemoteUrl,
@@ -248,7 +248,7 @@ impl DetailKey {
 }
 
 impl MachineEnvelope {
-    pub(crate) fn success(operation: &'static str, data: impl Serialize) -> Self {
+    pub fn success(operation: &'static str, data: impl Serialize) -> Self {
         Self {
             contract_version: CONTRACT_VERSION,
             binary_version: BINARY_VERSION,
@@ -303,7 +303,7 @@ impl MachineEnvelope {
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentError {
+pub struct AgentError {
     operation: &'static str,
     kind: ErrorKind,
     code: &'static str,
@@ -316,7 +316,7 @@ pub(crate) struct AgentError {
 }
 
 impl AgentError {
-    pub(crate) fn new(
+    pub fn new(
         operation: &'static str,
         kind: ErrorKind,
         code: &'static str,
@@ -349,19 +349,19 @@ impl AgentError {
         }
     }
 
-    pub(crate) fn invalid_input(code: &'static str) -> Self {
+    pub fn invalid_input(code: &'static str) -> Self {
         Self::invalid_input_for("unknown", code)
     }
 
-    pub(crate) fn invalid_input_for(operation: &'static str, code: &'static str) -> Self {
+    pub fn invalid_input_for(operation: &'static str, code: &'static str) -> Self {
         Self::new(operation, ErrorKind::InvalidInput, code, false)
     }
 
-    pub(crate) fn internal(code: &'static str) -> Self {
+    pub fn internal(code: &'static str) -> Self {
         Self::new("unknown", ErrorKind::Internal, code, false)
     }
 
-    pub(crate) fn output_limit(operation: &'static str, max_bytes: usize) -> Self {
+    pub fn output_limit(operation: &'static str, max_bytes: usize) -> Self {
         Self::new(
             operation,
             ErrorKind::OutputLimit,
@@ -371,7 +371,7 @@ impl AgentError {
         .with_detail(DetailKey::MaxBytes, max_bytes.to_string())
     }
 
-    pub(crate) fn from_processkit(
+    pub fn from_processkit(
         operation: &'static str,
         domain: FailureDomain,
         error: &ProcessError,
@@ -396,18 +396,18 @@ impl AgentError {
             .with_detail(DetailKey::ProcessErrorKind, error.kind().name())
     }
 
-    pub(crate) fn with_detail(mut self, key: DetailKey, value: impl Into<String>) -> Self {
+    pub fn with_detail(mut self, key: DetailKey, value: impl Into<String>) -> Self {
         self.details.insert(key, value.into());
         self
     }
 
-    pub(crate) fn with_fallback(mut self, fallback: Fallback) -> Self {
+    pub fn with_fallback(mut self, fallback: Fallback) -> Self {
         self.fallback = Some(fallback);
         self
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn with_warning(mut self, warning: impl Into<String>) -> Self {
+    pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
     }
@@ -422,33 +422,33 @@ impl AgentError {
         redact_text(self.message, self.redaction_policy())
     }
 
-    pub(crate) fn include_machine_paths(mut self, include: bool) -> Self {
+    pub fn include_machine_paths(mut self, include: bool) -> Self {
         self.include_machine_paths = include;
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_message(mut self, message: &'static str) -> Self {
+    #[doc(hidden)]
+    pub fn with_message(mut self, message: &'static str) -> Self {
         self.message = message;
         self
     }
 
     #[cfg(test)]
-    pub(crate) fn kind(&self) -> ErrorKind {
+    pub fn kind(&self) -> ErrorKind {
         self.kind
     }
 
     #[cfg(test)]
-    pub(crate) fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         self.code
     }
 
-    pub(crate) fn exit_code(&self) -> ExitCode {
+    pub fn exit_code(&self) -> ExitCode {
         ExitCode::from(self.kind.exit_code())
     }
 }
 
-pub(crate) trait IntoEnvelope {
+pub trait IntoEnvelope {
     fn into_envelope(self) -> (MachineEnvelope, ExitCode, Option<String>);
 }
 
@@ -466,13 +466,13 @@ impl IntoEnvelope for AgentError {
     }
 }
 
-pub(crate) struct RenderedOutput {
-    pub(crate) stdout: Vec<u8>,
-    pub(crate) diagnostic: Option<String>,
-    pub(crate) exit_code: ExitCode,
+pub struct RenderedOutput {
+    pub stdout: Vec<u8>,
+    pub diagnostic: Option<String>,
+    pub exit_code: ExitCode,
 }
 
-pub(crate) fn render(value: impl IntoEnvelope, max_bytes: usize) -> RenderedOutput {
+pub fn render(value: impl IntoEnvelope, max_bytes: usize) -> RenderedOutput {
     let (envelope, exit_code, diagnostic) = value.into_envelope();
     let mut stdout = serialize(&envelope);
     if stdout.len() > max_bytes {

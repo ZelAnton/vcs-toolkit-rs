@@ -105,11 +105,12 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool_handler};
 use vcs_core::processkit::ProcessRunner;
-use vcs_core::{OutputBudget, Repo, VcsRepo};
-use vcs_forge::{Forge, ForgeApi};
+use vcs_core::{BackendKind, OutputBudget, Repo, VcsRepo};
+use vcs_forge::{Forge, ForgeApi, ForgeKind};
 
 mod conflicts;
 mod forge_tools;
+mod outcome_tools;
 mod output;
 mod params;
 mod repo_tools;
@@ -117,6 +118,11 @@ mod write_gate;
 
 pub use params::*;
 pub use write_gate::*;
+
+/// Discovery guidance sent to every MCP client. The first 512 characters are a
+/// complete decision rule so clients that truncate instructions still receive
+/// the typed-tool, preflight, write-gate, and raw-fallback contract.
+pub const SERVER_INSTRUCTIONS: &str = "Prefer typed outcome_* tools for inspect, changes, checked commit, publish, and exact-revision CI. Start with outcome_inspect as preflight. Mutating tools are advertised only when the write gate enables them; never bypass that gate. Use lower-level typed repo_* or forge_* tools for operations with no outcome tool. Use a raw CLI only as a last-resort fallback when no typed tool is advertised or a typed result explicitly reports unsupported; preserve the same preflight and write policy.";
 
 /// An MCP server over a single repository (and, optionally, its forge). Held as
 /// object-safe trait handles, so it's runner-agnostic; clone is cheap (`Arc`).
@@ -191,6 +197,61 @@ impl VcsMcpServer {
         forge: Option<Arc<dyn ForgeApi>>,
         writes: WriteGate,
     ) -> Self {
+        let backend = repo.kind();
+        let forge_kind = forge.as_deref().map(ForgeApi::kind);
+        let mut tool_router =
+            Self::repo_tool_router() + Self::forge_tool_router() + Self::outcome_tool_router();
+
+        // Capability discovery is executable truth, not a catalogue of calls
+        // that will predictably be rejected. Inherent methods remain available
+        // for Rust compatibility; only the advertised MCP router is filtered.
+        for name in WRITE_TOOLS {
+            if !writes.allows(name) {
+                tool_router.remove_route(name);
+            }
+        }
+        if backend == BackendKind::Git {
+            for name in ["repo_op_log", "repo_undo"] {
+                tool_router.remove_route(name);
+            }
+        }
+        if forge_kind.is_none() || forge_kind == Some(ForgeKind::Unknown) {
+            let forge_names = tool_router
+                .list_all()
+                .into_iter()
+                .map(|tool| tool.name.into_owned())
+                .filter(|name| name.starts_with("forge_"))
+                .collect::<Vec<_>>();
+            for name in forge_names {
+                tool_router.remove_route(&name);
+            }
+        }
+        if forge_kind != Some(ForgeKind::GitHub) {
+            for name in outcome_tools::OUTCOME_FORGE_TOOLS {
+                tool_router.remove_route(name);
+            }
+        }
+        match forge_kind {
+            Some(ForgeKind::Gitea) => {
+                for name in [
+                    "forge_repo_view",
+                    "forge_pr_for_branch",
+                    "forge_pr_add_labels",
+                    "forge_pr_remove_labels",
+                    "forge_pr_edit",
+                    "forge_pr_mark_ready",
+                    "forge_pr_checks",
+                    "forge_pr_diff",
+                    "forge_issue_add_labels",
+                    "forge_issue_remove_labels",
+                    "forge_release_view",
+                ] {
+                    tool_router.remove_route(name);
+                }
+            }
+            Some(ForgeKind::GitLab) => tool_router.remove_route("forge_pr_request_changes"),
+            _ => {}
+        }
         Self {
             repo,
             forge,
@@ -200,7 +261,7 @@ impl VcsMcpServer {
             // rmcp's `ToolRouter: Add` combines them into the single router this
             // server dispatches on (the repo tools register first, then the forge
             // tools, preserving the original registration order).
-            tool_router: Self::repo_tool_router() + Self::forge_tool_router(),
+            tool_router,
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             content_budget: OutputBudget::unlimited(),
         }
@@ -284,12 +345,7 @@ impl ServerHandler for VcsMcpServer {
             // server_info to `Implementation::from_build_env()`, whose `env!` is
             // expanded in *rmcp's* crate — so without this it advertises "rmcp".
             .with_server_info(Implementation::new("vcs-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Drive a git/jj repository (and its forge) through typed tools. Read tools \
-                 (repo_*/forge_* queries) are always available; mutating tools require the server \
-                 to have been started with --allow-write (all mutations) or --allow-tools \
-                 name,... (a per-tool allowlist), and reject calls otherwise.",
-            )
+            .with_instructions(SERVER_INSTRUCTIONS)
     }
 }
 

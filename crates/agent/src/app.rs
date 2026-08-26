@@ -29,14 +29,14 @@ const DEFAULT_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Policy carried across every outcome implementation and projected onto every
 /// typed client. No outcome owns a second process-launch path.
-pub(crate) struct ExecutionPolicy {
-    pub(crate) cancellation: CancellationToken,
-    pub(crate) deadline: Duration,
-    pub(crate) content_budget: OutputBudget,
+pub struct ExecutionPolicy {
+    pub cancellation: CancellationToken,
+    pub deadline: Duration,
+    pub content_budget: OutputBudget,
 }
 
 impl ExecutionPolicy {
-    pub(crate) fn new(content_max_bytes: usize) -> Self {
+    pub fn new(content_max_bytes: usize) -> Self {
         Self {
             cancellation: CancellationToken::new(),
             deadline: DEFAULT_DEADLINE,
@@ -44,7 +44,7 @@ impl ExecutionPolicy {
         }
     }
 
-    pub(crate) fn with_deadline(mut self, deadline: Duration) -> Self {
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
         self
     }
@@ -417,7 +417,7 @@ impl MachinePath {
     }
 }
 
-pub(crate) async fn execute(
+pub async fn execute(
     invocation: &Invocation,
     policy: &ExecutionPolicy,
 ) -> AgentResult<MachineEnvelope> {
