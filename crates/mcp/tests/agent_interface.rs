@@ -341,9 +341,17 @@ fn validator_and_recorder_are_repeatable_without_network_state() {
             "invalid_call_rate",
             "outcome_correctness",
         ] {
-            assert!(measured[metric]["denominator"].as_u64().unwrap() > 0);
+            assert_eq!(measured[metric]["denominator"], 14);
         }
+        assert_eq!(
+            measured["invalid_call_evidence"].as_object().unwrap().len(),
+            14
+        );
     }
+    assert_eq!(
+        recording["interface_metrics"]["cli+skill"]["case_ids"],
+        recording["interface_metrics"]["mcp"]["case_ids"]
+    );
     let published = recording["cases"]
         .as_array()
         .unwrap()
@@ -428,11 +436,29 @@ fn validator_rejects_contradictory_selection_and_partial_results() {
     write_json(&raw_bypass_path, &raw_bypass);
     assert_validator_rejects(validator, corpus, &raw_bypass_path, baseline);
 
-    let mut unavailable_with_calls = original.clone();
-    unavailable_with_calls["interface_availability"]["mcp"] = "unavailable".into();
-    let unavailable_with_calls_path = temp.join("unavailable-with-calls.json");
-    write_json(&unavailable_with_calls_path, &unavailable_with_calls);
-    assert_validator_rejects(validator, corpus, &unavailable_with_calls_path, baseline);
+    let mut membership_mismatch = original.clone();
+    membership_mismatch["comparison_runs"]["mcp"]["case_ids"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let membership_mismatch_path = temp.join("membership-mismatch.json");
+    write_json(&membership_mismatch_path, &membership_mismatch);
+    assert_validator_rejects(validator, corpus, &membership_mismatch_path, baseline);
+
+    let mut missing_invalid_evidence = original.clone();
+    missing_invalid_evidence["comparison_runs"]["mcp"]["invalid_calls"]
+        .as_object_mut()
+        .unwrap()
+        .remove("inspect-status-git");
+    let missing_invalid_evidence_path = temp.join("missing-invalid-evidence.json");
+    write_json(&missing_invalid_evidence_path, &missing_invalid_evidence);
+    assert_validator_rejects(validator, corpus, &missing_invalid_evidence_path, baseline);
+
+    let mut revision_drift = original.clone();
+    revision_drift["transport_parity"][1]["mcp"]["run_revision"] = "drifted".into();
+    let revision_drift_path = temp.join("revision-drift.json");
+    write_json(&revision_drift_path, &revision_drift);
+    assert_validator_rejects(validator, corpus, &revision_drift_path, baseline);
 
     let mut missing_fallback = original.clone();
     missing_fallback["results"][0]["calls"]

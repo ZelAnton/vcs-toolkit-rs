@@ -14,11 +14,12 @@ from validate import (
     load_json,
     validate_baseline,
     validate_corpus,
-    validate_interface_availability,
+    validate_comparison_runs,
     validate_machine_fixtures,
     validate_processkit_cli_evidence,
     validate_processkit_cli_profile,
     validate_results,
+    validate_transport_parity,
 )
 
 
@@ -38,62 +39,23 @@ def _recorded_calls(calls: dict[str, int]) -> dict[str, int]:
     return recorded
 
 
-def _comparison_metrics(
-    corpus_by_id: dict[str, dict[str, Any]],
-    ordered: list[dict[str, Any]],
-    availability: dict[str, str],
-) -> dict[str, Any]:
-    by_id = {result["case_id"]: result for result in ordered}
+def _comparison_metrics(runs: dict[str, dict[str, Any] | None]) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
-    definitions = {
-        "cli+skill": ("vcs-agent", "preferred_interface"),
-        "mcp": ("mcp", "fallback_interface"),
-    }
-    for interface, (selected_interface, call_channel) in definitions.items():
-        if availability[interface] == "unavailable":
+    for interface, run in runs.items():
+        if run is None:
             metrics[interface] = None
             continue
-        if interface == "cli+skill":
-            eligible = [case for case in corpus_by_id.values() if case["expected"]["selection"] == "preferred"]
-        else:
-            eligible = [
-                case
-                for case in corpus_by_id.values()
-                if case["expected"]["selection"] == "fallback"
-                and "mcp" in case["expected"]["fallback"]["interfaces"]
-            ]
-        selected = [result for result in ordered if result["selection"]["selected_interface"] == selected_interface]
-        correct_selected = [
-            result
-            for result in selected
-            if result["case_id"] in {case["case_id"] for case in eligible}
-        ]
-        correct_outcomes = sum(
-            1
-            for case in eligible
-            if by_id[case["case_id"]]["selection"]["selected_interface"] == selected_interface
-            and by_id[case["case_id"]]["outcome"]["status"] == case["expected"]["outcome"]
-        )
-        channel_calls = sum(result["calls"][call_channel] for result in ordered)
-        invalid_calls = sum(
-            result["calls"][call_channel]
-            for result in ordered
-            if result["selection"]["selected_interface"] != selected_interface
-        )
-        bypasses = sum(
-            1
-            for case in eligible
-            if by_id[case["case_id"]]["selection"]["raw_cli_bypass"]
-        )
-        if not selected or not eligible or channel_calls == 0:
-            raise ValidationError(f"{interface}: measured comparison lacks selected/call evidence")
+        case_ids = run["case_ids"]
+        denominator = len(case_ids)
         metrics[interface] = {
             "availability": "measured",
-            "precision": _ratio(len(correct_selected), len(selected)),
-            "recall": _ratio(len(correct_selected), len(eligible)),
-            "bypass_rate": _ratio(bypasses, len(eligible)),
-            "invalid_call_rate": _ratio(invalid_calls, channel_calls),
-            "outcome_correctness": _ratio(correct_outcomes, len(eligible)),
+            "case_ids": case_ids,
+            "precision": _ratio(len(run["precision_hits"]), denominator),
+            "recall": _ratio(len(run["recall_hits"]), denominator),
+            "bypass_rate": _ratio(len(run["bypass_cases"]), denominator),
+            "invalid_call_rate": _ratio(sum(run["invalid_calls"].values()), denominator),
+            "invalid_call_evidence": run["invalid_calls"],
+            "outcome_correctness": _ratio(len(run["outcome_correct_cases"]), denominator),
         }
     return metrics
 
@@ -106,7 +68,8 @@ def make_recording(
 ) -> dict[str, Any]:
     corpus_by_id = validate_corpus(corpus, skill_contract)
     checked = validate_results(corpus_by_id, results)
-    interface_availability = validate_interface_availability(results)
+    comparison_runs = validate_comparison_runs(corpus_by_id, results)
+    transport_parity = validate_transport_parity(results)
     baseline_value = validate_baseline(baseline) if baseline is not None else None
     by_id = {result["case_id"]: result for result in checked}
     ordered = [by_id[case_id] for case_id in corpus_by_id if case_id in by_id]
@@ -157,9 +120,8 @@ def make_recording(
             "terminal_ci_verified": terminal_verified,
             "unrelated_state_preserved": sum(1 for result in ordered if result["workspace"]["unrelated_changes_preserved"]),
         },
-        "interface_metrics": _comparison_metrics(
-            corpus_by_id, ordered, interface_availability
-        ),
+        "interface_metrics": _comparison_metrics(comparison_runs),
+        "transport_parity": transport_parity,
     }
     if baseline_value is not None:
         recording["baseline"] = {

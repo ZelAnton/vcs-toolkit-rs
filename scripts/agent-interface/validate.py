@@ -819,24 +819,91 @@ def _validate_result_shape(result: Any, label: str) -> dict[str, Any]:
     return result
 
 
-def validate_interface_availability(results: Any) -> dict[str, str]:
+def _comparison_case_ids(value: Any, label: str, expected: list[str]) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValidationError(f"{label} must be a case-ID array")
+    if len(value) != len(set(value)):
+        raise ValidationError(f"{label} contains duplicate case IDs")
+    if value != expected:
+        raise ValidationError(f"{label} must match the common corpus case membership and order")
+    return value
+
+
+def validate_comparison_runs(
+    corpus_by_id: dict[str, dict[str, Any]], results: Any
+) -> dict[str, dict[str, Any] | None]:
     root = _object(results, "results")
-    availability = _object(root.get("interface_availability"), "results.interface_availability")
-    if set(availability) != set(COMPARISON_INTERFACES):
-        raise ValidationError("results.interface_availability must cover exactly cli+skill and mcp")
-    for interface, status in availability.items():
-        if status not in {"measured", "unavailable"}:
+    runs = _object(root.get("comparison_runs"), "results.comparison_runs")
+    if set(runs) != set(COMPARISON_INTERFACES):
+        raise ValidationError("results.comparison_runs must cover exactly cli+skill and mcp")
+    expected_ids = list(corpus_by_id)
+    checked: dict[str, dict[str, Any] | None] = {}
+    for interface in COMPARISON_INTERFACES:
+        raw_run = runs[interface]
+        if raw_run is None:
+            checked[interface] = None
+            continue
+        run = _object(raw_run, f"results.comparison_runs.{interface}")
+        case_ids = _comparison_case_ids(
+            run.get("case_ids"), f"results.comparison_runs.{interface}.case_ids", expected_ids
+        )
+        for field in ("precision_hits", "recall_hits", "bypass_cases", "outcome_correct_cases"):
+            values = run.get(field)
+            if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+                raise ValidationError(f"results.comparison_runs.{interface}.{field} must be a case-ID array")
+            if len(values) != len(set(values)) or not set(values) <= set(case_ids):
+                raise ValidationError(f"results.comparison_runs.{interface}.{field} has invalid case evidence")
+        invalid_calls = _object(
+            run.get("invalid_calls"), f"results.comparison_runs.{interface}.invalid_calls"
+        )
+        if set(invalid_calls) != set(case_ids):
             raise ValidationError(
-                f"results.interface_availability.{interface} must be measured or unavailable"
+                f"results.comparison_runs.{interface}.invalid_calls must explicitly cover every case"
             )
-    return availability
+        for case_id, count in invalid_calls.items():
+            if _integer(count, f"results.comparison_runs.{interface}.invalid_calls.{case_id}") < 0:
+                raise ValidationError("invalid-call evidence cannot be negative")
+        checked[interface] = run
+    return checked
+
+
+def validate_transport_parity(results: Any) -> list[dict[str, Any]]:
+    root = _object(results, "results")
+    parity = root.get("transport_parity")
+    if not isinstance(parity, list):
+        raise ValidationError("results.transport_parity must be an array")
+    expected_operations = ["publish", "ci_status", "ci_wait"]
+    if [item.get("operation") for item in parity if isinstance(item, dict)] != expected_operations:
+        raise ValidationError("results.transport_parity must cover publish, ci_status, and ci_wait in order")
+    checked: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(parity):
+        item = _object(raw_item, f"results.transport_parity[{index}]")
+        operation = _string(item.get("operation"), f"results.transport_parity[{index}].operation")
+        cli = _object(item.get("cli+skill"), f"results.transport_parity[{index}].cli+skill")
+        mcp = _object(item.get("mcp"), f"results.transport_parity[{index}].mcp")
+        if cli != mcp:
+            raise ValidationError(f"{operation}: CLI+Skill and MCP revision/CI evidence mismatch")
+        revision = _string(cli.get("revision"), f"{operation}.revision")
+        if cli.get("exact_revision_verified") is not True:
+            raise ValidationError(f"{operation}: exact revision must be verified")
+        if operation == "publish":
+            if cli.get("published_revision") != revision:
+                raise ValidationError("publish: published revision drift")
+        else:
+            if cli.get("run_revision") != revision:
+                raise ValidationError(f"{operation}: CI run revision drift")
+            if cli.get("terminal") is not True or cli.get("successful") is not True:
+                raise ValidationError(f"{operation}: terminal successful CI evidence required")
+        checked.append(item)
+    return checked
 
 
 def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> list[dict[str, Any]]:
     root = _object(results, "results")
     if root.get("schema_version") != "agent-interface.results.v1":
         raise ValidationError("results.schema_version must be agent-interface.results.v1")
-    availability = validate_interface_availability(root)
+    validate_comparison_runs(corpus_by_id, root)
+    validate_transport_parity(root)
     raw_results = root.get("results")
     if not isinstance(raw_results, list):
         raise ValidationError("results.results must be an array")
@@ -940,19 +1007,6 @@ def validate_results(corpus_by_id: dict[str, dict[str, Any]], results: Any) -> l
     missing = sorted(set(corpus_by_id) - seen)
     if missing:
         raise ValidationError(f"results missing case IDs: {', '.join(missing)}")
-    unavailable_channels = {
-        "cli+skill": ("vcs-agent", "preferred_interface"),
-        "mcp": ("mcp", "fallback_interface"),
-    }
-    for interface, (selection, call_channel) in unavailable_channels.items():
-        if availability[interface] == "unavailable" and any(
-            result["selection"]["selected_interface"] == selection
-            or result["calls"][call_channel] > 0
-            for result in checked
-        ):
-            raise ValidationError(
-                f"results.interface_availability.{interface}=unavailable contradicts recorded calls"
-            )
     return checked
 
 
