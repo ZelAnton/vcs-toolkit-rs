@@ -25,6 +25,8 @@ EXPECTED_SCENARIOS = {
     "wait_ci",
     "conflict",
     "ordinary_file_search",
+    "ordinary_file_read",
+    "ordinary_file_edit",
     "unsupported_low_level",
     "preferred_unavailable",
 }
@@ -673,6 +675,21 @@ def validate_corpus(corpus: Any) -> dict[str, dict[str, Any]]:
     fallbacks = policy.get("fallback_interfaces")
     if fallbacks != ["mcp", "raw-cli"]:
         raise ValidationError("selection_policy.fallback_interfaces must be [mcp, raw-cli]")
+    skill = _object(root.get("skill_metadata"), "corpus.skill_metadata")
+    if skill.get("name") != "vcs-agent":
+        raise ValidationError("skill_metadata.name must be vcs-agent")
+    if skill.get("contract_version") != "vcs-agent-skill/v1":
+        raise ValidationError("skill_metadata.contract_version must be vcs-agent-skill/v1")
+    if skill.get("path") != "../../skills/vcs-agent/SKILL.md":
+        raise ValidationError("skill_metadata.path must select the standalone Skill")
+    if skill.get("metric_priority") != [
+        "false_activation_rate",
+        "preferred_interface_selection_rate",
+        "raw_cli_bypass_rate",
+    ]:
+        raise ValidationError("skill_metadata must prioritize negative false-activation evidence")
+    if skill.get("unavailable_live_metrics", "missing") is not None:
+        raise ValidationError("unavailable Skill live metrics must be null, never zero")
     cases = root.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValidationError("corpus.cases must be a non-empty array")

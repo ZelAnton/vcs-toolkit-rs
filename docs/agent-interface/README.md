@@ -20,8 +20,11 @@ unique `case_id`, a backend/forge request, a preferred operation, an explicit
 fallback allow-list and reason list, and invariants for call counts, unrelated
 workspace state, exact revisions, and terminal CI.  It includes Git and
 Jujutsu inspection/diff, exact-path commit, GitHub/GitLab/Gitea publication,
-exact-revision CI waiting, conflict reporting, ordinary file search as a
-negative prompt, and an unsupported low-level command.
+exact-revision CI waiting, conflict reporting, ordinary file search/read/edit
+as negative prompts, and an unsupported low-level command. Its Skill metadata
+puts false-activation evidence first, then selection and raw-bypass evidence;
+the deterministic recording fixes all three ratios. Unavailable live metrics
+remain `null`, never an invented zero.
 
 The result envelope in [`result-schema.v1.json`](result-schema.v1.json) keeps
 selection evidence separate from outcome evidence:
@@ -103,7 +106,7 @@ fixture and includes:
 ```json
 {
   "schema_version": "agent-interface.live-recording.v1",
-  "corpus_version": "1.0.0",
+  "corpus_version": "1.1.0",
   "harness": {"name": "operator-selected", "model": "redacted", "network": true},
   "cases": [{
     "case_id": "inspect-status-git",

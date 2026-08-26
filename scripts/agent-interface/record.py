@@ -55,6 +55,7 @@ def make_recording(corpus: Any, results: Any, baseline: Any | None = None) -> di
         "schema_version": "agent-interface.recording.v1",
         "corpus_version": corpus["corpus_version"],
         "source": "offline-fixture",
+        "skill_metadata": corpus["skill_metadata"],
         "cases": [
             {
                 "case_id": result["case_id"],

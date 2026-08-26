@@ -232,5 +232,50 @@ class MachineFixtureValidationTests(unittest.TestCase):
                 self.assertFalse(output.exists(), "invalid input must not produce a recording")
 
 
+class SkillMetadataEvaluationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.corpus = validate.load_json(
+            ROOT / "docs" / "agent-interface" / "corpus.v1.json"
+        )
+        cls.results = validate.load_json(
+            ROOT / "docs" / "agent-interface" / "fixtures" / "results.v1.json"
+        )
+        cls.baseline = validate.load_json(
+            ROOT / "docs" / "agent-interface" / "baseline-mcp.v1.json"
+        )
+
+    def test_recording_fixes_skill_selection_false_activation_and_bypass_metrics(self) -> None:
+        recording = record.make_recording(self.corpus, self.results, self.baseline)
+        self.assertEqual(recording["skill_metadata"], self.corpus["skill_metadata"])
+        self.assertEqual(
+            recording["metrics"]["preferred_interface_selection_rate"],
+            {"numerator": 9, "denominator": 9},
+        )
+        self.assertEqual(
+            recording["metrics"]["false_activation_rate"],
+            {"numerator": 0, "denominator": 3},
+        )
+        self.assertEqual(
+            recording["metrics"]["raw_cli_bypass_rate"],
+            {"numerator": 1, "denominator": 14},
+        )
+        self.assertIsNone(recording["skill_metadata"]["unavailable_live_metrics"])
+
+    def test_negative_metric_must_remain_first_priority(self) -> None:
+        corpus = copy.deepcopy(self.corpus)
+        corpus["skill_metadata"]["metric_priority"].reverse()
+        with self.assertRaisesRegex(validate.ValidationError, "prioritize negative"):
+            validate.validate_corpus(corpus)
+
+    def test_unavailable_live_metrics_cannot_be_zero(self) -> None:
+        corpus = copy.deepcopy(self.corpus)
+        corpus["skill_metadata"]["unavailable_live_metrics"] = {
+            "false_activation_rate": 0
+        }
+        with self.assertRaisesRegex(validate.ValidationError, "never zero"):
+            validate.validate_corpus(corpus)
+
+
 if __name__ == "__main__":
     unittest.main()

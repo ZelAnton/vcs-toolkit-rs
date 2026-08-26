@@ -3,11 +3,25 @@
   "$id": "https://vcs-toolkit-rs.dev/schemas/agent-interface-recording-v1.json",
   "title": "Agent interface evaluation recording v1",
   "type": "object",
-  "required": ["schema_version", "corpus_version", "source", "cases", "metrics"],
+  "required": ["schema_version", "corpus_version", "source", "skill_metadata", "cases", "metrics"],
   "properties": {
     "schema_version": {"const": "agent-interface.recording.v1"},
     "corpus_version": {"type": "string", "minLength": 1},
     "source": {"type": "string", "minLength": 1},
+    "skill_metadata": {
+      "type": "object",
+      "required": ["name", "contract_version", "path", "metric_priority", "unavailable_live_metrics"],
+      "properties": {
+        "name": {"const": "vcs-agent"},
+        "contract_version": {"const": "vcs-agent-skill/v1"},
+        "path": {"const": "../../skills/vcs-agent/SKILL.md"},
+        "metric_priority": {
+          "const": ["false_activation_rate", "preferred_interface_selection_rate", "raw_cli_bypass_rate"]
+        },
+        "unavailable_live_metrics": {"type": "null"}
+      },
+      "additionalProperties": false
+    },
     "cases": {
       "type": "array",
       "items": {
